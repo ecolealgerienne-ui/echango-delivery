@@ -78,7 +78,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 - [x] **Priorité 1** : contradictions résolues, spike `fleetbase/customer-portal` validé de bout en bout par test réel. Fait le 26/07/2026.
 - [x] **Priorité 2** : vérifications techniques closes — créneaux horaires OK, dispatch `adhoc` validé par test réel, OSRM et facturation Ledger reclassés non-bloquants (réponses déjà connues, tâches de mise en prod plutôt que prérequis dev). Fait le 26/07/2026.
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
-- [ ] **Priorité 4, en cours** : scoper le BFF (s'appuie sur `customer-portal-api`, validé) et les deux interfaces custom ; spike FlutterFlow sur l'écran dispatch/carte avant de committer sur l'outil.
+- [x] **Priorité 4, scoping BFF** : premier draft dans `docs/specs_bff.md` (27/07/2026) — découverte structurante : `customer-portal-api` ne couvre que le persona commerçant (scope sur `Order.customer`), pas la petite flotte (`Order.facilitator`, aucun mécanisme natif) ; le BFF doit donc gérer deux stratégies d'accès Fleetbase différentes selon le persona. Reste : spike FlutterFlow sur l'écran dispatch/carte, questions ouvertes du scoping BFF (§8 du document).
 - [ ] Revenir documenter les réponses **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo).
 - [ ] Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
 
