@@ -28,9 +28,9 @@ Rien de déployé en réel pour l'instant. Étape en cours : déploiement Fleetb
 
 ## Questions ouvertes à trancher en testant en local
 
-1. **Granularité des permissions à l'intérieur d'une Organization** : peut-on donner à un commerçant un compte/rôle restreint à SES commandes uniquement (pas les autres commerçants, pas la vue globale du pool de transporteurs) ? Conditionne si l'hypothèse "Organization unique" suffit à isoler proprement les commerçants sans leur donner un accès Fleetbase complet, ou s'il faut construire une couche d'isolation nous-mêmes par-dessus l'API.
-2. Un driver Navigator peut-il recevoir des courses de **plusieurs commerçants différents** au sein d'une même Organization (modèle pool partagé), ou le broadcast ad hoc est-il pensé pour une seule entreprise ?
-3. Navigator est-il réellement adaptable (rebrand, configuration) pour servir d'app transporteur Echango, ou faut-il repartir sur du custom (comme pour l'app préparateur d'Echango Order, où aucun équivalent standard Odoo n'existait) ?
+1. **Granularité des permissions à l'intérieur d'une Organization** — **✅ tranchée (26/07/2026)** : la console/API classique ne fournit aucune isolation en dessous du niveau Organization (confirmé par test manuel + code). MAIS le package officiel `fleetbase/customer-portal-api` fournit une vraie isolation par compte, **validée par test réel de bout en bout** (compte `Contact` rattaché à un `Vendor`, login, `GET orders` correctement scopé). Détail complet : `docs/specs_echango_delivery.md` §3.1.
+2. Un driver Navigator peut-il recevoir des courses de **plusieurs commerçants différents** au sein d'une même Organization (modèle pool partagé), ou le broadcast ad hoc est-il pensé pour une seule entreprise ? **Partiellement répondu** : le pipeline serveur du dispatch adhoc (broadcast géospatial par proximité) est validé de bout en bout par test réel (26/07/2026, `docs/specs_echango_delivery.md` §3.2) ; l'assignation ciblée d'un driver précis à une commande est aussi confirmée possible. Reste à tester : la réception réelle par un driver, qui nécessite l'app Navigator installée (question #3 ci-dessous).
+3. Navigator est-il réellement adaptable (rebrand, configuration) pour servir d'app transporteur Echango, ou faut-il repartir sur du custom (comme pour l'app préparateur d'Echango Order, où aucun équivalent standard Odoo n'existait) ? **Toujours ouverte** — Navigator pas encore installé/testé en pratique.
 
 ## Licence — position actuelle (à rouvrir avant l'ouverture B2B réelle)
 
@@ -66,17 +66,19 @@ Ports par défaut (doc officielle) : Console `http://localhost:4200`, API `http:
 
 Après la phase d'exploration ci-dessus, une revue croisée par 5 agents spécialisés (sécurité, architecture, métier, logistique, validation technique Fleetbase) a été menée sur ce fichier et `docs/journal_exploration_fleetbase.md`, avec vérification systématique contre le code source public et la documentation officielle de Fleetbase. Résultat : **`docs/specs_echango_delivery.md`** — synthèse priorisée, avec un plan d'action concret avant tout développement, et une liste de contradictions entre agents à vérifier en premier (rapports complets dans `docs/rapports_specs/`).
 
-**Découvertes majeures à retenir** : un package officiel `fleetbase/customer-portal` (jamais repéré avant cette revue) fournit déjà une isolation par compte native pour le persona commerçant, potentiellement en remplacement d'une bonne partie du BFF prévu à construire nous-mêmes — à valider par un spike avant de concevoir quoi que ce soit. Le calcul d'itinéraire n'est pas self-hosted par défaut malgré le narratif du projet. Un auto-dispatch par proximité existe nativement. Le doc macro (`docs/specs_macro_drive_transport.md`) contient plusieurs affirmations obsolètes à corriger.
+**Découvertes majeures à retenir** : un package officiel `fleetbase/customer-portal` (jamais repéré avant cette revue) fournit déjà une isolation par compte native pour le persona commerçant, potentiellement en remplacement d'une bonne partie du BFF prévu à construire nous-mêmes. Le calcul d'itinéraire n'est pas self-hosted par défaut malgré le narratif du projet. Un auto-dispatch par proximité existe nativement. Le doc macro (`docs/specs_macro_drive_transport.md`) contient plusieurs affirmations obsolètes à corriger.
+
+**✅ Spikes validés par tests réels (26/07/2026)** : `customer-portal-api` installé et testé de bout en bout (compte de test créé, rattaché à un Vendor, commande visible via l'API scopée — un bug de format Fleetbase trouvé et documenté au passage) ; dispatch adhoc testé de bout en bout côté serveur (broadcast géospatial déclenché sans erreur). **Priorités 1 et 2 du plan d'action closes** — voir `docs/specs_echango_delivery.md` §9 pour le détail complet des tests et §3 pour toutes les découvertes. Étape en cours : scoper le BFF (Priorité 4).
 
 ## Prochaines étapes
 
 Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.md` §9. Résumé :
 
 - [x] Installer Fleetbase + FleetOps en local (utilisateur, WSL/Docker) — `scripts/setup-local.sh`. Fait le 26/07/2026 (bug MySQL rencontré et corrigé, voir journal §1.1).
-- [ ] **Priorité 1** : résoudre les deux contradictions entre agents (repo `fleetops-api` vs `fleetops` archivé/actif, existence réelle d'`order_config_uuid`) ; spike `fleetbase/customer-portal` avant de concevoir le BFF.
-- [ ] **Priorité 2** : vérifications techniques bloquantes (créneaux horaires réellement persistés ?, config OSRM réelle, test du mode `adhoc`, test `Order.customer` pour la facturation).
+- [x] **Priorité 1** : contradictions résolues, spike `fleetbase/customer-portal` validé de bout en bout par test réel. Fait le 26/07/2026.
+- [x] **Priorité 2** : vérifications techniques closes — créneaux horaires OK, dispatch `adhoc` validé par test réel, OSRM et facturation Ledger reclassés non-bloquants (réponses déjà connues, tâches de mise en prod plutôt que prérequis dev). Fait le 26/07/2026.
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
-- [ ] **Priorité 4** : spike FlutterFlow sur l'écran dispatch/carte avant de committer sur l'outil, puis concevoir le BFF et scoper les deux interfaces custom.
+- [ ] **Priorité 4, en cours** : scoper le BFF (s'appuie sur `customer-portal-api`, validé) et les deux interfaces custom ; spike FlutterFlow sur l'écran dispatch/carte avant de committer sur l'outil.
 - [ ] Revenir documenter les réponses **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo).
 - [ ] Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
 
