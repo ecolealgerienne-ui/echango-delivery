@@ -113,7 +113,7 @@ Détail complet : `03_metier.md`. Tableau des 11 règles métier non tranchées,
 Détail complet : `04_logistique.md`. Points structurants au-delà des découvertes déjà notées en §3.2/§3.3 :
 
 - Les tournées multi-arrêts (waypoints) sont supportées côté structure de données, mais **aucune optimisation d'ordre des arrêts n'est câblée côté API** — à construire si c'est un besoin produit réel.
-- Le zonage géographique (`ServiceArea`/`Zone`) existe mais n'a **aucun effet de filtrage** sur le dispatch — purement descriptif en l'état.
+- Le zonage géographique (`ServiceArea`/`Zone`) existe mais n'a **aucun effet de filtrage** sur le dispatch — purement descriptif en l'état. Même constat vérifié le 26/07/2026 pour les compétences (`Order.required_skills`/`Driver.skills`, tous deux réels en base) : aucun filtrage par compétence dans `HandleOrderDispatched`. Fleetbase expose plusieurs axes de filtrage riches en données mais aucun n'est câblé nativement au-delà du rayon géographique — à garder en tête comme un pattern répété, pas un cas isolé.
 - **Signal d'alerte concret à vérifier en priorité** : les champs `time_window_start`/`time_window_end` (créneaux horaires), capturés dans un payload de commande réel pendant les tests, sont absents des champs autorisés et des règles de validation observées dans le code — probablement ignorés silencieusement si envoyés tels quels. À tester avant de promettre un engagement de créneau horaire à un commerçant.
 - Aucune contrainte de capacité véhicule, aucun planning/shift driver (seulement un flag `online` temps réel) — lacunes à combler côté Echango si besoin produit confirmé.
 - Recommandation : activer/tester le mode `adhoc` natif pour le persona "petite flotte" plutôt que construire un moteur de matching maison — le vrai travail est de le scoper à la bonne Fleet (non filtré nativement).
@@ -139,7 +139,7 @@ Détail complet : `02_architecture.md` §5. Confirmé viable pour consommer une 
 4. Vérifier la configuration réelle du routing (OSRM) sur l'installation locale, évaluer Valhalla/VROOM ou un service commercial pour la production.
 5. Tester le mode `adhoc` (auto-dispatch par proximité) en pratique avec au moins deux drivers de test, confirmer le comportement du retry à 4 minutes.
 6. Vérifier si `Order.customer` doit être renseigné pour que `PurchaseRateObserver` génère une facture cohérente (test avec un Vendor "commerçant simple", sans facilitateur).
-7. Explorer le champ `required_skills` sur `Order` (découvert le 26/07/2026 en levant la contradiction §2.2, non exploré) — potentiel mécanisme natif de correspondance compétences driver/commande (véhicule réfrigéré, permis spécifique...), pertinent pour le dispatch.
+7. ~~Explorer le champ `required_skills` sur `Order`~~ **Fait** (26/07/2026) : `Driver.skills` existe aussi (JSON, `$fillable`), mais **aucun filtrage par compétences n'est câblé dans le dispatch natif** (`HandleOrderDispatched` ne filtre que sur statut/en ligne/société/position/distance géographique) — même schéma que `ServiceArea`/`Zone` (§7 du journal, rapport logistique) : donnée descriptive présente, sans effet automatique. Si le matching par compétence (véhicule réfrigéré, permis spécifique...) est un besoin produit réel, c'est encore à construire côté BFF.
 
 ### Priorité 3 — décisions produit à trancher (pas techniques, mais bloquantes pour le dev)
 8. Trancher les 11 règles métier listées en `03_metier.md` §5 (tarification, commission, cadence de paiement, annulations, SLA, propriété relation client, onboarding, fiscalité).
