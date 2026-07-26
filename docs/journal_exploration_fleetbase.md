@@ -72,7 +72,7 @@ Vérifié dans le code source public `fleetbase/core-api`, migration `migrations
 Test manuel : connexion en tant qu'utilisateur "vendeur" (lié à un `Vendor`/facilitateur) depuis un autre navigateur → **voit toutes les commandes de l'Organization**, y compris celles où il n'est pas facilitateur. Confirme que "Vendor/Facilitateur" est une **étiquette de donnée**, pas un mécanisme de permission/sécurité.
 
 Vérification côté code pour corroborer (les rôles IAM ont trop d'options pour un audit manuel exhaustif — jugé non productif) :
-- Aucun dossier `Policies` trouvé côté `fleetops-api` (404 sur le chemin attendu).
+- Aucun dossier `Policies` trouvé côté `fleetops-api`/`fleetops` (404 sur le chemin attendu).
 - `OrderController` (Internal v1) : aucune méthode d'index/liste visible dans ce fichier (héritée d'un contrôleur de base non inspecté), et **aucune référence à un système de Policy / `authorize()` / `can()` / gates** dans ce fichier.
 
 **Conclusion retenue (répond à la question ouverte #1 du CLAUDE.md)** : Fleetbase ne fournit aucune isolation native en dessous du niveau Organization — ni pour un commerçant restreint à ses propres commandes, ni pour un vendor restreint aux commandes où il est facilitateur. Le filtrage/la visibilité par sous-entité devra être **entièrement géré par notre propre couche (BFF)**, pas par la configuration native de rôles Fleetbase.
@@ -120,7 +120,7 @@ Idée initiale envisagée (avant la découverte des modèles ci-dessous) : gére
 
 Capture d'écran du formulaire de création de commande : champ "Attribuer un conducteur" avec un driver précis sélectionné ("TOTO"). Confirme qu'on peut assigner un driver ciblé (pas seulement un broadcast ad hoc automatique) — répond en partie à la question ouverte #2 du CLAUDE.md et dérisque l'architecture envisagée.
 
-### 6.3 Découverte du modèle `Fleet` (code source `fleetbase/fleetops-api`, `src/Models/Fleet.php`)
+### 6.3 Découverte du modèle `Fleet` (code source `fleetbase/fleetops`, `server/src/Models/Fleet.php` — corrigé le 26/07/2026 : le repo GitHub `fleetbase/fleetops-api` cité initialement est archivé depuis nov. 2023 ; le code actif, servi sous le même nom de package Composer, vit dans `fleetbase/fleetops`, voir `docs/specs_echango_delivery.md` §2.1)
 
 Champs fillable : `company_uuid`, `service_area_uuid`, `zone_uuid`, `vendor_uuid`, `parent_fleet_uuid`, `image_uuid`, `name`, `color`, `task`, `status`, `slug`.
 
@@ -129,7 +129,7 @@ Relations clés :
 - **`parent_fleet_uuid`** (relation `parentFleet()`, self-référentielle) — les Fleets sont **hiérarchisables**.
 - **`vendor_uuid`** (relation `vendor()`) — une Fleet peut être rattachée à un `Vendor`.
 
-### 6.4 Découverte du modèle `Vendor` (`src/Models/Vendor.php`)
+### 6.4 Découverte du modèle `Vendor` (`server/src/Models/Vendor.php`)
 
 Champs fillable : `_key`, `internal_id`, `company_uuid`, `logo_uuid`, `type_uuid`, `connect_company_uuid`, `business_id`, `name`, `email`, `website_url`, `meta`, `callbacks`, `phone`, `place_uuid`, `country`, `status`, `type`, `slug`.
 
@@ -152,7 +152,7 @@ Accesseurs : `getFacilitatorNameAttribute()`, `getFacilitatorIsVendorAttribute()
 
 ### 6.6 `IntegratedVendor` — écarté pour notre cas d'usage
 
-Champs fillable (`src/Models/IntegratedVendor.php`) : `company_uuid`, `created_by_uuid`, `host`, `namespace`, `webhook_url`, `provider`, `sandbox`, `options`, `credentials`. Mécanisme de **pont vers un prestataire externe** via webhook/API (`IntegratedVendors::bridgeFromIntegratedVendor`, `resolverFromIntegratedVendor`, callbacks de cycle de vie).
+Champs fillable (`server/src/Models/IntegratedVendor.php`) : `company_uuid`, `created_by_uuid`, `host`, `namespace`, `webhook_url`, `provider`, `sandbox`, `options`, `credentials`. Mécanisme de **pont vers un prestataire externe** via webhook/API (`IntegratedVendors::bridgeFromIntegratedVendor`, `resolverFromIntegratedVendor`, callbacks de cycle de vie).
 
 **Conclusion** : conçu pour sous-traiter l'exécution d'une commande à un système externe indépendant (l'entreprise garde son propre dispatch, Fleetbase lui transmet juste la commande) — différent du persona "petite flotte" visé, qui doit utiliser **nos** drivers/Fleet à l'intérieur de Fleetbase avec une interface légère à nous, pas son propre système indépendant. Écarté pour ce besoin (pourrait éventuellement resservir plus tard pour un tout autre cas : un partenaire logistique totalement autonome).
 

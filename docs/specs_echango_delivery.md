@@ -18,24 +18,30 @@ Ce document consolide et priorise les conclusions de 5 relectures spécialisées
 
 ---
 
-## 2. ⚠️ Contradictions entre agents — à vérifier en priorité
+## 2. ✅ Contradictions entre agents — résolues (26 juillet 2026, après compilation)
 
-Cinq agents ont travaillé en parallèle, chacun avec ses propres recherches de code. Deux points où leurs conclusions divergent factuellement ont été identifiés. **Ne pas trancher entre elles par supposition — vérifier directement en local avant de figer l'architecture.**
+Cinq agents ont travaillé en parallèle, chacun avec ses propres recherches de code. Deux points où leurs conclusions divergeaient factuellement ont été identifiés lors de la compilation, puis **vérifiés directement sur GitHub/Packagist dans la foulée** — conservés ici avec leur résolution, pour la traçabilité.
 
-### 2.1 `fleetbase/fleetops-api` est-il archivé ?
+### 2.1 `fleetbase/fleetops-api` est-il archivé ? — RÉSOLU
 
-- Le rapport **Sécurité** (`01_securite.md`) affirme avoir vérifié que `fleetbase/fleetops-api` est **archivé** (`archived: true`, dernière MAJ avril 2025), et que le code actif est dans `fleetbase/fleetops` (arborescence `server/src/Models/...`).
-- Le rapport **Validation technique Fleetbase** (`05_validation_technique_fleetbase.md`) continue de citer `fleetbase/fleetops-api` comme "la branche main v1.2.0, celle que l'équipe déploierait aujourd'hui", sans mention d'archivage, avec une arborescence `src/Models/...` (sans `server/`).
-- Le rapport **Architecture** (`02_architecture.md`) cite `fleetbase/fleetops` comme repo actif.
+- **`fleetbase/fleetops-api`** (le repo GitHub de ce nom) est bien **archivé** depuis le **22 novembre 2023** ("This repository was archived by the owner... It is now read-only"), confirmé en ouvrant directement la page. C'est la source consultée à tort par le rapport Validation technique Fleetbase (`05_validation_technique_fleetbase.md`).
+- Le développement actif a été déplacé vers **`fleetbase/fleetops`** (1 550 commits, structure `server/src/...`), confirmé actif.
+- **Vérification décisive faite sur Packagist** : le package Composer réellement requis par `fleetbase/fleetbase` (`"fleetbase/fleetops-api": "^0.6.58"`) — donc celui installé par `scripts/setup-local.sh` — a sur Packagist une **URL de dépôt qui pointe vers `https://github.com/fleetbase/fleetops`** (pas vers le repo archivé du même nom), dernière version 0.6.58 publiée le 17 juillet 2026, mise à jour le 25 juillet 2026. Autrement dit : le nom du **package Composer** (`fleetbase/fleetops-api`) n'a pas changé pour rester rétrocompatible, mais son **code source** vit désormais dans le repo GitHub `fleetbase/fleetops`.
 
-**Action requise avant tout choix d'architecture** : ouvrir directement `https://github.com/fleetbase/fleetops-api` et `https://github.com/fleetbase/fleetops` dans un navigateur, noter lequel est marqué "Archived", lequel a des commits récents, et quelle arborescence (`src/` vs `server/src/`) correspond à la version réellement installée par `composer require fleetbase/fleetops` (celle utilisée par `scripts/setup-local.sh`). Corriger toutes les références de repo dans `docs/journal_exploration_fleetbase.md` en conséquence.
+**Conclusion actionnable** : pour toute recherche de code future sur ce projet, utiliser `fleetbase/fleetops` (chemins `server/src/Models/...`), jamais le repo GitHub archivé `fleetbase/fleetops-api`. `docs/journal_exploration_fleetbase.md` a été corrigé en conséquence (voir sa note de mise à jour en tête de fichier).
 
-### 2.2 `order_config_uuid` existe-t-il comme colonne réelle sur `Order` ?
+### 2.2 `order_config_uuid` existe-t-il comme colonne réelle sur `Order` ? — RÉSOLU, confirmé OUI
 
-- Le rapport **Architecture** affirme que `order_config_uuid` est une colonne réelle sur `Order`, avec un modèle `OrderConfig` complet (activity-flow, champs personnalisés) dans le repo qu'il cite comme actif.
-- Le rapport **Validation technique Fleetbase** affirme au contraire que dans `fleetops-api` "main, v1.2.0", il n'y a **pas** de colonne `order_config_uuid` sur `Order` — le mécanisme de configuration de commande passerait plutôt par `Order.type` + un modèle `Extension` (`meta_type='order_config'`), et que le vrai modèle `OrderConfig` avec colonne dédiée n'existe que dans le package plus récent `fleetbase/customer-portal`.
+Vérifié directement dans `fleetbase/fleetops` (le bon repo, cf. §2.1), fichier `server/src/Models/Order.php` : `order_config_uuid` **est bien présent dans `$fillable`**, et une relation réelle existe :
+```php
+public function orderConfig(): BelongsTo
+{
+    return $this->belongsTo(OrderConfig::class)->withTrashed();
+}
+```
+**Conclusion** : le rapport Architecture (`02_architecture.md`) avait raison. Le rapport Validation technique Fleetbase s'était trompé en consultant le repo archivé (qui a effectivement une modélisation différente, antérieure). **La recommandation "un `OrderConfig` par persona" (§4) est donc bien réalisable nativement** — à confirmer par un test pratique de création, mais plus besoin de lever le doute sur son existence.
 
-Cette contradiction est **très probablement liée à la même confusion de repo qu'en §2.1** (deux versions différentes de l'écosystème Fleetbase consultées par les deux agents). **Action requise** : une fois le repo actif identifié (§2.1), vérifier directement dans son code si `order_config_uuid`/`OrderConfig` existe nativement dans FleetOps, ou uniquement via `customer-portal`. Ceci conditionne directement la faisabilité de la recommandation "un `OrderConfig` par persona" (§4 ci-dessous) — à ne pas considérer comme acquis avant vérification.
+**Bonus découvert pendant cette vérification** : le `$fillable` complet d'`Order` dans le bon repo contient aussi `time_window_start` et `time_window_end` — **ces deux champs sont donc bien mass-assignable**, contrairement à ce qu'affirmait le rapport Logistique (`04_logistique.md` §7), qui les avait aussi vérifiés sur le mauvais repo (l'archivé) et concluait à tort qu'ils seraient "probablement ignorés silencieusement". **Ce signal d'alerte est levé** : les créneaux horaires peuvent être utilisés avec confiance raisonnable — un test de persistance réel reste recommandé (créer une commande avec ces champs, vérifier en base) mais le risque identifié n'est plus fondé. Autre champ notable découvert au passage, absent des rapports initiaux : `required_skills` sur `Order` — suggère un mécanisme de correspondance compétences driver/commande non exploré, à regarder si pertinent pour le dispatch (ex. véhicule réfrigéré, permis spécifique).
 
 ---
 
@@ -124,35 +130,36 @@ Détail complet : `02_architecture.md` §5. Confirmé viable pour consommer une 
 
 ## 9. Plan d'action avant tout développement (priorisé)
 
-### Priorité 1 — lève les deux contradictions et conditionne toute la suite
-1. **Résoudre les contradictions §2** (repo `fleetops-api` vs `fleetops` archivé/actif, existence réelle d'`order_config_uuid`) en vérifiant directement sur GitHub et dans l'installation locale déjà en place.
-2. **Spike `fleetbase/customer-portal`** : installer l'extension (`composer require fleetbase/customer-portal-api`), créer un compte `Contact` et un compte `Vendor`, vérifier le scoping réel des commandes et la maturité de l'API. Décide si le BFF s'appuie dessus (wrapper fin) ou se construit intégralement à la main.
+### Priorité 1 — conditionne toute la suite
+1. ~~Résoudre les contradictions §2~~ **Fait** (26/07/2026) : `fleetbase/fleetops` confirmé comme repo actif, `order_config_uuid` confirmé réel. Voir §2.
+2. **Spike `fleetbase/customer-portal`** : installer l'extension (`composer require fleetbase/customer-portal-api`), créer un compte `Contact` et un compte `Vendor`, vérifier le scoping réel des commandes et la maturité de l'API. Décide si le BFF s'appuie dessus (wrapper fin) ou se construit intégralement à la main. **Reste à faire — nécessite l'environnement Docker local, hors de portée du sandbox.**
 
 ### Priorité 2 — vérifications techniques bloquantes pour des engagements produit
-3. Vérifier si `time_window_start`/`time_window_end` sont réellement persistés par l'API (créer une commande de test avec ces champs, inspecter la base).
+3. ~~Vérifier si `time_window_start`/`time_window_end` sont réellement persistés~~ **Signal d'alerte levé** (26/07/2026) : les deux champs sont confirmés mass-assignable dans le bon repo. Un test de persistance réel (créer une commande, vérifier en base) reste recommandé mais n'est plus bloquant. Voir §2.2.
 4. Vérifier la configuration réelle du routing (OSRM) sur l'installation locale, évaluer Valhalla/VROOM ou un service commercial pour la production.
 5. Tester le mode `adhoc` (auto-dispatch par proximité) en pratique avec au moins deux drivers de test, confirmer le comportement du retry à 4 minutes.
 6. Vérifier si `Order.customer` doit être renseigné pour que `PurchaseRateObserver` génère une facture cohérente (test avec un Vendor "commerçant simple", sans facilitateur).
+7. Explorer le champ `required_skills` sur `Order` (découvert le 26/07/2026 en levant la contradiction §2.2, non exploré) — potentiel mécanisme natif de correspondance compétences driver/commande (véhicule réfrigéré, permis spécifique...), pertinent pour le dispatch.
 
 ### Priorité 3 — décisions produit à trancher (pas techniques, mais bloquantes pour le dev)
-7. Trancher les 11 règles métier listées en `03_metier.md` §5 (tarification, commission, cadence de paiement, annulations, SLA, propriété relation client, onboarding, fiscalité).
-8. Documenter explicitement les règles de priorité/consentement driver entre Fleet dédiée et pool mutualisé (aucune règle native, silence = bug potentiel).
-9. Décider si Ledger est activé, et si oui, confirmer Odoo/Echango Order comme source de vérité comptable pour éviter une double comptabilité.
+8. Trancher les 11 règles métier listées en `03_metier.md` §5 (tarification, commission, cadence de paiement, annulations, SLA, propriété relation client, onboarding, fiscalité).
+9. Documenter explicitement les règles de priorité/consentement driver entre Fleet dédiée et pool mutualisé (aucune règle native, silence = bug potentiel).
+10. Décider si Ledger est activé, et si oui, confirmer Odoo/Echango Order comme source de vérité comptable pour éviter une double comptabilité.
 
 ### Priorité 4 — avant la première ligne de code d'interface
-10. Spike FlutterFlow time-boxé sur l'écran dispatch/carte (le plus exigeant), avant de committer sur l'outil pour les deux interfaces.
-11. Concevoir le BFF comme point d'entrée unique (y compris futur connecteur Odoo), stateless, avec DTOs internes qui n'exposent jamais les noms de champs Fleetbase bruts.
-12. Modèle de menace + tests anti-IDOR pour la couche de filtrage du BFF, avant tout accès commerçant/sous-organisation réel.
+11. Spike FlutterFlow time-boxé sur l'écran dispatch/carte (le plus exigeant), avant de committer sur l'outil pour les deux interfaces.
+12. Concevoir le BFF comme point d'entrée unique (y compris futur connecteur Odoo), stateless, avec DTOs internes qui n'exposent jamais les noms de champs Fleetbase bruts.
+13. Modèle de menace + tests anti-IDOR pour la couche de filtrage du BFF, avant tout accès commerçant/sous-organisation réel.
 
 ### Reste différé (déjà noté dans `CLAUDE.md`, non affecté par cette revue)
-13. Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
-14. Installer et tester Navigator avec un vrai compte driver (question ouverte #3 du `CLAUDE.md`).
+14. Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
+15. Installer et tester Navigator avec un vrai compte driver (question ouverte #3 du `CLAUDE.md`).
 
 ---
 
 ## 10. Documents à corriger suite à cette revue
 
-- **`docs/journal_exploration_fleetbase.md`** : corriger la référence de repo Fleetbase une fois la contradiction §2.1 résolue ; ajouter une note vers ce document de synthèse.
+- **`docs/journal_exploration_fleetbase.md`** : ~~corriger la référence de repo Fleetbase~~ **fait** (26/07/2026, voir note de mise à jour en tête du journal et §2.1 ci-dessus) ; note vers ce document de synthèse ajoutée.
 - **`docs/specs_macro_drive_transport.md`** : corriger les points listés en §3.5 (concept "Networks" non confirmé, facturation/commission sur-attribuée, dashboard Fleetbase comme solution commerçant à retirer, statut Navigator à aligner avec `CLAUDE.md`, ajouter le persona "gestionnaire de petite flotte" absent de la version actuelle). **Ce document appartient normalement au repo `echangoorder`** (`docs/specs_macro_drive_transport.md` y est cité comme source ; une copie existe aussi dans ce repo) — vérifier lequel est la source de vérité avant de corriger, pour ne pas créer une divergence entre les deux copies.
 - **`CLAUDE.md`** : ajouter un renvoi vers ce document de synthèse et vers `docs/rapports_specs/`, mettre à jour la section "Prochaines étapes" avec le plan d'action priorisé du §9 ci-dessus.
 
