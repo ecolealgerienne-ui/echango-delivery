@@ -4,6 +4,8 @@ Ce document trace en détail la session d'exploration Fleetbase du 26 juillet 20
 
 Contexte général et enjeux produit : voir `CLAUDE.md`.
 
+**Mise à jour (26 juillet 2026)** : ce journal a été relu par 5 agents spécialisés (sécurité, architecture, métier, logistique, validation technique Fleetbase), qui ont corrigé/complété plusieurs points ci-dessous et fait des découvertes majeures (notamment le package `fleetbase/customer-portal`, l'auto-dispatch natif, et le fait que le routing OSRM n'est pas self-hosted par défaut). Voir la synthèse consolidée : **`docs/specs_echango_delivery.md`**, et les rapports complets dans `docs/rapports_specs/`.
+
 ---
 
 ## 1. Installation locale

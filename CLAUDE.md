@@ -62,13 +62,23 @@ Ports par défaut (doc officielle) : Console `http://localhost:4200`, API `http:
 
 **Non vérifié ici** (limite d'environnement — `docker` CLI présent dans ce sandbox mais aucun daemon actif, `/var/run/docker.sock` absent, même limite que `backend/` côté `echangoorder`) : le contenu exact de `docker-compose.yml`/`.env.example`/`docker-compose.override.yml.example` de Fleetbase, le comportement réel de l'extension FleetOps, la granularité des rôles/permissions (questions ouvertes ci-dessus). Tout ça à valider en réel côté utilisateur (WSL/Docker, comme pour Odoo dans `echangoorder`) et à reporter dans ce fichier une fois testé.
 
+## Specs consolidées (26 juillet 2026)
+
+Après la phase d'exploration ci-dessus, une revue croisée par 5 agents spécialisés (sécurité, architecture, métier, logistique, validation technique Fleetbase) a été menée sur ce fichier et `docs/journal_exploration_fleetbase.md`, avec vérification systématique contre le code source public et la documentation officielle de Fleetbase. Résultat : **`docs/specs_echango_delivery.md`** — synthèse priorisée, avec un plan d'action concret avant tout développement, et une liste de contradictions entre agents à vérifier en premier (rapports complets dans `docs/rapports_specs/`).
+
+**Découvertes majeures à retenir** : un package officiel `fleetbase/customer-portal` (jamais repéré avant cette revue) fournit déjà une isolation par compte native pour le persona commerçant, potentiellement en remplacement d'une bonne partie du BFF prévu à construire nous-mêmes — à valider par un spike avant de concevoir quoi que ce soit. Le calcul d'itinéraire n'est pas self-hosted par défaut malgré le narratif du projet. Un auto-dispatch par proximité existe nativement. Le doc macro (`docs/specs_macro_drive_transport.md`) contient plusieurs affirmations obsolètes à corriger.
+
 ## Prochaines étapes
 
-- [ ] Installer Fleetbase + FleetOps en local (utilisateur, WSL/Docker) — `scripts/setup-local.sh`.
-- [ ] Créer l'Organization "Echango Delivery" de test, explorer rôles/permissions (question ouverte #1).
-- [ ] Tester la création d'une commande (Orders API), le dispatch ad hoc, l'app Navigator (questions ouvertes #2/#3).
-- [ ] Revenir documenter les réponses aux questions ouvertes ici **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo — c'est du code Odoo).
-- [ ] Scoper les deux interfaces custom (commerçant / gestionnaire de petite flotte) évoquées dans § Architecture envisagée — périmètre, écrans, priorité — avant tout développement.
+Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.md` §9. Résumé :
+
+- [x] Installer Fleetbase + FleetOps en local (utilisateur, WSL/Docker) — `scripts/setup-local.sh`. Fait le 26/07/2026 (bug MySQL rencontré et corrigé, voir journal §1.1).
+- [ ] **Priorité 1** : résoudre les deux contradictions entre agents (repo `fleetops-api` vs `fleetops` archivé/actif, existence réelle d'`order_config_uuid`) ; spike `fleetbase/customer-portal` avant de concevoir le BFF.
+- [ ] **Priorité 2** : vérifications techniques bloquantes (créneaux horaires réellement persistés ?, config OSRM réelle, test du mode `adhoc`, test `Order.customer` pour la facturation).
+- [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
+- [ ] **Priorité 4** : spike FlutterFlow sur l'écran dispatch/carte avant de committer sur l'outil, puis concevoir le BFF et scoper les deux interfaces custom.
+- [ ] Revenir documenter les réponses **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo).
+- [ ] Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
 
 ## Repo lié
 
