@@ -1,0 +1,71 @@
+# CLAUDE.md — Echango Delivery
+
+Ce fichier guide Claude Code (et tout contributeur) sur le contexte, les décisions et les questions ouvertes du projet **Echango Delivery**. Écrit dans le même esprit que le `CLAUDE.md` d'`echangoorder` : décisions + justification, pas juste l'état courant.
+
+## Contexte projet
+
+Echango Delivery est le **Produit 2** de l'écosystème Echango : une plateforme B2B qui met en relation des commerçants locaux (boulangerie, pharmacie, fleuriste... et **Echango Order**, premier client en dogfooding) avec un réseau de transporteurs locaux indépendants. Vision complète : `docs/specs_macro_drive_transport.md` dans [`echangoorder`](https://github.com/ecolealgerienne-ui/echangoorder) (§4 pour la partie Delivery spécifiquement).
+
+Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse centrale — **plus de commerçants → plus de transporteurs → plus de valeur**. Ça suppose un pool de transporteurs **mutualisé** entre commerçants, pas une flotte dédiée par commerçant.
+
+## Pourquoi un repo séparé (décision produit, 2026-07-26)
+
+Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un logiciel tiers, pas notre code. Le vendoriser dans `echangoorder` mélangerait les licences (AGPL vs le code propriétaire d'Echango Order) et une stack complètement différente (Node.js/MySQL/Redis/SocketCluster vs Odoo/Postgres). Ce repo contient **nos** scripts de déploiement, notre config, et nos notes de décision — **pas le code source de Fleetbase lui-même**, cloné à part en local (voir § Installation locale). On ne fork pas Fleetbase pour l'instant : pas nécessaire tant qu'on ne modifie pas son code (voir § Licence).
+
+## État actuel — phase d'exploration (2026-07-26)
+
+Rien de déployé en réel pour l'instant. Étape en cours : déploiement Fleetbase **en local** (côté utilisateur, WSL/Docker — voir § Installation locale) pour explorer les fonctionnalités réelles avant de figer une architecture. Voir § Questions ouvertes ci-dessous pour ce qu'on cherche à vérifier.
+
+## Architecture envisagée (hypothèse de travail — à valider en testant, pas encore tranchée)
+
+- **Une seule Organization Fleetbase "Echango Delivery"**, pas une par commerçant. Les "Organizations" Fleetbase sont un mécanisme d'isolation totale (drivers, commandes, utilisateurs, clés API — rien ne traverse). Une Organization par commerçant cloisonnerait leurs transporteurs respectifs et casserait l'effet réseau visé. Modèle cohérent avec le doc macro §2 : "Opérateur plateforme gère le réseau transporteurs via back-office Fleetbase" — un seul opérateur, un seul réseau.
+- Les commerçants n'ont pas forcément de système/site web à eux : ils doivent pouvoir commander un transporteur via **une interface fournie par Echango** (décision produit explicite, pas une intégration API obligatoire côté commerçant). Reste ouvert : cette interface est-elle la console Fleetbase elle-même (avec des comptes/rôles restreints par commerçant, si la granularité le permet), ou une interface custom Echango construite par-dessus l'API Fleetbase ?
+- Extension **FleetOps** nécessaire (dispatch/commandes/flotte). Extension **Storefront** (marketplace e-commerce Fleetbase) **pas nécessaire** — Echango Order a déjà son propre frontal (app Flutter), pas besoin de la vitrine intégrée de Fleetbase.
+- App conducteur : évaluer **Navigator** (app officielle Fleetbase, React Native, open source, AGPL) avant de construire un app transporteur custom from scratch. Le doc macro d'Echango Order avait écarté Navigator ("remplacé par l'app transporteur custom") sans justification documentée — à revérifier maintenant qu'on regarde Fleetbase de plus près, plutôt que de reproduire une décision non vérifiée.
+
+## Questions ouvertes à trancher en testant en local
+
+1. **Granularité des permissions à l'intérieur d'une Organization** : peut-on donner à un commerçant un compte/rôle restreint à SES commandes uniquement (pas les autres commerçants, pas la vue globale du pool de transporteurs) ? Conditionne si l'hypothèse "Organization unique" suffit à isoler proprement les commerçants sans leur donner un accès Fleetbase complet, ou s'il faut construire une couche d'isolation nous-mêmes par-dessus l'API.
+2. Un driver Navigator peut-il recevoir des courses de **plusieurs commerçants différents** au sein d'une même Organization (modèle pool partagé), ou le broadcast ad hoc est-il pensé pour une seule entreprise ?
+3. Navigator est-il réellement adaptable (rebrand, configuration) pour servir d'app transporteur Echango, ou faut-il repartir sur du custom (comme pour l'app préparateur d'Echango Order, où aucun équivalent standard Odoo n'existait) ?
+
+## Licence — position actuelle (à rouvrir avant l'ouverture B2B réelle)
+
+**AGPL-3.0 self-hosted retenu par défaut pour l'instant** (gratuit ; obligation de publier nos modifications si le service est exposé en réseau à des tiers — clause "network use"). La licence commerciale Fleetbase (FCL, qui lève cette obligation) est écartée pour l'instant — montant trouvé en recherche non fiable/contradictoire, **jamais vérifié officiellement**, à ne pas utiliser comme base de décision budgétaire. Ce point est explicitement différé : il ne bloque pas la phase d'exploration actuelle, mais devra être retranché avant la Phase 3 du roadmap macro (ouverture B2B à des commerçants tiers, `docs/specs_macro_drive_transport.md` §8.3).
+
+## Installation locale (à exécuter par l'utilisateur — pas de Docker fonctionnel dans le sandbox Claude Code)
+
+Prérequis (vérifiés contre la doc officielle Fleetbase, pas supposés) : Docker + Docker Compose, Node.js v22, Git.
+
+Deux méthodes officielles :
+
+```bash
+# Méthode 1 — CLI Fleetbase (recommandée par l'éditeur)
+npm install -g @fleetbase/cli
+flb install-fleetbase
+
+# Méthode 2 — clone + script manuel (celle utilisée par scripts/setup-local.sh de ce repo)
+git clone https://github.com/fleetbase/fleetbase.git
+cd fleetbase && ./scripts/docker-install.sh
+```
+
+Extension FleetOps (dispatch/commandes/flotte, nécessaire pour nous — pas installée par défaut) :
+
+```bash
+flb install fleetbase/fleetops
+```
+
+Ports par défaut (doc officielle) : Console `http://localhost:4200`, API `http://localhost:8000`, SocketCluster `38000`.
+
+**Non vérifié ici** (limite d'environnement — `docker` CLI présent dans ce sandbox mais aucun daemon actif, `/var/run/docker.sock` absent, même limite que `backend/` côté `echangoorder`) : le contenu exact de `docker-compose.yml`/`.env.example`/`docker-compose.override.yml.example` de Fleetbase, le comportement réel de l'extension FleetOps, la granularité des rôles/permissions (questions ouvertes ci-dessus). Tout ça à valider en réel côté utilisateur (WSL/Docker, comme pour Odoo dans `echangoorder`) et à reporter dans ce fichier une fois testé.
+
+## Prochaines étapes
+
+- [ ] Installer Fleetbase + FleetOps en local (utilisateur, WSL/Docker) — `scripts/setup-local.sh`.
+- [ ] Créer l'Organization "Echango Delivery" de test, explorer rôles/permissions (question ouverte #1).
+- [ ] Tester la création d'une commande (Orders API), le dispatch ad hoc, l'app Navigator (questions ouvertes #2/#3).
+- [ ] Revenir documenter les réponses aux questions ouvertes ici **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo — c'est du code Odoo).
+
+## Repo lié
+
+- [`echangoorder`](https://github.com/ecolealgerienne-ui/echangoorder) — Echango Order (Produit 1). `docs/specs_macro_drive_transport.md` pour la vision macro complète des deux produits.
