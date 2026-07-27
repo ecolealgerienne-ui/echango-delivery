@@ -1,10 +1,10 @@
 # Specs — App Transporteur Echango (Flutter)
 
 **Date** : 27 juillet 2026
-**Statut** : Spécification fonctionnelle complète, dérivée des specs de Fleetbase Navigator — base de référence avant développement. **Mise à jour (27/07/2026)** : les 3 décisions d'architecture laissées ouvertes en §13 ont été tranchées (auth via BFF §2.1, temps réel push FCM/APN + polling §11.1, géolocalisation open source §11.2).
+**Statut** : Spécification fonctionnelle complète, dérivée des specs de Fleetbase Navigator — base de référence avant développement. **Mise à jour (27/07/2026, 1er passage)** : les 3 décisions d'architecture laissées ouvertes en §13 ont été tranchées (auth via BFF §2.1, temps réel push FCM/APN + polling §11.1, géolocalisation open source §11.2). **Mise à jour (27/07/2026, 2e passage)** : périmètre réduit sur décision explicite — chat et rapports carburant retirés (jugés inutiles pour ce projet), système d'incidents générique de Navigator remplacé par un mécanisme ciblé "échec de livraison" (§4.3), seul besoin réel identifié derrière la question initiale.
 **Contexte** : suite à `docs/navigator_test_findings.md` (Navigator abandonné — blocages d'installation/compilation structurels, crash au démarrage documenté, dépendances React Native 0.86 instables), décision de construire une **app transporteur custom en Flutter pur** plutôt que d'utiliser/forker Navigator.
 
-**Méthode de ce document** : Navigator (`fleetbase/navigator-app`, React Native, AGPL) est l'app officielle Fleetbase pour les transporteurs, avec un périmètre fonctionnel mature et éprouvé (dispatch, POD, chat, rapports, gestion de flotte). Plutôt que de repartir de zéro, ce document **reprend l'intégralité de son périmètre fonctionnel** (écrans, actions, données, intégrations techniques) et le retranscrit comme spec cible pour notre propre app Flutter — **rien n'est volontairement omis** à ce stade ; le tri MVP vs V2 est fait explicitement en §10, pas par omission silencieuse.
+**Méthode de ce document** : Navigator (`fleetbase/navigator-app`, React Native, AGPL) est l'app officielle Fleetbase pour les transporteurs, avec un périmètre fonctionnel mature et éprouvé (dispatch, POD, chat, rapports, gestion de flotte). Le document a d'abord repris l'intégralité de ce périmètre par exhaustivité (1er passage, rien omis silencieusement), **puis un périmètre a été explicitement retiré sur décision utilisateur** (2e passage, §6/§7/§8) — chat et rapports carburant jugés inutiles, système d'incidents générique remplacé par un besoin réel plus étroit (échec de livraison, §4.3). Ce qui a été retiré reste documenté à son emplacement d'origine avec la justification, jamais supprimé sans trace.
 
 **Sources** : README officiel, structure complète du code source (`src/screens`, `src/components`, `src/hooks`, `src/constants`, `src/navigation`), et lecture directe de plusieurs écrans clés (`OrderScreen`, `ProofOfDeliveryScreen`, `ChatHomeScreen`, `DriverDashboardScreen`, `DriverOrderManagementScreen`, `FuelReportForm`, `IssueForm`) — repo public `fleetbase/navigator-app`, consulté le 27/07/2026.
 
@@ -14,7 +14,7 @@
 
 **Utilisateur unique de cette app** : le **transporteur/driver** — qu'il fasse partie du pool mutualisé "Echango Delivery" ou d'une Fleet dédiée à un gestionnaire de petite flotte (voir `CLAUDE.md` § Architecture). Un seul type d'utilisateur, contrairement aux deux autres interfaces custom du projet (commerçant, gestionnaire de petite flotte).
 
-**Objectif** : recevoir des commandes (adhoc ou assignées), les exécuter (navigation, étapes, preuve de livraison), suivre son statut/historique, communiquer avec l'opérateur/client, et signaler des événements (carburant, incidents).
+**Objectif** : recevoir des commandes (adhoc ou assignées), les exécuter (navigation, étapes, preuve de livraison), suivre son statut/historique, et signaler un échec de livraison le cas échéant (§4.3). **Chat et rapports carburant explicitement hors périmètre** (décision utilisateur 27/07/2026, voir §6/§7).
 
 ---
 
@@ -120,6 +120,20 @@ Repris de `OrderScreen` — l'écran le plus riche de l'app.
 - États de chargement pendant les transitions d'activité
 - Éléments UI conditionnels selon le statut (pas commencé / en cours / terminé)
 
+### 4.3 Échec de livraison — remplace le système d'incidents générique de Navigator (décision 27/07/2026)
+
+**Contexte de cette décision** : Navigator a un système de signalement d'incidents séparé (§8, ancien), avec 9 catégories génériques de fleet-management (véhicule, driver, itinéraire, cargo, logiciel, opérationnel, client, sécurité, environnemental) — la plupart sans rapport avec l'usage d'Echango Delivery. Le seul besoin réel confirmé est plus étroit : **signaler qu'une livraison a échoué**, pas un système de ticketing fleet-ops complet.
+
+**Action ajoutée à l'écran détail commande (§4.2)** : en plus de "Démarrer"/"Mettre à jour l'activité", le driver peut marquer une étape (waypoint) comme **échouée** plutôt que complétée :
+
+- **Raison de l'échec** — sélecteur avec une liste courte et spécifique à la livraison (à valider avec l'équipe métier, proposition de départ) : Client absent, Adresse introuvable, Client a refusé le colis, Colis endommagé/manquant, Accès impossible (site fermé, zone inaccessible), Autre (texte libre)
+- **Photo optionnelle** — preuve visuelle de la situation (ex. porte fermée, colis endommagé), réutilise la même capacité caméra que la POD (§5, `camera` Flutter)
+- **Note libre optionnelle** — complément texte
+
+**Comportement** : la commande/le waypoint passe dans un statut d'échec (mécanisme natif Fleetbase à confirmer — la machine à états `order_config` a déjà une notion d'échec de livraison selon la doc, cf. `docs/specs_echango_delivery.md` §3.1 sur `pod_method`/`require_pod` par étape ; à vérifier si un statut "failed" existe nativement par étape ou s'il faut le simuler via une note + statut "completed" côté Fleetbase avec le détail réel géré uniquement côté BFF/Echango). Le dispatcher/opérateur doit voir cette information pour décider d'une reprogrammation ou d'un remboursement — canal de visibilité (notification au commerçant ? à l'opérateur Echango ?) à définir avec les règles métier de `docs/specs_echango_delivery.md` §6.
+
+**Ce qui n'est PAS repris** : les 9 catégories génériques Navigator (véhicule, driver, itinéraire, logiciel, opérationnel, client, sécurité, environnemental) et leur système de priorité/statut de ticket — jugées hors sujet pour ce projet.
+
 ---
 
 ## 5. Preuve de livraison (Proof of Delivery — POD)
@@ -138,85 +152,27 @@ Repris de `ProofOfDeliveryScreen` — **trois méthodes supportées**, sélectio
 
 ---
 
-## 6. Chat / Messagerie
+## 6. Chat / Messagerie — ❌ Hors périmètre (décision 27/07/2026)
 
-Repris intégralement (`ChatHomeScreen`, `ChatChannelScreen`, `ChatParticipantsScreen`, `CreateChatChannelScreen`) :
+Navigator propose un système de chat complet (`ChatHomeScreen`, `ChatChannelScreen`, `ChatParticipantsScreen`, `CreateChatChannelScreen` — liste de canaux, fil de messages, pièces jointes, gestion de participants). **Retiré du périmètre sur décision explicite** : jugé inutile pour ce projet.
 
-### 6.1 Liste des conversations (Chat Home)
-
-- Liste des canaux de chat de l'utilisateur courant
-- Bouton flottant "+" pour créer un nouveau canal
-- **Par canal affiché** : avatar du/des participant(s), titre du canal, aperçu du dernier message (avec nom de l'expéditeur si 3+ participants), horodatage (format type WhatsApp), badge de messages non lus (compteur vert, affiché seulement si > 0)
-- Pull-to-refresh
-- Écoute WebSocket temps réel : rafraîchissement automatique sur nouveau message, ajout/retrait de participant, création/suppression de canal
-
-### 6.2 Écran de conversation (Chat Channel)
-
-- Fil de messages (`ChatFeed`, `ChatLog`, `ChatMessage`)
-- Clavier de saisie dédié (`ChatKeyboard`)
-- Pièces jointes (`ChatAttachment`)
-- Avatars des participants (`ChatParticipantAvatar`)
-
-### 6.3 Gestion des participants
-
-- Écran dédié listant/gérant les participants d'un canal (`ChatParticipants`, `ChatParticipantsScreen`)
-
-### 6.4 Création de canal
-
-- Écran dédié de création (`CreateChatChannelScreen`)
-
-### 6.5 Commentaires sur commande (distinct du chat)
-
-- `Comment`/`CommentThread`/`OrderCommentThread` — fil de commentaires attaché à une commande spécifique (différent des canaux de chat génériques), déjà mentionné en §4.2 comme partie de l'écran détail commande.
+**Conservé malgré tout** (différent du chat, pas concerné par cette décision) : le fil de commentaires attaché à une commande spécifique (`OrderCommentThread`, mentionné en §4.2) — plus léger qu'un vrai système de chat (pas de canaux, pas de participants à gérer), simple échange de notes driver ↔ dispatcher sur une commande précise. À reconfirmer si toujours souhaité, mais non retiré par cette décision qui visait le chat générique.
 
 ---
 
-## 7. Rapports carburant (Fuel Reports)
+## 7. Rapports carburant (Fuel Reports) — ❌ Hors périmètre (décision 27/07/2026)
 
-Repris de `FuelReportForm`/`CreateFuelReportScreen`/`EditFuelReportScreen`/`FuelReportScreen` :
-
-**Champs du formulaire** (4 champs, tous obligatoires pour activer la soumission) :
-
-1. **Statut** — sélecteur (bottom sheet)
-2. **Kilométrage/odomètre** — saisie texte ("Input your current odometer...")
-3. **Volume de carburant** — saisie avec unité (`UnitInput`, ex. litres/gallons — voir unités disponibles en §9)
-4. **Coût** — saisie monétaire (`MoneyInput`)
-
-**Soumission** : inclut aussi automatiquement l'ID du driver et la position actuelle (géolocalisation au moment du rapport).
-
-**Écrans** : création, édition, et vue détail d'un rapport existant.
-
-**Non présent dans Navigator** (à noter, pas à supposer) : pas de champ véhicule explicite, pas de photo de reçu, pas de champ notes libres — le formulaire est volontairement minimal.
+Navigator propose un formulaire de rapport carburant (`FuelReportForm` — statut, odomètre, volume, coût ; écrans de création/édition/détail). **Retiré du périmètre sur décision explicite** : jugé inutile pour ce projet.
 
 ---
 
-## 8. Signalement d'incidents (Issues)
+## 8. Échec de livraison — remplace le signalement d'incidents générique de Navigator
 
-Repris de `IssueForm`/`CreateIssueScreen`/`EditIssueScreen`/`IssueScreen` :
+**Ancien périmètre Navigator** (`IssueForm`/`CreateIssueScreen`/`EditIssueScreen`/`IssueScreen`) : système de ticketing générique fleet-ops, 5 champs (type, catégorie, priorité, statut, rapport texte) et **9 catégories** couvrant véhicule, driver, itinéraire, cargo/colis, logiciel/technique, opérationnel, client, sécurité, durabilité environnementale — la plupart hors sujet pour Echango Delivery (ex. "vulnérabilités de sécurité logicielle", "empreinte carbone").
 
-**Champs du formulaire** (5 champs) :
+**Clarification faite le 27/07/2026** : le vrai besoin derrière "incident" n'est pas ce système générique, mais un signalement d'**échec de livraison** (client absent, adresse introuvable, colis refusé/endommagé) — mécanisme différent, intégré à la commande elle-même plutôt qu'un système de tickets séparé. **Voir §4.3** pour la spec complète de ce remplacement (raison d'échec + photo optionnelle + note, action ajoutée directement à l'écran détail commande).
 
-1. **Type d'incident** — sélecteur
-2. **Catégorie** — sélecteur, filtré selon le type choisi
-3. **Priorité** — sélecteur
-4. **Statut** — sélecteur
-5. **Rapport détaillé** — zone de texte libre
-
-**9 catégories d'incidents avec sous-types** (`IssueCategory.ts`, repris intégralement) :
-
-| Catégorie | Sous-types |
-|---|---|
-| **Véhicule** | Problèmes mécaniques, dommages esthétiques, problèmes de pneus, électronique/instruments, alertes de maintenance, problèmes d'efficacité carburant |
-| **Driver** | Comportement, documentation, gestion du temps, communication, besoins de formation, violations santé/sécurité |
-| **Itinéraire** | Itinéraires inefficaces, préoccupations sécurité, routes bloquées, considérations environnementales, conditions météo défavorables |
-| **Cargo/Colis** | Marchandises endommagées, marchandises égarées, problèmes de documentation, marchandises sensibles à la température, chargement incorrect |
-| **Logiciel/Technique** | Bugs, préoccupations UI/UX, échecs d'intégration, performance, demandes de fonctionnalité, vulnérabilités de sécurité |
-| **Opérationnel** | Conformité, allocation de ressources, dépassements de coûts, communication, problèmes de gestion fournisseur |
-| **Client** | Qualité de service, écarts de facturation, rupture de communication, retours/suggestions, erreurs de commande |
-| **Sécurité** | Accès non autorisé, préoccupations données, sécurité physique, problèmes d'intégrité des données |
-| **Durabilité environnementale** | Consommation carburant, empreinte carbone, gestion des déchets, opportunités d'initiatives vertes |
-
-**Non présent dans Navigator** (à noter) : pas de pièce jointe photo, pas d'association explicite à une commande/véhicule dans le formulaire lui-même, pas de champ sous-type séparé (le sous-type semble géré comme un raffinement de la catégorie plutôt qu'un champ à part).
+**Ce paragraphe est conservé à cet emplacement** (plutôt que supprimé) pour la traçabilité : il documente explicitement ce qui a été écarté du périmètre Navigator et pourquoi, cohérent avec la méthode de ce document (ne rien omettre silencieusement, §"Méthode" en tête de document).
 
 ---
 
@@ -243,7 +199,7 @@ Repris de `DriverAccountScreen`, `DriverProfileScreen`, `EditAccountPropertyScre
 - `EditLocationScreen` / `EditLocationCoordScreen` — édition d'une position (adresse ou coordonnées GPS directes)
 - `LocationPermissionScreen` — demande/statut de la permission de géolocalisation
 - `DriverOnlineToggle` (composant, pas écran dédié) — bascule en ligne/hors ligne, condition nécessaire pour recevoir des commandes adhoc (cf. `docs/specs_echango_delivery.md` §3.2, le driver de test devait être mis `online=1` manuellement faute de ce toggle actif)
-- `DriverReportScreen` — vue consolidée des rapports du driver (probablement carburant + incidents combinés)
+- `DriverReportScreen` (Navigator) — dans l'original, vue consolidée carburant + incidents ; **non repris tel quel** (carburant hors périmètre, §7) — remplacé si besoin par un historique des échecs de livraison du driver (§4.3), à faire vivre plutôt dans l'historique de commandes (§4.1) que comme écran séparé
 - `TestScreen` — écran de développement/diagnostic, non destiné à la prod (à ne pas répliquer)
 
 ---
@@ -315,11 +271,10 @@ Cohérents avec les modèles Fleetbase déjà validés dans `docs/specs_echango_
 - **Driver** — le transporteur, avec `location`, `online`/statut, `skills`
 - **Vehicle** — véhicule assigné au driver
 - **Fleet** — regroupement de drivers (many-to-many), potentiellement rattaché à un `Vendor`
-- **Chat channel / message** — pas encore rencontré dans notre exploration précédente de l'API Fleetbase ; à valider si couvert par le même `fleetbase/fleetops` ou une extension séparée
-- **FuelReport** — rapport carburant (statut, odomètre, volume, coût, driver, position)
-- **Issue** — incident (type, catégorie, priorité, statut, rapport texte)
 
-**Point à vérifier avant dev** (pas encore fait dans nos tests précédents) : le chat, les rapports carburant et les incidents sont-ils bien exposés par l'API Fleetbase "console" standard, ou nécessitent-ils une extension additionnelle (à la manière de `customer-portal` ou `ledger`) ? Non couvert par les tests réels déjà menés (`docs/specs_echango_delivery.md` §3).
+**Retirés du périmètre** (§6/§7, décision 27/07/2026) : Chat channel/message, FuelReport — non nécessaires, pas de modèle de données à prévoir pour ces deux fonctionnalités.
+
+**Échec de livraison** (§4.3, remplace Issue) : pas de nouveau modèle Fleetbase — s'appuie sur le statut/activité existant de `Order`/`Waypoint`, complété d'une raison + photo optionnelle. **Point à vérifier avant dev** : existe-t-il un statut natif "failed" par étape dans la machine à états `order_config` (cf. `docs/specs_echango_delivery.md` §3.1), ou faut-il gérer ce détail uniquement côté BFF/Echango (Fleetbase voit juste "completed", le détail réel de l'échec vit dans notre propre couche) ? Non testé en pratique à ce jour.
 
 ---
 
@@ -331,16 +286,22 @@ Cohérents avec les modèles Fleetbase déjà validés dans `docs/specs_echango_
 2. ~~Temps réel : WebSocket SocketCluster vs push FCM/APN~~ **✅ Tranché : push FCM/APN natif comme déclencheur + polling REST pour le reste** (§11.1), pas de client SocketCluster Dart.
 3. ~~`flutter_background_geolocation` (licence commerciale)~~ **✅ Tranché : rejeté, remplacé par `geolocator` + `flutter_foreground_task` (open source)** (§11.2) — compromis d'implémentation assumé, à valider en test réel avant mise en prod (voir §11.2, limite documentée).
 
+### Périmètre tranché (27/07/2026, 2e passage)
+
+4. ~~Chat~~ **❌ Retiré du périmètre** (§6) — jugé inutile.
+5. ~~Rapports carburant~~ **❌ Retiré du périmètre** (§7) — jugé inutile.
+6. ~~Signalement d'incidents générique (9 catégories fleet-ops)~~ **❌ Retiré, remplacé par un mécanisme ciblé "échec de livraison"** (§4.3/§8) — seul besoin réel confirmé derrière la question initiale.
+
 ### Reste ouvert
 
-4. **Chat, rapports carburant, incidents : quelle API Fleetbase les expose ?** (§12) — jamais vérifié en pratique, contrairement au reste de l'API déjà testé. Une extension dédiée (à la manière de `customer-portal`/`ledger`) pourrait être nécessaire — à investiguer avant de committer sur le périmètre exact de ces trois fonctionnalités.
-5. **Provisioning du compte driver** — qui crée le `Driver`/`User` Fleetbase et le mapping vers le compte Echango (§2.1) ? Même question que pour le commerçant (`docs/specs_bff.md` §2.1, §8.1) : self-service vs manuel. Recommandation par défaut inchangée : commencer manuel.
-6. **Test réel de la boucle FCM/APN une fois l'app construite** (§11.1) — la conception s'appuie sur un pipeline serveur déjà validé, mais la réception effective par un vrai device n'aura été testée avec aucun client (ni Navigator, abandonné avant d'y arriver, ni notre app, pas encore construite) tant que ce test n'est pas refait avec notre propre client.
-7. **Robustesse terrain de la géolocalisation open source** (§11.2) — à tester sur device physique, usage prolongé, plusieurs fabricants Android, avant de la considérer fiable pour une flotte en production.
-8. **Portée MVP vs V2** — ce document reprend l'intégralité du périmètre Navigator par exhaustivité (consigne explicite : ne rien omettre), mais tout ne doit probablement pas être développé dès la V1. Proposition de découpage à valider avec l'équipe produit :
-   - **MVP plausible** : authentification simple (email/password), dashboard, liste + détail commande, actions dispatch (accepter/rejeter adhoc, démarrer, mettre à jour activité, navigation externe), POD (au moins une méthode, ex. signature ou photo), toggle en ligne/hors ligne
-   - **V2 plausible** : chat, rapports carburant, incidents, connexions sociales, POD multi-méthodes (QR + photo + signature), gestion de flotte/véhicule détaillée, internationalisation
-   - **Cette proposition est une suggestion, pas une décision** — à valider explicitement, pas à déduire silencieusement de ce document.
+7. **Statut natif "failed" par étape ?** (§4.3, §12) — la machine à états `order_config` de Fleetbase a-t-elle un statut d'échec par waypoint, ou faut-il gérer ce détail entièrement côté BFF ? Non testé en pratique à ce jour.
+8. **Provisioning du compte driver** — qui crée le `Driver`/`User` Fleetbase et le mapping vers le compte Echango (§2.1) ? Même question que pour le commerçant (`docs/specs_bff.md` §2.1, §8.1) : self-service vs manuel. Recommandation par défaut inchangée : commencer manuel.
+9. **Test réel de la boucle FCM/APN une fois l'app construite** (§11.1) — la conception s'appuie sur un pipeline serveur déjà validé, mais la réception effective par un vrai device n'aura été testée avec aucun client (ni Navigator, abandonné avant d'y arriver, ni notre app, pas encore construite) tant que ce test n'est pas refait avec notre propre client.
+10. **Robustesse terrain de la géolocalisation open source** (§11.2) — à tester sur device physique, usage prolongé, plusieurs fabricants Android, avant de la considérer fiable pour une flotte en production.
+11. **Portée MVP vs V2 sur le périmètre restant** — proposition de découpage à valider avec l'équipe produit :
+    - **MVP plausible** : authentification simple (email/password), dashboard, liste + détail commande, actions dispatch (accepter/rejeter adhoc, démarrer, mettre à jour activité, navigation externe), POD (au moins une méthode, ex. signature ou photo), toggle en ligne/hors ligne, échec de livraison (§4.3)
+    - **V2 plausible** : connexions sociales (téléphone/Apple/Google/Facebook — email/password suffit en MVP), POD multi-méthodes (QR + photo + signature, une seule méthode suffit en MVP), gestion de flotte/véhicule détaillée, internationalisation
+    - **Cette proposition est une suggestion, pas une décision** — à valider explicitement, pas à déduire silencieusement de ce document.
 
 ---
 
