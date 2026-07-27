@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../providers/auth_provider.dart';
-import 'otp_screen.dart';
+
+import '../../state/auth_state.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -144,13 +145,13 @@ class _LoginScreenState extends State<LoginScreen> {
             obscureText: true,
           ),
           const SizedBox(height: 24),
-          Consumer<AuthProvider>(
-            builder: (context, authProvider, _) {
+          Consumer<AuthState>(
+            builder: (context, authState, _) {
               return ElevatedButton(
-                onPressed: authProvider.isLoading
+                onPressed: authState.isLoading
                     ? null
-                    : () => _handleEmailLogin(context, authProvider),
-                child: authProvider.isLoading
+                    : () => _handleEmailLogin(context, authState),
+                child: authState.isLoading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
@@ -161,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
           const SizedBox(height: 16),
-          if (context.watch<AuthProvider>().errorMessage != null)
+          if (context.watch<AuthState>().errorMessage != null)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -170,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                context.watch<AuthProvider>().errorMessage!,
+                context.watch<AuthState>().errorMessage!,
                 style: TextStyle(color: Colors.red.shade700),
               ),
             ),
@@ -211,13 +212,13 @@ class _LoginScreenState extends State<LoginScreen> {
             keyboardType: TextInputType.phone,
           ),
           const SizedBox(height: 24),
-          Consumer<AuthProvider>(
-            builder: (context, authProvider, _) {
+          Consumer<AuthState>(
+            builder: (context, authState, _) {
               return ElevatedButton(
-                onPressed: authProvider.isLoading
+                onPressed: authState.isLoading
                     ? null
-                    : () => _handlePhoneLogin(context, authProvider),
-                child: authProvider.isLoading
+                    : () => _handlePhoneLogin(context, authState),
+                child: authState.isLoading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
@@ -228,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
             },
           ),
           const SizedBox(height: 16),
-          if (context.watch<AuthProvider>().errorMessage != null)
+          if (context.watch<AuthState>().errorMessage != null)
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -237,7 +238,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                context.watch<AuthProvider>().errorMessage!,
+                context.watch<AuthState>().errorMessage!,
                 style: TextStyle(color: Colors.red.shade700),
               ),
             ),
@@ -248,7 +249,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleEmailLogin(
     BuildContext context,
-    AuthProvider authProvider,
+    AuthState authState,
   ) async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -257,22 +258,19 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    final success = await authProvider.loginWithEmail(
+    final success = await authState.loginWithEmail(
       email: _emailController.text,
       password: _passwordController.text,
     );
 
-    if (success) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Login successful')),
-      );
+    if (success && mounted) {
+      context.go('/dashboard');
     }
   }
 
   Future<void> _handlePhoneLogin(
     BuildContext context,
-    AuthProvider authProvider,
+    AuthState authState,
   ) async {
     if (_phoneController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -281,16 +279,13 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    final success = await authProvider.loginWithPhone(
+    final success = await authState.loginWithPhone(
       phone: _phoneController.text,
     );
 
-    if (success) {
-      if (!context.mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OtpScreen(phone: _phoneController.text),
-        ),
+    if (success && mounted) {
+      context.push(
+        '/login/otp?phone=${Uri.encodeComponent(_phoneController.text)}',
       );
     }
   }

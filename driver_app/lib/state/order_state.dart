@@ -1,14 +1,19 @@
-import 'package:flutter/material.dart';
-import '../models/order.dart';
-import '../services/bff_client.dart';
+import 'package:flutter/foundation.dart';
 
-class OrderProvider extends ChangeNotifier {
-  final _bffClient = BFFClient();
+import '../errors/app_error.dart';
+import '../models/order.dart';
+import '../services/bff_api_client.dart';
+
+/// État de gestion des commandes pour le driver.
+class OrderState extends ChangeNotifier {
+  final BffApiClient _apiClient;
 
   List<Order> _orders = [];
   Order? _selectedOrder;
   bool _isLoading = false;
   String? _errorMessage;
+
+  OrderState({required BffApiClient apiClient}) : _apiClient = apiClient;
 
   List<Order> get orders => _orders;
   Order? get selectedOrder => _selectedOrder;
@@ -22,44 +27,51 @@ class OrderProvider extends ChangeNotifier {
   List<Order> get completedOrders =>
       _orders.where((order) => order.isCompleted).toList();
 
+  /// Charge les commandes du driver.
   Future<void> loadOrders({String status = 'assigned'}) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      _orders = await _bffClient.getOrders(status: status);
+      _orders = await _apiClient.getOrders(status: status);
+    } on AppException catch (e) {
+      _errorMessage = e.message;
     } catch (e) {
-      _errorMessage = 'Failed to load orders: $e';
+      _errorMessage = 'Failed to load orders';
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
+  /// Charge les détails d'une commande.
   Future<void> selectOrder(String orderId) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      _selectedOrder = await _bffClient.getOrder(orderId);
+      _selectedOrder = await _apiClient.getOrder(orderId);
+    } on AppException catch (e) {
+      _errorMessage = e.message;
     } catch (e) {
-      _errorMessage = 'Failed to load order details: $e';
+      _errorMessage = 'Failed to load order';
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
+  /// Accepte une commande.
   Future<bool> acceptOrder(String orderId) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      await _bffClient.acceptOrder(orderId);
-      // Update local order status
+      await _apiClient.acceptOrder(orderId);
+      // Mise à jour locale optimiste
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index >= 0) {
         _orders[index] = _orders[index].copyWith(status: 'accepted');
@@ -68,8 +80,11 @@ class OrderProvider extends ChangeNotifier {
         _selectedOrder = _selectedOrder?.copyWith(status: 'accepted');
       }
       return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
     } catch (e) {
-      _errorMessage = 'Failed to accept order: $e';
+      _errorMessage = 'Failed to accept order';
       return false;
     } finally {
       _isLoading = false;
@@ -77,13 +92,14 @@ class OrderProvider extends ChangeNotifier {
     }
   }
 
+  /// Démarre la livraison d'une commande.
   Future<bool> startOrder(String orderId) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      await _bffClient.startOrder(orderId);
+      await _apiClient.startOrder(orderId);
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index >= 0) {
         _orders[index] = _orders[index].copyWith(status: 'picked_up');
@@ -92,8 +108,11 @@ class OrderProvider extends ChangeNotifier {
         _selectedOrder = _selectedOrder?.copyWith(status: 'picked_up');
       }
       return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
     } catch (e) {
-      _errorMessage = 'Failed to start order: $e';
+      _errorMessage = 'Failed to start delivery';
       return false;
     } finally {
       _isLoading = false;
@@ -101,6 +120,7 @@ class OrderProvider extends ChangeNotifier {
     }
   }
 
+  /// Marque une commande comme livrée.
   Future<bool> completeOrder({
     required String orderId,
     required String proofUrl,
@@ -110,10 +130,7 @@ class OrderProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _bffClient.completeOrder(
-        orderId: orderId,
-        proofUrl: proofUrl,
-      );
+      await _apiClient.completeOrder(orderId: orderId, proofUrl: proofUrl);
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index >= 0) {
         _orders[index] = _orders[index].copyWith(
@@ -128,8 +145,11 @@ class OrderProvider extends ChangeNotifier {
         );
       }
       return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
     } catch (e) {
-      _errorMessage = 'Failed to complete order: $e';
+      _errorMessage = 'Failed to complete order';
       return false;
     } finally {
       _isLoading = false;
@@ -137,6 +157,7 @@ class OrderProvider extends ChangeNotifier {
     }
   }
 
+  /// Rapporte un échec de livraison.
   Future<bool> reportDeliveryFailure({
     required String orderId,
     required String reason,
@@ -148,7 +169,7 @@ class OrderProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _bffClient.reportDeliveryFailure(
+      await _apiClient.reportDeliveryFailure(
         orderId: orderId,
         reason: reason,
         photoUrl: photoUrl,
@@ -180,8 +201,11 @@ class OrderProvider extends ChangeNotifier {
         );
       }
       return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
     } catch (e) {
-      _errorMessage = 'Failed to report delivery failure: $e';
+      _errorMessage = 'Failed to report delivery failure';
       return false;
     } finally {
       _isLoading = false;

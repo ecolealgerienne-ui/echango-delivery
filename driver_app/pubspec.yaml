@@ -5,45 +5,51 @@ publish_to: none
 version: 0.1.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.5.0 <4.0.0'
   flutter: '>=3.20.0'
 
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Navigation
+  go_router: ^14.6.0
 
   # State Management
-  provider: ^6.0.0
+  provider: ^6.1.2
 
   # Networking
-  http: ^1.1.0
-  dio: ^5.3.0
+  http: ^1.2.2
 
-  # Local Storage
-  shared_preferences: ^2.2.0
+  # Storage & Security
+  shared_preferences: ^2.3.3
+  flutter_secure_storage: ^9.2.2
   sqflite: ^2.3.0
 
   # Location & Geolocation
-  geolocator: ^9.0.0
+  geolocator: ^13.0.1
   flutter_foreground_task: ^5.0.0
 
   # Push Notifications
   firebase_core: ^2.24.0
   firebase_messaging: ^14.6.0
 
+  # Permissions
+  permission_handler: ^11.3.1
+
   # UI
   google_maps_flutter: ^2.5.0
-  intl: ^0.19.0
+  cupertino_icons: ^1.0.8
 
   # Utilities
-  logger: ^2.0.0
   equatable: ^2.0.0
-  uuid: ^4.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
@@ -51,10 +57,12 @@ flutter:
   assets:
     - assets/images/
     - assets/icons/
+    - assets/translations/
 
   fonts:
-    - family: Roboto
+    - family: CasbahDisplay
       fonts:
-        - asset: assets/fonts/Roboto-Regular.ttf
-        - asset: assets/fonts/Roboto-Bold.ttf
+        - asset: assets/fonts/Lora-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Lora-Bold.ttf
           weight: 700

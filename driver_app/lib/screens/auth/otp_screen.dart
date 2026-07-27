@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../providers/auth_provider.dart';
+
+import '../../state/auth_state.dart';
 
 class OtpScreen extends StatefulWidget {
   final String phone;
 
-  const OtpScreen({
-    Key? key,
-    required this.phone,
-  }) : super(key: key);
+  const OtpScreen({super.key, required this.phone});
 
   @override
   State<OtpScreen> createState() => _OtpScreenState();
@@ -100,13 +99,13 @@ class _OtpScreenState extends State<OtpScreen> {
               ),
             ),
             const SizedBox(height: 32),
-            Consumer<AuthProvider>(
-              builder: (context, authProvider, _) {
+            Consumer<AuthState>(
+              builder: (context, authState, _) {
                 return ElevatedButton(
-                  onPressed: authProvider.isLoading
+                  onPressed: authState.isLoading
                       ? null
-                      : () => _handleOtpVerification(context, authProvider),
-                  child: authProvider.isLoading
+                      : () => _handleOtpVerification(context, authState),
+                  child: authState.isLoading
                       ? const SizedBox(
                           height: 20,
                           width: 20,
@@ -119,12 +118,12 @@ class _OtpScreenState extends State<OtpScreen> {
             const SizedBox(height: 16),
             Center(
               child: TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => context.pop(),
                 child: const Text('Back to Login'),
               ),
             ),
             const SizedBox(height: 16),
-            if (context.watch<AuthProvider>().errorMessage != null)
+            if (context.watch<AuthState>().errorMessage != null)
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -133,7 +132,7 @@ class _OtpScreenState extends State<OtpScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  context.watch<AuthProvider>().errorMessage!,
+                  context.watch<AuthState>().errorMessage!,
                   style: TextStyle(color: Colors.red.shade700),
                 ),
               ),
@@ -145,7 +144,7 @@ class _OtpScreenState extends State<OtpScreen> {
 
   Future<void> _handleOtpVerification(
     BuildContext context,
-    AuthProvider authProvider,
+    AuthState authState,
   ) async {
     final otp = _otpControllers.map((c) => c.text).join();
 
@@ -156,16 +155,13 @@ class _OtpScreenState extends State<OtpScreen> {
       return;
     }
 
-    final success = await authProvider.verifyOtp(
+    final success = await authState.verifyOtp(
       phone: widget.phone,
       otp: otp,
     );
 
-    if (success) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Login successful')),
-      );
+    if (success && mounted) {
+      context.go('/dashboard');
     }
   }
 }

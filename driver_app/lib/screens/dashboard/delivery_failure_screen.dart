@@ -1,15 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../models/order.dart';
-import '../providers/order_provider.dart';
+
+import '../../state/order_state.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
-  final Order order;
+  final String orderId;
 
-  const DeliveryFailureScreen({
-    Key? key,
-    required this.order,
-  }) : super(key: key);
+  const DeliveryFailureScreen({super.key, required this.orderId});
 
   @override
   State<DeliveryFailureScreen> createState() => _DeliveryFailureScreenState();
@@ -61,22 +59,21 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Order #${widget.order.publicId}',
+                      'Order #$widget.orderId',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '${widget.order.dropoffPlace?.name}\n${widget.order.dropoffPlace?.address}',
+                      'Report the reason for delivery failure',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.grey[600],
-                          ),
+                        color: Colors.grey[600],
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 24),
-
             // Reason Selection
             Text(
               'Failure Reason',
@@ -105,7 +102,6 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
               ),
             ),
             const SizedBox(height: 24),
-
             // Notes
             Text(
               'Additional Notes (Optional)',
@@ -123,7 +119,6 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
               maxLines: 4,
             ),
             const SizedBox(height: 24),
-
             // Photo section (MVP: placeholder)
             Card(
               color: Colors.blue.shade50,
@@ -141,56 +136,49 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                       'Photo Evidence (MVP: Optional)',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Colors.blue.shade700,
-                          ),
+                        color: Colors.blue.shade700,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Photo capture will be available in future updates',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Colors.grey[600],
-                          ),
+                        color: Colors.grey[600],
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 32),
-
             // Submit Button
-            Consumer<OrderProvider>(
-              builder: (context, orderProvider, _) {
+            Consumer<OrderState>(
+              builder: (context, orderState, _) {
                 return ElevatedButton(
-                  onPressed: orderProvider.isLoading
-                      ? null
-                      : () => _submitFailureReport(context, orderProvider),
+                  onPressed: orderState.isLoading ? null : () => _submitFailureReport(context, orderState),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.red,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
-                  child: orderProvider.isLoading
+                  child: orderState.isLoading
                       ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
                       : const Text(
                           'Submit Failure Report',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 );
               },
             ),
             const SizedBox(height: 16),
-            if (context.watch<OrderProvider>().errorMessage != null)
+            if (context.watch<OrderState>().errorMessage != null)
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -199,7 +187,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  context.watch<OrderProvider>().errorMessage!,
+                  context.watch<OrderState>().errorMessage!,
                   style: TextStyle(color: Colors.red.shade700),
                 ),
               ),
@@ -211,10 +199,10 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
 
   Future<void> _submitFailureReport(
     BuildContext context,
-    OrderProvider orderProvider,
+    OrderState orderState,
   ) async {
-    final success = await orderProvider.reportDeliveryFailure(
-      orderId: widget.order.id,
+    final success = await orderState.reportDeliveryFailure(
+      orderId: widget.orderId,
       reason: _selectedReason,
       notes: _notesController.text.isNotEmpty ? _notesController.text : null,
     );
@@ -224,8 +212,8 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Delivery failure reported')),
       );
-      Navigator.pop(context);
-      Navigator.pop(context);
+      context.pop();
+      context.pop();
     }
   }
 }
