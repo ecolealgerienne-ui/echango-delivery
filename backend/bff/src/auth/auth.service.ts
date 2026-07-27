@@ -1,5 +1,6 @@
-import { Injectable, BadRequestException, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, UnauthorizedException, Logger, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
@@ -12,6 +13,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private configService: ConfigService,
     private fleetbaseClient: FleetbaseApiClient,
   ) {}
 
@@ -26,20 +28,25 @@ export class AuthService {
     });
 
     if (existing) {
-      throw new BadRequestException('Email already registered');
+      throw new ConflictException('Email already registered');
     }
 
     try {
       // 1. Create Vendor in Fleetbase
+      this.logger.log(`Creating Vendor in Fleetbase for ${dto.businessName}`);
       const vendorResponse = await this.fleetbaseClient.createVendor(
         dto.businessName,
         dto.email,
         dto.businessPhone,
       );
 
-      const vendorUuid = vendorResponse.data.uuid || vendorResponse.data.id;
+      const vendorUuid = vendorResponse.data?.uuid || vendorResponse.data?.id;
+      if (!vendorUuid) {
+        throw new Error('Vendor UUID not returned from Fleetbase');
+      }
 
       // 2. Create Customer in Fleetbase
+      this.logger.log(`Creating Customer in Fleetbase for vendor ${vendorUuid}`);
       const customerResponse = await this.fleetbaseClient.createCustomer(
         vendorUuid,
         dto.email,
@@ -47,7 +54,10 @@ export class AuthService {
         dto.lastName,
       );
 
-      const customerUuid = customerResponse.data.uuid || customerResponse.data.id;
+      const customerUuid = customerResponse.data?.uuid || customerResponse.data?.id;
+      if (!customerUuid) {
+        throw new Error('Customer UUID not returned from Fleetbase');
+      }
 
       // 3. Create MerchantAccount in BFF database
       const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -63,16 +73,14 @@ export class AuthService {
           businessPhone: dto.businessPhone,
           fleetbaseVendorUuid: vendorUuid,
           fleetbaseCustomerUuid: customerUuid,
-          emailVerified: true, // TODO: Implement email verification
+          emailVerified: true, // TODO: Email verification in v2
         },
       });
 
+      this.logger.log(`Merchant registered: ${merchant.id}`);
+
       // 4. Generate JWT token
-      const token = this.jwtService.sign({
-        sub: merchant.id,
-        email: merchant.email,
-        type: 'merchant',
-      });
+      const token = this.generateToken(merchant.id, merchant.email, 'merchant');
 
       return {
         token,
@@ -110,18 +118,20 @@ export class AuthService {
       throw new UnauthorizedException('Email not verified');
     }
 
+    if (!merchant.active) {
+      throw new UnauthorizedException('Account is inactive');
+    }
+
     // Update last login
     await this.prisma.merchantAccount.update({
       where: { id: merchant.id },
       data: { lastLoginAt: new Date() },
     });
 
+    this.logger.log(`Merchant logged in: ${merchant.id}`);
+
     // Generate JWT token
-    const token = this.jwtService.sign({
-      sub: merchant.id,
-      email: merchant.email,
-      type: 'merchant',
-    });
+    const token = this.generateToken(merchant.id, merchant.email, 'merchant');
 
     return {
       token,
@@ -134,13 +144,66 @@ export class AuthService {
   }
 
   /**
+   * Register device token for push notifications
+   */
+  async registerDeviceToken(merchantId: string, token: string, platform: string) {
+    const merchant = await this.prisma.merchantAccount.findUnique({
+      where: { id: merchantId },
+    });
+
+    if (!merchant) {
+      throw new BadRequestException('Merchant not found');
+    }
+
+    // Check if token already exists
+    const existing = await this.prisma.deviceToken.findUnique({
+      where: { token },
+    });
+
+    if (existing) {
+      // Update if merchant changed
+      if (existing.merchantId !== merchantId) {
+        await this.prisma.deviceToken.update({
+          where: { id: existing.id },
+          data: { merchantId },
+        });
+      }
+      return existing;
+    }
+
+    // Create new device token
+    return this.prisma.deviceToken.create({
+      data: {
+        merchantId,
+        token,
+        platform,
+      },
+    });
+  }
+
+  /**
    * Verify JWT token and return payload
    */
   verifyToken(token: string) {
     try {
       return this.jwtService.verify(token);
     } catch (error) {
-      throw new UnauthorizedException('Invalid token');
+      throw new UnauthorizedException('Invalid or expired token');
     }
+  }
+
+  /**
+   * Generate JWT token
+   */
+  private generateToken(userId: string, email: string, type: 'merchant' | 'fleet') {
+    const expiresIn = this.configService.get('JWT_EXPIRATION') || '24h';
+    return this.jwtService.sign(
+      {
+        sub: userId,
+        email,
+        type,
+      },
+      { expiresIn },
+    );
   }
 }

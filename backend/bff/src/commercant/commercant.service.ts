@@ -1,6 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
+import { SaveAddressDto } from './dto/address.dto';
 
 @Injectable()
 export class CommerçantService {
@@ -12,81 +20,293 @@ export class CommerçantService {
   ) {}
 
   /**
-   * Get merchant's orders
-   * TODO: Implement pagination, filtering by status
+   * Get merchant's orders from Fleetbase via customer-portal-api
    */
-  async getOrders(merchantId: string) {
+  async getOrders(merchantId: string, query: ListOrdersQueryDto) {
     this.logger.log(`Fetching orders for merchant ${merchantId}`);
-    // TODO: Implement
-    return [];
+
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    try {
+      const page = query.page || 1;
+      const limit = query.limit || 25;
+
+      // Call customer-portal-api if merchant has a token
+      // For now, return cached orders from BFF database
+      const orders = await this.prisma.order.findMany({
+        where: {
+          merchantId,
+          ...(query.status && { status: query.status }),
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const total = await this.prisma.order.count({
+        where: {
+          merchantId,
+          ...(query.status && { status: query.status }),
+        },
+      });
+
+      return {
+        data: orders,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch orders: ${error.message}`);
+      throw new BadRequestException('Failed to fetch orders');
+    }
   }
 
   /**
-   * Get order detail
+   * Get single order detail with full information
    */
   async getOrderDetail(merchantId: string, orderId: string) {
     this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
-    // TODO: Implement
-    return null;
+
+    await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        commissions: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    // Anti-IDOR: Verify merchant owns this order
+    if (order.merchantId !== merchantId) {
+      throw new ForbiddenException('You do not have access to this order');
+    }
+
+    return order;
   }
 
   /**
-   * Create order
+   * Create a new delivery order
    */
-  async createOrder(merchantId: string, data: any) {
+  async createOrder(merchantId: string, dto: CreateOrderDto) {
     this.logger.log(`Creating order for merchant ${merchantId}`);
-    // TODO: Implement
-    return null;
+
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    try {
+      // Build Fleetbase order payload
+      const fleetbaseOrder = {
+        customer_uuid: merchant.fleetbaseCustomerUuid,
+        vendor_uuid: merchant.fleetbaseVendorUuid,
+        payload: {
+          pickup: {
+            name: dto.pickupLocationName,
+            latitude: dto.pickupLatitude,
+            longitude: dto.pickupLongitude,
+            contact_name: dto.pickupContactName,
+            contact_phone: dto.pickupContactPhone,
+            notes: dto.pickupNotes,
+          },
+          dropoff: {
+            name: dto.dropoffLocationName,
+            latitude: dto.dropoffLatitude,
+            longitude: dto.dropoffLongitude,
+            contact_name: dto.dropoffContactName,
+            contact_phone: dto.dropoffContactPhone,
+            notes: dto.dropoffNotes,
+          },
+          items: dto.items || [],
+        },
+        instructions: dto.deliveryInstructions,
+      };
+
+      // Create order in Fleetbase
+      const response = await this.fleetbaseClient.callFleetOps('POST', '/orders', fleetbaseOrder);
+
+      const fleetbaseOrderId = response.data?.uuid || response.data?.id;
+
+      // Cache order in BFF database
+      const order = await this.prisma.order.create({
+        data: {
+          merchantId,
+          fleetbaseOrderId,
+          status: 'pending',
+          trackingNumber: response.data?.tracking_number,
+        },
+      });
+
+      this.logger.log(`Order created: ${order.id}`);
+
+      return order;
+    } catch (error) {
+      this.logger.error(`Failed to create order: ${error.message}`);
+      throw new BadRequestException('Failed to create order');
+    }
   }
 
   /**
-   * Cancel order
+   * Cancel an order
    */
   async cancelOrder(merchantId: string, orderId: string) {
-    this.logger.log(`Cancelling order ${orderId} for merchant ${merchantId}`);
-    // TODO: Implement
-    return null;
+    this.logger.log(`Cancelling order ${orderId}`);
+
+    await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.merchantId !== merchantId) {
+      throw new ForbiddenException('You do not have access to this order');
+    }
+
+    if (['completed', 'cancelled', 'failed'].includes(order.status)) {
+      throw new BadRequestException(`Cannot cancel order with status: ${order.status}`);
+    }
+
+    try {
+      // Cancel in Fleetbase
+      await this.fleetbaseClient.callFleetOps('POST', `/orders/${order.fleetbaseOrderId}/cancel`);
+
+      // Update local cache
+      const updated = await this.prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'cancelled' },
+      });
+
+      this.logger.log(`Order cancelled: ${orderId}`);
+      return updated;
+    } catch (error) {
+      this.logger.error(`Failed to cancel order: ${error.message}`);
+      throw new BadRequestException('Failed to cancel order');
+    }
   }
 
   /**
-   * Get tracking info for order
+   * Get secure tracking info for an order
    */
   async getOrderTracking(merchantId: string, orderId: string) {
     this.logger.log(`Fetching tracking for order ${orderId}`);
-    // TODO: Implement
-    return null;
-  }
 
-  /**
-   * Register device token for push notifications
-   */
-  async registerDeviceToken(merchantId: string, token: string, platform: string) {
-    this.logger.log(`Registering device token for merchant ${merchantId}`);
+    await this.getMerchantWithValidation(merchantId);
 
-    return this.prisma.deviceToken.create({
-      data: {
-        merchantId,
-        token,
-        platform,
-      },
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
     });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.merchantId !== merchantId) {
+      throw new ForbiddenException('You do not have access to this order');
+    }
+
+    try {
+      // Fetch latest data from Fleetbase
+      const response = await this.fleetbaseClient.callFleetOps(
+        'GET',
+        `/orders/${order.fleetbaseOrderId}`,
+      );
+
+      return {
+        id: order.id,
+        status: order.status,
+        trackingNumber: order.trackingNumber,
+        fleetbaseData: response.data,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch tracking: ${error.message}`);
+      throw new BadRequestException('Failed to fetch tracking information');
+    }
   }
 
   /**
-   * Get merchant's addresses
+   * Get merchant's saved addresses from Fleetbase address-book
    */
   async getAddresses(merchantId: string) {
     this.logger.log(`Fetching addresses for merchant ${merchantId}`);
-    // TODO: Implement
-    return [];
+
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    try {
+      // Call Fleetbase to get address-book entries for this vendor
+      const response = await this.fleetbaseClient.callFleetOps('GET', '/addresses', undefined, {
+        vendor_uuid: merchant.fleetbaseVendorUuid,
+        limit: 100,
+      });
+
+      return {
+        data: response.data || [],
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch addresses: ${error.message}`);
+      // Return empty list if Fleetbase call fails
+      return { data: [] };
+    }
   }
 
   /**
-   * Create/Save address
+   * Save a new address to merchant's address-book
    */
-  async saveAddress(merchantId: string, address: any) {
+  async saveAddress(merchantId: string, dto: SaveAddressDto) {
     this.logger.log(`Saving address for merchant ${merchantId}`);
-    // TODO: Implement
-    return null;
+
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    try {
+      // Create address in Fleetbase
+      const payload = {
+        vendor_uuid: merchant.fleetbaseVendorUuid,
+        name: dto.name,
+        address: dto.address,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        contact_name: dto.contactName,
+        contact_phone: dto.contactPhone,
+        notes: dto.notes,
+        meta: {
+          label: dto.label,
+        },
+      };
+
+      const response = await this.fleetbaseClient.callFleetOps('POST', '/addresses', payload);
+
+      this.logger.log(`Address saved: ${response.data?.id}`);
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Failed to save address: ${error.message}`);
+      throw new BadRequestException('Failed to save address');
+    }
+  }
+
+  /**
+   * Helper: Get merchant and validate
+   */
+  private async getMerchantWithValidation(merchantId: string) {
+    const merchant = await this.prisma.merchantAccount.findUnique({
+      where: { id: merchantId },
+    });
+
+    if (!merchant) {
+      throw new NotFoundException('Merchant not found');
+    }
+
+    if (!merchant.active) {
+      throw new ForbiddenException('Merchant account is inactive');
+    }
+
+    return merchant;
   }
 }
