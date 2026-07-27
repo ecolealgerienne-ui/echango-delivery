@@ -1,0 +1,60 @@
+name: echango_driver
+description: Driver application for Echango Delivery logistics platform.
+publish_to: none
+
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.20.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  provider: ^6.0.0
+
+  # Networking
+  http: ^1.1.0
+  dio: ^5.3.0
+
+  # Local Storage
+  shared_preferences: ^2.2.0
+  sqflite: ^2.3.0
+
+  # Location & Geolocation
+  geolocator: ^9.0.0
+  flutter_foreground_task: ^5.0.0
+
+  # Push Notifications
+  firebase_core: ^2.24.0
+  firebase_messaging: ^14.6.0
+
+  # UI
+  google_maps_flutter: ^2.5.0
+  intl: ^0.19.0
+
+  # Utilities
+  logger: ^2.0.0
+  equatable: ^2.0.0
+  uuid: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
