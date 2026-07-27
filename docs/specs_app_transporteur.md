@@ -1,7 +1,7 @@
 # Specs — App Transporteur Echango (Flutter)
 
 **Date** : 27 juillet 2026
-**Statut** : Spécification fonctionnelle complète, dérivée des specs de Fleetbase Navigator — base de référence avant développement.
+**Statut** : Spécification fonctionnelle complète, dérivée des specs de Fleetbase Navigator — base de référence avant développement. **Mise à jour (27/07/2026)** : les 3 décisions d'architecture laissées ouvertes en §13 ont été tranchées (auth via BFF §2.1, temps réel push FCM/APN + polling §11.1, géolocalisation open source §11.2).
 **Contexte** : suite à `docs/navigator_test_findings.md` (Navigator abandonné — blocages d'installation/compilation structurels, crash au démarrage documenté, dépendances React Native 0.86 instables), décision de construire une **app transporteur custom en Flutter pur** plutôt que d'utiliser/forker Navigator.
 
 **Méthode de ce document** : Navigator (`fleetbase/navigator-app`, React Native, AGPL) est l'app officielle Fleetbase pour les transporteurs, avec un périmètre fonctionnel mature et éprouvé (dispatch, POD, chat, rapports, gestion de flotte). Plutôt que de repartir de zéro, ce document **reprend l'intégralité de son périmètre fonctionnel** (écrans, actions, données, intégrations techniques) et le retranscrit comme spec cible pour notre propre app Flutter — **rien n'est volontairement omis** à ce stade ; le tri MVP vs V2 est fait explicitement en §10, pas par omission silencieuse.
@@ -33,7 +33,19 @@ Repris intégralement du périmètre Navigator :
 - **Écran d'avertissement de configuration** (Setup Warning) — affiché si la config API Fleetbase est absente/invalide au démarrage
 - **Gestion de lien d'instance** (Instance Link) — deep link permettant d'ouvrir l'app sur une ressource précise (ex. lien de suivi partagé)
 
-**Note d'architecture à trancher (§10)** : Navigator s'authentifie directement contre l'API Fleetbase avec une clé API embarquée au build. Pour notre app, reste à décider si l'authentification driver passe par le BFF (cohérent avec le principe déjà acté pour les deux autres interfaces custom, `docs/specs_bff.md` §5) ou reste un appel direct à Fleetbase comme Navigator — **point ouvert, pas tranché dans ce document**.
+### 2.1 Authentification via BFF — décision (27/07/2026)
+
+Contrairement à Navigator, qui s'authentifie directement contre l'API Fleetbase avec une clé API embarquée au build, **l'app driver passe systématiquement par le BFF** — même principe que les deux autres interfaces custom (`docs/specs_bff.md` §5) : le client Flutter ne détient et n'appelle jamais Fleetbase directement, un seul système d'auth Echango (Bearer token) pour les trois interfaces.
+
+**Modèle retenu : proxy par compte de service, pas de credential Fleetbase individuel par driver** — même schéma que le persona "petite flotte" (`docs/specs_bff.md` §2.2), pour une raison différente mais tout aussi valable :
+
+- Un vrai `Driver`/`User` Fleetbase **doit** exister pour chaque transporteur — contrairement au facilitateur, ce n'est pas contournable : le matching géospatial natif du dispatch adhoc (`HandleOrderDispatched`) et l'assignation ciblée (`driver_assigned_uuid`) opèrent nativement sur ce modèle, déjà validé de bout en bout côté serveur (`docs/specs_echango_delivery.md` §3.2).
+- **Ce qui est évitable, en revanche** : que l'app Flutter détienne elle-même un token Fleetbase valide pour ce Driver. Contrairement au persona commerçant (`customer-portal-api`, scoping natif testé et validé), **aucun mécanisme équivalent "driver-portal" n'a été testé ni même repéré côté Fleetbase** — pas de découverte équivalente à `fleetbase/customer-portal` pour ce persona à ce jour. Répliquer le pattern "token Sanctum individuel géré par le BFF" (§5.1 de `docs/specs_bff.md`, pensé pour le commerçant) supposerait de faire confiance à un scoping driver natif jamais vérifié.
+- **Décision** : le BFF utilise un **compte de service Fleetbase partagé** (même famille de compte que celui du persona petite flotte, cf. `docs/specs_bff.md` §5.2) pour lire/écrire les ressources driver (commandes assignées, position, statut en ligne, jeton push, activité), et **filtre lui-même** chaque réponse par identité du driver connecté (`driver_assigned_uuid` = le sien, ou commande adhoc dans son rayon) avant de la renvoyer au client — même discipline anti-IDOR que les deux autres personas (`docs/specs_bff.md` §5.3).
+- **Bénéfice direct** : cohérence totale des trois interfaces sur un seul modèle de sécurité à auditer (un compte de service Fleetbase par famille de persona non couverte par un portail officiel, jamais de credential Fleetbase individuel chez un client final), plutôt que d'inventer un troisième schéma pour ce troisième persona.
+- **Identité du driver côté Echango** : un compte Echango (email/téléphone/social login, §2 ci-dessus) mappé à un `driver_uuid` Fleetbase — ce mapping est déclaré une fois au provisioning (création manuelle du Driver Fleetbase + rattachement, cohérent avec la recommandation "provisioning manuel d'abord" déjà actée pour le commerçant, `docs/specs_bff.md` §2.1).
+
+**Conséquence pour §11 (temps réel)** : voir la décision correspondante ci-dessous — le canal FCM/APN natif de Fleetbase (`OrderPing`) cible directement le `Driver` Fleetbase (champ jeton push sur son enregistrement), pas le compte Echango. Le BFF doit donc, à l'enregistrement du jeton push par l'app, l'écrire sur le `Driver` Fleetbase correspondant via son compte de service — un pont nécessaire entre les deux couches d'identité.
 
 ---
 
@@ -242,7 +254,7 @@ Repris de l'analyse des dépendances `package.json` de Navigator, avec équivale
 
 | Capacité | Lib React Native (Navigator) | Équivalent Flutter proposé |
 |---|---|---|
-| **Géolocalisation en tâche de fond** | `react-native-background-geolocation` | `flutter_background_geolocation` (même éditeur, Transistor Software — licence commerciale déjà utilisée par Navigator, à vérifier/budgéter) |
+| **Géolocalisation en tâche de fond** | `react-native-background-geolocation` (Transistor Software, commercial) | **`geolocator` + `flutter_foreground_task`** — voir décision et justification ci-dessous, choix délibérément open source |
 | **Cartes** | `react-native-maps` + `react-native-maps-directions` | `google_maps_flutter` + calcul d'itinéraire via API dédiée (OSRM/Google Directions) |
 | **Navigation externe** | `react-native-launch-navigator` | `map_launcher` ou intents natifs (`url_launcher` avec schémas Google Maps/Waze/Apple Plans) |
 | **Caméra** | `react-native-vision-camera` | `camera` (package Flutter officiel) |
@@ -257,11 +269,39 @@ Repris de l'analyse des dépendances `package.json` de Navigator, avec équivale
 | **Connexion Google** | `@react-native-google-signin/google-signin` | `google_sign_in` |
 | **Connexion Facebook** | `react-native-fbsdk-next` | `flutter_facebook_auth` |
 | **Internationalisation** | `react-native-i18n` + `react-native-localize` | `flutter_localizations` + `intl` |
-| **WebSocket temps réel** | `socketcluster-client` | **Point ouvert** — pas de client SocketCluster natif Flutter connu ; déjà noté comme limite pour les deux autres interfaces custom (`docs/specs_echango_delivery.md` §8, recommandation polling REST). Pour l'app driver, le besoin est plus fort (recevoir un dispatch adhoc en temps quasi-réel) — polling seul risque d'être insuffisant ; à investiguer (WebSocket générique `web_socket_channel` en parlant directement le protocole SocketCluster, ou notification push FCM/APN comme déclencheur principal plutôt que WebSocket, cohérent avec ce que fait déjà `OrderPing`, cf. `docs/specs_echango_delivery.md` §3.2) |
+| **WebSocket temps réel** | `socketcluster-client` | **Non repris — remplacé par push FCM/APN natif + polling REST**, voir décision et justification ci-dessous |
 | **Scan QR code** | (composant `QrCodeScanner`, lib non identifiée précisément) | `mobile_scanner` |
 | **Signature manuscrite** | `SignatureCanvas` (composant) | `signature` (package Flutter) |
 | **Animations** | `react-native-reanimated` | Animations Flutter natives (`AnimationController`) |
 | **Framework UI** | `tamagui` | Widgets Flutter natifs + `Material`/`Cupertino` |
+
+### 11.1 Stratégie temps réel — décision (27/07/2026)
+
+**Retenu : push FCM/APN natif Fleetbase comme déclencheur, polling REST via BFF pour tout le reste. Pas de client SocketCluster en Dart.**
+
+Raisonnement :
+
+- **Aucun client SocketCluster mature n'existe pour Flutter/Dart** — implémenter le protocole nous-mêmes (`web_socket_channel` + réimplémentation du protocole SocketCluster côté client) serait un chantier disproportionné pour un besoin déjà couvert autrement.
+- **Le canal qui compte vraiment (dispatch adhoc + assignation ciblée) est déjà natif et déjà validé de bout en bout côté serveur** : `OrderPing` (`docs/specs_echango_delivery.md` §3.2) implémente `ShouldQueue` avec des canaux `broadcast` (WebSocket), `FcmChannel` et `ApnChannel` — **le canal FCM/APN ne nécessite aucun développement serveur supplémentaire**, juste la configuration d'un projet Firebase Echango (voir ci-dessous) et l'enregistrement du jeton push sur le `Driver` Fleetbase correspondant.
+- **Tout le reste** (rafraîchissement de la liste de commandes, progression du détail d'une commande, messages de chat) **passe en polling REST via le BFF** — cohérent avec la recommandation déjà actée pour les deux autres interfaces custom (`docs/specs_echango_delivery.md` §8 : "polling recommandé pour V1"). Garde une seule stratégie temps réel across les trois apps, plus simple à maintenir qu'un mélange WebSocket + polling.
+
+**Implémentation concrète** :
+1. Un projet **Firebase** dédié à Echango (pas celui de Fleetbase) — `google-services.json` / `GoogleService-Info.plist` intégrés à l'app Flutter (`firebase_messaging`).
+2. Les identifiants serveur de ce même projet Firebase configurés côté backend Fleetbase (variables d'environnement FCM déjà prévues nativement par `FcmChannel`, aucun code à écrire côté Fleetbase).
+3. À la connexion, l'app enregistre son jeton FCM auprès du BFF (`POST /transporteur/device-token`) ; le BFF l'écrit sur le `Driver` Fleetbase correspondant via son compte de service (§2.1).
+4. Réception d'un `OrderPing` → notification système → l'app réveille et déclenche un fetch REST via BFF pour récupérer le détail de la commande (jamais de payload métier transmis directement dans la notification push elle-même, uniquement un identifiant + déclencheur, principe de précaution sur des données potentiellement sensibles transitant par un tiers Firebase).
+
+**Limite assumée, à valider par un test réel une fois l'app construite** : ce choix reproduit exactement le test qu'on voulait faire avec Navigator (§ session du 27/07/2026) — la seule vraie preuve que ça fonctionne est un device réel avec l'app installée, jeton FCM enregistré, recevant effectivement une commande adhoc. Rien de nouveau à inventer côté serveur, mais la boucle complète reste à re-valider avec notre propre client, pas avec Navigator.
+
+### 11.2 Géolocalisation en tâche de fond — décision (27/07/2026) : open source uniquement
+
+**Rejeté** : `flutter_background_geolocation` (Transistor Software) — même éditeur que la librairie React Native utilisée par Navigator, mais **licence commerciale**. Écarté par principe : préférence explicite pour des solutions open source sur ce projet.
+
+**Retenu : `geolocator` (MIT) + `flutter_foreground_task` (MIT)** :
+- **`geolocator`** — API de position (ponctuelle + flux continu), multiplateforme, aucune dépendance à un service commercial.
+- **`flutter_foreground_task`** — service Android de premier plan (foreground service) avec notification persistante, nécessaire pour que la géolocalisation continue de fonctionner quand l'app est en arrière-plan (obligatoire de toute façon sur Android 10+ pour un accès fiable à la position en tâche de fond, indépendamment du choix de librairie). Sur iOS, complété par la configuration native standard (`UIBackgroundModes: location` dans `Info.plist`) et la permission "Toujours autoriser" — capacité native de la plateforme, pas une fonctionnalité tierce.
+
+**Compromis assumé et à documenter comme risque, pas à ignorer** : les solutions commerciales comme Transistor existent précisément parce que la géolocalisation fiable en arrière-plan sur mobile est difficile à faire robuste dans la durée (gestion fine de la précision/fréquence pour économiser la batterie, résilience aux politiques agressives de kill d'app par les OEM Android, heuristiques propriétaires accumulées sur des années). La pile open-source retenue est fonctionnellement suffisante pour un MVP mais **doit être testée en conditions réelles tôt** (device physique, usage prolongé, différents fabricants Android) avant d'être considérée fiable pour une flotte de transporteurs en production — à inscrire explicitement dans le plan de test du développement de cette app, pas supposé acquis par ce document.
 
 ---
 
@@ -285,11 +325,19 @@ Cohérents avec les modèles Fleetbase déjà validés dans `docs/specs_echango_
 
 ## 13. Questions ouvertes avant développement
 
-1. **Authentification directe Fleetbase vs via BFF** (§2) — cohérence à trancher avec le principe déjà acté pour les 2 autres interfaces custom.
-2. **Temps réel : WebSocket SocketCluster vs push FCM/APN comme déclencheur principal** (§11) — critique pour la réception adhoc, à trancher avant de committer sur l'architecture temps réel de l'app.
-3. **Chat, rapports carburant, incidents : quelle API Fleetbase les expose ?** (§12) — jamais vérifié en pratique, contrairement au reste de l'API déjà testé.
-4. **`flutter_background_geolocation` a une licence commerciale** (le même éditeur que la lib React Native utilisée par Navigator) — coût à chiffrer avant de s'engager dessus ; alternative gratuite (`geolocator` + service en tâche de fond maison) moins robuste mais à considérer si le budget est un enjeu.
-5. **Portée MVP vs V2** — ce document reprend l'intégralité du périmètre Navigator par exhaustivité (consigne explicite : ne rien omettre), mais tout ne doit probablement pas être développé dès la V1. Proposition de découpage à valider avec l'équipe produit :
+### Décisions actées (27/07/2026)
+
+1. ~~Authentification directe Fleetbase vs via BFF~~ **✅ Tranché : via BFF**, modèle proxy par compte de service (§2.1), même famille de solution que le persona petite flotte.
+2. ~~Temps réel : WebSocket SocketCluster vs push FCM/APN~~ **✅ Tranché : push FCM/APN natif comme déclencheur + polling REST pour le reste** (§11.1), pas de client SocketCluster Dart.
+3. ~~`flutter_background_geolocation` (licence commerciale)~~ **✅ Tranché : rejeté, remplacé par `geolocator` + `flutter_foreground_task` (open source)** (§11.2) — compromis d'implémentation assumé, à valider en test réel avant mise en prod (voir §11.2, limite documentée).
+
+### Reste ouvert
+
+4. **Chat, rapports carburant, incidents : quelle API Fleetbase les expose ?** (§12) — jamais vérifié en pratique, contrairement au reste de l'API déjà testé. Une extension dédiée (à la manière de `customer-portal`/`ledger`) pourrait être nécessaire — à investiguer avant de committer sur le périmètre exact de ces trois fonctionnalités.
+5. **Provisioning du compte driver** — qui crée le `Driver`/`User` Fleetbase et le mapping vers le compte Echango (§2.1) ? Même question que pour le commerçant (`docs/specs_bff.md` §2.1, §8.1) : self-service vs manuel. Recommandation par défaut inchangée : commencer manuel.
+6. **Test réel de la boucle FCM/APN une fois l'app construite** (§11.1) — la conception s'appuie sur un pipeline serveur déjà validé, mais la réception effective par un vrai device n'aura été testée avec aucun client (ni Navigator, abandonné avant d'y arriver, ni notre app, pas encore construite) tant que ce test n'est pas refait avec notre propre client.
+7. **Robustesse terrain de la géolocalisation open source** (§11.2) — à tester sur device physique, usage prolongé, plusieurs fabricants Android, avant de la considérer fiable pour une flotte en production.
+8. **Portée MVP vs V2** — ce document reprend l'intégralité du périmètre Navigator par exhaustivité (consigne explicite : ne rien omettre), mais tout ne doit probablement pas être développé dès la V1. Proposition de découpage à valider avec l'équipe produit :
    - **MVP plausible** : authentification simple (email/password), dashboard, liste + détail commande, actions dispatch (accepter/rejeter adhoc, démarrer, mettre à jour activité, navigation externe), POD (au moins une méthode, ex. signature ou photo), toggle en ligne/hors ligne
    - **V2 plausible** : chat, rapports carburant, incidents, connexions sociales, POD multi-méthodes (QR + photo + signature), gestion de flotte/véhicule détaillée, internationalisation
    - **Cette proposition est une suggestion, pas une décision** — à valider explicitement, pas à déduire silencieusement de ce document.
