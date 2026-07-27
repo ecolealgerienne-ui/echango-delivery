@@ -12,7 +12,7 @@ Ce document consolide et priorise les conclusions de 5 relectures spécialisées
 - **§2** : les points où deux agents se contredisent — à vérifier en priorité, avant de faire confiance à quoi que ce soit d'autre dans ce document.
 - **§3** : les découvertes qui changent réellement la donne par rapport à ce qu'on pensait avant cette revue.
 - **§4 à §7** : synthèse par domaine (architecture, sécurité, métier, logistique), condensée — le détail complet est dans `docs/rapports_specs/`.
-- **§8** : la décision FlutterFlow.
+- **§8** : la décision Flutter pur vs FlutterFlow.
 - **§9** : le plan d'action concret, priorisé, avant d'écrire la moindre ligne de code d'interface ou de BFF.
 - **§10** : documents à corriger suite à cette revue (CLAUDE.md, doc macro).
 
@@ -136,11 +136,13 @@ Détail complet : `04_logistique.md`. Points structurants au-delà des découver
 
 ---
 
-## 8. FlutterFlow — décision
+## 8. Flutter (pur) vs FlutterFlow — décision revue le 27/07/2026
 
-Détail complet : `02_architecture.md` §5. Confirmé viable pour consommer une API REST custom (auth Bearer natif, formulaires liés à des données dynamiques — bon fit pour l'interface commerçant). **Limite claire** : pas de client SocketCluster natif pour le temps réel — recommandation de faire du **polling REST** plutôt que du WebSocket pour la V1, suffisant pour un usage B2B à l'échelle visée. FlutterFlow génère du vrai code exportable, ce qui limite le risque d'un mauvais choix initial (on peut reprendre la main en code natif sur un écran précis sans tout réécrire).
+Détail complet de l'évaluation initiale : `02_architecture.md` §5 (toujours valide techniquement, voir nuance ci-dessous). Confirmé viable pour consommer une API REST custom (auth Bearer natif, formulaires liés à des données dynamiques — bon fit pour l'interface commerçant). **Limite claire, indépendante de l'outil** : pas de client SocketCluster natif pour le temps réel dans Flutter — recommandation de faire du **polling REST** plutôt que du WebSocket pour la V1, suffisant pour un usage B2B à l'échelle visée.
 
-**Décision** : partir sur FlutterFlow pour les deux interfaces custom, avec un **spike time-boxé préalable sur l'écran le plus exigeant** (carte + positions drivers rafraîchies par polling + action d'assignation, côté "petite flotte") avant de committer sur l'ensemble — ne pas valider l'outil uniquement sur l'écran commerçant, plus facile et moins représentatif du risque réel.
+**Décision initiale (26/07/2026) : FlutterFlow.** **Revue et inversée le 27/07/2026** : c'est Claude Code qui écrit le code des deux interfaces, pas un développeur humain qui gagnerait du temps avec l'éditeur visuel glisser-déposer de FlutterFlow — cet argument central en faveur de l'outil ne s'applique donc pas. Un agent IA n'a pas de moyen efficace de piloter une interface web visuelle pensée pour un humain ; écrire directement du code Dart/Flutter est plus rapide et plus précis, et garde tout dans le repo git comme le reste du projet, sans dépendance à un compte/projet FlutterFlow externe ni étape d'éjection vers du code à un moment donné.
+
+**Décision retenue : Flutter pur (code écrit directement)** pour les deux interfaces custom. Les vraies questions techniques identifiées restent d'actualité, reformulées sans référence à l'outil FlutterFlow : Flutter web est-il un bon choix de déploiement pour ces deux interfaces (cohérent avec la recommandation web-first déjà faite, moins de friction d'onboarding qu'une app à installer) ? Polling REST vs client temps réel pour le suivi/dispatch (polling recommandé pour V1, non remis en cause par ce changement) ? Un test technique ciblé sur ces deux points reste utile avant de démarrer le développement des écrans, mais ce n'est plus un "spike FlutterFlow" — plutôt une vérification de la qualité du déploiement web Flutter et du pattern de polling retenu.
 
 ---
 
@@ -165,9 +167,10 @@ Détail complet : `02_architecture.md` §5. Confirmé viable pour consommer une 
 10. Décider si Ledger est activé, et si oui, confirmer Odoo/Echango Order comme source de vérité comptable pour éviter une double comptabilité.
 
 ### Priorité 4 — avant la première ligne de code d'interface
-11. Spike FlutterFlow time-boxé sur l'écran dispatch/carte (le plus exigeant), avant de committer sur l'outil pour les deux interfaces.
+11. ~~Spike FlutterFlow~~ **Décision revue (27/07/2026, voir §8)** : Flutter pur (code écrit directement par Claude Code), pas FlutterFlow — l'argument de vitesse pour un développeur humain via glisser-déposer ne s'applique pas à un développement piloté par IA. Reste utile : vérifier la qualité du déploiement Flutter web sur l'écran le plus exigeant (carte + positions drivers + action d'assignation, côté "petite flotte") et confirmer le pattern de polling REST, avant de démarrer le développement des deux interfaces.
 12. Concevoir le BFF comme point d'entrée unique (y compris futur connecteur Odoo), stateless, avec DTOs internes qui n'exposent jamais les noms de champs Fleetbase bruts.
 13. Modèle de menace + tests anti-IDOR pour la couche de filtrage du BFF, avant tout accès commerçant/sous-organisation réel.
+15. Installer et tester Navigator (décision prise le 27/07/2026 : on reste sur Navigator plutôt qu'une app transporteur custom — question ouverte #3 du `CLAUDE.md`) — jamais installé en pratique, à faire avant de considérer l'app transporteur prête.
 
 ### Reste différé (déjà noté dans `CLAUDE.md`, non affecté par cette revue)
 14. Rouvrir la question de la licence AGPL avec un juriste avant la Phase 3 B2B.
