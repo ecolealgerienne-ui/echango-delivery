@@ -40,7 +40,6 @@ dependencies:
   permission_handler: ^11.3.1
 
   # UI
-  google_maps_flutter: ^2.4.0
   cupertino_icons: ^1.0.8
 
   # Utilities
