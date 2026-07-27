@@ -1,4 +1,4 @@
-class AppConfig {
+class ApiConfig {
   // API Configuration
   static const String bffBaseUrl = 'http://localhost:3000/api/v1';
   static const String fleetbaseApiUrl = 'http://localhost:8000/api/v1';
@@ -8,7 +8,7 @@ class AppConfig {
   static const int locationUpdateInterval = 10;
 
   // Location Services
-  static const double minLocationAccuracy = 10.0; // meters
+  static const double locationDistanceThreshold = 10.0; // meters
   static const int maxLocationAge = 60000; // milliseconds
 
   // Notification Configuration
