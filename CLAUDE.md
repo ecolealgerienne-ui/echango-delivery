@@ -31,7 +31,19 @@ Rien de déployé en réel pour l'instant. Étape en cours : déploiement Fleetb
 
 1. **Granularité des permissions à l'intérieur d'une Organization** — **✅ tranchée (26/07/2026)** : la console/API classique ne fournit aucune isolation en dessous du niveau Organization (confirmé par test manuel + code). MAIS le package officiel `fleetbase/customer-portal-api` fournit une vraie isolation par compte, **validée par test réel de bout en bout** (compte `Contact` rattaché à un `Vendor`, login, `GET orders` correctement scopé). Détail complet : `docs/specs_echango_delivery.md` §3.1.
 2. Un driver Navigator peut-il recevoir des courses de **plusieurs commerçants différents** au sein d'une même Organization (modèle pool partagé), ou le broadcast ad hoc est-il pensé pour une seule entreprise ? **Partiellement répondu** : le pipeline serveur du dispatch adhoc (broadcast géospatial par proximité) est validé de bout en bout par test réel (26/07/2026, `docs/specs_echango_delivery.md` §3.2) ; l'assignation ciblée d'un driver précis à une commande est aussi confirmée possible. Reste à tester : la réception réelle par un driver, qui nécessite l'app Navigator installée (question #3 ci-dessous).
-3. Navigator est-il réellement adaptable (rebrand, configuration) pour servir d'app transporteur Echango ? **Décision de principe prise (27/07/2026) : on reste sur Navigator**, pas de custom — reste seulement à confirmer l'adaptabilité réelle (rebrand, config) par un test d'installation, jamais fait en pratique.
+3. Navigator est-il réellement adaptable (rebrand, configuration) pour servir d'app transporteur Echango ? **❌ Révision de décision (27/07/2026)** : test d'installation et compilation mené côté utilisateur (Windows, Android). Obstacles sérieux identifiés et confirmés par recherche GitHub :
+   - **Erreurs de codegen systémiques** : `react-native-camera-roll` incompatible avec React Native 0.86 (même sur branche "legacy" 0.76) — `UnionTypeAnnotation` non supportée par le générateur de code Fleetbase
+   - **Crash au startup même après build réussi** : Hermes engine error, documenté dans issue #101 du repo Navigator (aussi reproductible sur d'autres OS comme Arch Linux)
+   - **Documentation incomplète** : tokens Facebook/Transistor non mentionnés, mais requis pour fonctionner
+   - **Workarounds nécessaires** : patches manuels sur dependencies, upgrades forcées, configurations non documentées
+   - **Support/maintenance incertain** : 9 issues actives liées à build/compilation, pas de pattern clair de fermeture
+   
+   **Conclusion** : Navigator a des frictions d'installation trop sérieuses pour être un MVP fiable sans fork/patching massif. Coût de maintenance à long terme élevé et non maîtrisé.
+   
+   **Prochaines étapes** : 
+   - **Option A (recommandée)** : construire une app transporteur custom en **Flutter pur** (cohérent avec stack Echango Order, contrôle complet, maintenance claire)
+   - **Option B** : forker + patcher Navigator (maintenance plus lourde, dépendance à upstream instable)
+   - **Option C** : utiliser console Fleetbase pour les transporteurs (rejeté avant, trop complexe)
 
 ## Licence — position actuelle (à rouvrir avant l'ouverture B2B réelle)
 
