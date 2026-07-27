@@ -48,11 +48,11 @@ ThemeData buildAppTheme() {
       labelStyle: const TextStyle(color: Colors.black),
       side: const BorderSide(color: Color(0xFFBDBDBD)),
     ),
-    tabBarTheme: TabBarThemeData(
-      labelColor: primaryColor,
+    tabBarTheme: const TabBarThemeData(
+      labelColor: Color(0xFF2196F3),
       unselectedLabelColor: Colors.grey,
-      indicator: const UnderlineTabIndicator(
-        borderSide: BorderSide(color: primaryColor, width: 2),
+      indicator: UnderlineTabIndicator(
+        borderSide: BorderSide(color: Color(0xFF2196F3), width: 2),
       ),
     ),
     fontFamily: 'Roboto',

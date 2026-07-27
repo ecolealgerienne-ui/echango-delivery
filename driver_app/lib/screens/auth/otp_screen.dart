@@ -142,28 +142,26 @@ class _OtpScreenState extends State<OtpScreen> {
     );
   }
 
-  Future<void> _handleOtpVerification(
+  void _handleOtpVerification(
     BuildContext context,
     AuthState authState,
-  ) async {
+  ) {
     final otp = _otpControllers.map((c) => c.text).join();
 
     if (otp.length < 6) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a valid OTP')),
       );
       return;
     }
 
-    final success = await authState.verifyOtp(
+    authState.verifyOtp(
       phone: widget.phone,
       otp: otp,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      context.go('/dashboard');
-    }
+    ).then((success) {
+      if (mounted && success) {
+        context.go('/dashboard');
+      }
+    });
   }
 }
