@@ -11,57 +11,32 @@ export class FlotteService {
     private fleetbaseClient: FleetbaseApiClient,
   ) {}
 
-  /**
-   * Get fleet's orders (filtered by facilitator_uuid)
-   * TODO: Implement pagination, filtering by status
-   */
-  async getOrders(fleetId: string, facilitatorUuid: string) {
-    this.logger.log(`Fetching orders for fleet ${fleetId}`);
-    // TODO: Implement
+  async getOrders(_fleetId: string, _facilitatorUuid: string) {
+    // TODO: Implement pagination, filtering by status
     return [];
   }
 
-  /**
-   * Get order detail for fleet
-   */
-  async getOrderDetail(fleetId: string, facilitatorUuid: string, orderId: string) {
-    this.logger.log(`Fetching order ${orderId} for fleet ${fleetId}`);
+  async getOrderDetail(_fleetId: string, _facilitatorUuid: string, _orderId: string) {
     // TODO: Implement
     return null;
   }
 
-  /**
-   * Get drivers for fleet
-   */
-  async getDrivers(fleetId: string, fleetUuid: string) {
-    this.logger.log(`Fetching drivers for fleet ${fleetId}`);
+  async getDrivers(_fleetId: string, _fleetUuid: string) {
     // TODO: Implement
     return [];
   }
 
-  /**
-   * Get driver positions in bulk
-   */
-  async getDriverPositions(fleetId: string, driverIds: string[]) {
-    this.logger.log(`Fetching positions for ${driverIds.length} drivers`);
+  async getDriverPositions(_fleetId: string, _driverIds: string[]) {
     // TODO: Implement
     return [];
   }
 
-  /**
-   * Add driver to fleet
-   */
-  async addDriver(fleetId: string, fleetUuid: string, driverData: any) {
-    this.logger.log(`Adding driver to fleet ${fleetId}`);
+  async addDriver(_fleetId: string, _fleetUuid: string, _driverData: any) {
     // TODO: Implement
     return null;
   }
 
-  /**
-   * Assign driver to order
-   */
-  async assignDriver(fleetId: string, facilitatorUuid: string, orderId: string, driverId: string) {
-    this.logger.log(`Assigning driver ${driverId} to order ${orderId}`);
+  async assignDriver(_fleetId: string, _facilitatorUuid: string, _orderId: string, _driverId: string) {
     // TODO: Implement
     return null;
   }
