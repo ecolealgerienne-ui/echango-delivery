@@ -8,11 +8,13 @@ export class MerchantRegisterDto {
   @MinLength(8)
   password: string;
 
+  @IsOptional()
   @IsString()
-  firstName: string;
+  firstName?: string;
 
+  @IsOptional()
   @IsString()
-  lastName: string;
+  lastName?: string;
 
   @IsString()
   businessName: string;
