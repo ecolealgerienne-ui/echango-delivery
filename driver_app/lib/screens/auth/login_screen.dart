@@ -159,9 +159,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           );
                           return;
                         }
+                        final router = GoRouter.of(context);
                         authState.loginWithEmail(email: email, password: password).then((success) {
                           if (mounted && success) {
-                            context.go('/dashboard');
+                            router.go('/dashboard');
                           }
                         });
                       },
@@ -239,9 +240,10 @@ class _LoginScreenState extends State<LoginScreen> {
                           );
                           return;
                         }
+                        final router = GoRouter.of(context);
                         authState.loginWithPhone(phone: phone).then((success) {
                           if (mounted && success) {
-                            context.push(
+                            router.push(
                               '/login/otp?phone=${Uri.encodeComponent(phone)}',
                             );
                           }

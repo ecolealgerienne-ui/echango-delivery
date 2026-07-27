@@ -112,9 +112,10 @@ class _OtpScreenState extends State<OtpScreen> {
                             );
                             return;
                           }
+                          final router = GoRouter.of(context);
                           authState.verifyOtp(phone: widget.phone, otp: otp).then((success) {
                             if (mounted && success) {
-                              context.go('/dashboard');
+                              router.go('/dashboard');
                             }
                           });
                         },
