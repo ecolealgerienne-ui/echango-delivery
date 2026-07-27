@@ -4,11 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/otp_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
-import '../screens/dashboard/orders_list_screen.dart';
 import '../screens/dashboard/order_detail_screen.dart';
 import '../screens/dashboard/delivery_failure_screen.dart';
-import '../screens/dashboard/map_screen.dart';
-import '../screens/dashboard/profile_screen.dart';
 import '../screens/splash_screen.dart';
 import '../state/auth_state.dart';
 
@@ -69,10 +66,6 @@ GoRouter buildAppRouter(AuthState authState) {
         builder: (context, state) => const DashboardScreen(),
         routes: [
           GoRoute(
-            path: 'orders',
-            builder: (context, state) => const OrdersListScreen(),
-          ),
-          GoRoute(
             path: 'orders/:id',
             builder: (context, state) {
               final orderId = state.pathParameters['id'] ?? '';
@@ -87,14 +80,6 @@ GoRouter buildAppRouter(AuthState authState) {
                 },
               ),
             ],
-          ),
-          GoRoute(
-            path: 'map',
-            builder: (context, state) => const MapScreen(),
-          ),
-          GoRoute(
-            path: 'profile',
-            builder: (context, state) => const ProfileScreen(),
           ),
         ],
       ),
