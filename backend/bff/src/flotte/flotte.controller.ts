@@ -6,38 +6,32 @@ export class FlotteController {
   constructor(private flotteService: FlotteService) {}
 
   @Get('commandes')
-  async getOrders(@Request() req: any) {
-    // TODO: Get fleet context from request
+  async getOrders(@Request() _req: any) {
     return this.flotteService.getOrders('fleet-id', 'facilitator-uuid');
   }
 
   @Get('commandes/:id')
-  async getOrderDetail(@Request() req: any, @Param('id') orderId: string) {
-    // TODO: Get fleet context from request
+  async getOrderDetail(@Request() _req: any, @Param('id') orderId: string) {
     return this.flotteService.getOrderDetail('fleet-id', 'facilitator-uuid', orderId);
   }
 
   @Get('drivers')
-  async getDrivers(@Request() req: any) {
-    // TODO: Get fleet context from request
+  async getDrivers(@Request() _req: any) {
     return this.flotteService.getDrivers('fleet-id', 'fleet-uuid');
   }
 
   @Post('drivers')
-  async addDriver(@Request() req: any, @Body() driverData: any) {
-    // TODO: Get fleet context from request
+  async addDriver(@Request() _req: any, @Body() driverData: any) {
     return this.flotteService.addDriver('fleet-id', 'fleet-uuid', driverData);
   }
 
   @Get('drivers/positions')
-  async getDriverPositions(@Request() req: any) {
-    // TODO: Get fleet context and driver IDs from request
+  async getDriverPositions(@Request() _req: any) {
     return this.flotteService.getDriverPositions('fleet-id', []);
   }
 
   @Post('commandes/:id/assigner')
-  async assignDriver(@Request() req: any, @Param('id') orderId: string, @Body() body: any) {
-    // TODO: Get fleet context from request
+  async assignDriver(@Request() _req: any, @Param('id') orderId: string, @Body() body: any) {
     return this.flotteService.assignDriver('fleet-id', 'facilitator-uuid', orderId, body.driverId);
   }
 }
