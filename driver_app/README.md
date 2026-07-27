@@ -24,7 +24,7 @@ flutter pub get
    - Android: Add `google-services.json` to `android/app`
 
 3. Configure API endpoint:
-   - Update `lib/config/app_config.dart` with your BFF base URL
+   - Update `lib/config/api_config.dart` with your BFF base URL
 
 ### Running the App
 
@@ -44,29 +44,37 @@ flutter build ipa     # iOS
 ```
 lib/
 ├── main.dart                 # App entry point
-├── config/                   # Configuration files
-│   ├── app_config.dart
-│   └── firebase_options.dart
+├── config/                   # Configuration
+│   ├── api_config.dart       # API endpoints & constants
+│   └── firebase_options.dart # Firebase configuration
+├── errors/                   # Error handling
+│   └── app_error.dart        # Centralized error codes
 ├── models/                   # Data models
-│   └── order.dart
+│   └── order.dart            # Order, Place, DeliveryFailure
 ├── services/                 # Business logic
-│   ├── bff_client.dart
-│   ├── auth_service.dart
-│   ├── notification_service.dart
-│   └── location_service.dart
-├── providers/                # State management (Provider)
-│   ├── auth_provider.dart
-│   └── order_provider.dart
+│   ├── bff_api_client.dart   # HTTP client for BFF
+│   ├── notification_service.dart  # Firebase Cloud Messaging
+│   └── location_service.dart # Background location tracking
+├── state/                    # State management (ChangeNotifier)
+│   ├── auth_state.dart       # Authentication state
+│   └── order_state.dart      # Order management state
+├── navigation/               # Navigation
+│   └── app_router.dart       # GoRouter configuration
+├── theme/                    # UI theming
+│   └── app_theme.dart        # Material Design 3 theme
+├── utils/                    # Utilities
+│   └── logger.dart           # Simple logging
+├── validation/               # Form validation
+│   └── validators.dart       # Input validators
 └── screens/                  # UI screens
     ├── splash_screen.dart
-    ├── login_screen.dart
-    ├── otp_screen.dart
-    ├── dashboard_screen.dart
-    ├── orders_list_screen.dart
-    ├── order_detail_screen.dart
-    ├── delivery_failure_screen.dart
-    ├── map_screen.dart
-    └── profile_screen.dart
+    ├── auth/
+    │   ├── login_screen.dart
+    │   └── otp_screen.dart
+    └── dashboard/
+        ├── dashboard_screen.dart     # Tabbed main screen
+        ├── order_detail_screen.dart
+        └── delivery_failure_screen.dart
 ```
 
 ## Features
@@ -90,27 +98,44 @@ lib/
 
 ## Architecture
 
-### Authentication Flow
-- Email/Password → BFF `/auth/login` → access token
-- Phone OTP → BFF `/auth/login-phone` → OTP code → `/auth/verify-otp` → access token
+### Authentication & Session Management
+- **Email/Password Flow**: BFF `/auth/login` → access token → stored securely
+- **Phone OTP Flow**: BFF `/auth/login-phone` → OTP → `/auth/verify-otp` → access token
+- **Session Restoration**: Automatic token restoration on app launch
+- **Inactivity Timeout**: 24-hour session expiry with automatic re-authentication prompt
+- **Secure Storage**: Tokens stored in device secure storage (iOS Keychain, Android Keystore)
+
+### State Management
+- **AuthState**: Manages session status and authentication
+- **OrderState**: Manages order list and operations
+- **Optimistic Updates**: Local state updated immediately for better UX
 
 ### Real-time Updates
-- Firebase Cloud Messaging for push notifications
-- WebSocket support for future real-time features
-- Device registration with driver ID topics
+- **Firebase Cloud Messaging**: Push notifications for new orders
+- **Device Registration**: Automatic subscription to driver-specific topics (`echango_driver_{driverId}`)
 
 ### Location Services
-- Geolocator package for background location tracking
-- flutter_foreground_task for persistent tracking
-- Automatic location updates to BFF every 10 meters or 10 seconds
+- **Background Tracking**: Continuous location updates with `geolocator`
+- **Foreground Task**: `flutter_foreground_task` maintains tracking when app is backgrounded
+- **Update Frequency**: 10 meters distance or 10 second interval (configurable)
+- **API Sync**: Automatic updates to BFF location endpoint
 
 ## Configuration
 
-Update these files before deployment:
+### Before Running
 
 1. **Firebase Setup** (`lib/config/firebase_options.dart`)
-2. **API Endpoints** (`lib/config/app_config.dart`)
-3. **App Info** (pubspec.yaml)
+   - Add Firebase project configuration
+   - iOS: Add `GoogleService-Info.plist`
+   - Android: Add `google-services.json`
+
+2. **API Endpoints** (`lib/config/api_config.dart`)
+   - Set BFF base URL (default: `http://localhost:3000/api/v1`)
+   - Adjust location distance threshold (default: 10.0 meters)
+   - Configure API timeout (default: 30 seconds)
+
+3. **App Version** (pubspec.yaml)
+   - Update version number for releases
 
 ## Testing
 
@@ -121,13 +146,25 @@ flutter test
 
 ## Dependencies
 
-- Provider: State management
-- Dio: HTTP client
-- Firebase Core & Messaging: Push notifications
-- Geolocator: Location services
-- Google Maps Flutter: Map integration
-- Shared Preferences: Local storage
-- SQLite: Local database
+### Core
+- **provider**: State management (ChangeNotifier)
+- **go_router**: Type-safe navigation with redirect-based auth flow
+- **http**: HTTP client for REST API calls
+- **flutter_secure_storage**: Secure token storage
+
+### Services & Integrations
+- **firebase_core** & **firebase_messaging**: Push notifications via FCM
+- **geolocator** & **flutter_foreground_task**: Background location tracking
+- **permission_handler**: Runtime permissions for location and notifications
+
+### Storage
+- **shared_preferences**: Local key-value storage
+- **sqflite**: Local SQLite database
+
+### UI
+- **google_maps_flutter**: Map integration
+- **cupertino_icons**: iOS-style icons
+- **equatable**: Value equality for models
 
 See `pubspec.yaml` for complete dependency list.
 
