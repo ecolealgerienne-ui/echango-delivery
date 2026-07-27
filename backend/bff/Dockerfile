@@ -5,7 +5,7 @@ WORKDIR /build
 
 # Install dependencies
 COPY package*.json ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Generate Prisma client
 COPY prisma ./prisma
@@ -25,7 +25,7 @@ RUN apk add --no-cache dumb-init
 
 # Install production dependencies
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --omit=dev --legacy-peer-deps
 
 # Copy Prisma files
 COPY prisma ./prisma
