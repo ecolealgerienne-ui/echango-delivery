@@ -5,7 +5,7 @@ WORKDIR /build
 
 # Install dependencies
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 # Generate Prisma client
 COPY prisma ./prisma
@@ -25,7 +25,7 @@ RUN apk add --no-cache dumb-init
 
 # Install production dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --production
 
 # Copy Prisma files
 COPY prisma ./prisma
