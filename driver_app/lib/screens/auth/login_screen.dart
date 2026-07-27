@@ -150,7 +150,21 @@ class _LoginScreenState extends State<LoginScreen> {
               return ElevatedButton(
                 onPressed: authState.isLoading
                     ? null
-                    : () => _handleEmailLogin(context, authState),
+                    : () {
+                        final email = _emailController.text;
+                        final password = _passwordController.text;
+                        if (email.isEmpty || password.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please fill in all fields')),
+                          );
+                          return;
+                        }
+                        authState.loginWithEmail(email: email, password: password).then((success) {
+                          if (mounted && success) {
+                            context.go('/dashboard');
+                          }
+                        });
+                      },
                 child: authState.isLoading
                     ? const SizedBox(
                         height: 20,
@@ -217,7 +231,22 @@ class _LoginScreenState extends State<LoginScreen> {
               return ElevatedButton(
                 onPressed: authState.isLoading
                     ? null
-                    : () => _handlePhoneLogin(context, authState),
+                    : () {
+                        final phone = _phoneController.text;
+                        if (phone.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please enter a phone number')),
+                          );
+                          return;
+                        }
+                        authState.loginWithPhone(phone: phone).then((success) {
+                          if (mounted && success) {
+                            context.push(
+                              '/login/otp?phone=${Uri.encodeComponent(phone)}',
+                            );
+                          }
+                        });
+                      },
                 child: authState.isLoading
                     ? const SizedBox(
                         height: 20,
@@ -247,49 +276,4 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  void _handleEmailLogin(
-    BuildContext context,
-    AuthState authState,
-  ) {
-    final email = _emailController.text;
-    final password = _passwordController.text;
-
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
-      );
-      return;
-    }
-
-    authState.loginWithEmail(
-      email: email,
-      password: password,
-    ).then((success) {
-      if (mounted && success) {
-        context.go('/dashboard');
-      }
-    });
-  }
-
-  void _handlePhoneLogin(
-    BuildContext context,
-    AuthState authState,
-  ) {
-    final phone = _phoneController.text;
-
-    if (phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a phone number')),
-      );
-      return;
-    }
-
-    authState.loginWithPhone(phone: phone).then((success) {
-      if (mounted && success) {
-        context.push(
-          '/login/otp?phone=${Uri.encodeComponent(phone)}',
-        );
-      }
-    });
-  }
 }

@@ -104,7 +104,20 @@ class _OtpScreenState extends State<OtpScreen> {
                 return ElevatedButton(
                   onPressed: authState.isLoading
                       ? null
-                      : () => _handleOtpVerification(context, authState),
+                      : () {
+                          final otp = _otpControllers.map((c) => c.text).join();
+                          if (otp.length < 6) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Please enter a valid OTP')),
+                            );
+                            return;
+                          }
+                          authState.verifyOtp(phone: widget.phone, otp: otp).then((success) {
+                            if (mounted && success) {
+                              context.go('/dashboard');
+                            }
+                          });
+                        },
                   child: authState.isLoading
                       ? const SizedBox(
                           height: 20,
@@ -142,26 +155,4 @@ class _OtpScreenState extends State<OtpScreen> {
     );
   }
 
-  void _handleOtpVerification(
-    BuildContext context,
-    AuthState authState,
-  ) {
-    final otp = _otpControllers.map((c) => c.text).join();
-
-    if (otp.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid OTP')),
-      );
-      return;
-    }
-
-    authState.verifyOtp(
-      phone: widget.phone,
-      otp: otp,
-    ).then((success) {
-      if (mounted && success) {
-        context.go('/dashboard');
-      }
-    });
-  }
 }
