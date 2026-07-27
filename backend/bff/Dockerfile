@@ -1,22 +1,36 @@
-# Build stage
+# Development stage: full deps (incl. @nestjs/cli) + live reload via docker-compose volume mounts
+FROM node:20-alpine AS development
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --legacy-peer-deps
+
+COPY prisma ./prisma
+RUN npx prisma generate
+
+COPY . .
+
+EXPOSE 3001
+
+CMD ["npm", "run", "start:dev"]
+
+# Build stage: compiles TypeScript for production image
 FROM node:20-alpine AS builder
 
 WORKDIR /build
 
-# Install dependencies
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
-# Generate Prisma client
 COPY prisma ./prisma
 RUN npx prisma generate
 
-# Copy source and build
 COPY . .
 RUN npm run build
 
-# Runtime stage
-FROM node:20-alpine
+# Production runtime stage: prod deps only, no dev tooling
+FROM node:20-alpine AS production
 
 WORKDIR /app
 
@@ -29,6 +43,7 @@ RUN npm install --omit=dev --legacy-peer-deps
 
 # Copy Prisma files
 COPY prisma ./prisma
+COPY --from=builder /build/node_modules/.prisma ./node_modules/.prisma
 
 # Copy built application
 COPY --from=builder /build/dist ./dist
