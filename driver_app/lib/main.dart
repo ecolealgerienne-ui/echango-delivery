@@ -7,7 +7,7 @@ import 'config/api_config.dart';
 import 'config/firebase_options.dart';
 import 'navigation/app_router.dart';
 import 'services/bff_api_client.dart';
-import 'services/notification_service.dart';
+import 'services/notification_service.dart' show NotificationService;
 import 'state/auth_state.dart';
 import 'state/order_state.dart';
 import 'theme/app_theme.dart';
@@ -57,14 +57,12 @@ class EchangoDriverApp extends StatefulWidget {
 class _EchangoDriverAppState extends State<EchangoDriverApp>
     with WidgetsBindingObserver {
   late final OrderState _orderState;
-  late final NotificationService _notificationService;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _orderState = OrderState(apiClient: widget.apiClient);
-    _notificationService = NotificationService();
   }
 
   @override

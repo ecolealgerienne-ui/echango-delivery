@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 /// Thème Echango Delivery — couleurs, typographie, et styles cohérents.
 ThemeData buildAppTheme() {
   const primaryColor = Color(0xFF2196F3);
-  const secondaryColor = Color(0xFF1976D2);
-  const accentColor = Color(0xFFFFC107);
 
   return ThemeData(
     useMaterial3: true,
@@ -50,10 +48,10 @@ ThemeData buildAppTheme() {
       labelStyle: const TextStyle(color: Colors.black),
       side: BorderSide(color: Colors.grey[300]!),
     ),
-    tabBarTheme: const TabBarTheme(
+    tabBarTheme: TabBarThemeData(
       labelColor: primaryColor,
       unselectedLabelColor: Colors.grey,
-      indicator: UnderlineTabIndicator(
+      indicator: const UnderlineTabIndicator(
         borderSide: BorderSide(color: primaryColor, width: 2),
       ),
     ),

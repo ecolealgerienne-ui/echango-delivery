@@ -19,9 +19,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     // Charge les commandes au démarrage du dashboard
-    Future.microtask(
-      () => context.read<OrderState>().loadOrders(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<OrderState>().loadOrders();
+      }
+    });
   }
 
   @override

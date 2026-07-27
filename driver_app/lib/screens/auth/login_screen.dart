@@ -263,7 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
       password: _passwordController.text,
     );
 
-    if (success && mounted) {
+    if (!mounted) return;
+    if (success) {
       context.go('/dashboard');
     }
   }
@@ -283,7 +284,8 @@ class _LoginScreenState extends State<LoginScreen> {
       phone: _phoneController.text,
     );
 
-    if (success && mounted) {
+    if (!mounted) return;
+    if (success) {
       context.push(
         '/login/otp?phone=${Uri.encodeComponent(_phoneController.text)}',
       );

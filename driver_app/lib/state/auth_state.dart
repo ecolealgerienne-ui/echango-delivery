@@ -34,7 +34,7 @@ class AuthState extends ChangeNotifier {
     required BffApiClient apiClient,
   })  : _prefs = prefs,
         _apiClient = apiClient,
-        _status = _statusFromString(_prefs.getString(_statusPrefsKey));
+        _status = _statusFromString(prefs.getString(_statusPrefsKey));
 
   SessionStatus get status => _status;
   String? get driverId => _driverId;

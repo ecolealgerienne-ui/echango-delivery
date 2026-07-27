@@ -160,7 +160,8 @@ class _OtpScreenState extends State<OtpScreen> {
       otp: otp,
     );
 
-    if (success && mounted) {
+    if (!mounted) return;
+    if (success) {
       context.go('/dashboard');
     }
   }

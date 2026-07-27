@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-import '../config/api_config.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 

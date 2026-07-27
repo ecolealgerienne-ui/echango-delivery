@@ -11,10 +11,12 @@ class OrderDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        context.read<OrderState>().clearSelection();
-        return true;
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          context.read<OrderState>().clearSelection();
+        }
       },
       child: Scaffold(
         appBar: AppBar(

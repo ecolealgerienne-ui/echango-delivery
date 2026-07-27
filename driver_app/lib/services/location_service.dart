@@ -51,8 +51,10 @@ class LocationService {
       if (!hasPermission) return null;
 
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
-        timeLimit: const Duration(seconds: 10),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 10),
+        ),
       );
 
       AppLogger.info('LocationService', 'Current position: ${position.latitude}, ${position.longitude}');
@@ -77,9 +79,9 @@ class LocationService {
       AppLogger.info('LocationService', 'Starting background location tracking');
 
       _positionStream = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
+        locationSettings: LocationSettings(
           accuracy: LocationAccuracy.best,
-          distanceFilter: ApiConfig.locationDistanceThreshold,
+          distanceFilter: ApiConfig.locationDistanceThreshold.toInt(),
         ),
       );
 
@@ -130,7 +132,7 @@ class LocationService {
     required double endLongitude,
   }) async {
     try {
-      final distance = await Geolocator.distanceBetween(
+      final distance = Geolocator.distanceBetween(
         startLatitude,
         startLongitude,
         endLatitude,
