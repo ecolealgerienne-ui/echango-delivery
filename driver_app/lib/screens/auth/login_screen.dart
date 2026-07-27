@@ -251,7 +251,11 @@ class _LoginScreenState extends State<LoginScreen> {
     BuildContext context,
     AuthState authState,
   ) async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+    final email = _emailController.text;
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all fields')),
       );
@@ -259,8 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
     }
 
     final success = await authState.loginWithEmail(
-      email: _emailController.text,
-      password: _passwordController.text,
+      email: email,
+      password: password,
     );
 
     if (!mounted) return;
@@ -273,21 +277,22 @@ class _LoginScreenState extends State<LoginScreen> {
     BuildContext context,
     AuthState authState,
   ) async {
-    if (_phoneController.text.isEmpty) {
+    final phone = _phoneController.text;
+
+    if (phone.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a phone number')),
       );
       return;
     }
 
-    final success = await authState.loginWithPhone(
-      phone: _phoneController.text,
-    );
+    final success = await authState.loginWithPhone(phone: phone);
 
     if (!mounted) return;
     if (success) {
       context.push(
-        '/login/otp?phone=${Uri.encodeComponent(_phoneController.text)}',
+        '/login/otp?phone=${Uri.encodeComponent(phone)}',
       );
     }
   }

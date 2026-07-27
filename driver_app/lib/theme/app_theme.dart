@@ -46,7 +46,7 @@ ThemeData buildAppTheme() {
       backgroundColor: Colors.grey[100],
       selectedColor: primaryColor,
       labelStyle: const TextStyle(color: Colors.black),
-      side: BorderSide(color: Colors.grey[300]!),
+      side: const BorderSide(color: Color(0xFFBDBDBD)),
     ),
     tabBarTheme: TabBarThemeData(
       labelColor: primaryColor,
