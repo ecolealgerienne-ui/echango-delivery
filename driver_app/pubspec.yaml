@@ -30,7 +30,7 @@ dependencies:
 
   # Location & Geolocation
   geolocator: ^13.0.1
-  flutter_foreground_task: ^5.0.0
+  flutter_foreground_task: ^7.0.0
 
   # Push Notifications
   firebase_core: ^2.24.0
