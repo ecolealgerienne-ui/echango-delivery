@@ -32,12 +32,13 @@ export class FleetbaseApiClient {
    * Call Fleetbase customer-portal-api endpoint
    * Used for merchant operations (read/write orders, etc.)
    */
-  async callCustomerPortal(method: string, path: string, data?: any, token?: string) {
+  async callCustomerPortal(method: string, path: string, data?: any, token?: string, params?: any) {
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
     return this.apiClient({
       method,
       url: `/customer-portal/int/v1${path}`,
       data,
+      params,
       headers,
     });
   }

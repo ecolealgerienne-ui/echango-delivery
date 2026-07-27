@@ -11,7 +11,7 @@ import { FleetbaseModule } from '../fleetbase/fleetbase.module';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'dev-secret',
-      signOptions: { expiresIn: process.env.JWT_EXPIRATION || '24h' },
+      signOptions: { expiresIn: parseInt(process.env.JWT_EXPIRATION || '86400', 10) },
     }),
     FleetbaseModule,
   ],
