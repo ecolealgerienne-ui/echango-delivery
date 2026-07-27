@@ -3,6 +3,8 @@ FROM node:20-alpine AS development
 
 WORKDIR /app
 
+RUN apk add --no-cache openssl
+
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
@@ -20,6 +22,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /build
 
+RUN apk add --no-cache openssl
+
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
@@ -34,8 +38,8 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Install dumb-init for proper signal handling + OpenSSL for Prisma engine
+RUN apk add --no-cache dumb-init openssl
 
 # Install production dependencies
 COPY package*.json ./
