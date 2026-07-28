@@ -447,4 +447,14 @@ L'hypothèse (a) est écartée au passage, et c'est utile : le scope compagnie e
 1. **Rejet d'un token valide mais du mauvais persona** — sautait faute de compte commerçant. Le script **forge** maintenant un JWT `type:"merchant"` signé avec le vrai `JWT_SECRET` : c'est exactement l'objet à éprouver (un jeton légitime, du mauvais type), sans créer de Vendor/Contact parasite côté Fleetbase comme le ferait une inscription commerçant. Un 401 est distingué d'un 403 et signalé comme **non concluant** (secret désynchronisé ⇒ le contrôle de type n'a jamais été atteint), plutôt que compté comme un succès.
 2. **Échec de livraison** — demandait une commande assignée, il n'y en avait aucune. Ajout d'un mode opt-in `WITH_MUTATIONS=1` qui réclame une commande adhoc disponible puis déroule accepter → échec. **Jamais par défaut** : accepter assigne *et* démarre la commande, un état que le script ne sait pas défaire.
 
-**Reste non testé** : `demarrer`/`activite` (même raison d'état), la forme exacte de l'objet `Activity`, et l'upload photo base64.
+**Résultats complémentaires en mode `WITH_MUTATIONS=1`** (même session) :
+
+| Contrôle | Résultat |
+|---|---|
+| Rejet d'un token valide non-driver | ✅ **403** — le contrôle de type fonctionne |
+| `POST .../accepter` (réclamer une adhoc) | ✅ commande `order_4ioz8zuyve` réclamée |
+| `POST .../echec` (échec de livraison) | ✅ |
+
+L'acceptation d'une commande adhoc est donc validée de bout en bout : le driver est assigné et la commande démarrée en un seul appel, conformément à §4.2 de la spec. À noter que le script a bien envoyé un **public_id** (`order_4ioz8zuyve`) — la correction §6.7 est confirmée en conditions réelles, pas seulement en lecture de code.
+
+**Reste non testé** : `demarrer` (redondant avec `accepter` pour une adhoc, mais utile pour une commande pré-assignée), `activite`, l'upload photo base64, et surtout **la forme exacte de l'objet `Activity`** — dernier inconnu bloquant pour l'écran détail de l'app. `scripts/inspect-order-activity.sh` a été écrit pour la relever sur une vraie commande assignée, en cherchant les clés candidates (`config`, `activities`, `next_activity`, `tracker_data`…) et, si aucune n'est présente, en orientant vers l'`OrderConfig` — auquel cas le BFF devra exposer ce flow à l'app, ce qu'aucun endpoint ne fait aujourd'hui.
