@@ -61,6 +61,26 @@ WSL2 a sa propre pile réseau. Il faut une redirection de port
 (`netsh interface portproxy`) et une règle de pare-feu. L'émulateur n'a pas ce
 problème — `10.0.2.2` passe par le loopback de Windows.
 
+**Éviter de retaper les identifiants.** Deux mécanismes :
+
+- La **session est conservée** entre deux lancements (jeton en stockage
+  sécurisé). Retaper ses identifiants à chaque fois signale une session
+  expirée — 24 h par défaut — ou une réinstallation complète de l'app.
+- En **debug uniquement**, un sélecteur de comptes de test permet de se
+  connecter en un tap et de basculer entre transporteurs, ce qui est utile
+  pour vérifier l'isolation des commandes. Les comptes sont fournis au build,
+  jamais versionnés :
+
+```bash
+flutter run --dart-define=DEV_ACCOUNTS='[{"label":"Transporteur 1","email":"driver-test-10000@echango.local","password":"motdepasse123"},{"label":"Transporteur 2","email":"driver-test-2@echango.local","password":"motdepasse123"}]'
+```
+
+Sans cette variable, aucun raccourci n'apparaît. En build release, le
+sélecteur est absent quoi qu'il arrive — un raccourci de connexion dans une
+app distribuée serait une faille, pas une commodité. Le dernier email utilisé
+est par ailleurs pré-rempli au lancement (l'email seul, jamais le mot de
+passe).
+
 **3. Autoriser le HTTP en clair** — Android bloque le trafic non-TLS depuis
 l'API 28. Sans ça, chaque appel échoue en `CLEARTEXT communication not
 permitted`. Pour du développement local uniquement, dans

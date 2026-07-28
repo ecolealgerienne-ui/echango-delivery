@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../config/dev_accounts.dart';
 import '../../state/auth_state.dart';
+
+/// Dernier email utilisé, pour le pré-remplir au lancement suivant. Seul
+/// l'email est conservé — jamais le mot de passe, qui n'a rien à faire dans
+/// des préférences en clair.
+const _lastEmailPrefsKey = 'echango_driver_last_email';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,6 +29,76 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _pageController = PageController();
+    _restoreLastEmail();
+  }
+
+  Future<void> _restoreLastEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    final last = prefs.getString(_lastEmailPrefsKey);
+    if (last != null && mounted && _emailController.text.isEmpty) {
+      setState(() => _emailController.text = last);
+    }
+  }
+
+  Future<void> _rememberEmail(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastEmailPrefsKey, email);
+  }
+
+  /// Connexion en un tap depuis un compte de développement.
+  Future<void> _loginAs(DevAccount account, AuthState authState) async {
+    _emailController.text = account.email;
+    _passwordController.text = account.password;
+
+    final router = GoRouter.of(context);
+    final success = await authState.loginWithEmail(
+      email: account.email,
+      password: account.password,
+    );
+    if (!mounted) return;
+    if (success) {
+      await _rememberEmail(account.email);
+      router.go('/dashboard');
+    }
+  }
+
+  /// Sélecteur de comptes de test. Vide (donc invisible) hors debug et si
+  /// DEV_ACCOUNTS n'est pas fourni au build — voir dev_accounts.dart.
+  Widget _buildDevAccountPicker(AuthState authState) {
+    final accounts = DevAccounts.accounts;
+    if (accounts.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            const Icon(Icons.science_outlined, size: 16, color: Colors.grey),
+            const SizedBox(width: 6),
+            Text(
+              'Comptes de test (debug)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: accounts
+              .map((a) => ActionChip(
+                    avatar: const Icon(Icons.person_outline, size: 18),
+                    label: Text(a.label),
+                    onPressed:
+                        authState.isLoading ? null : () => _loginAs(a, authState),
+                  ))
+              .toList(),
+        ),
+      ],
+    );
   }
 
   @override
@@ -162,6 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         final router = GoRouter.of(context);
                         authState.loginWithEmail(email: email, password: password).then((success) {
                           if (mounted && success) {
+                            _rememberEmail(email);
                             router.go('/dashboard');
                           }
                         });
@@ -190,6 +268,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: TextStyle(color: Colors.red.shade700),
               ),
             ),
+          _buildDevAccountPicker(context.watch<AuthState>()),
         ],
       ),
     );
