@@ -231,7 +231,8 @@ export class CommerçantService {
   }
 
   /**
-   * Get merchant's saved addresses from Fleetbase address-book
+   * Get merchant's saved addresses, stored as Fleetbase Places owned by
+   * their Vendor (owner_uuid), scoped server-side via GET /places?owner_uuid=...
    */
   async getAddresses(merchantId: string) {
     this.logger.log(`Fetching addresses for merchant ${merchantId}`);
@@ -239,24 +240,16 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
     try {
-      // Call Fleetbase to get address-book entries for this vendor
-      const response = await this.fleetbaseClient.callFleetOps('GET', '/addresses', undefined, {
-        vendor_uuid: merchant.fleetbaseVendorUuid,
-        limit: 100,
-      });
-
-      return {
-        data: response.data || [],
-      };
+      const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
+      return { data: response?.places || [] };
     } catch (error) {
       this.logger.error(`Failed to fetch addresses: ${error.message}`);
-      // Return empty list if Fleetbase call fails
       return { data: [] };
     }
   }
 
   /**
-   * Save a new address to merchant's address-book
+   * Save a new address as a Fleetbase Place owned by the merchant's Vendor.
    */
   async saveAddress(merchantId: string, dto: SaveAddressDto) {
     this.logger.log(`Saving address for merchant ${merchantId}`);
@@ -264,25 +257,21 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
     try {
-      // Create address in Fleetbase
-      const payload = {
-        vendor_uuid: merchant.fleetbaseVendorUuid,
+      const response = await this.fleetbaseClient.createOwnedPlace(merchant.fleetbaseVendorUuid, {
         name: dto.name,
-        address: dto.address,
         latitude: dto.latitude,
         longitude: dto.longitude,
-        contact_name: dto.contactName,
-        contact_phone: dto.contactPhone,
-        notes: dto.notes,
+        address: dto.address,
+        phone: dto.contactPhone,
         meta: {
           label: dto.label,
+          contactName: dto.contactName,
+          notes: dto.notes,
         },
-      };
+      });
 
-      const response = await this.fleetbaseClient.callFleetOps('POST', '/addresses', payload);
-
-      this.logger.log(`Address saved: ${response.data?.id}`);
-      return response.data;
+      this.logger.log(`Address saved: ${response?.place?.uuid}`);
+      return response.place;
     } catch (error) {
       this.logger.error(`Failed to save address: ${error.message}`);
       throw new BadRequestException('Failed to save address');

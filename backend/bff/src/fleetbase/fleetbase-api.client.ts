@@ -135,6 +135,50 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Create a Place owned by a merchant's Vendor, used as a saved address-book
+   * entry. Confirmed by direct testing that owner_uuid is a genuine filter
+   * column on GET /places (querying by an owner_uuid with no owned Places
+   * returns an empty list, not the full company-wide set) - this is what
+   * makes per-merchant address scoping safe.
+   */
+  async createOwnedPlace(
+    ownerUuid: string,
+    data: { name: string; latitude: number; longitude: number; address?: string; phone?: string; meta?: Record<string, any> },
+  ) {
+    try {
+      const response = await this.callFleetOps('POST', '/places', {
+        name: data.name,
+        location: {
+          type: 'Point',
+          coordinates: [data.longitude, data.latitude],
+        },
+        address: data.address,
+        phone: data.phone,
+        owner_uuid: ownerUuid,
+        owner_type: 'fleet-ops:vendor',
+        meta: data.meta,
+      });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Owned place creation failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * List Places owned by a given Vendor (a merchant's saved addresses).
+   */
+  async getOwnedPlaces(ownerUuid: string) {
+    try {
+      const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Get owned places failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Resolve the default 'transport' OrderConfig UUID, required by order creation.
    */
   async getDefaultOrderConfigUuid(): Promise<string> {
