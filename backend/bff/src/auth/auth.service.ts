@@ -284,23 +284,27 @@ export class AuthService {
    * is the only way to actually confirm the uuid is real.
    */
   async registerDriver(dto: DriverRegisterDto) {
-    const existingEmail = await this.prisma.driverAccount.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (existingEmail) {
-      throw new ConflictException('Email already registered');
-    }
-
-    const existingUuid = await this.prisma.driverAccount.findUnique({
-      where: { fleetbaseDriverUuid: dto.fleetbaseDriverUuid },
-    });
-
-    if (existingUuid) {
-      throw new ConflictException('This driver is already linked to an account');
-    }
-
     try {
+      // Ces deux vérifications sont volontairement DANS le try : hors du try,
+      // une erreur Prisma (table absente, client non régénéré) échappe au
+      // filtre d'exceptions — qui ne capture que les HttpException — et sort
+      // en 500 "Internal server error" sans le moindre indice exploitable.
+      const existingEmail = await this.prisma.driverAccount.findUnique({
+        where: { email: dto.email },
+      });
+
+      if (existingEmail) {
+        throw new ConflictException('Email already registered');
+      }
+
+      const existingUuid = await this.prisma.driverAccount.findUnique({
+        where: { fleetbaseDriverUuid: dto.fleetbaseDriverUuid },
+      });
+
+      if (existingUuid) {
+        throw new ConflictException('This driver is already linked to an account');
+      }
+
       const response = await this.fleetbaseClient.getAllDrivers();
       const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
       const fleetbaseDriver = (drivers || []).find((d: any) => d?.uuid === dto.fleetbaseDriverUuid);
@@ -341,6 +345,19 @@ export class AuthService {
         throw error;
       }
       this.logger.error(`Driver registration failed: ${error.message}`, error);
+
+      // Deux pannes d'installation très probables tant que la tranche driver
+      // n'a jamais tourné, et indiscernables l'une de l'autre dans un 500 nu.
+      // P2021 = table absente ; `driverAccount` undefined = client Prisma pas
+      // régénéré depuis l'ajout du modèle. Les deux se corrigent côté dev, pas
+      // côté appelant — autant le dire explicitement.
+      if (error?.code === 'P2021' || /driverAccount/.test(error?.message ?? '')) {
+        throw new BadRequestException(
+          'Table DriverAccount introuvable ou client Prisma obsolète. ' +
+            'Lancer : npm run prisma:generate && npm run prisma:migrate',
+        );
+      }
+
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       throw new BadRequestException(
         this.configService.get('NODE_ENV') === 'development'
