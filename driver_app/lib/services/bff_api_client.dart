@@ -26,6 +26,15 @@ class BffApiClient {
     _accessToken = await _storage.read(key: _tokenKey);
   }
 
+  /// Un jeton est-il présent en mémoire ?
+  ///
+  /// Ne dit rien de sa validité : le BFF signe des JWT expirables, et seul un
+  /// appel réel révèle une expiration (traitée en 401 → [AppError
+  /// .authSessionExpired] par [_parseResponse]). Sert uniquement à décider,
+  /// au démarrage, s'il vaut la peine de restaurer la session plutôt que
+  /// d'afficher l'écran de connexion.
+  bool isAuthenticated() => _accessToken != null && _accessToken!.isNotEmpty;
+
   /// Stocke le token de manière sécurisée après authentification.
   Future<void> _saveToken(String token) async {
     _accessToken = token;
