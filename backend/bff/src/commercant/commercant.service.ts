@@ -131,7 +131,7 @@ export class CommerçantService {
           merchantId,
           fleetbaseOrderId,
           status: 'pending',
-          trackingNumber: fleetbaseOrder?.tracking_number,
+          trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
       });
 
