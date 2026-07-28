@@ -258,7 +258,11 @@ Suite de session (reprise sur branche `claude/echango-delivery-bff-resume-zf24yd
 
 **✅ VALIDÉ PAR TEST RÉEL (28/07/2026)**, via `scripts/test-driver-auth.sh` contre l'instance Fleetbase locale de l'utilisateur : le miroir `UserDevice` fonctionne de bout en bout. Les deux déductions risquées se sont révélées justes — **payload plat** (supposé par analogie avec `/vendors`/`/places`, qui utilisent la même macro générique `fleetbaseRoutes()` que `/user-devices`, contrairement à `/orders`/`/drivers` dont les contrôleurs custom exigent une enveloppe, cf. §2.5/§2.12) et **clé de réponse** (`user_device`, supposée par le pattern §2.4). L'analogie « même macro de routage ⇒ même forme de payload » tient donc, ce qui est un repère réutilisable pour les prochaines ressources `fleetbaseRoutes()`.
 
-**Reste non vérifié** : si des appels répétés avec le même token font un upsert ou empilent des lignes **côté Fleetbase**. Le script vérifie désormais l'idempotence côté BFF (2 appels → même enregistrement `DriverDeviceToken`), mais le BFF pourrait très bien réutiliser son propre enregistrement tout en recréant un `UserDevice` à chaque fois. Ça compte en pratique : Firebase renvoie le même jeton à chaque démarrage de l'app, donc cette route est appelée souvent, et des doublons signifieraient des notifications en double. Commande de vérification rappelée en fin de script.
+**Reste non vérifié — et le test du 28/07 ne l'a PAS tranché, contrairement à ce qu'il en avait l'air** : le comptage `user_devices` après plusieurs appels renvoie bien `1`, mais ça ne prouve pas que Fleetbase fait un upsert. C'est un **garde côté BFF** qui produit ce résultat : `registerDriverDeviceToken()` teste `if (driver.fleetbaseUserUuid && !record.fleetbaseUserDeviceUuid)` — une fois le miroir posé, tout appel ultérieur avec le même jeton **saute entièrement l'appel Fleetbase**. Le comportement natif de la route sur jeton répété reste donc inconnu. Il faudrait, pour le savoir, appeler `POST /int/v1/user-devices` deux fois directement (hors BFF).
+
+En pratique le risque immédiat est couvert : le cas courant (Firebase renvoie le même jeton à chaque démarrage) ne crée pas de doublon, grâce à ce garde.
+
+**En revanche, ce test met au jour un vrai trou, lui non couvert** : quand Firebase **fait tourner** un jeton (réinstallation, effacement des données de l'app, restauration de sauvegarde), l'app enregistre un jeton neuf → nouvelle ligne `DriverDeviceToken` **et** nouveau `UserDevice` côté Fleetbase — mais **l'ancien `UserDevice` n'est jamais supprimé**. Or `Driver::routeNotificationForFcm()` renvoie *tous* les devices rattachés au `user_uuid` (§5.1) : Fleetbase continuera donc d'émettre vers des jetons morts indéfiniment, et les lignes mortes s'accumuleront. À traiter avec le module `transporteur` (piste : supprimer le `UserDevice` correspondant quand un jeton est remplacé, ou purger côté Fleetbase les devices du `user_uuid` avant d'en écrire un neuf). **Non corrigé à ce stade** — nécessite de connaître la route de suppression `user-devices`, non vérifiée.
 
 ### 5.2 Modèle de comptes driver — `DriverAccount`, provisioning manuel
 
@@ -311,3 +315,24 @@ Non exécuté dans le sandbox (ni Docker ni Fleetbase) — seules la syntaxe et 
 3. **`prisma generate` oublié** ⇒ `TypeError: Cannot read properties of undefined (reading 'findUnique')`, sorti en **500 nu**. Deux causes cumulées : le client Prisma n'avait jamais été régénéré depuis l'ajout des modèles (§5.4 — impossible dans le sandbox), et surtout les vérifications d'unicité de `registerDriver()` étaient placées **hors du `try`**, donc hors de toute gestion d'erreur. `HttpExceptionFilter` étant `@Catch(HttpException)`, une `TypeError` brute passait à travers sans rien d'exploitable. Corrigé : vérifications déplacées dans le `try`, et les deux pannes d'installation probables (P2021 table absente, client obsolète) mappées vers un message qui nomme les commandes à lancer.
 
 **Leçon de méthode** : le point 3 est le plus instructif. Placer une requête base hors du bloc de gestion d'erreur ne se voit pas tant que la base répond ; ça ne se paie qu'au premier démarrage à froid, exactement là où le diagnostic doit être le plus lisible. À vérifier par réflexe dans les endpoints du futur module `transporteur`.
+
+### 5.7 Tableau de suivi des tests — tranche auth driver (28/07/2026)
+
+Bilan de ce qui est **réellement prouvé par exécution**, par opposition à ce qui est seulement écrit ou déduit. Colonne « preuve » = comment on le sait, pour éviter de reclasser plus tard une déduction en test.
+
+| Élément | Statut | Preuve |
+|---|---|---|
+| `POST /auth/transporteur/register` | ✅ testé | `test-driver-auth.sh`, compte créé et lié |
+| Vérification de l'existence du Driver Fleetbase | ✅ testé | UUID bidon rejeté (contourne §2.13) |
+| `POST /auth/transporteur/login` | ✅ testé | JWT obtenu et réutilisé sur la requête suivante |
+| `POST /auth/transporteur/device-token` | ✅ testé | enregistrement créé côté BFF |
+| Miroir Fleetbase `UserDevice` | ✅ testé | ligne `user_devices` présente, uuid remonté |
+| Payload plat sur `POST /int/v1/user-devices` | ✅ testé | l'appel réussit → analogie `fleetbaseRoutes()` confirmée |
+| Clé de réponse `user_device` | ✅ testé | `fleetbaseUserDeviceUuid` renseigné en base |
+| Idempotence du rappel de jeton, **côté BFF** | ✅ testé | 2 appels → même `DriverDeviceToken` |
+| Upsert vs doublon, **côté Fleetbase** | ❌ **non testé** | le garde BFF saute l'appel, cf. §5.1 — `count=1` ne prouve rien |
+| Nettoyage d'un jeton **remplacé** (rotation Firebase) | ❌ **trou identifié** | non implémenté, §5.1 |
+| Réception réelle d'un push par un appareil | ❌ non testé | demande un vrai appareil + projet Firebase configuré |
+| Module `transporteur` métier | ❌ non écrit | bloquant pour tester l'app au-delà du login |
+
+**Ce que ça change pour la suite** : la couche d'identité driver (compte Echango ↔ `Driver` Fleetbase ↔ `UserDevice`) est solide et vérifiée, donc le module `transporteur` peut être construit dessus sans réserve. Les deux lignes rouges du milieu du tableau ne bloquent pas ce développement, mais doivent être traitées **avant** toute mise en service réelle : des jetons morts jamais purgés dégradent silencieusement le dispatch, sans erreur visible nulle part.
