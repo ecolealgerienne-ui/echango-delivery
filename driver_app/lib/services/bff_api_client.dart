@@ -59,6 +59,22 @@ class BffApiClient {
     return headers;
   }
 
+  /// Rend une erreur réseau diagnosticable depuis l'écran, sans avoir à
+  /// brancher un debugger. Les trois causes courantes sur un poste de dev ont
+  /// des symptômes distincts mais des messages Dart peu parlants.
+  String _networkErrorMessage(Object e) {
+    final raw = e.toString();
+    if (raw.contains('CLEARTEXT')) {
+      return 'HTTP en clair bloqué par Android. Ajouter '
+          'android:usesCleartextTraffic="true" au manifeste (dev uniquement).';
+    }
+    if (raw.contains('Connection refused') || raw.contains('Failed host lookup')) {
+      return 'BFF injoignable à $baseUrl. Sur émulateur utiliser 10.0.2.2, '
+          'sur téléphone l\'IP LAN de la machine — jamais localhost.';
+    }
+    return 'Erreur réseau : $raw';
+  }
+
   /// Traite les réponses HTTP et mappe les erreurs.
   dynamic _parseResponse(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -128,7 +144,11 @@ class BffApiClient {
       if (e is AppException) rethrow;
       throw AppException(
         code: AppError.networkError,
-        message: 'Network error',
+        // Le détail sous-jacent, pas un « Network error » nu : c'est presque
+        // toujours une adresse injoignable (localhost pointe sur l'appareil,
+        // pas sur la machine de dev) ou du HTTP en clair bloqué par Android.
+        // Sans ce texte, les trois causes sont indiscernables à l'écran.
+        message: _networkErrorMessage(e),
         originalError: e,
       );
     }
@@ -153,7 +173,11 @@ class BffApiClient {
       if (e is AppException) rethrow;
       throw AppException(
         code: AppError.networkError,
-        message: 'Network error',
+        // Le détail sous-jacent, pas un « Network error » nu : c'est presque
+        // toujours une adresse injoignable (localhost pointe sur l'appareil,
+        // pas sur la machine de dev) ou du HTTP en clair bloqué par Android.
+        // Sans ce texte, les trois causes sont indiscernables à l'écran.
+        message: _networkErrorMessage(e),
         originalError: e,
       );
     }
@@ -183,7 +207,11 @@ class BffApiClient {
       if (e is AppException) rethrow;
       throw AppException(
         code: AppError.networkError,
-        message: 'Network error',
+        // Le détail sous-jacent, pas un « Network error » nu : c'est presque
+        // toujours une adresse injoignable (localhost pointe sur l'appareil,
+        // pas sur la machine de dev) ou du HTTP en clair bloqué par Android.
+        // Sans ce texte, les trois causes sont indiscernables à l'écran.
+        message: _networkErrorMessage(e),
         originalError: e,
       );
     }
@@ -224,7 +252,11 @@ class BffApiClient {
       if (e is AppException) rethrow;
       throw AppException(
         code: AppError.networkError,
-        message: 'Network error',
+        // Le détail sous-jacent, pas un « Network error » nu : c'est presque
+        // toujours une adresse injoignable (localhost pointe sur l'appareil,
+        // pas sur la machine de dev) ou du HTTP en clair bloqué par Android.
+        // Sans ce texte, les trois causes sont indiscernables à l'écran.
+        message: _networkErrorMessage(e),
         originalError: e,
       );
     }
