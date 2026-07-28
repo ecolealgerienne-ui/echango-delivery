@@ -1,4 +1,5 @@
-import { IsString, IsNumber, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateOrderDto {
   @IsString()
@@ -66,8 +67,12 @@ export class ListOrdersQueryDto {
   status?: string; // 'pending', 'active', 'completed', 'failed', 'cancelled'
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   page?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   limit?: number;
 }
