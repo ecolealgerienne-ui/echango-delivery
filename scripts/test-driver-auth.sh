@@ -46,11 +46,15 @@ if [[ "$DRIVER_UUID" == driver_* ]]; then
   cat <<EOF
 ❌ "$DRIVER_UUID" est un public_id, pas un uuid.
 
-Le BFF compare sur le uuid (format 8-4-4-4-12, avec tirets). Récupérer le bon :
+Le BFF compare sur le uuid (format 8-4-4-4-12, avec tirets). Récupérer le bon
+en laissant Fleetbase interroger sa propre base — pas de mot de passe à
+manipuler (ceux du Postgres BFF ne marchent pas ici : autre base, autre
+conteneur) :
 
-  docker exec -it \$(docker ps --format '{{.Names}}' | grep -i 'database\|mysql' | head -1) \\
-    mysql -uroot -p fleetbase \\
-    -e "SELECT uuid, public_id, name FROM drivers WHERE public_id='$DRIVER_UUID';"
+  docker exec fleetbase-src-application-1 php artisan tinker \\
+    --execute="echo DB::table('drivers')->where('public_id','$DRIVER_UUID')->value('uuid');"
+
+Si le conteneur applicatif porte un autre nom : docker ps --format '{{.Names}}'
 EOF
   exit 1
 fi
