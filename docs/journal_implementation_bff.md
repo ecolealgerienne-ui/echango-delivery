@@ -619,3 +619,40 @@ Trois scripts au vert intégral. Ce qui est **prouvé par exécution réelle** :
 **Dette assumée à retirer un jour** : le contournement du bug amont §6.12 (bucket lu depuis la requête). Il doit sauter si Fleetbase corrige la ligne — sinon il masquera une configuration S3 réellement invalide.
 
 **Sur la méthode** : cette tranche a produit six corrections d'hypothèses fausses (§6.2, §6.7, §6.9, §6.14, §6.17, §6.18). Toutes venaient d'avoir accepté une description — nom de classe, résumé de méthode, message d'erreur, sortie de test — à la place du code ou de la donnée elle-même. Le taux de réussite du raisonnement à partir du code source est resté élevé ; c'est le raisonnement à partir de *ce qu'on dit du* code source qui a systématiquement échoué.
+
+---
+
+## 7. Alignement de l'app Flutter sur l'API vérifiée (28/07/2026)
+
+Le serveur étant validé (§6.19), revue du code Dart contre les formes réelles. `driver_app/` ayant été scaffoldé avant l'existence des endpoints (§5.5), le modèle de données était lui aussi écrit contre une API imaginée. **Aucune compilation possible dans le sandbox** (pas de toolchain Flutter) : ce qui suit est une revue de cohérence, pas une validation.
+
+### 7.1 `Order.fromJson` aurait planté au premier chargement
+
+Comparaison avec les clés réellement renvoyées (relevées au §6.9) :
+
+| Attendu par le modèle | Clé réelle |
+|---|---|
+| `facilitator_id` (**requis non-nul**) | `facilitator_uuid`, souvent absent |
+| `customer_id` | `customer_uuid` |
+| `driver_id` | `driver_assigned_uuid` |
+| `pickup_place` / `dropoff_place` | `payload.pickup` / `payload.dropoff` |
+| `payload.type` | `type`, à la racine |
+| `notes`, `distance`, `estimated_duration`, `proof_url` | n'existent pas |
+
+Le premier écart suffisait à faire échouer tout chargement de liste : `json['facilitator_id'] as String` sur une clé absente lève une `TypeError`, et une seule commande mal formée faisait tomber l'écran entier. Corrigé, et les désérialiseurs rendus tolérants par principe — une commande inattendue doit être ignorable, pas fatale.
+
+`Place.fromJson` avait le même défaut sur `location.coordinates` (déréférencement direct), plus un piège classique : Fleetbase renvoie du **GeoJSON**, donc `[longitude, latitude]` — ordre inverse de l'usage courant. Le scaffolding l'avait bien vu ; c'est conservé et désormais commenté.
+
+### 7.2 Prédicats de statut inopérants
+
+Le modèle testait `picked_up` et `cancelled` — statuts qui **n'existent pas** dans Fleetbase (les vrais : `created`, `dispatched`, `started`, `enroute`, `completed`, `canceled`, avec un seul « l »). Conséquence : `isInProgress` était toujours faux, donc aucune commande n'apparaissait jamais comme en cours, et les boutons d'action de l'écran détail ne s'affichaient pas.
+
+Statut volontairement laissé en `String` plutôt qu'en enum : la machine à états vient de l'`OrderConfig` côté serveur (§6.9), la figer côté client la ferait diverger au premier changement de configuration.
+
+### 7.3 Les raisons d'échec étaient rejetées par le serveur
+
+L'écran envoyait des libellés anglais (`'Recipient not available'`) comme valeur, alors que le BFF valide contre une liste fermée de codes (`client_absent`, `adresse_introuvable`, …). **Tout signalement d'échec aurait été rejeté en 400.**
+
+Les deux listes divergeaient aussi sur le fond : le scaffolding proposait « Traffic/delay » et « Vehicle issue » — des retards, pas des échecs de livraison — et omettait « accès impossible » présent dans la spec §4.3. Remplacé par un couple code/libellé aligné exactement sur le serveur.
+
+**Statut** : ces trois corrections viennent d'une revue de cohérence, pas d'une exécution. La compilation (`flutter analyze`) et le test réel restent à faire côté Windows.

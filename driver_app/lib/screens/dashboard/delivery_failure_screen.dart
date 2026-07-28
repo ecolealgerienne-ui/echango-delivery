@@ -17,20 +17,31 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
   late String _selectedReason;
   late TextEditingController _notesController;
 
-  static const List<String> _failureReasons = [
-    'Recipient not available',
-    'Address not found',
-    'Recipient refused',
-    'Item damaged',
-    'Traffic/delay',
-    'Vehicle issue',
-    'Other',
-  ];
+  /// Codes attendus par le BFF (DELIVERY_FAILURE_REASONS, liste fermée
+  /// validée côté serveur) associés à leur libellé affiché.
+  ///
+  /// ⚠️ La valeur envoyée doit être le CODE, pas le libellé : l'écran
+  /// envoyait auparavant des libellés anglais ('Recipient not available'),
+  /// que la validation serveur rejetait systématiquement en 400.
+  ///
+  /// La liste suit specs_app_transporteur.md §4.3 — délibérément courte et
+  /// spécifique à la livraison, et non les 9 catégories génériques de
+  /// Navigator. Deux entrées du scaffolding ont disparu ('Traffic/delay',
+  /// 'Vehicle issue') : ce sont des retards, pas des échecs de livraison.
+  /// Marquée « à valider avec l'équipe métier » dans la spec.
+  static const Map<String, String> _failureReasons = {
+    'client_absent': 'Client absent',
+    'adresse_introuvable': 'Adresse introuvable',
+    'colis_refuse': 'Client a refusé le colis',
+    'colis_endommage': 'Colis endommagé ou manquant',
+    'acces_impossible': 'Accès impossible (site fermé, zone inaccessible)',
+    'autre': 'Autre',
+  };
 
   @override
   void initState() {
     super.initState();
-    _selectedReason = _failureReasons.first;
+    _selectedReason = _failureReasons.keys.first;
     _notesController = TextEditingController();
   }
 
@@ -87,10 +98,10 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   value: _selectedReason,
                   isExpanded: true,
                   underline: const SizedBox.shrink(),
-                  items: _failureReasons.map((reason) {
+                  items: _failureReasons.entries.map((entry) {
                     return DropdownMenuItem(
-                      value: reason,
-                      child: Text(reason),
+                      value: entry.key,
+                      child: Text(entry.value),
                     );
                   }).toList(),
                   onChanged: (value) {
