@@ -200,10 +200,19 @@ export class FleetbaseApiClient {
    * Create a delivery Order. Fleetbase requires the entire payload nested
    * under a top-level 'order' key, with payload.pickup_uuid/dropoff_uuid
    * referencing pre-created Place records (or a payload.waypoints array).
+   *
+   * customer_uuid/customer_type (not a flat 'customer' string) are required:
+   * confirmed by live test (28/07/2026) that OrderController's
+   * normalizeCustomerType() only reads input['customer_uuid'] or
+   * input['customer']['uuid'] - a flat string 'customer' value is silently
+   * dropped and customer_uuid ends up null (see
+   * docs/journal_implementation_bff.md §2.10). facilitator_uuid/
+   * facilitator_type use the same direct-column pattern, confirmed working.
    */
   async createOrder(order: {
     order_config_uuid: string;
-    customer: string;
+    customer_uuid: string;
+    customer_type?: string;
     type?: string;
     payload: { pickup_uuid: string; dropoff_uuid: string };
     meta?: Record<string, any>;
@@ -351,20 +360,22 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Get driver positions.
-   * NOTE: endpoint shape NOT yet confirmed by source reading or live test -
-   * this is a placeholder assumption (`GET /driver-positions?driver_ids=...`).
-   * Verify against a running instance (route:list, or the `Position` model's
-   * controller) before relying on this in production.
+   * List ALL company Position records, unfiltered. Confirmed by reading
+   * PositionFilter.php (28/07/2026) that there is no `driver_uuid` (or any
+   * per-driver) query filter on this endpoint - it only supports a free-text
+   * `query` search, `createdAt`, and automatic company-wide scoping. `GET
+   * /int/v1/driver-positions` (previously assumed here) does not exist at
+   * all - confirmed 404 ("There is nothing to see here", the masked
+   * NotFoundHttpException pattern from docs/journal_implementation_bff.md
+   * §2.1). The real resource is the generic `/int/v1/positions` endpoint.
+   * Callers MUST filter the result client-side by `driver_uuid`.
    */
-  async getDriverPositions(driverIds: string[]) {
+  async getAllPositions() {
     try {
-      const response = await this.callFleetOps('GET', '/driver-positions', undefined, {
-        driver_ids: driverIds.join(','),
-      });
+      const response = await this.callFleetOps('GET', '/positions');
       return response.data;
     } catch (error) {
-      this.logger.error(`Get driver positions failed: ${error.message}`);
+      this.logger.error(`Get all positions failed: ${error.message}`);
       throw error;
     }
   }

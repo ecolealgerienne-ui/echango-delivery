@@ -113,11 +113,15 @@ export class FlotteService {
   }
 
   /**
-   * Get positions for this fleet's drivers only. Even if the caller passes
-   * driverIds belonging to other Vendors, they're dropped before the
-   * Fleetbase call and again from the response (defense in depth - the
-   * position endpoint itself is not yet confirmed by source reading or live
-   * test, see FleetbaseApiClient.getDriverPositions).
+   * Get positions for this fleet's drivers only.
+   *
+   * Fleetbase's /positions endpoint has no per-driver query filter at all
+   * (confirmed by reading PositionFilter.php, see
+   * docs/journal_implementation_bff.md §2.9) - only free-text `query` and
+   * `createdAt` are supported, plus automatic company-wide scoping. So we
+   * fetch every company Position and filter in memory, same pattern as
+   * orders/drivers: first by this fleet's owned driver UUIDs, then further
+   * by the caller's requested subset if any.
    */
   async getDriverPositions(fleetId: string, requestedDriverIds: string[]) {
     const fleet = await this.getFleetWithValidation(fleetId);
@@ -129,17 +133,22 @@ export class FlotteService {
       const targetIds =
         requestedDriverIds && requestedDriverIds.length > 0
           ? requestedDriverIds.filter((id) => ownedUuids.has(id))
-          : Array.from(ownedUuids) as string[];
+          : (Array.from(ownedUuids) as string[]);
 
       if (targetIds.length === 0) {
         return [];
       }
 
-      const response = await this.fleetbaseClient.getDriverPositions(targetIds);
+      const response = await this.fleetbaseClient.getAllPositions();
       const positions = response?.positions || response?.data || [];
+      const targetSet = new Set(targetIds);
 
+      // Field name (subject_uuid vs driver_uuid) is a best-effort guess: the
+      // company has zero Position rows in this dev instance, so there is no
+      // real record to check the shape against yet. Re-verify once a driver
+      // has actually sent a location ping.
       return (Array.isArray(positions) ? positions : []).filter((p: any) =>
-        ownedUuids.has(p?.driver_uuid || p?.driver),
+        targetSet.has(p?.subject_uuid || p?.driver_uuid),
       );
     } catch (error) {
       this.logger.error(`Failed to fetch driver positions: ${error.message}`);

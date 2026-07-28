@@ -153,7 +153,35 @@ Lecture de `CreateOrderRequest::rules()` (le fichier réel des règles de valida
 2. Filtrer **côté BFF, en mémoire**, en ne gardant que les enregistrements dont `facilitator_uuid`/`vendor_uuid` correspond exactement au `fleetbaseVendorUuid` du `FleetAccount` authentifié (comparaison stricte, jamais de filtre optimiste)
 3. Appliquer la même vérification en lecture unitaire (`getOrderDetail`) : après récupération par ID, vérifier l'appartenance avant de renvoyer quoi que ce soit (même pattern anti-IDOR que `commercant.service.ts` avec `merchantId`)
 
-**À reporter dans `docs/specs_bff.md` §5.2** (pas fait dans cette session — le document de scoping doit être corrigé pour ne plus présenter le filtrage serveur comme acquis).
+**Reporté dans `docs/specs_bff.md` §5.2** (fait le 28/07/2026 — le document de scoping ne présente plus le filtrage serveur comme acquis).
+
+**✅ Module `flotte` validé de bout en bout par test réel (28/07/2026)**, avec deux comptes de flotte distincts (`Fleet A`/`Fleet B`, chacun son propre Vendor au sein de la même Organization) pour prouver l'isolation, pas seulement la fonctionnalité :
+- `POST /vendors/{id}/assign-driver` (driver → vendor) : confirmé, `GET /flotte/drivers` renvoie strictement le driver du bon vendor pour chaque compte, jamais celui de l'autre.
+- `GET /flotte/commandes` : sur 2 commandes appartenant à Fleet A (`facilitator_uuid` posé manuellement, voir §2.10 sur la vraie méthode), Fleet A voit ses 2 commandes, Fleet B voit une liste vide — filtrage applicatif confirmé correct.
+- `GET /flotte/commandes/{id}` : Fleet A → `200`, Fleet B sur la même commande → `403` (anti-IDOR confirmé).
+- `POST /flotte/commandes/{id}/assigner` : Fleet A assigne son propre driver à sa propre commande → `201`, dispatch réel déclenché côté Fleetbase (`driver_assigned_uuid` posé, notification driver). Fleet B tente d'assigner son driver à la commande de Fleet A → `403`, rejeté avant même d'atteindre Fleetbase.
+
+### 2.9 `facilitator_uuid` sur `/orders` — fausse alerte de méthode, pas un bug Fleetbase
+
+Au cours de cette session, une variable shell (`$VENDOR_A_UUID`) censée porter l'UUID du Vendor de test s'est retrouvée vide (perdue entre deux commandes, jamais réellement exportée dans le terminal utilisateur — seulement affichée dans un bloc de commande). Plusieurs tentatives de créer/modifier une commande avec `facilitator_uuid` (ou `facilitator`) valant cette variable vide ont donc silencieusement échoué à chaque fois, ce qui a été interprété à tort comme un bug de persistance Fleetbase (colonne `$fillable`, mais jamais écrite en base, vérifié jusqu'au SQL brut avec `DB::table('orders')->update(...)` renvoyant 0 lignes modifiées).
+
+**Une fois la variable correctement réexportée avec la vraie valeur, `facilitator_uuid`/`facilitator_type` fonctionnent parfaitement dès le premier essai**, via `POST /orders` avec ces deux clés directement (les noms de colonnes `$fillable` du modèle `Order`, pas la clé virtuelle `facilitator` qui n'a pas de resolver dédié contrairement à `customer` — voir §2.10). Aucune anomalie Fleetbase réelle sur ce point.
+
+**Leçon de méthode explicitement notée** : avant de creuser une hypothèse de bug applicatif via lecture de source/DB, toujours vérifier l'état des variables d'environnement/shell utilisées dans le test qui a échoué (`echo "VAR=[$VAR]"`) — un simple test à vide aurait évité l'essentiel de cette investigation.
+
+### 2.10 Création de commande — `customer` doit être `customer_uuid`/`customer_type`, pas une chaîne plate
+
+Découverte pendant l'investigation ci-dessus (en lisant `OrderController::normalizeCustomerType()`) : cette méthode ne lit que `input['customer_uuid']` ou `input['customer']['uuid']` (objet imbriqué) — **jamais** une simple chaîne `input['customer']`. Or `commercant.service.ts`/`fleetbase-api.client.ts` envoyaient depuis le début `customer: merchant.fleetbaseVendorUuid` (chaîne plate), silencieusement ignorée par `normalizeCustomerType()` : validation passe (`ExistsInAny` sur `uuid`, qui matche bien), mais `customer_uuid` reste `null` en base sur **toutes** les commandes commerçant créées jusqu'ici, y compris la toute première commande de test de la session précédente — jamais vérifié jusqu'à aujourd'hui.
+
+**Fix** : envoyer directement `customer_uuid`/`customer_type` (les colonnes `$fillable` réelles du modèle `Order`, même pattern que `facilitator_uuid`/`facilitator_type` confirmé en §2.9) plutôt que la clé virtuelle `customer`. Corrigé dans `fleetbase-api.client.ts::createOrder()` et son appel dans `commercant.service.ts`. **Pas re-testé de bout en bout après le fix** (à faire : recréer une commande commerçant et vérifier `customer_uuid` non-null dans la réponse).
+
+### 2.11 `GET /driver-positions` n'existe pas — vraie ressource `/int/v1/positions`, sans filtre par driver
+
+`GET /driver-positions?driver_ids=...` (hypothèse non vérifiée posée en §"flotte") renvoie `{"errors":["There is nothing to see here."]}` — le même 404 masqué que §2.1, confirmant que la route n'existe pas du tout. La vraie ressource, trouvée via `route:list`, est le contrôleur générique `/int/v1/positions` (CRUD standard : `queryRecord`/`createRecord`/`findRecord`/`updateRecord`).
+
+Lecture de `PositionFilter.php` : **aucun filtre par `driver_uuid` n'existe** — seuls `query` (recherche texte libre) et `createdAt` sont supportés, en plus du scoping automatique par `company_uuid`. Un paramètre `driver_uuid` serait donc silencieusement ignoré, même pattern que §2.8.
+
+**Fix, dans `flotte.service.ts::getDriverPositions`** : `fetchAll` sur `/positions` (sans filtre de confiance) puis filtrage en mémoire par les UUID des drivers possédés par la flotte — même pattern anti-IDOR que pour `/orders`/`/drivers`. **Non vérifié de bout en bout** : la compagnie de test a 0 enregistrement `Position` (aucun driver n'a jamais envoyé de position GPS réelle dans cette instance de dev), donc la forme exacte du champ de référence driver (`subject_uuid` vs `driver_uuid`, actuellement les deux tentés en fallback) reste à confirmer avec une vraie donnée.
 
 ---
 

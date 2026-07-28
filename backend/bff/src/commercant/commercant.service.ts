@@ -113,7 +113,8 @@ export class CommerçantService {
 
       const response = await this.fleetbaseClient.createOrder({
         order_config_uuid: orderConfigUuid,
-        customer: merchant.fleetbaseVendorUuid,
+        customer_uuid: merchant.fleetbaseVendorUuid,
+        customer_type: 'vendor',
         type: 'transport',
         payload: {
           pickup_uuid: pickupPlace.place.uuid,
