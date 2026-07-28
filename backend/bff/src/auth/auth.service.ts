@@ -40,7 +40,7 @@ export class AuthService {
         dto.businessPhone,
       );
 
-      const vendorUuid = vendorResponse.data?.uuid || vendorResponse.data?.id;
+      const vendorUuid = vendorResponse.vendor?.uuid || vendorResponse.vendor?.id;
       if (!vendorUuid) {
         throw new Error('Vendor UUID not returned from Fleetbase');
       }
