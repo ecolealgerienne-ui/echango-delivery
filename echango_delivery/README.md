@@ -56,7 +56,32 @@ flutter run
 - **HTTP en clair** : ajouter `android:usesCleartextTraffic="true"` sur la
   balise `<application>` du manifeste. À retirer avant distribution.
 - **Firebase est optionnel** : l'initialisation est encadrée, l'app démarre
-  sans. Conséquence : pas de notification, rafraîchissement manuel.
+  sans. Conséquence : pas de notification, rafraîchissement par interrogation
+  périodique du BFF à la place.
+
+### Permissions Android — obligatoire pour le profil transporteur
+
+`android/` est régénéré par `flutter create` et **n'est pas versionné** : ces
+lignes sont à remettre après chaque régénération, au-dessus de `<application>`
+dans `android/app/src/main/AndroidManifest.xml`.
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Sans elles, `Geolocator.requestPermission()` échoue **sans dialogue** : la
+bascule « en ligne » refuse de s'activer et affiche le message d'autorisation,
+ce qui ressemble à un refus de l'utilisateur alors que le système n'a jamais
+posé la question.
+
+**Limite connue** : le suivi de position s'arrête quand l'app passe en arrière
+plan. La permission `ACCESS_BACKGROUND_LOCATION` et un service au premier plan
+(`flutter_foreground_task`, prévu en §11.2 de `docs/specs_app_transporteur.md`)
+restent à ajouter — en l'état, un transporteur doit garder l'app ouverte pour
+que sa position alimente le dispatch.
 
 **Comptes de test** (debug uniquement, jamais versionnés). Le `role` ne sert
 qu'à l'icône du raccourci — c'est le serveur qui résout le profil :
@@ -79,6 +104,28 @@ flutter run --dart-define=DEV_ACCOUNTS='[
 **Limite connue** : la capture photo n'est pas branchée. Les étapes marquées
 `require_pod` partent sans preuve — le serveur les accepte, la preuve manque au
 dossier.
+
+## Présence du transporteur
+
+Trois mécanismes qui n'ont de sens que combinés, regroupés dans
+`state/driver_presence_state.dart` :
+
+| | Rôle | Sans lui |
+|---|---|---|
+| Bascule en ligne | déclare le driver disponible dans Fleetbase | aucune course ne lui est diffusée |
+| Suivi de position | alimente le dispatch géospatial | en ligne mais invisible : le dispatch choisit par proximité |
+| Push + interrogation | rafraîchit la liste des courses | la course arrive, l'écran ne bouge pas |
+
+La présence suit la **session**, pas un écran : elle démarre après connexion ou
+restauration de session, et s'arrête à la déconnexion — y compris si le driver
+n'a jamais ouvert le tableau de bord. Le passage hors ligne a lieu **avant**
+l'invalidation du jeton (`AuthState.onBeforeLogout`), sans quoi l'appel partirait
+sans authentification et le driver resterait éligible à des courses.
+
+Le push est un **déclencheur**, jamais une source de données : son contenu n'est
+pas affiché, il provoque une relecture auprès du BFF. L'interrogation périodique
+(45 s, au premier plan et en ligne uniquement) couvre les cas où il n'arrive
+pas — Firebase non configuré, permission refusée, message perdu.
 
 Le parcours de connexion par téléphone/OTP a été **retiré** : ses endpoints
 n'existent pas côté BFF, l'écran ne pouvait qu'échouer. Il reste au périmètre

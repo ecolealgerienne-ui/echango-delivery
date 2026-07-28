@@ -43,8 +43,7 @@ export class CommerçantService {
 
     let live: any[] = [];
     try {
-      const response = await this.fleetbaseClient.getAllOrders();
-      live = response?.orders || response?.data || (Array.isArray(response) ? response : []);
+      live = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       // Degrade rather than fail: without Fleetbase the merchant still sees
       // that the order exists, just not how far along it is.

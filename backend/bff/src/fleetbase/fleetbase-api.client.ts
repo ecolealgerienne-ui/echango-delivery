@@ -314,6 +314,62 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Normalise the shapes Fleetbase wraps a collection in (journal §2.4):
+   * sometimes a bare array, sometimes under `data`, sometimes under a
+   * resource-named key. Never assume one — the same installation answers
+   * differently depending on the endpoint.
+   */
+  extractCollection(response: any, ...resourceKeys: string[]): any[] {
+    for (const key of [...resourceKeys, 'data']) {
+      if (Array.isArray(response?.[key])) {
+        return response[key];
+      }
+    }
+    return Array.isArray(response) ? response : [];
+  }
+
+  /**
+   * Every company order, across as many pages as it takes.
+   *
+   * `getAllOrders()` above returns ONE page, and its 100-item default silently
+   * looks like "all of them" until the company crosses that count — after
+   * which a caller scanning the result for a specific order stops finding
+   * orders that exist and are legitimately assigned, and reports a 404. Since
+   * every filter here is applied client-side (Fleetbase ignores the query
+   * filters, see the note above), an incomplete fetch is an incorrect answer,
+   * not merely a truncated list.
+   *
+   * The page cap is a runaway guard, not a limit anyone should hit; crossing
+   * it is logged because past that point the results are wrong again.
+   */
+  async fetchEveryOrder(pageSize = 100, maxPages = 50): Promise<any[]> {
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const orders = this.extractCollection(await this.getAllOrders(page, pageSize), 'orders');
+
+      if (orders.length === 0) {
+        break;
+      }
+
+      all.push(...orders);
+
+      if (orders.length < pageSize) {
+        break;
+      }
+
+      if (page === maxPages) {
+        this.logger.warn(
+          `fetchEveryOrder a atteint le garde-fou de ${maxPages} pages — la liste est tronquée, ` +
+            'les recherches par identifiant peuvent renvoyer un 404 à tort',
+        );
+      }
+    }
+
+    return all;
+  }
+
+  /**
    * Get a single order by uuid. Confirmed working (used for tracking, see
    * commercant.service.ts getOrderTracking).
    */
@@ -649,6 +705,12 @@ export class FleetbaseApiClient {
    * NotFoundHttpException pattern from docs/journal_implementation_bff.md
    * §2.1). The real resource is the generic `/int/v1/positions` endpoint.
    * Callers MUST filter the result client-side by `driver_uuid`.
+   *
+   * ⚠️ Plus utilisé par la carte de flotte : télécharger tout l'historique de
+   * la compagnie pour n'afficher qu'un point par driver ne tenait pas à
+   * l'échelle. `FlotteService.getDriverPositions()` sert désormais le miroir
+   * local alimenté par `POST /transporteur/position`. Cette méthode reste pour
+   * un besoin d'historique — ne pas la rebrancher sur la carte.
    */
   async getAllPositions() {
     try {

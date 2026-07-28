@@ -46,6 +46,18 @@ export class TransporteurService {
   }
 
   /**
+   * The Fleetbase Driver record behind an Echango account.
+   *
+   * A full list fetch, because `/drivers` has the same silently-ignored-filter
+   * behaviour as `/orders` (journal §2.8) — there is no by-uuid lookup to use.
+   */
+  private async findFleetbaseDriver(fleetbaseDriverUuid: string) {
+    const response = await this.fleetbaseClient.getAllDrivers();
+    const drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+    return drivers.find((d: any) => d?.uuid === fleetbaseDriverUuid);
+  }
+
+  /**
    * Resolve the driver's Fleetbase public_id, backfilling it if absent.
    *
    * Accounts registered before the column existed have it null, and
@@ -56,9 +68,7 @@ export class TransporteurService {
       return driver.fleetbaseDriverPublicId;
     }
 
-    const response = await this.fleetbaseClient.getAllDrivers();
-    const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
-    const match = (drivers || []).find((d: any) => d?.uuid === driver.fleetbaseDriverUuid);
+    const match = await this.findFleetbaseDriver(driver.fleetbaseDriverUuid);
 
     if (!match?.public_id) {
       throw new BadRequestException('Could not resolve this driver public_id in Fleetbase');
@@ -70,14 +80,6 @@ export class TransporteurService {
     });
 
     return match.public_id;
-  }
-
-  /**
-   * Normalise the various shapes Fleetbase returns a collection in.
-   * Confirmed in journal §2.4: responses are not consistently wrapped.
-   */
-  private extractOrders(response: any): any[] {
-    return response?.orders || response?.data || (Array.isArray(response) ? response : []);
   }
 
   /**
@@ -98,8 +100,7 @@ export class TransporteurService {
   private async resolveOrder(orderId: string) {
     let orders: any[];
     try {
-      const response = await this.fleetbaseClient.getAllOrders();
-      orders = this.extractOrders(response);
+      orders = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       this.logger.error(`Order lookup failed (${orderId}): ${error.message}`);
       throw new BadRequestException('Failed to fetch orders');
@@ -174,8 +175,32 @@ export class TransporteurService {
     );
   }
 
+  /**
+   * Profil du transporteur, disponibilité comprise.
+   *
+   * `online` vient de Fleetbase et non d'un état mémorisé côté app : c'est
+   * Fleetbase qui décide à qui le dispatch géospatial diffuse une course, donc
+   * lui seul sait si ce driver est réellement joignable. Sans ce champ, l'app
+   * afficherait au redémarrage la position par défaut de son interrupteur —
+   * un driver rouvrant l'app se croirait hors ligne tout en continuant de
+   * recevoir des courses, ou l'inverse.
+   *
+   * `null` quand Fleetbase est injoignable : l'app doit alors afficher un état
+   * indéterminé plutôt que d'affirmer « hors ligne », qui serait un mensonge
+   * dans le sens dangereux (le driver ne réagit pas à une course reçue).
+   */
   async getProfile(driverId: string) {
     const driver = await this.getDriverOrFail(driverId);
+
+    let online: boolean | null = null;
+    try {
+      const record = await this.findFleetbaseDriver(driver.fleetbaseDriverUuid);
+      if (record && record.online !== undefined && record.online !== null) {
+        online = Boolean(record.online);
+      }
+    } catch (error) {
+      this.logger.warn(`Could not read online status for driver ${driverId}: ${error.message}`);
+    }
 
     return {
       id: driver.id,
@@ -184,6 +209,7 @@ export class TransporteurService {
       lastName: driver.lastName,
       phone: driver.phone,
       fleetbaseDriverUuid: driver.fleetbaseDriverUuid,
+      online,
     };
   }
 
@@ -196,11 +222,30 @@ export class TransporteurService {
 
     try {
       await this.fleetbaseClient.trackDriver(publicId, dto);
-      return { success: true };
     } catch (error) {
       this.logger.error(`Position update failed for driver ${driverId}: ${error.message}`);
       throw new BadRequestException('Failed to update position');
     }
+
+    // Miroir local du dernier point, pour que la carte de flotte n'ait pas à
+    // télécharger tout l'historique de la compagnie (cf. schema.prisma).
+    // Fleetbase reste la source de vérité : l'écriture ci-dessus a déjà réussi
+    // quand on arrive ici, et un échec du miroir ne doit pas faire croire au
+    // driver que sa position n'est pas partie.
+    try {
+      await this.prisma.driverAccount.update({
+        where: { id: driver.id },
+        data: {
+          lastLatitude: dto.latitude,
+          lastLongitude: dto.longitude,
+          lastPositionAt: new Date(),
+        },
+      });
+    } catch (error) {
+      this.logger.warn(`Position mirror failed for driver ${driverId}: ${error.message}`);
+    }
+
+    return { success: true };
   }
 
   async toggleOnline(driverId: string, dto: ToggleOnlineDto) {
@@ -231,8 +276,7 @@ export class TransporteurService {
 
     let orders: any[];
     try {
-      const response = await this.fleetbaseClient.getAllOrders();
-      orders = this.extractOrders(response);
+      orders = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       this.logger.error(`Order list failed for driver ${driverId}: ${error.message}`);
       throw new BadRequestException('Failed to fetch orders');

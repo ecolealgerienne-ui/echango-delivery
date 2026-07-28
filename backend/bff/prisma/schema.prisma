@@ -103,6 +103,17 @@ model DriverAccount {
   // Status
   active                Boolean  @default(true)
 
+  // Dernière position connue, miroir de ce que l'app vient d'envoyer à
+  // Fleetbase. Fleetbase stocke bien l'historique des Position, mais son
+  // endpoint /positions n'offre aucun filtre par driver : servir une carte de
+  // flotte depuis lui oblige à télécharger tout l'historique de la compagnie
+  // et à le trier en mémoire, à chaque rafraîchissement. Ces trois colonnes
+  // donnent la seule chose dont la carte a besoin — le dernier point — sans
+  // dupliquer l'historique, qui reste chez Fleetbase, source de vérité.
+  lastLatitude          Float?
+  lastLongitude         Float?
+  lastPositionAt        DateTime?
+
   // Relations
   deviceTokens          DriverDeviceToken[]
   deliveryFailures      DeliveryFailure[]

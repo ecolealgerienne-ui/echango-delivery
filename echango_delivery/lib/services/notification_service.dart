@@ -1,110 +1,114 @@
+import 'dart:async';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 
 import '../utils/logger.dart';
 
-/// Service pour gérer Firebase Cloud Messaging et les notifications push.
+/// Point d'entrée FCM en tâche de fond.
+///
+/// Doit rester une fonction de premier niveau annotée `vm:entry-point` :
+/// Flutter démarre un isolate neuf pour la traiter, sans l'état de l'app.
+/// On se contente donc de tracer — le rafraîchissement réel a lieu au retour
+/// au premier plan, où l'app dispose de sa session.
+@pragma('vm:entry-point')
+Future<void> handleBackgroundMessage(RemoteMessage message) async {
+  AppLogger.info('NotificationService', 'Message en tâche de fond : ${message.data}');
+}
+
+/// Notifications push Fleetbase (`OrderPing`).
+///
+/// Rôle exact, décidé en §11.1 de specs_app_transporteur.md : le push est un
+/// **déclencheur de rafraîchissement**, jamais une source de données. Le
+/// contenu du message n'est pas affiché tel quel ni inséré dans la liste —
+/// il dit seulement « quelque chose a changé, redemande au BFF ». Ça évite
+/// d'avoir à faire confiance à un payload pour l'anti-IDOR, et l'app reste
+/// correcte quand un push se perd.
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
-  late final FirebaseMessaging _firebaseMessaging;
 
-  static Function(Map<String, dynamic>)? _onOrderNotification;
+  factory NotificationService() => _instance;
 
-  NotificationService._internal() {
-    _firebaseMessaging = FirebaseMessaging.instance;
-  }
+  NotificationService._internal();
 
-  factory NotificationService() {
-    return _instance;
-  }
+  FirebaseMessaging get _messaging => FirebaseMessaging.instance;
 
-  static Future<void> initialize() async {
-    final instance = NotificationService();
-    await instance._initializeFirebase();
-  }
+  bool _available = false;
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
 
-  Future<void> _initializeFirebase() async {
+  /// Faux quand Firebase n'a pas pu être initialisé (configuration absente en
+  /// développement). Tout le reste de l'app doit continuer de fonctionner.
+  bool get isAvailable => _available;
+
+  /// Appelé quand un message signale un changement de commande.
+  void Function()? onOrderEvent;
+
+  /// Appelé quand Firebase émet un nouveau jeton, y compris à la première
+  /// obtention. C'est ce qui doit déclencher l'enregistrement côté BFF.
+  void Function(String token)? onTokenChanged;
+
+  Future<void> initialize() async {
     try {
-      // Demande les permissions de notification
-      final settings = await _firebaseMessaging.requestPermission(
-        alert: true,
-        announcement: false,
-        badge: true,
-        carPlay: false,
-        criticalAlert: false,
-        provisional: false,
-        sound: true,
+      FirebaseMessaging.onBackgroundMessage(handleBackgroundMessage);
+
+      final settings = await _messaging.requestPermission();
+      AppLogger.info(
+        'NotificationService',
+        'Permission notifications : ${settings.authorizationStatus}',
       );
 
-      AppLogger.info('NotificationService', 'Permission status: ${settings.authorizationStatus}');
+      _subscriptions.add(FirebaseMessaging.onMessage.listen(_handle));
+      _subscriptions.add(FirebaseMessaging.onMessageOpenedApp.listen(_handle));
+      _subscriptions.add(_messaging.onTokenRefresh.listen((token) {
+        AppLogger.info('NotificationService', 'Jeton FCM renouvelé');
+        onTokenChanged?.call(token);
+      }));
 
-      // Écoute les messages au premier plan
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        AppLogger.info('NotificationService', 'Foreground message: ${message.notification?.title}');
-        _handleOrderNotification(message.data);
-      });
+      final initial = await _messaging.getInitialMessage();
+      if (initial != null) _handle(initial);
 
-      // Écoute l'ouverture de l'app via notification
-      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        AppLogger.info('NotificationService', 'Message opened: ${message.notification?.title}');
-        _handleOrderNotification(message.data);
-      });
-
-      // Vérifie si l'app a été lancée via une notification
-      final initialMessage = await _firebaseMessaging.getInitialMessage();
-      if (initialMessage != null) {
-        _handleOrderNotification(initialMessage.data);
-      }
-
-      AppLogger.info('NotificationService', 'Initialization complete');
+      _available = true;
     } catch (e) {
-      AppLogger.error('NotificationService', 'Initialization failed', e);
+      // Pas de push : l'app reste utilisable, le driver rafraîchit à la main
+      // et le repli par polling prend le relais.
+      _available = false;
+      AppLogger.warn('NotificationService', 'Notifications indisponibles : $e');
     }
   }
 
-  Future<void> subscribeToDriverNotifications(String driverId) async {
+  /// Jeton de cet appareil, ou `null` si Firebase n'est pas configuré.
+  Future<String?> currentToken() async {
+    if (!_available) return null;
     try {
-      final topic = 'echango_driver_$driverId';
-      await _firebaseMessaging.subscribeToTopic(topic);
-      AppLogger.info('NotificationService', 'Subscribed to topic: $topic');
+      return await _messaging.getToken();
     } catch (e) {
-      AppLogger.error('NotificationService', 'Subscription failed', e);
-    }
-  }
-
-  Future<void> unsubscribeFromDriverNotifications(String driverId) async {
-    try {
-      final topic = 'echango_driver_$driverId';
-      await _firebaseMessaging.unsubscribeFromTopic(topic);
-      AppLogger.info('NotificationService', 'Unsubscribed from topic: $topic');
-    } catch (e) {
-      AppLogger.error('NotificationService', 'Unsubscription failed', e);
-    }
-  }
-
-  Future<String?> getDeviceToken() async {
-    try {
-      final token = await _firebaseMessaging.getToken();
-      AppLogger.info('NotificationService', 'Device token: $token');
-      return token;
-    } catch (e) {
-      AppLogger.error('NotificationService', 'Failed to get device token', e);
+      AppLogger.warn('NotificationService', 'Jeton FCM indisponible : $e');
       return null;
     }
   }
 
-  void setOnOrderNotification(Function(Map<String, dynamic>) callback) {
-    _onOrderNotification = callback;
-  }
-
-  void _handleOrderNotification(Map<String, dynamic> data) {
-    AppLogger.info('NotificationService', 'Handling order notification: $data');
-    if (_onOrderNotification != null) {
-      _onOrderNotification!(data);
+  /// Coupe la réception à la déconnexion : le jeton est supprimé côté Firebase
+  /// pour que l'appareil cesse d'être adressable, en complément de la purge du
+  /// jeton côté BFF.
+  Future<void> release() async {
+    if (!_available) return;
+    try {
+      await _messaging.deleteToken();
+    } catch (e) {
+      AppLogger.warn('NotificationService', 'Suppression du jeton FCM impossible : $e');
     }
   }
 
-  /// Handle background messages (called at app startup).
-  static Future<void> handleBackgroundMessage(RemoteMessage message) async {
-    AppLogger.info('NotificationService', 'Background message: ${message.notification?.title}');
+  void _handle(RemoteMessage message) {
+    AppLogger.info('NotificationService', 'Message reçu : ${message.data}');
+    onOrderEvent?.call();
+  }
+
+  @visibleForTesting
+  Future<void> dispose() async {
+    for (final s in _subscriptions) {
+      await s.cancel();
+    }
+    _subscriptions.clear();
   }
 }

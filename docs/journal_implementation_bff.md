@@ -846,3 +846,69 @@ Fleetbase n'est **délibérément pas** vérifié : son indisponibilité dégrad
 Le BFF compile, les scripts sont syntaxiquement valides, l'app Flutter est équilibrée. **Rien n'a été exécuté** — pas d'instance dans le sandbox. `scripts/test-driver-auth.sh` a été réécrit pour le parcours par invitation (émission via un compte flotte) et vérifie deux nouveaux contrôles : rejet d'une invitation inventée, et refus qu'un transporteur s'auto-émette une invitation.
 
 **Prérequis avant de relancer les tests** : `npm run prisma:migrate` (nouveau modèle `DriverInvitation`) et un `JWT_SECRET` d'au moins 32 caractères dans `.env` — le service refuse désormais de démarrer sans.
+
+---
+
+## 10. Présence transporteur — le P1 bloquant pilote (28/07/2026)
+
+Les trois revues croisées convergeaient sur un même constat : côté serveur, tout ce dont un transporteur a besoin existait et était validé par des tests réels ; côté app, **rien ne l'appelait**. `LocationService` n'était instancié nulle part, `getDeviceToken()` n'était appelé par personne, `setOnline` n'existait que dans le client HTTP. Un driver de test n'aurait donc jamais été « en ligne » pour Fleetbase, n'aurait jamais émis de position, jamais reçu de push, et n'aurait vu une nouvelle course que s'il tirait l'écran vers le bas au bon moment.
+
+### 10.1 Trois mécanismes qui n'ont de sens que combinés
+
+Regroupés dans `DriverPresenceState` plutôt que dispersés dans les écrans, parce qu'ils ne se tiennent qu'ensemble :
+
+| Mécanisme | Sans lui |
+|---|---|
+| Bascule en ligne | Fleetbase ne diffuse aucune course à ce driver |
+| Suivi de position | en ligne mais invisible — le dispatch choisit par proximité |
+| Push + interrogation | la course arrive, l'écran ne bouge pas |
+
+La présence suit la **session**, pas un écran : elle démarre après connexion ou restauration au lancement, et s'arrête à la déconnexion même si le driver n'a jamais ouvert le tableau de bord.
+
+### 10.2 Le passage hors ligne devait précéder l'invalidation du jeton
+
+Premier branchement écrit : la présence réagissait au changement d'état d'`AuthState`. Il ne pouvait pas fonctionner — `logout()` appelle `clearSession()` **avant** de notifier, donc l'appel `setOnline(false)` serait parti sans jeton et aurait échoué en 401, silencieusement. Un transporteur déconnecté serait resté « en ligne » côté Fleetbase, éligible à des courses que personne n'aurait prises.
+
+D'où `AuthState.onBeforeLogout`, exécuté pendant que le jeton est encore valide. Repère plus général : **tout nettoyage déclenché par un changement d'état arrive après coup** ; ce qui exige encore les droits de la session doit être accroché avant, pas observé après.
+
+### 10.3 `getProfile` ne disait pas si le driver était en ligne
+
+Sans ce champ, l'app aurait affiché au démarrage la position par défaut de son interrupteur. Un driver rouvrant l'app se serait cru hors ligne tout en continuant de recevoir des courses — le sens dangereux de l'erreur.
+
+`getProfile` lit désormais `online` depuis Fleetbase, seul à savoir à qui le dispatch diffuse. `null` quand Fleetbase est injoignable, et l'app affiche alors « — » plutôt que d'affirmer « hors ligne ».
+
+### 10.4 Le suivi de position ne s'arrêtait jamais
+
+`stopBackgroundTracking()` basculait un booléen sans annuler l'abonnement au flux `Geolocator` : le GPS restait allumé et les positions continuaient de partir après la déconnexion. Batterie vidée, et un driver qui se croyait hors ligne alimentait encore le dispatch. L'abonnement est maintenant réellement annulé, et `isTracking` dérive de son existence au lieu d'un drapeau parallèle qui pouvait mentir.
+
+### 10.5 Le plafond silencieux de 100 commandes
+
+`getAllOrders()` avait `limit = 100` par défaut, et trois des quatre appelants s'en servaient comme d'un « tout ». Puisque **chaque filtre est appliqué côté BFF** (Fleetbase ignore silencieusement les filtres de requête, §2.8), une liste tronquée n'est pas une liste partielle : c'est une **réponse fausse**. À partir de la 101ᵉ commande de l'organisation, `resolveOrder()` aurait cessé de trouver des commandes existantes et légitimement assignées, et renvoyé 404.
+
+Le module flotte avait déjà écrit la pagination correcte pour cette raison exacte ; elle est hissée dans le client (`fetchEveryOrder`) et partagée par les trois personas. Le garde-fou de pages journalise quand il est atteint — au-delà, les réponses redeviennent fausses.
+
+### 10.6 La carte de flotte téléchargeait tout l'historique de positions
+
+`/positions` de Fleetbase n'a aucun filtre par driver (§2.9). Servir une carte depuis lui obligeait à télécharger tout l'historique de la compagnie à chaque rafraîchissement, pour n'afficher qu'un point par driver — un coût qui croît avec l'historique, pas avec le nombre de drivers affichés.
+
+`POST /transporteur/position` écrit désormais un miroir local (`lastLatitude`/`lastLongitude`/`lastPositionAt` sur `DriverAccount`), et la flotte le lit. L'historique reste chez Fleetbase, source de vérité. Le miroir échoue en avertissement, jamais en erreur : l'écriture Fleetbase a déjà réussi à ce stade, et faire échouer l'appel ferait croire au driver que sa position n'est pas partie.
+
+Conséquence assumée : un driver sans compte Echango, ou qui n'a jamais émis depuis l'app, n'apparaît pas sur la carte. Fleetbase n'en aurait de toute façon aucune position.
+
+### 10.7 Statuts optimistes inventés
+
+`acceptOrder` écrivait localement `accepted`, `startOrder` écrivait `picked_up` — **aucun des deux n'existe dans Fleetbase** (`dispatched`, `started`, `completed`, `canceled`). L'app affichait donc un statut qu'aucune couleur ni aucun filtre ne reconnaissait. Et le statut n'est pas la seule chose qui change : les transitions suivantes en dépendent et viennent du serveur. Les cinq mutations passent par un `_mutateOrder` unique qui relit l'état après coup, comme le faisait déjà `applyActivity`.
+
+### 10.8 Aucune requête HTTP n'avait de délai maximal
+
+`package:http` n'applique aucun timeout par défaut. Une requête partie vers un réseau qui cesse de répondre restait en attente indéfiniment : indicateur de chargement perpétuel, sans erreur ni possibilité de réessayer — sur le téléphone d'un transporteur en couverture faible, le mode d'échec le plus courant et le plus difficile à distinguer d'une app figée. Enveloppé dans un `http.BaseClient` plutôt qu'appliqué appel par appel, pour qu'un nouvel endpoint ne puisse pas l'oublier.
+
+### 10.9 État
+
+BFF : compile (`tsc --noEmit`). **Non exécuté** — pas d'instance Fleetbase dans le sandbox.
+
+App : **jamais compilée**, aucune toolchain Flutter ici. `flutter analyze` reste à passer côté Windows.
+
+**Prérequis avant de relancer les tests** : `npm run prisma:migrate` (trois colonnes de position sur `DriverAccount`).
+
+**Reste ouvert** : le suivi de position s'arrête quand l'app passe en arrière plan — `ACCESS_BACKGROUND_LOCATION` et un service au premier plan (`flutter_foreground_task`, §11.2 de `specs_app_transporteur.md`) ne sont pas branchés. En l'état, un transporteur doit garder l'app ouverte pour alimenter le dispatch.

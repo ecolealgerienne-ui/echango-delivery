@@ -110,75 +110,27 @@ class OrderState extends ChangeNotifier {
     }
   }
 
-  /// Accepte une commande.
-  Future<bool> acceptOrder(String orderId) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await _apiClient.acceptOrder(orderId);
-      // Mise à jour locale optimiste
-      final index = _orders.indexWhere((o) => o.id == orderId);
-      if (index >= 0) {
-        _orders[index] = _orders[index].copyWith(status: 'accepted');
-      }
-      if (_selectedOrder?.id == orderId) {
-        _selectedOrder = _selectedOrder?.copyWith(status: 'accepted');
-      }
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = e.message;
-      return false;
-    } catch (e) {
-      _errorMessage = 'Failed to accept order';
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Démarre la livraison d'une commande.
-  Future<bool> startOrder(String orderId) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await _apiClient.startOrder(orderId);
-      final index = _orders.indexWhere((o) => o.id == orderId);
-      if (index >= 0) {
-        _orders[index] = _orders[index].copyWith(status: 'picked_up');
-      }
-      if (_selectedOrder?.id == orderId) {
-        _selectedOrder = _selectedOrder?.copyWith(status: 'picked_up');
-      }
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = e.message;
-      return false;
-    } catch (e) {
-      _errorMessage = 'Failed to start delivery';
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// Applique une transition proposée par [nextActivities].
+  /// Exécute une action qui change l'état d'une commande, puis relit cet état
+  /// depuis le serveur.
   ///
-  /// [activity] doit être renvoyé tel quel : le serveur valide l'objet
-  /// complet, pas son seul code.
-  Future<bool> applyActivity(String orderId, Map<String, dynamic> activity) async {
+  /// Les versions précédentes écrivaient un statut « optimiste » localement,
+  /// avec deux défauts. D'abord les valeurs étaient inventées : `accepted` et
+  /// `picked_up` n'existent pas dans Fleetbase, qui utilise `dispatched`,
+  /// `started`, `completed`, `canceled` — l'écran affichait donc un statut
+  /// qu'aucun filtre ni aucune couleur ne reconnaissait, jusqu'au prochain
+  /// rafraîchissement. Ensuite le statut n'est pas la seule chose qui change :
+  /// les transitions suivantes en dépendent, et elles viennent du serveur.
+  Future<bool> _mutateOrder(
+    String orderId,
+    Future<void> Function() action,
+    String fallbackError,
+  ) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      await _apiClient.updateActivity(orderId, activity);
-      // Recharger : la transition change l'état ET les transitions suivantes.
+      await action();
       await selectOrder(orderId);
       await loadOrders();
       return true;
@@ -186,13 +138,38 @@ class OrderState extends ChangeNotifier {
       _errorMessage = e.message;
       return false;
     } catch (e) {
-      _errorMessage = 'Impossible d\'appliquer cette étape';
+      _errorMessage = fallbackError;
       return false;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
+
+  /// Accepte une commande.
+  Future<bool> acceptOrder(String orderId) => _mutateOrder(
+        orderId,
+        () => _apiClient.acceptOrder(orderId),
+        'Impossible d\'accepter cette commande',
+      );
+
+  /// Démarre la livraison d'une commande.
+  Future<bool> startOrder(String orderId) => _mutateOrder(
+        orderId,
+        () => _apiClient.startOrder(orderId),
+        'Impossible de démarrer cette livraison',
+      );
+
+  /// Applique une transition proposée par [nextActivities].
+  ///
+  /// [activity] doit être renvoyé tel quel : le serveur valide l'objet
+  /// complet, pas son seul code.
+  Future<bool> applyActivity(String orderId, Map<String, dynamic> activity) =>
+      _mutateOrder(
+        orderId,
+        () => _apiClient.updateActivity(orderId, activity),
+        'Impossible d\'appliquer cette étape',
+      );
 
   /// Marque une commande comme livrée.
   ///
@@ -202,74 +179,41 @@ class OrderState extends ChangeNotifier {
   Future<bool> completeOrder({
     required String orderId,
     String? proofPhotoBase64,
-  }) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      if (proofPhotoBase64 != null) {
-        await _apiClient.captureProofPhoto(orderId, [proofPhotoBase64]);
-      }
-      await _apiClient.completeOrder(orderId);
-      final index = _orders.indexWhere((o) => o.id == orderId);
-      if (index >= 0) {
-        _orders[index] = _orders[index].copyWith(status: 'completed');
-      }
-      if (_selectedOrder?.id == orderId) {
-        _selectedOrder = _selectedOrder?.copyWith(status: 'completed');
-      }
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = e.message;
-      return false;
-    } catch (e) {
-      _errorMessage = 'Failed to complete order';
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  }) =>
+      _mutateOrder(
+        orderId,
+        () async {
+          if (proofPhotoBase64 != null) {
+            await _apiClient.captureProofPhoto(orderId, [proofPhotoBase64]);
+          }
+          await _apiClient.completeOrder(orderId);
+        },
+        'Impossible de clôturer cette commande',
+      );
 
   /// Rapporte un échec de livraison.
+  ///
+  /// Le statut Fleetbase n'est PAS modifié par un signalement (§6.5) : le BFF
+  /// joint le rapport à la commande, c'est tout. Fabriquer un statut `failed`
+  /// local mentirait sur l'état réel et serait écrasé au rechargement.
   Future<bool> reportDeliveryFailure({
     required String orderId,
     required String reason,
     String? photoBase64,
     String? notes,
     String? waypointUuid,
-  }) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await _apiClient.reportDeliveryFailure(
+  }) =>
+      _mutateOrder(
         orderId,
-        reason: reason,
-        notes: notes,
-        waypointUuid: waypointUuid,
-        photo: photoBase64,
+        () => _apiClient.reportDeliveryFailure(
+          orderId,
+          reason: reason,
+          notes: notes,
+          waypointUuid: waypointUuid,
+          photo: photoBase64,
+        ),
+        'Impossible d\'enregistrer ce signalement',
       );
-      // Recharger depuis le serveur : le statut Fleetbase n'est PAS modifié
-      // par un signalement (§6.5), le BFF joint simplement le rapport à la
-      // commande. Fabriquer un statut 'failed' local mentirait sur l'état réel
-      // et serait écrasé au prochain rafraîchissement.
-      await selectOrder(orderId);
-      await loadOrders();
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = e.message;
-      return false;
-    } catch (e) {
-      _errorMessage = 'Failed to report delivery failure';
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
 
   void clearError() {
     _errorMessage = null;

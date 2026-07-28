@@ -1,12 +1,39 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../config/api_config.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
 
 const _tokenKey = 'echango_session_token';
+
+/// Client HTTP qui borne chaque requête dans le temps.
+///
+/// `package:http` n'applique aucun délai maximal : une requête partie vers un
+/// réseau qui cesse de répondre reste en attente indéfiniment, et l'écran
+/// garde son indicateur de chargement sans jamais afficher d'erreur ni
+/// permettre de réessayer. Sur le téléphone d'un transporteur en zone de
+/// couverture faible, c'est le mode d'échec le plus courant — et le plus
+/// difficile à distinguer d'une application figée.
+///
+/// Enveloppé ici plutôt qu'appliqué à chaque appel : un `.timeout()` par site
+/// se serait fait oublier au premier nouvel endpoint.
+class _TimeoutClient extends http.BaseClient {
+  final http.Client _inner;
+  final Duration _timeout;
+
+  _TimeoutClient(this._inner, this._timeout);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request).timeout(_timeout);
+
+  @override
+  void close() => _inner.close();
+}
 
 /// Client HTTP pour communiquer avec le BFF Echango Delivery.
 /// Gère automatiquement l'authentification (token Bearer) et les erreurs.
@@ -20,7 +47,10 @@ class BffApiClient {
   BffApiClient({
     required this.baseUrl,
     http.Client? httpClient,
-  }) : _httpClient = httpClient ?? http.Client();
+  }) : _httpClient = _TimeoutClient(
+          httpClient ?? http.Client(),
+          const Duration(seconds: ApiConfig.apiTimeout),
+        );
 
   /// Restaure le token depuis le stockage sécurisé au démarrage de l'app.
   Future<void> restoreSession() async {
@@ -72,6 +102,10 @@ class BffApiClient {
     if (raw.contains('Connection refused') || raw.contains('Failed host lookup')) {
       return 'BFF injoignable à $baseUrl. Sur émulateur utiliser 10.0.2.2, '
           'sur téléphone l\'IP LAN de la machine — jamais localhost.';
+    }
+    if (e is TimeoutException) {
+      return 'Le serveur n\'a pas répondu en ${ApiConfig.apiTimeout} s. '
+          'Vérifiez votre connexion et réessayez.';
     }
     return 'Erreur réseau : $raw';
   }

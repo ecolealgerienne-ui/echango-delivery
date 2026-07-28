@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/auth_state.dart';
+import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -32,23 +33,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(
         title: const Text('Echango Delivery'),
         elevation: 0,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Center(
-              child: Consumer<AuthState>(
-                builder: (context, authState, _) {
-                  return Text(
-                    authState.email ?? 'Transporteur',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  );
-                },
-              ),
-            ),
-          ),
+        actions: const [_AvailabilitySwitch()],
+      ),
+      body: Column(
+        children: [
+          const _PresenceBanner(),
+          Expanded(child: _buildBody()),
         ],
       ),
-      body: _buildBody(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) {
@@ -57,15 +49,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.list),
-            label: 'Orders',
+            label: 'Commandes',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.map),
-            label: 'Map',
+            label: 'Carte',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person),
-            label: 'Profile',
+            label: 'Profil',
           ),
         ],
       ),
@@ -83,6 +75,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
       default:
         return const OrdersListScreen();
     }
+  }
+}
+
+/// Interrupteur de disponibilité.
+///
+/// C'est la commande la plus conséquente de l'app côté transporteur : hors
+/// ligne, Fleetbase ne diffuse aucune course à ce driver. Elle est donc à
+/// portée permanente dans la barre, et pas enterrée dans le profil.
+class _AvailabilitySwitch extends StatelessWidget {
+  const _AvailabilitySwitch();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<DriverPresenceState>(
+      builder: (context, presence, _) {
+        final online = presence.online;
+
+        return Row(
+          children: [
+            Text(
+              online == null
+                  ? '—'
+                  : online
+                      ? 'En ligne'
+                      : 'Hors ligne',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            if (presence.isBusy)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else
+              Switch(
+                // `null` signifie « disponibilité inconnue » (Fleetbase
+                // injoignable). L'interrupteur reste manipulable : le driver
+                // doit pouvoir forcer son état, c'est le libellé « — » qui
+                // porte l'incertitude.
+                value: online ?? false,
+                onChanged: (value) => presence.setOnline(value),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Ce qui empêche le driver de recevoir des courses, dit explicitement.
+///
+/// Sans ça, une permission refusée ou un push non configuré se traduit par un
+/// écran vide indiscernable d'une absence réelle de course — le mode d'échec
+/// le plus coûteux à diagnostiquer sur le terrain.
+class _PresenceBanner extends StatelessWidget {
+  const _PresenceBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<DriverPresenceState>(
+      builder: (context, presence, _) {
+        final theme = Theme.of(context);
+        final error = presence.errorMessage;
+
+        if (error != null) {
+          return _banner(
+            error,
+            theme.colorScheme.errorContainer,
+            theme.colorScheme.onErrorContainer,
+          );
+        }
+
+        if (presence.online == false) {
+          return _banner(
+            'Vous êtes hors ligne : aucune course ne vous sera proposée.',
+            theme.colorScheme.secondaryContainer,
+            theme.colorScheme.onSecondaryContainer,
+          );
+        }
+
+        if (presence.online == true && !presence.pushAvailable) {
+          return _banner(
+            'Notifications indisponibles sur cet appareil — la liste se '
+            'rafraîchit automatiquement, avec un léger délai.',
+            theme.colorScheme.surfaceContainerHighest,
+            theme.colorScheme.onSurfaceVariant,
+          );
+        }
+
+        return const SizedBox.shrink();
+      },
+    );
+  }
+
+  Widget _banner(String text, Color bg, Color fg) {
+    return Container(
+      width: double.infinity,
+      color: bg,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Text(text, style: TextStyle(color: fg)),
+    );
   }
 }
 
@@ -242,7 +338,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
           child: ListTile(
-            title: Text('Order #${order.publicId}'),
+            title: Text('Commande #${order.publicId}'),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -254,7 +350,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Status: ${order.status}',
+                  'Statut : ${order.status}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: _getStatusColor(order.status),
                       ),
@@ -310,12 +406,12 @@ class MapScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            'Map Integration',
+            'Carte non disponible',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
           Text(
-            'Google Maps will be integrated here',
+            'La carte des courses n\'est pas encore implémentée.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: Colors.grey[600],
@@ -396,7 +492,7 @@ class ProfileScreen extends StatelessWidget {
                         ),
                       )
                     : const Text(
-                        'Logout',
+                        'Se déconnecter',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -417,16 +513,18 @@ class ProfileScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        title: const Text('Se déconnecter'),
+        content: const Text(
+          'Vous serez basculé hors ligne et ne recevrez plus de courses.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: const Text('Annuler'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Logout'),
+            child: const Text('Se déconnecter'),
           ),
         ],
       ),

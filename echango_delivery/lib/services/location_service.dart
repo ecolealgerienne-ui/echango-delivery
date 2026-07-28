@@ -1,15 +1,21 @@
+import 'dart:async';
+
 import 'package:geolocator/geolocator.dart';
 
 import '../config/api_config.dart';
 import '../utils/logger.dart';
 import 'bff_api_client.dart';
 
-/// Service pour gérer la géolocalisation et le suivi en tâche de fond.
+/// Suivi de position du transporteur, remonté au BFF puis à Fleetbase.
+///
+/// Le dispatch géospatial de Fleetbase choisit à qui diffuser une course à
+/// partir de la dernière position connue (specs_echango_delivery.md §3.2) :
+/// un driver qui n'émet pas n'est pas seulement invisible sur la carte, il ne
+/// reçoit aucune course.
 class LocationService {
   static final LocationService _instance = LocationService._internal();
-  late final BffApiClient _apiClient;
-  bool _isTracking = false;
-  Stream<Position>? _positionStream;
+  BffApiClient? _apiClient;
+  StreamSubscription<Position>? _subscription;
 
   LocationService._internal();
 
@@ -19,129 +25,144 @@ class LocationService {
 
   Future<void> initialize(BffApiClient apiClient) async {
     _apiClient = apiClient;
-    await _requestLocationPermission();
   }
 
-  Future<bool> _requestLocationPermission() async {
+  /// Demande la permission de localisation.
+  ///
+  /// Ne renvoie `true` que si la permission couvre réellement le suivi : un
+  /// `denied` transformé en `whileInUse` par l'utilisateur suffit au premier
+  /// plan, `deniedForever` ne se rattrape que dans les réglages système.
+  Future<bool> requestPermission() async {
     try {
-      final permission = await Geolocator.checkPermission();
+      var permission = await Geolocator.checkPermission();
 
       if (permission == LocationPermission.denied) {
-        final request = await Geolocator.requestPermission();
-        if (request != LocationPermission.whileInUse && request != LocationPermission.always) {
-          AppLogger.warn('LocationService', 'Location permission denied');
-          return false;
-        }
-      } else if (permission == LocationPermission.deniedForever) {
-        AppLogger.error('LocationService', 'Location permission permanently denied');
-        await Geolocator.openLocationSettings();
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        AppLogger.error('LocationService', 'Permission refusée définitivement');
         return false;
       }
 
-      return true;
+      final granted = permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always;
+
+      if (!granted) {
+        AppLogger.warn('LocationService', 'Permission de localisation refusée');
+      }
+
+      return granted;
     } catch (e) {
-      AppLogger.error('LocationService', 'Permission request failed', e);
+      AppLogger.error('LocationService', 'Échec de la demande de permission', e);
       return false;
     }
   }
 
   Future<Position?> getCurrentPosition() async {
     try {
-      final hasPermission = await _requestLocationPermission();
-      if (!hasPermission) return null;
+      if (!await requestPermission()) return null;
 
-      final position = await Geolocator.getCurrentPosition(
+      return await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
           timeLimit: Duration(seconds: 10),
         ),
       );
-
-      AppLogger.info('LocationService', 'Current position: ${position.latitude}, ${position.longitude}');
-      return position;
     } catch (e) {
-      AppLogger.error('LocationService', 'Failed to get position', e);
+      AppLogger.error('LocationService', 'Position indisponible', e);
       return null;
     }
   }
 
-  Future<void> startBackgroundTracking() async {
-    if (_isTracking) {
-      AppLogger.warn('LocationService', 'Background tracking already active');
-      return;
-    }
+  /// Démarre le suivi. Renvoie `false` si la permission manque — l'appelant
+  /// doit alors le dire à l'utilisateur, pas se mettre « en ligne » en
+  /// silence sans jamais émettre.
+  Future<bool> startTracking() async {
+    if (_subscription != null) return true;
+
+    if (!await requestPermission()) return false;
 
     try {
-      final hasPermission = await _requestLocationPermission();
-      if (!hasPermission) return;
-
-      _isTracking = true;
-      AppLogger.info('LocationService', 'Starting background location tracking');
-
-      _positionStream = Geolocator.getPositionStream(
+      _subscription = Geolocator.getPositionStream(
         locationSettings: LocationSettings(
           accuracy: LocationAccuracy.best,
           distanceFilter: ApiConfig.locationDistanceThreshold.toInt(),
         ),
+      ).listen(
+        _pushPosition,
+        onError: (Object e) {
+          AppLogger.error('LocationService', 'Flux de position interrompu', e);
+        },
       );
 
-      _positionStream?.listen((Position position) {
-        AppLogger.info(
-          'LocationService',
-          'Location update: ${position.latitude}, ${position.longitude}',
-        );
-        _updateDriverLocation(position);
-      });
+      AppLogger.info('LocationService', 'Suivi de position démarré');
+      return true;
     } catch (e) {
-      AppLogger.error('LocationService', 'Failed to start tracking', e);
-      _isTracking = false;
+      AppLogger.error('LocationService', 'Impossible de démarrer le suivi', e);
+      return false;
     }
   }
 
-  Future<void> stopBackgroundTracking() async {
-    if (!_isTracking) {
-      AppLogger.warn('LocationService', 'Background tracking not active');
+  /// Arrête le suivi.
+  ///
+  /// L'abonnement est bien annulé, et pas seulement un booléen remis à faux :
+  /// la version précédente laissait le flux Geolocator actif, donc le GPS
+  /// allumé et des positions envoyées après la déconnexion — batterie vidée,
+  /// et un driver qui se croit hors ligne continuait d'alimenter le dispatch.
+  Future<void> stopTracking() async {
+    final subscription = _subscription;
+    _subscription = null;
+
+    if (subscription == null) return;
+
+    await subscription.cancel();
+    AppLogger.info('LocationService', 'Suivi de position arrêté');
+  }
+
+  bool get isTracking => _subscription != null;
+
+  /// Envoie une position au BFF, une fois, sans démarrer le suivi. Utilisé au
+  /// passage en ligne pour que le dispatch dispose d'un point tout de suite,
+  /// sans attendre le premier franchissement du seuil de distance.
+  Future<void> pushCurrentPosition() async {
+    final position = await getCurrentPosition();
+    if (position != null) await _pushPosition(position);
+  }
+
+  Future<void> _pushPosition(Position position) async {
+    final client = _apiClient;
+    if (client == null) {
+      AppLogger.error('LocationService', 'Service non initialisé — position perdue');
       return;
     }
 
     try {
-      _isTracking = false;
-      AppLogger.info('LocationService', 'Stopping background location tracking');
-    } catch (e) {
-      AppLogger.error('LocationService', 'Failed to stop tracking', e);
-    }
-  }
-
-  bool get isTracking => _isTracking;
-
-  Future<void> _updateDriverLocation(Position position) async {
-    try {
-      await _apiClient.updateDriverLocation(
+      await client.updateDriverLocation(
         latitude: position.latitude,
         longitude: position.longitude,
+        heading: position.heading,
+        speed: position.speed,
       );
     } catch (e) {
-      AppLogger.error('LocationService', 'Failed to update location', e);
+      // Une position perdue n'est pas rattrapée : la suivante la remplace de
+      // toute façon. Échouer bruyamment ici couperait le suivi sur une simple
+      // coupure réseau.
+      AppLogger.warn('LocationService', 'Position non remontée : $e');
     }
   }
 
-  Future<double> calculateDistance({
+  double distanceBetween({
     required double startLatitude,
     required double startLongitude,
     required double endLatitude,
     required double endLongitude,
-  }) async {
-    try {
-      final distance = Geolocator.distanceBetween(
-        startLatitude,
-        startLongitude,
-        endLatitude,
-        endLongitude,
-      );
-      return distance;
-    } catch (e) {
-      AppLogger.error('LocationService', 'Failed to calculate distance', e);
-      return 0;
-    }
+  }) {
+    return Geolocator.distanceBetween(
+      startLatitude,
+      startLongitude,
+      endLatitude,
+      endLongitude,
+    );
   }
 }

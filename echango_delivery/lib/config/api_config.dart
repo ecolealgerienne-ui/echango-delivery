@@ -23,32 +23,16 @@ class ApiConfig {
     defaultValue: 'http://10.0.2.2:3001',
   );
 
-  // L'app n'appelle JAMAIS Fleetbase directement — tout passe par le BFF
-  // (decision specs_app_transporteur.md §2.1 : aucun credential Fleetbase
-  // dans un client final). Conservé pour information/debug uniquement.
-  static const String fleetbaseApiUrl = 'http://localhost:8000';
-
-  // Timeouts (in seconds)
+  /// Délai maximal d'une requête au BFF, en secondes. Appliqué globalement
+  /// par le client HTTP (voir BffApiClient).
   static const int apiTimeout = 30;
-  static const int locationUpdateInterval = 10;
 
-  // Location Services
-  static const double locationDistanceThreshold = 10.0; // meters
-  static const int maxLocationAge = 60000; // milliseconds
+  /// Distance minimale, en mètres, entre deux remontées de position. Filtre
+  /// appliqué par Geolocator lui-même : en dessous, aucun appel réseau n'est
+  /// fait. Trop bas, la batterie et le forfait y passent ; trop haut, le
+  /// dispatch géospatial travaille sur une position périmée.
+  static const double locationDistanceThreshold = 10.0;
 
-  // Notification Configuration
-  static const String fcmTopicPrefix = 'echango_driver';
-
-  // App Info
   static const String appVersion = '0.1.0';
   static const String appName = 'Echango Delivery';
-
-  // Feature Flags
-  static const bool enableDebugLogging = true;
-  static const bool enableOfflineMode = true;
-
-  /// Get Firebase topic name for driver
-  static String getDriverTopic(String driverId) {
-    return '${fcmTopicPrefix}_$driverId';
-  }
 }

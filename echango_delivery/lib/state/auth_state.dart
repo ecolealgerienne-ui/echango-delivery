@@ -259,7 +259,25 @@ class AuthState extends ChangeNotifier {
         _displayName ??= businessName;
       }, 'Inscription impossible');
 
+  /// Travail à faire pendant que le jeton est encore valide, avant d'invalider
+  /// la session.
+  ///
+  /// Sans ce point d'accroche, tout nettoyage déclenché par le changement
+  /// d'état arrive trop tard : la session est déjà effacée et l'appel part
+  /// sans jeton. C'est ce qui laisserait un transporteur déconnecté marqué
+  /// « en ligne » côté Fleetbase, donc éligible à des courses que personne ne
+  /// prendrait.
+  Future<void> Function()? onBeforeLogout;
+
   Future<void> logout() async {
+    try {
+      await onBeforeLogout?.call();
+    } catch (e) {
+      // La déconnexion doit aboutir quoi qu'il arrive : un nettoyage qui échoue
+      // ne doit pas retenir l'utilisateur dans une session dont il veut sortir.
+      debugPrint('Nettoyage avant déconnexion incomplet : $e');
+    }
+
     await _apiClient.clearSession();
     _status = SessionStatus.unauthenticated;
     _role = null;

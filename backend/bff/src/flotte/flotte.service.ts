@@ -11,6 +11,16 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 
+/** Projection de DriverAccount servie par getDriverPositions. */
+interface LastKnownPosition {
+  fleetbaseDriverUuid: string;
+  firstName: string | null;
+  lastName: string | null;
+  lastLatitude: number | null;
+  lastLongitude: number | null;
+  lastPositionAt: Date | null;
+}
+
 @Injectable()
 export class FlotteService {
   private readonly logger = new Logger(FlotteService.name);
@@ -113,43 +123,60 @@ export class FlotteService {
   }
 
   /**
-   * Get positions for this fleet's drivers only.
+   * Dernière position connue des drivers de cette flotte.
    *
-   * Fleetbase's /positions endpoint has no per-driver query filter at all
-   * (confirmed by reading PositionFilter.php, see
-   * docs/journal_implementation_bff.md §2.9) - only free-text `query` and
-   * `createdAt` are supported, plus automatic company-wide scoping. So we
-   * fetch every company Position and filter in memory, same pattern as
-   * orders/drivers: first by this fleet's owned driver UUIDs, then further
-   * by the caller's requested subset if any.
+   * Servie depuis le miroir local alimenté par POST /transporteur/position,
+   * et non depuis Fleetbase. L'endpoint /positions de Fleetbase n'a aucun
+   * filtre par driver (vérifié dans PositionFilter.php, journal §2.9) : il
+   * n'accepte qu'une recherche texte et une date, avec un cloisonnement
+   * automatique par compagnie. Le servir revenait donc à télécharger tout
+   * l'historique de positions de l'organisation à chaque rafraîchissement
+   * d'une carte qui n'affiche qu'un point par driver — un coût qui grandit
+   * avec l'historique, pas avec le nombre de drivers affichés.
+   *
+   * Ce que ça change pour l'appelant : un driver qui n'a pas de compte
+   * Echango, ou qui n'a pas encore envoyé de position depuis l'app, n'apparaît
+   * pas dans le résultat. C'est le comportement voulu — Fleetbase n'en aurait
+   * de toute façon aucune position à donner.
    */
   async getDriverPositions(fleetId: string, requestedDriverIds: string[]) {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
       const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-      const ownedUuids = new Set(owned.map((d: any) => d.uuid));
+      const ownedUuids = new Set<string>(owned.map((d: any) => d.uuid));
 
       const targetIds =
         requestedDriverIds && requestedDriverIds.length > 0
           ? requestedDriverIds.filter((id) => ownedUuids.has(id))
-          : (Array.from(ownedUuids) as string[]);
+          : Array.from(ownedUuids);
 
       if (targetIds.length === 0) {
         return [];
       }
 
-      const response = await this.fleetbaseClient.getAllPositions();
-      const positions = response?.positions || response?.data || [];
-      const targetSet = new Set(targetIds);
+      const accounts = await this.prisma.driverAccount.findMany({
+        where: {
+          fleetbaseDriverUuid: { in: targetIds },
+          lastPositionAt: { not: null },
+        },
+        select: {
+          fleetbaseDriverUuid: true,
+          firstName: true,
+          lastName: true,
+          lastLatitude: true,
+          lastLongitude: true,
+          lastPositionAt: true,
+        },
+      });
 
-      // Field name (subject_uuid vs driver_uuid) is a best-effort guess: the
-      // company has zero Position rows in this dev instance, so there is no
-      // real record to check the shape against yet. Re-verify once a driver
-      // has actually sent a location ping.
-      return (Array.isArray(positions) ? positions : []).filter((p: any) =>
-        targetSet.has(p?.subject_uuid || p?.driver_uuid),
-      );
+      return (accounts as LastKnownPosition[]).map((a) => ({
+        driver_uuid: a.fleetbaseDriverUuid,
+        name: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
+        latitude: a.lastLatitude,
+        longitude: a.lastLongitude,
+        recorded_at: a.lastPositionAt,
+      }));
     } catch (error) {
       this.logger.error(`Failed to fetch driver positions: ${error.message}`);
       throw new BadRequestException('Failed to fetch driver positions');
@@ -221,34 +248,14 @@ export class FlotteService {
 
   /**
    * Fetch every order in the company, across pages, since the
-   * facilitator_uuid filter cannot be trusted server-side. Capped to avoid
-   * an unbounded loop against a much larger dataset than expected today.
+   * facilitator_uuid filter cannot be trusted server-side.
+   *
+   * The pagination itself now lives in the Fleetbase client: the other two
+   * personas were scanning a single 100-item page for the same reason and had
+   * the same silent truncation bug this method already avoided.
    */
-  private async fetchAllOrders(): Promise<any[]> {
-    const pageSize = 100;
-    const maxPages = 50;
-    const all: any[] = [];
-
-    for (let page = 1; page <= maxPages; page++) {
-      const response = await this.fleetbaseClient.getAllOrders(page, pageSize);
-      const orders = response?.orders || response?.data || (Array.isArray(response) ? response : []);
-
-      if (!orders || orders.length === 0) {
-        break;
-      }
-
-      all.push(...orders);
-
-      if (orders.length < pageSize) {
-        break;
-      }
-
-      if (page === maxPages) {
-        this.logger.warn(`fetchAllOrders hit the ${maxPages}-page safety cap - results may be incomplete`);
-      }
-    }
-
-    return all;
+  private fetchAllOrders(): Promise<any[]> {
+    return this.fleetbaseClient.fetchEveryOrder();
   }
 
   private async fetchOwnedDrivers(vendorUuid: string): Promise<any[]> {

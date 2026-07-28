@@ -111,6 +111,14 @@ echo "$RESP" | jq -e '.online == true' >/dev/null 2>&1 \
   || fail "POST /transporteur/statut" "$RESP"
 pass "POST /transporteur/statut (online=true)"
 
+# Le profil doit maintenant refléter la disponibilité réelle : c'est ce que
+# l'app lit au démarrage pour positionner son interrupteur. Sans ce champ, un
+# driver rouvrant l'app se croirait hors ligne tout en recevant des courses.
+RESP=$(api GET /transporteur/profil)
+echo "$RESP" | jq -e '.online == true' >/dev/null 2>&1 \
+  || fail "GET /transporteur/profil ne reflète pas le passage en ligne" "$RESP"
+pass "GET  /transporteur/profil (online=true relu depuis Fleetbase)"
+
 # --- 3. Position ----------------------------------------------------------
 # POST /v1/drivers/{id}/track. Alger centre.
 RESP=$(api POST /transporteur/position '{"latitude":36.7538,"longitude":3.0588,"heading":90,"speed":0}')
