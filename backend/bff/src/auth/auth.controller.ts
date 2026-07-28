@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { MerchantRegisterDto, MerchantLoginDto } from './dto/register.dto';
+import { MerchantRegisterDto, MerchantLoginDto, FleetRegisterDto, FleetLoginDto } from './dto/register.dto';
 import { RegisterDeviceTokenDto } from './dto/device-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 
@@ -18,6 +18,18 @@ export class AuthController {
   @Post('merchant/login')
   async loginMerchant(@Body() dto: MerchantLoginDto) {
     return this.authService.loginMerchant(dto);
+  }
+
+  @Public()
+  @Post('flotte/register')
+  async registerFleet(@Body() dto: FleetRegisterDto) {
+    return this.authService.registerFleet(dto);
+  }
+
+  @Public()
+  @Post('flotte/login')
+  async loginFleet(@Body() dto: FleetLoginDto) {
+    return this.authService.loginFleet(dto);
   }
 
   @Post('device-token')

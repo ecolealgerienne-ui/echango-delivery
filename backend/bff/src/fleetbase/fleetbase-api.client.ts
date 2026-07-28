@@ -234,18 +234,33 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Get orders scoped to a facilitator (fleet)
+   * List ALL company orders, unfiltered. Confirmed by direct testing (28/07/2026,
+   * see docs/journal_implementation_bff.md §2.8) that Fleetbase silently IGNORES
+   * `facilitator_uuid` as a query filter on this endpoint - it returns the full
+   * company-wide dataset regardless of the value passed. Callers MUST filter the
+   * result client-side by `facilitator_uuid`; never trust a query param here as
+   * a security boundary.
    */
-  async getFleetOrders(facilitatorUuid: string, page = 1, limit = 25) {
+  async getAllOrders(page = 1, limit = 100) {
     try {
-      const response = await this.callFleetOps('GET', '/orders', undefined, {
-        facilitator_uuid: facilitatorUuid,
-        page,
-        limit,
-      });
+      const response = await this.callFleetOps('GET', '/orders', undefined, { page, limit });
       return response.data;
     } catch (error) {
-      this.logger.error(`Get fleet orders failed: ${error.message}`);
+      this.logger.error(`Get all orders failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a single order by uuid. Confirmed working (used for tracking, see
+   * commercant.service.ts getOrderTracking).
+   */
+  async getOrder(orderUuid: string) {
+    try {
+      const response = await this.callFleetOps('GET', `/orders/${orderUuid}`);
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Get order failed: ${error.message}`);
       throw error;
     }
   }
@@ -265,35 +280,77 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Assign a driver to an order
+   * Assign an order to a driver. Confirmed shape by reading
+   * DriverController::assignOrder() - route is `/drivers/{id}/assign-order`,
+   * body key is `order` (not `order_id`/`orderId`).
    */
-  async assignDriverToOrder(orderId: string, driverUuid: string) {
+  async assignOrderToDriver(driverUuid: string, orderUuid: string) {
     try {
-      const response = await this.callFleetOps('PATCH', `/orders/${orderId}`, {
-        driver_assigned_uuid: driverUuid,
+      const response = await this.callFleetOps('POST', `/drivers/${driverUuid}/assign-order`, {
+        order: orderUuid,
       });
       return response.data;
     } catch (error) {
-      this.logger.error(`Assign driver failed: ${error.message}`);
+      this.logger.error(`Assign order to driver failed: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Get drivers for a fleet
+   * List ALL company drivers, unfiltered. Confirmed by direct testing (28/07/2026,
+   * see docs/journal_implementation_bff.md §2.8) that `vendor_uuid` is silently
+   * IGNORED as a query filter here too - same bypass as /orders. Callers MUST
+   * filter client-side by `vendor_uuid`; never trust this query param.
    */
-  async getFleetDrivers(fleetUuid: string) {
+  async getAllDrivers() {
     try {
-      const response = await this.callFleetOps('GET', `/fleets/${fleetUuid}/drivers`);
+      const response = await this.callFleetOps('GET', '/drivers');
       return response.data;
     } catch (error) {
-      this.logger.error(`Get fleet drivers failed: ${error.message}`);
+      this.logger.error(`Get all drivers failed: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Get driver positions
+   * Create a new Driver record in Fleetbase.
+   * NOTE: endpoint shape assumed by convention (POST /drivers, mirroring
+   * /vendors and /places), NOT yet confirmed by source reading or live test -
+   * verify against a running instance before relying on this in production.
+   */
+  async createDriver(data: { name: string; email?: string; phone?: string }) {
+    try {
+      const response = await this.callFleetOps('POST', '/drivers', data);
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Create driver failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Attach a Driver to a Vendor's fleet. Confirmed shape by reading
+   * VendorController::assignDriver() - route is `/vendors/{id}/assign-driver`,
+   * body key is `driver`; this sets the Driver's `vendor_uuid`.
+   */
+  async assignDriverToVendor(vendorUuid: string, driverUuid: string) {
+    try {
+      const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/assign-driver`, {
+        driver: driverUuid,
+      });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Assign driver to vendor failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get driver positions.
+   * NOTE: endpoint shape NOT yet confirmed by source reading or live test -
+   * this is a placeholder assumption (`GET /driver-positions?driver_ids=...`).
+   * Verify against a running instance (route:list, or the `Position` model's
+   * controller) before relying on this in production.
    */
   async getDriverPositions(driverIds: string[]) {
     try {

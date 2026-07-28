@@ -120,6 +120,41 @@ Lecture de `CreateOrderRequest::rules()` (le fichier réel des règles de valida
 
 **Sous-bug découvert dans la foulée** : `tracking_number` dans la réponse n'est **pas** une chaîne mais l'objet `TrackingNumber` complet (`{uuid, tracking_number: "ECH...", qr_code, barcode, url, status, ...}`) — la colonne Prisma `Order.trackingNumber` (`String?`) attend `fleetbaseOrder.tracking_number.tracking_number`, pas l'objet entier. Encore un exemple du pattern §2.4 (ne jamais supposer la forme d'une réponse sans la vérifier).
 
+### 2.6 Annulation de commande — pas de route `POST /orders/{id}/cancel`
+
+**Hypothèse initiale (fausse)** : un endpoint REST classique `POST /orders/{id}/cancel`.
+
+**Réalité, confirmée en lisant `OrderController::cancel()`** : la route réelle est `PATCH /orders/cancel` (pas de `{id}` dans le chemin) — l'UUID de la commande est passé dans le corps de la requête, sous la clé `order` : `{"order": "<uuid>"}`.
+
+**Correction** : `cancelOrder(orderUuid)` dans `fleetbase-api.client.ts` appelle `PATCH /orders/cancel` avec `{order: orderUuid}`. Vérifié par test réel (commande passée en statut `cancelled`).
+
+### 2.7 Carnet d'adresses — pas de route `/addresses`, réutilisation de `Place.owner_uuid`
+
+**Question ouverte du projet, tranchée ici par test empirique** (pas de doc officielle trouvée sur le sujet) : `route:list` ne montre aucune route `/addresses` sous `int/v1`. Hypothèse retenue : réutiliser le modèle `Place` existant (déjà utilisé pour pickup/dropoff, §2.5) comme carnet d'adresses, scopé via ses colonnes `owner_uuid`/`owner_type`.
+
+**Vérifié par test réel avant d'implémenter côté BFF** (point important : contrairement à `facilitator_uuid`/`vendor_uuid` sur `/orders`/`/drivers`, voir §2.8 ci-dessous) : `GET /places?owner_uuid=<uuid-sans-place>` renvoie bien une liste vide, et `GET /places?owner_uuid=<uuid-du-vendor-du-commerçant>` renvoie uniquement ses propres `Place`, pas les ~7+ places de la compagnie. `owner_uuid` sur `/places` est donc un filtre serveur réel — contrairement à `facilitator_uuid`/`vendor_uuid`, ce n'est **pas** un cas générique de filtre ignoré, à vérifier au cas par cas par colonne/endpoint.
+
+**Correction** : `createOwnedPlace()` / `getOwnedPlaces()` dans `fleetbase-api.client.ts`, utilisés par `commercant.service.ts` pour `getAddresses`/`saveAddress`, avec `owner_type: 'fleet-ops:vendor'`.
+
+### 2.8 ⚠️ CRITIQUE — les filtres `facilitator_uuid` (`/orders`) et `vendor_uuid` (`/drivers`) sont ignorés côté serveur
+
+**Ne pas confondre avec §2.7** : tous les filtres de query string ne se valent pas — certains fonctionnent réellement (`owner_uuid` sur `/places`, vérifié), d'autres non. Chaque filtre doit être vérifié individuellement, jamais supposé par analogie.
+
+**Hypothèse du document de scoping initial** (`docs/specs_bff.md` §5.2) : le module `flotte` (petite flotte, persona 2) pourrait scoper ses appels à Fleetbase en passant `facilitator_uuid=<vendor_uuid_du_gestionnaire>` sur `GET /orders`, et `vendor_uuid=<vendor_uuid>` sur `GET /drivers`, en confiant à Fleetbase le filtrage côté serveur — ce qui aurait permis d'éviter tout filtrage applicatif côté BFF.
+
+**Réalité, découverte par deux tests empiriques directs, indépendants** :
+1. `GET /orders?facilitator_uuid=<uuid réel>` puis `GET /orders?facilitator_uuid=<uuid inexistant/aléatoire>` renvoient **exactement le même jeu de résultats** — les 7 commandes de la compagnie, avec des `facilitator_uuid` variés (voire `null`), indépendamment de la valeur du paramètre.
+2. Même constat sur `GET /drivers?vendor_uuid=<uuid inexistant>` : les 2 drivers de la compagnie sont renvoyés intégralement, alors qu'aucun des deux n'appartient au vendor inventé passé en filtre.
+
+**Conclusion — implication de sécurité directe** : ces deux paramètres de query string sont acceptés par l'API (aucune erreur renvoyée) mais **n'ont aucun effet de filtrage réel**. Un BFF qui ferait confiance à ces paramètres pour scoper les données d'un gestionnaire de petite flotte exposerait silencieusement les commandes et les drivers de **toute la compagnie**, y compris ceux des autres commerçants/flottes — un IDOR (Insecure Direct Object Reference) de la pire espèce : la vulnérabilité est invisible en test si on ne compare pas explicitement les résultats avec un filtre valide vs un filtre invalide (une simple requête filtrée qui "a l'air" de fonctionner ne suffit pas à la détecter, car les données réelles du gestionnaire sont *incluses* dans le résultat, juste noyées avec celles des autres).
+
+**Correction obligatoire, appliquée dans `flotte.service.ts`** : ne jamais transmettre `facilitator_uuid`/`vendor_uuid` à Fleetbase comme mécanisme de sécurité. À la place :
+1. Récupérer l'intégralité de la liste depuis Fleetbase (`GET /orders` / `GET /drivers`, sans filtre de confiance)
+2. Filtrer **côté BFF, en mémoire**, en ne gardant que les enregistrements dont `facilitator_uuid`/`vendor_uuid` correspond exactement au `fleetbaseVendorUuid` du `FleetAccount` authentifié (comparaison stricte, jamais de filtre optimiste)
+3. Appliquer la même vérification en lecture unitaire (`getOrderDetail`) : après récupération par ID, vérifier l'appartenance avant de renvoyer quoi que ce soit (même pattern anti-IDOR que `commercant.service.ts` avec `merchantId`)
+
+**À reporter dans `docs/specs_bff.md` §5.2** (pas fait dans cette session — le document de scoping doit être corrigé pour ne plus présenter le filtrage serveur comme acquis).
+
 ---
 
 ## 3. Bugs BFF (indépendants de Fleetbase)

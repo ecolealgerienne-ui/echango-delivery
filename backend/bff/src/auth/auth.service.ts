@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
-import { MerchantRegisterDto, MerchantLoginDto } from './dto/register.dto';
+import { MerchantRegisterDto, MerchantLoginDto, FleetRegisterDto, FleetLoginDto } from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
@@ -144,6 +144,117 @@ export class AuthService {
         id: merchant.id,
         email: merchant.email,
         businessName: merchant.businessName,
+      },
+    };
+  }
+
+  /**
+   * Register a new fleet manager ("petite flotte" persona).
+   * Creates Echango account + Fleetbase Vendor only - no Customer/personnel,
+   * no dedicated Fleetbase User (Option A, docs/specs_bff.md §2): the fleet
+   * manager authenticates purely against the BFF, which then acts as a
+   * service account against FleetOps, scoping every call by this Vendor's
+   * uuid as facilitator_uuid/vendor_uuid (filtered client-side, see
+   * docs/journal_implementation_bff.md §2.8 - Fleetbase does not enforce
+   * these filters server-side).
+   */
+  async registerFleet(dto: FleetRegisterDto) {
+    const existing = await this.prisma.fleetAccount.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existing) {
+      throw new ConflictException('Email already registered');
+    }
+
+    try {
+      this.logger.log(`Creating Vendor in Fleetbase for fleet ${dto.businessName}`);
+      const vendorResponse = await this.fleetbaseClient.createVendor(
+        dto.businessName,
+        dto.email,
+        dto.businessPhone,
+      );
+
+      const vendorUuid = vendorResponse.vendor?.uuid || vendorResponse.vendor?.id;
+      if (!vendorUuid) {
+        throw new Error('Vendor UUID not returned from Fleetbase');
+      }
+
+      const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+      const fleet = await this.prisma.fleetAccount.create({
+        data: {
+          email: dto.email,
+          password: hashedPassword,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          businessName: dto.businessName,
+          phone: dto.phone,
+          businessPhone: dto.businessPhone,
+          fleetbaseVendorUuid: vendorUuid,
+        },
+      });
+
+      this.logger.log(`Fleet account registered: ${fleet.id}`);
+
+      const token = this.generateToken(fleet.id, fleet.email, 'fleet');
+
+      return {
+        token,
+        user: {
+          id: fleet.id,
+          email: fleet.email,
+          businessName: fleet.businessName,
+        },
+      };
+    } catch (error) {
+      this.logger.error(`Fleet registration failed: ${error.message}`, error);
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      throw new BadRequestException(
+        this.configService.get('NODE_ENV') === 'development'
+          ? `Failed to register fleet account: ${detail}`
+          : 'Failed to register fleet account',
+      );
+    }
+  }
+
+  /**
+   * Login fleet manager with email/password
+   */
+  async loginFleet(dto: FleetLoginDto) {
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!fleet) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const passwordMatches = await bcrypt.compare(dto.password, fleet.password);
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (!fleet.active) {
+      throw new UnauthorizedException('Account is inactive');
+    }
+
+    await this.prisma.fleetAccount.update({
+      where: { id: fleet.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    this.logger.log(`Fleet manager logged in: ${fleet.id}`);
+
+    const token = this.generateToken(fleet.id, fleet.email, 'fleet');
+
+    return {
+      token,
+      user: {
+        id: fleet.id,
+        email: fleet.email,
+        businessName: fleet.businessName,
       },
     };
   }
