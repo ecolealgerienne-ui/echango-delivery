@@ -381,11 +381,14 @@ export class FleetbaseApiClient {
    * payload, see docs/journal_implementation_bff.md §2.5/§2.12) - a flat
    * payload is used here by that analogy.
    *
-   * NOT independently verified end-to-end - no live Fleetbase instance nor
-   * real driver device was available to test this against in this session.
-   * Before relying on this in production, confirm: the request payload shape
-   * (flat vs `{user_device: {...}}` envelope), the response wrapper key, and
-   * whether repeat calls with the same token upsert or create duplicate rows.
+   * VALIDATED end-to-end 28/07/2026 via scripts/test-driver-auth.sh against a
+   * live local Fleetbase: the flat payload and the response key both work, and
+   * the returned UserDevice uuid is persisted. The analogy above held.
+   *
+   * Still unconfirmed: whether repeat calls with the same token upsert or
+   * append a row on the Fleetbase side. It matters in practice - Firebase
+   * hands back the same token on every app start, so this route gets called
+   * repeatedly, and duplicate rows would mean duplicate pushes.
    */
   async upsertDriverDeviceToken(userUuid: string, token: string, platform: string) {
     try {

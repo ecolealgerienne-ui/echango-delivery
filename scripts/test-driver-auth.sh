@@ -129,6 +129,25 @@ else
   echo "    Driver.user_uuid absent (driver Fleetbase sans User rattaché)."
 fi
 
+# --- 3b. Rappel du même jeton : upsert ou doublon ? -----------------------
+# Cas réel fréquent : Firebase renvoie le même jeton à chaque démarrage de
+# l'app, donc cet appel se répète souvent. S'il empile des lignes, un driver
+# finit avec N enregistrements identiques et reçoit N notifications.
+DEVICE_RESP2=$(curl -sS -X POST "$BFF_URL/auth/transporteur/device-token" \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+  -d '{"token":"fake-fcm-token-pour-test","platform":"android"}')
+
+ID1=$(echo "$DEVICE_RESP"  | jq -r '.id // empty')
+ID2=$(echo "$DEVICE_RESP2" | jq -r '.id // empty')
+
+if [ -n "$ID2" ] && [ "$ID1" = "$ID2" ]; then
+  pass "device-token — rappel du même jeton réutilisé (pas de doublon côté BFF)"
+else
+  echo "⚠️  device-token — le rappel du même jeton a produit un enregistrement"
+  echo "    différent côté BFF ($ID1 → $ID2). À corriger : l'app rappellera"
+  echo "    cette route à chaque démarrage avec le même jeton Firebase."
+fi
+
 # --- 4. Rejets attendus ---------------------------------------------------
 # Un register doit refuser un UUID inconnu. Ce test compte autant que les
 # autres : §2.13 du journal a montré que GET /drivers/{uuid} renvoie TOUS les
@@ -150,10 +169,11 @@ echo "Tranche auth validée. Identifiants réutilisables pour l'app :"
 echo "  email    : $EMAIL"
 echo "  password : $PASSWORD"
 echo ""
-echo "À vérifier ensuite à la main dans Fleetbase (le script ne peut pas) :"
-echo "  - la ligne user_devices créée :"
-echo "      docker exec fleetbase-src-database-1 mysql -uroot -p fleetbase \\"
-echo "        -e \"SELECT uuid, user_uuid, platform, token FROM user_devices;\""
-echo "  - qu'un 2e appel device-token avec le MÊME token fasse un upsert et"
-echo "    non un doublon (comportement non vérifié, journal §5.1)."
+echo "Reste à vérifier côté Fleetbase (le script ne voit que la réponse du BFF) :"
+echo "combien de lignes user_devices portent ce jeton. Le BFF peut très bien"
+echo "réutiliser SON enregistrement tout en recréant un UserDevice à chaque"
+echo "appel — attendu : 1."
+echo ""
+echo "    docker exec fleetbase-src-application-1 php artisan tinker \\"
+echo "      --execute=\"echo DB::table('user_devices')->where('token','fake-fcm-token-pour-test')->count();\""
 echo "──────────────────────────────────────────────────────────"
