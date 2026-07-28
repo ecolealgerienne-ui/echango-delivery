@@ -49,28 +49,28 @@ Future<void> main() async {
   await authState.restoreSession();
 
   runApp(
-    EchangoDriverApp(
+    EchangoDeliveryApp(
       authState: authState,
       apiClient: apiClient,
     ),
   );
 }
 
-class EchangoDriverApp extends StatefulWidget {
+class EchangoDeliveryApp extends StatefulWidget {
   final AuthState authState;
   final BffApiClient apiClient;
 
-  const EchangoDriverApp({
+  const EchangoDeliveryApp({
     super.key,
     required this.authState,
     required this.apiClient,
   });
 
   @override
-  State<EchangoDriverApp> createState() => _EchangoDriverAppState();
+  State<EchangoDeliveryApp> createState() => _EchangoDeliveryAppState();
 }
 
-class _EchangoDriverAppState extends State<EchangoDriverApp>
+class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     with WidgetsBindingObserver {
   late final OrderState _orderState;
   late final MerchantOrderState _merchantOrderState;

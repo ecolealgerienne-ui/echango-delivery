@@ -29,7 +29,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(authState.businessName ?? 'Mes livraisons'),
+        title: Text(authState.displayName ?? 'Mes livraisons'),
         actions: [
           IconButton(
             tooltip: 'Carnet d\'adresses',
