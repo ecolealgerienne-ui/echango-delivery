@@ -24,42 +24,76 @@ export class CommerçantService {
   /**
    * Get merchant's orders from Fleetbase via customer-portal-api
    */
+  /**
+   * Merge the merchant's cached order rows with their live Fleetbase state.
+   *
+   * The cache alone is not enough to show anything useful: it stores an id, a
+   * tracking number and a status frozen at 'pending' on creation that nothing
+   * ever resynchronises — so a merchant would watch a delivery that never
+   * appears to progress, and would see neither addresses nor courier.
+   *
+   * The cache keeps the job it is actually good at: recording which orders
+   * belong to which merchant. That mapping is what makes the anti-IDOR check
+   * trustworthy, and it must stay authoritative — §2.8 established that
+   * Fleetbase silently ignores unsupported filters on /orders, so asking it
+   * "which orders are this merchant's" would return the whole company.
+   */
+  private async mergeWithFleetbase(cached: { id: string; fleetbaseOrderId: string }[]) {
+    if (!cached.length) return [];
+
+    let live: any[] = [];
+    try {
+      const response = await this.fleetbaseClient.getAllOrders();
+      live = response?.orders || response?.data || (Array.isArray(response) ? response : []);
+    } catch (error) {
+      // Degrade rather than fail: without Fleetbase the merchant still sees
+      // that the order exists, just not how far along it is.
+      this.logger.warn(`Fleetbase unreachable, serving cached orders only: ${error.message}`);
+      return cached.map((c) => ({ ...c, uuid: c.fleetbaseOrderId, stale: true }));
+    }
+
+    const byId = new Map(live.map((o: any) => [o?.uuid, o]));
+
+    return cached.map((c) => {
+      const order = byId.get(c.fleetbaseOrderId);
+      if (!order) {
+        // Order vanished from Fleetbase (deleted, or another organization).
+        return { ...c, uuid: c.fleetbaseOrderId, missing: true };
+      }
+      // Fleetbase order wins on every business field; the local id is kept so
+      // the app can still address the row it came from.
+      return { ...order, bff_order_id: c.id };
+    });
+  }
+
   async getOrders(merchantId: string, query: ListOrdersQueryDto) {
     this.logger.log(`Fetching orders for merchant ${merchantId}`);
 
-    const merchant = await this.getMerchantWithValidation(merchantId);
+    await this.getMerchantWithValidation(merchantId);
 
     try {
       const page = query.page || 1;
       const limit = query.limit || 25;
 
-      // Call customer-portal-api if merchant has a token
-      // For now, return cached orders from BFF database
-      const orders = await this.prisma.order.findMany({
-        where: {
-          merchantId,
-          ...(query.status && { status: query.status }),
-        },
+      const cached = await this.prisma.order.findMany({
+        where: { merchantId },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       });
 
-      const total = await this.prisma.order.count({
-        where: {
-          merchantId,
-          ...(query.status && { status: query.status }),
-        },
-      });
+      const orders = await this.mergeWithFleetbase(cached);
+      const total = await this.prisma.order.count({ where: { merchantId } });
+
+      // `status` is filtered here rather than in the query: the cached status
+      // is stale, so only the merged result knows the real one.
+      const filtered = query.status
+        ? orders.filter((o: any) => o?.status === query.status)
+        : orders;
 
       return {
-        data: orders,
-        pagination: {
-          page,
-          limit,
-          total,
-          pages: Math.ceil(total / limit),
-        },
+        orders: filtered,
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       };
     } catch (error) {
       this.logger.error(`Failed to fetch orders: ${error.message}`);
@@ -67,32 +101,35 @@ export class CommerçantService {
     }
   }
 
-  /**
-   * Get single order detail with full information
-   */
   async getOrderDetail(merchantId: string, orderId: string) {
     this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
 
     await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        commissions: true,
+    // Accept either identifier: the app may hold the local id returned at
+    // creation, or a Fleetbase one seen in a list.
+    const order = await this.prisma.order.findFirst({
+      where: {
+        OR: [{ id: orderId }, { fleetbaseOrderId: orderId }],
       },
+      include: { commissions: true },
     });
 
     if (!order) {
       throw new NotFoundException('Order not found');
     }
 
-    // Anti-IDOR: Verify merchant owns this order
+    // Anti-IDOR: ownership is decided on the local mapping, never on anything
+    // Fleetbase returns — see mergeWithFleetbase().
     if (order.merchantId !== merchantId) {
+      this.logger.warn(`Merchant ${merchantId} attempted to access order ${orderId}`);
       throw new ForbiddenException('You do not have access to this order');
     }
 
-    return order;
+    const [merged] = await this.mergeWithFleetbase([order]);
+    return { ...merged, commissions: order.commissions };
   }
+
 
   /**
    * Create a new delivery order

@@ -16,6 +16,9 @@ class MerchantOrder extends Equatable {
   final String status;
   final String? trackingNumber;
   final bool dispatched;
+  /// L'état Fleetbase n'a pas pu être récupéré : afficher « indisponible »
+  /// plutôt qu'un statut faux.
+  final bool degraded;
   final DateTime createdAt;
   final OrderPlace? pickup;
   final OrderPlace? dropoff;
@@ -28,6 +31,7 @@ class MerchantOrder extends Equatable {
     required this.createdAt,
     this.trackingNumber,
     this.dispatched = false,
+    this.degraded = false,
     this.pickup,
     this.dropoff,
     this.driverName,
@@ -42,6 +46,11 @@ class MerchantOrder extends Equatable {
   bool get isWaitingDispatch => !dispatched && !isFinished;
   bool get canCancel => !isFinished;
 
+  /// ⚠️ Le BFF fusionne son cache local avec l'état Fleetbase : la réponse a
+  /// donc la forme d'une commande Fleetbase, plus `bff_order_id`. Deux cas
+  /// dégradés existent et doivent rester lisibles plutôt que planter :
+  /// `stale` (Fleetbase injoignable) et `missing` (commande disparue) — dans
+  /// les deux, seuls l'identifiant et la date sont fiables.
   factory MerchantOrder.fromJson(Map<String, dynamic> json) {
     final payload = json['payload'] as Map<String, dynamic>?;
 
@@ -66,6 +75,7 @@ class MerchantOrder extends Equatable {
           ? json['tracking_number']['tracking_number'] as String?
           : json['tracking_number'] as String?,
       dispatched: json['dispatched'] == true,
+      degraded: json['stale'] == true || json['missing'] == true,
       createdAt: parseDate('created_at'),
       pickup: place('pickup'),
       dropoff: place('dropoff'),

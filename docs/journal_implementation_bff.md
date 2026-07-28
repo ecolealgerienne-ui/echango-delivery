@@ -717,3 +717,32 @@ FLEETBASE_PROOF_BUCKET=<nom réel du bucket>
 **À vérifier en même temps** : si l'amont a corrigé la ligne entre-temps (`config()` au lieu de `$request->input()`), le contournement devient inutile *et nuisible* — il continuerait d'imposer une valeur là où la config serveur devrait décider. Tester d'abord un upload sans ces variables : s'il passe, retirer le contournement de `captureOrderPhoto()`.
 
 C'est le seul endroit du BFF où une valeur d'environnement écrase silencieusement une configuration Fleetbase. Il mérite d'être revu à chaque montée de version.
+
+---
+
+## 8. Interface commerçant (28/07/2026)
+
+### 8.1 ⚠️ Le module commerçant servait un cache jamais resynchronisé
+
+Découvert en préparant l'app : `POST /commercant/commandes` renvoie un **cuid Prisma** (`cms4wivve…`), pas un identifiant Fleetbase. En lisant `commercant.service.ts`, la cause est plus large — `getOrders()` interrogeait **uniquement** `prisma.order`, jamais Fleetbase.
+
+Or ce cache ne contient qu'un id, un `fleetbaseOrderId`, un numéro de suivi et un `status` **figé à `'pending'` à la création, que rien ne resynchronise**. Conséquences pour un commerçant :
+
+- sa livraison n'aurait **jamais** semblé progresser, quel que soit son état réel ;
+- ni adresses, ni transporteur assigné, ni date de dispatch — rien de tout ça n'est stocké localement.
+
+Le module passait pourtant les tests : ils vérifiaient qu'une commande est créée et relue, pas que l'état affiché correspond à la réalité. Un cache qui ment est indétectable si on ne compare jamais à la source.
+
+**Correction** : `mergeWithFleetbase()` conserve au cache le seul rôle qu'il remplit bien — **la correspondance commerçant ↔ commande** — et lit tout le reste depuis Fleetbase. Ce partage n'est pas cosmétique : §2.8 a montré que Fleetbase ignore silencieusement les filtres non supportés sur `/orders`, donc lui demander « quelles commandes appartiennent à ce commerçant » renverrait toute la compagnie. **L'appartenance doit rester décidée localement** ; c'est ce qui rend le contrôle anti-IDOR fiable.
+
+**Dégradation explicite plutôt que silencieuse** : si Fleetbase est injoignable, les commandes sont renvoyées marquées `stale` ; si l'une a disparu côté Fleetbase, `missing`. L'app affiche alors « État indisponible » au lieu d'un statut inventé. Une donnée absente doit se voir.
+
+### 8.2 Décisions de périmètre
+
+- **App mobile d'abord**, web ensuite (décision utilisateur). Aucune dépendance native n'a été introduite — ni géolocalisation, ni push, ni carte — ce qui garde la cible web ouverte sans réécriture.
+- **Adresses en texte** avec carnet réutilisable, carte plus tard. Conséquence assumée et documentée dans le code : les coordonnées viennent d'une adresse enregistrée ou d'un repli au centre d'Alger, jamais d'un géocodage. Suffisant pour un dispatch géospatial approximatif, à reprendre avec la carte.
+- **Pas de dispatch automatique** : une demande créée par un commerçant attend qu'un opérateur la diffuse. L'écran de création le dit, sinon l'absence de transporteur passerait pour une panne. C'est une règle métier à confirmer (`docs/specs_echango_delivery.md` §6), pas une limite technique.
+
+### 8.3 État
+
+`scripts/test-commercant-module.sh` passe au vert intégral, **anti-IDOR compris** — un second commerçant ne voit ni la commande de l'autre (403), ni quoi que ce soit dans sa liste. L'app, elle, **n'a jamais été compilée** : `flutter analyze` reste le premier test réel.

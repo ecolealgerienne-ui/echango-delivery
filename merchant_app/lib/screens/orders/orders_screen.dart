@@ -192,7 +192,10 @@ class _OrderList extends StatelessWidget {
                 ],
               ),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/commandes/${order.publicId}'),
+              // `order.id` = uuid Fleetbase : c'est ce que le détail sait
+              // résoudre (avec l'id local du cache). Le public_id, lui, n'est
+              // stocké nulle part côté BFF et ne matcherait rien.
+              onTap: () => context.push('/commandes/${order.id}'),
             ),
           );
         },
@@ -210,6 +213,17 @@ class _StatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     // Libellés métier plutôt que les codes Fleetbase bruts : un commerçant
     // n'a pas à savoir ce que signifie « enroute ».
+    if (order.degraded) {
+      return const Chip(
+        label: Text('État indisponible',
+            style: TextStyle(fontSize: 11, color: Colors.white)),
+        backgroundColor: Colors.blueGrey,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      );
+    }
+
     final (label, color) = switch (order.status) {
       'completed' => ('Livrée', Colors.green),
       'canceled' => ('Annulée', Colors.grey),
