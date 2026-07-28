@@ -1,0 +1,44 @@
+name: echango_merchant
+description: Merchant application for Echango Delivery — order a courier and track deliveries.
+publish_to: none
+
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+  flutter: '>=3.20.0'
+
+# Volontairement plus léger que driver_app : pas de géolocalisation, de push
+# ni de carte. Le commerçant saisit ses adresses en texte (décision produit,
+# la sélection sur carte viendra plus tard) et consulte le suivi — rien de
+# tout ça ne demande de permission système, ce qui garde la cible web simple.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Navigation
+  go_router: ^14.6.0
+
+  # State Management
+  provider: ^6.1.2
+
+  # Networking
+  http: ^1.2.2
+
+  # Storage
+  shared_preferences: ^2.3.3
+  flutter_secure_storage: ^9.2.2
+
+  # UI
+  cupertino_icons: ^1.0.8
+
+  # Utilities
+  equatable: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
