@@ -546,8 +546,12 @@ export class FleetbaseApiClient {
     // Le bug est aussi son propre remède : la valeur venant de la requête, on
     // l'y place. Le disque et le bucket restent surchargeables par
     // environnement pour un déploiement S3 réel.
+    // Le bucket doit être NON VIDE : `ConvertEmptyStringsToNull` est dans la
+    // pile Laravel, donc une chaîne vide arrive à `null` au contrôleur et
+    // reproduit exactement le TypeError qu'on cherche à éviter (constaté au
+    // 2e essai, 28/07). Le disque `local` ignore la valeur de toute façon.
     const disk = process.env.FLEETBASE_PROOF_DISK || 'local';
-    const bucket = process.env.FLEETBASE_PROOF_BUCKET || '';
+    const bucket = process.env.FLEETBASE_PROOF_BUCKET || 'fleetbase';
 
     const body: any = {
       photos,

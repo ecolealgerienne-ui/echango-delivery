@@ -575,3 +575,23 @@ Premier essai de `seed-test-order.sh` : `pickup=` et `dropoff=` vides alors que 
 Aucun champ `uuid` nulle part. Or la création de commande passe par `int/v1`, qui exige des `*_uuid`. Le script traduit donc désormais `public_id → uuid` via la liste des places.
 
 C'est le troisième incident d'identifiant de cette session (§6.7, §6.14, §6.16). Le motif est constant et mérite d'être retenu : **`int/v1` parle uuid, `v1` parle public_id, et traverser la frontière impose une traduction explicite.** Le §6.14 montre que l'inverse existe aussi ponctuellement — d'où la règle pratique : ne jamais présumer, vérifier route par route.
+
+### 6.17 Le contournement du bug de bucket était lui-même neutralisé par un middleware
+
+Deuxième échec identique de `POST .../preuve` malgré le contournement de §6.12. Cause visible **dans la pile de la trace elle-même**, qu'il aurait fallu lire plus attentivement la première fois :
+
+```
+Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull
+```
+
+Le contournement envoyait `bucket: ""`. Ce middleware, standard dans Laravel, convertit toute chaîne vide en `null` **avant** que le contrôleur ne la lise — reproduisant exactement le `TypeError` qu'on cherchait à éviter. Correction : valeur non vide par défaut (`fleetbase`), ignorée de toute façon par le disque `local`.
+
+**Leçon** : la trace contenait déjà la réponse. Sur une pile de middlewares Laravel, ce qui transforme la requête entre le client et le contrôleur fait partie du contrat, au même titre que la signature de la méthode.
+
+### 6.18 Deux faux négatifs de test corrigés
+
+**Rotation de jeton** — restait orange même avec un jeton unique par exécution (§6.14). Les modèles Fleetbase utilisent `SoftDeletes` : la purge fonctionne, mais `DB::table('user_devices')->count()` court-circuite le scope global d'Eloquent et compte les lignes supprimées. Ajout de `whereNull('deleted_at')`. Le test mesurait la présence de la ligne, pas sa suppression logique.
+
+**Dispatch du seed** — `{"error":"Order has already been dispatched!"}` traité comme un échec, alors qu'une commande créée avec `adhoc:true` est **déjà dispatchée par Fleetbase à la création**. La preuve était dans le run suivant : la commande apparaissait bien comme opportunité adhoc et a pu être acceptée. Refus reclassé en succès.
+
+Ces deux cas, plus §6.14, forment un motif : **trois faux signaux de suite venaient de l'outil de mesure, pas du code mesuré.** Un test qui échoue mérite la même suspicion qu'un test qui passe.

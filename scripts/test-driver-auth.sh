@@ -176,6 +176,9 @@ fi
 # sauvegarde — Firebase délivre alors un jeton différent. Sans retrait de
 # l'ancien, Fleetbase pousse indéfiniment vers un appareil mort, sans jamais
 # produire d'erreur (routeNotificationForFcm renvoie TOUS les devices du user).
+# whereNull('deleted_at') est indispensable : les modèles Fleetbase utilisent
+# SoftDeletes, et DB::table() court-circuite le scope global — sans ce filtre on
+# compte les lignes supprimées et la purge paraît toujours échouer.
 ROTATED="fake-fcm-token-rotation-$RANDOM"
 api_post_token() {
   curl -sS -X POST "$BFF_URL/auth/transporteur/device-token" \
@@ -186,7 +189,7 @@ ROT_RESP=$(api_post_token "$ROTATED")
 
 if echo "$ROT_RESP" | jq -e '.id' >/dev/null 2>&1; then
   REMAINING=$(docker exec fleetbase-src-application-1 php artisan tinker \
-    --execute="echo DB::table('user_devices')->where('token','$FCM_TOKEN')->count();" \
+    --execute="echo DB::table('user_devices')->where('token','$FCM_TOKEN')->whereNull('deleted_at')->count();" \
     2>/dev/null | tr -d '[:space:]' || echo "?")
   if [ "$REMAINING" = "0" ]; then
     pass "rotation de jeton — l'ancien UserDevice a bien été retiré côté Fleetbase"

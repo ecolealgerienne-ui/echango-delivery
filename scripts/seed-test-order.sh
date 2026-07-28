@@ -118,9 +118,13 @@ echo "✅ Commande créée : $NEW_ID"
 # Déclenche le broadcast géospatial vers les drivers en ligne à proximité
 # (specs_echango_delivery.md §3.2). Sans ça la commande n'apparaît pas comme
 # opportunité adhoc.
+# Une commande créée avec adhoc:true est déjà dispatchée par Fleetbase — le
+# refus « already been dispatched » est donc un succès, pas une erreur.
 DISPATCHED=$(fb POST "/v1/orders/$NEW_ID/dispatch" '{}')
 if echo "$DISPATCHED" | jq -e '(.data // .) | .dispatched == true' >/dev/null 2>&1; then
   echo "✅ Commande dispatchée (adhoc)"
+elif echo "$DISPATCHED" | grep -qi 'already been dispatched'; then
+  echo "✅ Commande déjà dispatchée à la création (adhoc)"
 else
   echo "⚠️  Dispatch incertain. Réponse :"
   echo "$DISPATCHED" | head -c 400
