@@ -7,7 +7,7 @@ export class FleetbaseApiClient {
   private readonly apiClient: AxiosInstance;
 
   constructor() {
-    const baseURL = process.env.FLEETBASE_API_URL || 'http://localhost:8000/api';
+    const baseURL = process.env.FLEETBASE_API_URL || 'http://localhost:8000';
     const apiKey = process.env.FLEETBASE_API_KEY;
 
     this.apiClient = axios.create({
