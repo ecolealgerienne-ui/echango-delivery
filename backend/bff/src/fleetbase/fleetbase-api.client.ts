@@ -22,7 +22,13 @@ export class FleetbaseApiClient {
     this.apiClient.interceptors.response.use(
       (response) => response,
       (error) => {
-        this.logger.error(`Fleetbase API error: ${error.message}`, error);
+        if (error.response) {
+          this.logger.error(
+            `Fleetbase API error: ${error.response.status} ${error.config?.method?.toUpperCase()} ${error.config?.url} - ${JSON.stringify(error.response.data)}`,
+          );
+        } else {
+          this.logger.error(`Fleetbase API error: ${error.message}`);
+        }
         throw error;
       },
     );

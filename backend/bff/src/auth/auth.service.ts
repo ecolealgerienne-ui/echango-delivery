@@ -92,7 +92,12 @@ export class AuthService {
       };
     } catch (error) {
       this.logger.error(`Merchant registration failed: ${error.message}`, error);
-      throw new BadRequestException('Failed to register merchant');
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      throw new BadRequestException(
+        this.configService.get('NODE_ENV') === 'development'
+          ? `Failed to register merchant: ${detail}`
+          : 'Failed to register merchant',
+      );
     }
   }
 
