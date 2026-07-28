@@ -314,13 +314,18 @@ export class FleetbaseApiClient {
 
   /**
    * Create a new Driver record in Fleetbase.
-   * NOTE: endpoint shape assumed by convention (POST /drivers, mirroring
-   * /vendors and /places), NOT yet confirmed by source reading or live test -
-   * verify against a running instance before relying on this in production.
+   * Confirmed by live test (28/07/2026) that a flat payload crashes
+   * DriverController::createRecord() with the exact same PHP TypeError as
+   * flat order payloads crashed OrderController (see
+   * docs/journal_implementation_bff.md §2.5): `Validator::make($request->
+   * input(...), $rules)` receives `null`. Wrapping under a `driver` key
+   * (mirroring the `order` envelope for /orders) is the fix by analogy -
+   * NOT yet independently confirmed to be the correct key name; re-test
+   * and, if it still 400s, check `DriverController.php` line 67 directly.
    */
   async createDriver(data: { name: string; email?: string; phone?: string }) {
     try {
-      const response = await this.callFleetOps('POST', '/drivers', data);
+      const response = await this.callFleetOps('POST', '/drivers', { driver: data });
       return response.data;
     } catch (error) {
       this.logger.error(`Create driver failed: ${error.message}`);
