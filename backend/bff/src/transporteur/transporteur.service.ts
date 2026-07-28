@@ -427,17 +427,19 @@ export class TransporteurService {
    * de proximité. Le rayon relève d'une décision produit encore ouverte.
    */
   private redactUnclaimedOrder(order: any) {
-    // Le point d'ENLÈVEMENT est un commerce : nom, adresse et coordonnées
-    // restent visibles (décision produit, 28/07/2026). Le transporteur en a
-    // besoin pour juger si la course vaut le déplacement, et l'adresse d'un
-    // commerce est une information d'affaires, le plus souvent publique.
+    // Le point d'ENLÈVEMENT est un commerce : ses informations passent en
+    // entier, téléphone compris (décision produit, 28/07/2026). Ce sont des
+    // coordonnées professionnelles, le plus souvent déjà publiques, et le
+    // transporteur en a besoin pour juger la course — voire pour signaler un
+    // problème à l'enlèvement.
     //
-    // Le téléphone reste masqué : personne n'a de raison d'appeler une course
-    // qu'il n'a pas prise, et un numéro diffusé à tout le réseau est un
-    // vecteur de nuisance.
+    // Seules `owner` et `customer` sautent : ce sont des relations imbriquées
+    // qui peuvent porter les données du CLIENT de la commande, et les laisser
+    // rouvrirait par une porte de côté ce que l'expurgation de la livraison
+    // ferme.
     const pickup = (p: any) => {
       if (!p) return p;
-      const { phone, contact_phone, email, owner, customer, ...rest } = p;
+      const { owner, customer, ...rest } = p;
       return rest;
     };
 

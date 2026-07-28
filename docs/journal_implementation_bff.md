@@ -1099,8 +1099,10 @@ Deux corrections possibles — rendre le texte honnête, ou rendre l'expurgation
 
 | | Avant acceptation | Justification |
 |---|---|---|
-| Enlèvement | nom, adresse et coordonnées visibles ; téléphone masqué | c'est un commerce — adresse le plus souvent publique, et le transporteur en a besoin pour juger si la course vaut le déplacement |
+| Enlèvement | tout, téléphone compris | c'est un commerce : coordonnées professionnelles le plus souvent déjà publiques, dont le transporteur a besoin pour juger la course et signaler un problème à l'enlèvement |
 | Livraison | commune seule — ni nom, ni rue, ni coordonnées, ni téléphone | c'est un particulier |
+
+Une seule exception à « tout » sur l'enlèvement : les relations imbriquées `owner` et `customer`, qui peuvent porter les données du **client** de la commande. Les laisser rouvrirait par une porte de côté ce que l'expurgation de la livraison ferme — c'est le genre de fuite qui ne se voit pas, parce qu'on regarde le champ qu'on a masqué et pas celui qui le contient encore.
 
 La commune est reconstruite depuis les champs structurés quand ils existent, sinon en retirant le premier segment de l'adresse formatée (heuristique fragile, qui renvoie **rien** plutôt qu'un fragment identifiant en cas de doute).
 
