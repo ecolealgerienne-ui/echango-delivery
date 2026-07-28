@@ -239,19 +239,50 @@ fi
 
 
 # --- 4. Rejets attendus ---------------------------------------------------
-# Un register doit refuser un UUID inconnu. Ce test compte autant que les
-# autres : §2.13 du journal a montré que GET /drivers/{uuid} renvoie TOUS les
-# drivers au lieu d'un 404, donc une vérification naïve accepterait n'importe
-# quel UUID. C'est ce contournement qu'on valide ici.
+# Ce bloc testait auparavant qu'un `fleetbaseDriverUuid` inconnu était refusé
+# au register. Il passait au vert pour une raison qui n'avait plus rien à voir
+# avec ce qu'il annonçait : depuis le passage à l'invitation (revue C2), le DTO
+# n'accepte plus du tout ce champ, donc la requête était rejetée par la
+# validation avant même d'atteindre la moindre logique. Un test vert qui ne
+# vérifie plus rien est pire qu'un test absent — il rassure.
+#
+# Les trois assertions ci-dessous portent sur ce qui protège réellement
+# l'identité d'un transporteur aujourd'hui.
+
+# 4.1 — Un jeton d'invitation inventé ne doit ouvrir aucun compte. C'est la
+# garde qui remplace l'ancienne vérification d'UUID.
 BOGUS_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
   -H 'Content-Type: application/json' \
   -d "$(jq -n --arg email "bogus-$RANDOM@echango.local" --arg pw "$PASSWORD" \
-        '{fleetbaseDriverUuid:"00000000-0000-0000-0000-000000000000", email:$email, password:$pw}')")
+        '{invitationToken:"invente-mais-assez-long-pour-passer-le-dto",
+          email:$email, password:$pw}')")
 
 if echo "$BOGUS_RESP" | jq -e '.token' >/dev/null 2>&1; then
-  fail "SÉCURITÉ : un UUID Fleetbase bidon a été accepté" "$BOGUS_RESP"
+  fail "SÉCURITÉ : une invitation inventée a été acceptée" "$BOGUS_RESP"
 fi
-pass "register — UUID inconnu correctement rejeté"
+echo "$BOGUS_RESP" | grep -qi 'invitation' \
+  || fail "invitation inventée rejetée, mais pas par le contrôle attendu" "$BOGUS_RESP"
+pass "register — invitation inventée correctement rejetée"
+
+# 4.2 — Un transporteur ne doit pas pouvoir s'émettre une invitation. Sans ce
+# garde, l'inscription sur invitation ne vaudrait rien : n'importe quel driver
+# se ferait un jeton pour l'identité d'un autre.
+SELF_INVITE=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X POST "$BFF_URL/auth/transporteur/invitation" \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+  -d "$(jq -n --arg u "$DRIVER_UUID" '{fleetbaseDriverUuid:$u}')")
+[ "$SELF_INVITE" = "403" ] \
+  || fail "SÉCURITÉ : un transporteur a pu émettre une invitation (HTTP $SELF_INVITE)" "-"
+pass "invitation — un transporteur ne peut pas s'en émettre (403)"
+
+# 4.3 — Et personne sans jeton du tout.
+ANON_INVITE=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X POST "$BFF_URL/auth/transporteur/invitation" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg u "$DRIVER_UUID" '{fleetbaseDriverUuid:$u}')")
+[ "$ANON_INVITE" = "401" ] \
+  || fail "SÉCURITÉ : invitation émise sans authentification (HTTP $ANON_INVITE)" "-"
+pass "invitation — refusée sans authentification (401)"
 
 echo ""
 echo "──────────────────────────────────────────────────────────"
