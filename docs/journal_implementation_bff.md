@@ -458,3 +458,25 @@ L'hypothèse (a) est écartée au passage, et c'est utile : le scope compagnie e
 L'acceptation d'une commande adhoc est donc validée de bout en bout : le driver est assigné et la commande démarrée en un seul appel, conformément à §4.2 de la spec. À noter que le script a bien envoyé un **public_id** (`order_4ioz8zuyve`) — la correction §6.7 est confirmée en conditions réelles, pas seulement en lecture de code.
 
 **Reste non testé** : `demarrer` (redondant avec `accepter` pour une adhoc, mais utile pour une commande pré-assignée), `activite`, l'upload photo base64, et surtout **la forme exacte de l'objet `Activity`** — dernier inconnu bloquant pour l'écran détail de l'app. `scripts/inspect-order-activity.sh` a été écrit pour la relever sur une vraie commande assignée, en cherchant les clés candidates (`config`, `activities`, `next_activity`, `tracker_data`…) et, si aucune n'est présente, en orientant vers l'`OrderConfig` — auquel cas le BFF devra exposer ce flow à l'app, ce qu'aucun endpoint ne fait aujourd'hui.
+
+### 6.9 Forme de l'objet `Activity` — relevée sur une vraie commande (28/07/2026)
+
+Dernier inconnu bloquant de §6.8, levé avec `scripts/inspect-order-activity.sh` sur la commande `order_4ioz8zuyve`.
+
+**Le détail de commande ne contient aucune donnée d'activité.** Clés réellement renvoyées : `status`, `latest_status`, `latest_status_code`, `dispatched`, `started_at`, `order_config_uuid`, `payload`, `tracking`… mais ni `config`, ni `activities`, ni `next_activity`, ni `tracker_data` (null). Impossible, donc, de récupérer l'objet `Activity` depuis le détail comme le supposait le commentaire du scaffolding.
+
+**La route dédiée existe** : `GET /v1/orders/{id}/next-activity` → `OrderController@getNextActivity`. Elle résout le flow de l'`OrderConfig` contre l'état courant de la commande et renvoie des objets `Activity` directement réutilisables :
+
+```json
+[{ "code": "...", "status": "...", "details": "...", "complete": bool,
+   "require_pod": bool, "pod_method": "...",
+   "_resolved_status": "...", "_resolved_details": "..." }]
+```
+
+Elle accepte un paramètre `waypoint` pour cibler une étape précise d'une tournée multi-arrêts.
+
+**Ce que ça évite** : reconstruire la machine à états côté BFF ou côté app à partir de `order_configs.flow`. C'eût été à la fois du travail inutile et une source de divergence — deux implémentations d'un même flow finissent toujours par ne plus concorder.
+
+**Bénéfice secondaire, non anticipé** : le drapeau `require_pod`/`pod_method` porté par chaque activité est précisément ce dont l'app a besoin pour savoir quand router vers l'écran de preuve de livraison (`docs/specs_app_transporteur.md` §5, « quand la config de la commande l'exige »). Cette information n'a donc pas à être déduite ailleurs.
+
+**Ajouté** : `GET /transporteur/commandes/:id/activites-suivantes` (BFF) et `getNextActivities()` (client Flutter), avec les mêmes contrôles d'appartenance que le reste du module. Le script de test affiche les codes proposés et ceux exigeant une preuve.

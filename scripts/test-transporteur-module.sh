@@ -215,6 +215,20 @@ if [ -z "$MINE" ] && [ "${WITH_MUTATIONS:-0}" = "1" ]; then
 fi
 
 if [ -n "$MINE" ]; then
+  # --- 8a. Transitions disponibles -----------------------------------------
+  # Le détail de commande ne porte aucune donnée d'activité (§6.9) : c'est
+  # cette route qui fournit à l'app les objets Activity à renvoyer ensuite à
+  # update-activity. Sans elle, l'écran détail ne peut rien faire avancer.
+  RESP=$(api GET "/transporteur/commandes/$MINE/activites-suivantes")
+  if echo "$RESP" | jq -e 'if type=="array" then length > 0 else (.activities // []) | length > 0 end' >/dev/null 2>&1; then
+    pass "GET  /transporteur/commandes/:id/activites-suivantes"
+    echo "     codes proposés : $(echo "$RESP" | jq -r '(if type=="array" then . else .activities end) | map(.code) | join(", ")' 2>/dev/null)"
+    echo "     preuve exigée  : $(echo "$RESP" | jq -r '(if type=="array" then . else .activities end) | map(select(.require_pod == true) | .code) | join(", ") | if . == "" then "aucune" else . end' 2>/dev/null)"
+  else
+    warn "activites-suivantes n'a renvoyé aucune transition"
+    echo "    Réponse : $(echo "$RESP" | head -c 300)"
+  fi
+
   RESP=$(api POST "/transporteur/commandes/$MINE/echec" \
     '{"reason":"client_absent","notes":"Test automatisé — sonnette sans réponse"}')
   echo "$RESP" | jq -e '.reason == "client_absent"' >/dev/null 2>&1 \
@@ -239,8 +253,8 @@ echo "────────────────────────�
 echo "Non couvert par ce script, à vérifier séparément :"
 echo "  - démarrer/activité : modifient un état non trivial à remettre en place."
 echo "    (accepter + échec sont couverts via WITH_MUTATIONS=1)"
-echo "  - update-activity attend un objet Activity COMPLET issu de la config de"
-echo "    la commande, pas une chaîne de statut. Vérifier la forme exacte"
-echo "    renvoyée par GET /transporteur/commandes/:id avant de câbler l'app."
+echo "  - update-activity : les transitions sont désormais exposées par"
+echo "    activites-suivantes ; reste à valider l'envoi effectif de l'une"
+echo "    d'elles, qui fait avancer la commande."
 echo "  - upload de photo (preuve/échec) : base64, jamais testé en vrai."
 echo "──────────────────────────────────────────────────────────"

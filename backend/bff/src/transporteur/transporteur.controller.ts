@@ -77,6 +77,15 @@ export class TransporteurController {
     return this.transporteurService.completeOrder(this.driverId(req), id);
   }
 
+  @Get('commandes/:id/activites-suivantes')
+  async getNextActivities(
+    @Request() req: any,
+    @Param('id') id: string,
+    @Query('waypoint') waypoint?: string,
+  ) {
+    return this.transporteurService.getNextActivities(this.driverId(req), id, waypoint);
+  }
+
   @Post('commandes/:id/activite')
   async updateActivity(@Request() req: any, @Param('id') id: string, @Body() dto: UpdateActivityDto) {
     return this.transporteurService.updateActivity(this.driverId(req), id, dto);

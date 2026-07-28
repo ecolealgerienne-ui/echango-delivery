@@ -484,9 +484,34 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * The activities the order can legally transition to right now.
+   *
+   * Needed because the order detail carries no activity data at all — verified
+   * 28/07/2026 on a live order: it exposes `order_config_uuid` but neither the
+   * flow nor the current step (journal §6.9). This route resolves the flow
+   * against the order's current state and returns ready-to-use Activity
+   * objects, so neither the BFF nor the app has to reimplement the state
+   * machine.
+   *
+   * Each entry carries at least: code, status, details, complete, and
+   * require_pod/pod_method when the step demands proof — which is also how the
+   * app knows to route to the POD screen (specs_app_transporteur.md §5).
+   *
+   * `waypoint` selects a specific stop on a multi-stop order.
+   */
+  async getNextActivities(orderPublicId: string, waypoint?: string) {
+    const response = await this.callFleetOpsPublic(
+      'GET',
+      `/orders/${orderPublicId}/next-activity`,
+      undefined,
+      waypoint ? { waypoint } : undefined,
+    );
+    return response.data;
+  }
+
+  /**
    * Advance the order through its state machine. `activity` must be a full
-   * Activity object from the order config, not a status string — the app gets
-   * it from the order detail payload and hands it back.
+   * Activity object as returned by getNextActivities() — not a status string.
    */
   async updateOrderActivity(orderPublicId: string, activity: any, proof?: string) {
     const body: any = { activity };

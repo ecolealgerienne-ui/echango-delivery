@@ -304,6 +304,30 @@ export class TransporteurService {
     }
   }
 
+  /**
+   * The transitions available on this order right now.
+   *
+   * The app needs this before it can call updateActivity at all: the order
+   * detail carries no activity data (§6.9), so there is nothing to hand back
+   * without asking for it. Entries flagged require_pod are what tell the app
+   * to route through the proof screen first.
+   */
+  async getNextActivities(driverId: string, orderId: string, waypoint?: string) {
+    const driver = await this.getDriverOrFail(driverId);
+    const order = await this.getOrder(driverId, orderId);
+
+    if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
+      throw new BadRequestException('This order is not assigned to you');
+    }
+
+    try {
+      return await this.fleetbaseClient.getNextActivities(this.orderPublicId(order), waypoint);
+    } catch (error) {
+      this.logger.error(`Next activities failed (${orderId}): ${error.message}`);
+      throw new BadRequestException('Failed to fetch available activities');
+    }
+  }
+
   async updateActivity(driverId: string, orderId: string, dto: UpdateActivityDto) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.getOrder(driverId, orderId);

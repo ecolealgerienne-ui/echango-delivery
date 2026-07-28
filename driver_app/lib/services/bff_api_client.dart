@@ -358,11 +358,37 @@ class BffApiClient {
     _parseResponse(response);
   }
 
+  /// Transitions possibles sur cette commande à l'instant T.
+  ///
+  /// À appeler AVANT [updateActivity] : le détail de commande ne contient
+  /// aucune donnée d'activité (vérifié sur une vraie commande, journal §6.9),
+  /// il n'y a donc rien à renvoyer sans passer par ici.
+  ///
+  /// Chaque entrée porte au moins `code`, `status`, `details`, `complete`, et
+  /// `require_pod`/`pod_method` quand l'étape exige une preuve — c'est ce
+  /// drapeau qui doit router vers l'écran POD (§5) avant de valider l'étape.
+  Future<List<Map<String, dynamic>>> getNextActivities(String orderId,
+      {String? waypoint}) async {
+    final uri = Uri.parse('$baseUrl/transporteur/commandes/$orderId/activites-suivantes');
+    final response = await _httpClient.get(
+      waypoint != null ? uri.replace(queryParameters: {'waypoint': waypoint}) : uri,
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    if (data is List) {
+      return data.cast<Map<String, dynamic>>();
+    }
+    if (data is Map && data['activities'] is List) {
+      return (data['activities'] as List).cast<Map<String, dynamic>>();
+    }
+    return [];
+  }
+
   /// Fait progresser la commande dans sa machine à états.
   ///
-  /// [activity] doit être l'objet Activity COMPLET issu de la config de la
-  /// commande (obtenu via [getOrder]), pas une chaîne de statut — c'est ce que
-  /// valide POST /v1/orders/{id}/update-activity côté Fleetbase.
+  /// [activity] doit être un objet Activity COMPLET tel que renvoyé par
+  /// [getNextActivities], pas une chaîne de statut — c'est ce que valide
+  /// POST /v1/orders/{id}/update-activity côté Fleetbase.
   Future<void> updateActivity(String orderId, Map<String, dynamic> activity,
       {String? proof}) async {
     final response = await _httpClient.post(
