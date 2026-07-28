@@ -54,7 +54,7 @@ export class AuthService {
         dto.lastName,
       );
 
-      const customerUuid = customerResponse.data?.uuid || customerResponse.data?.id;
+      const customerUuid = customerResponse.personnel?.contact_uuid || customerResponse.personnel?.contact?.uuid;
       if (!customerUuid) {
         throw new Error('Customer UUID not returned from Fleetbase');
       }

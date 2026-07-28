@@ -96,16 +96,16 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Create a Customer contact for a merchant in Fleetbase
+   * Attach a Contact as personnel of a Vendor, with type 'customer'.
+   * Fleetbase auto-provisions a linked User (role "Fleet-Ops Customer")
+   * unless create_login is set to false.
    */
   async createCustomer(vendorUuid: string, email: string, firstName: string, lastName: string) {
     try {
-      const response = await this.callFleetOps('POST', '/customers', {
-        vendor_uuid: vendorUuid,
+      const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/personnels`, {
         email,
-        first_name: firstName,
-        last_name: lastName,
-        type: 'customer', // Polymorphic type
+        name: `${firstName} ${lastName}`.trim(),
+        type: 'customer',
       });
       return response.data;
     } catch (error) {
