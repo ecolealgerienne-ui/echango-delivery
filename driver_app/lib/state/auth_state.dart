@@ -91,7 +91,9 @@ class AuthState extends ChangeNotifier {
 
     try {
       final response = await _apiClient.login(email: email, password: password);
-      final driver = response['data']['driver'];
+      // Réponse réelle du BFF : {token, user:{id,email,firstName,lastName}} —
+      // à plat, clé `user` (pas d'enveloppe `data`, pas de clé `driver`).
+      final driver = response['user'];
       _driverId = driver['id'];
       _driverEmail = driver['email'];
 

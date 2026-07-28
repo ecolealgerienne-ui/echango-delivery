@@ -275,3 +275,29 @@ Pas de nouveau module `transporteur/` créé cette session (structure `commercan
 ### 5.4 Limite d'environnement rencontrée — `prisma generate` bloqué par la politique de proxy sortant
 
 Nouveau dans ce sandbox (pas rencontré dans les sessions précédentes, qui avaient peut-être un accès différent) : `npx prisma generate` échoue systématiquement, y compris avec `PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1` — `binaries.prisma.sh` est bloqué par la politique du proxy sortant (`403` sur le `CONNECT`, confirmé via `$HTTPS_PROXY/__agentproxy/status`), pas seulement absent de la liste blanche par erreur temporaire. Le client Prisma présent dans `node_modules/.prisma/client` est donc le template générique non généré (0 modèle, y compris `MerchantAccount`/`FleetAccount` qui existaient déjà avant cette session) — **jamais généré avec succès dans ce sandbox**, avant même les modèles `DriverAccount`/`DriverDeviceToken` ajoutés ici. `npx nest build` compile néanmoins sans erreur (le client non généré expose apparemment un typage assez permissif pour ne pas faire échouer `tsc`), donc ce n'est pas bloquant pour committer/pousser du code, mais ça signifie qu'aucune vérification de type stricte contre le schéma Prisma réel n'a eu lieu ici — à garder en tête, et à re-générer/tester dans l'environnement Docker de l'utilisateur avant de faire confiance à ce code en pratique.
+
+
+### 5.5 Écart app Flutter ↔ API réelle — le scaffolding avait été écrit contre une API imaginée
+
+Constaté en préparant les tests (28/07/2026) : `driver_app/` a été scaffoldé le 27/07 **avant** que le moindre endpoint BFF n'existe, donc contre une API supposée. La comparaison ligne à ligne de `driver_app/lib/services/bff_api_client.dart` avec le BFF réel donne un écart quasi total — utile à garder en tête comme leçon de méthode : **scaffolder un client contre une API pas encore écrite produit du code qui a l'air fini mais n'est branché sur rien**.
+
+| L'app appelait | Réalité serveur |
+|---|---|
+| `/auth/login` | `/auth/transporteur/login` (préfixe `transporteur`) |
+| réponse `data.data.access_token` | `{token, user:{...}}` — à plat, clé `token` |
+| `auth_state.dart` lisait `response['data']['driver']` | clé `user` |
+| `baseUrl = localhost:3000/api/v1` | port **3001**, aucun préfixe global (`main.ts`) |
+| `/auth/login-phone`, `/auth/verify-otp`, `/auth/logout` | n'existent pas |
+| `/driver/profile`, `/driver/location`, `/driver/status` | n'existent pas |
+| `/orders`, `/orders/:id/accept|start|complete|failure` | n'existent pas |
+| *(rien)* | `/auth/transporteur/device-token` existait mais n'était jamais appelé — le jeton FCM était récupéré puis jeté |
+
+Corrigé cette session : chemins/formes de la tranche auth alignés sur le serveur réel, méthode `registerDeviceToken()` ajoutée, tout le reste annoté `NON IMPLÉMENTÉ CÔTÉ BFF` en commentaire de code plutôt que supprimé (l'OTP et le login social sont au périmètre spec §2, seul leur arbitrage MVP/V2 est ouvert — ce n'est pas du code mort). Le `README.md` de `driver_app` a été corrigé de la même façon : il annonçait comme fonctionnelles des fonctionnalités sans contrepartie serveur.
+
+### 5.6 Script de validation `scripts/test-driver-auth.sh`
+
+Écrit pour valider au curl la tranche auth avant de brancher l'app — le diagnostic d'un échec est bien plus lisible en curl qu'à travers le client Flutter. Couvre : BFF joignable, `register`, `login`, `device-token`, et **le rejet d'un UUID Fleetbase inconnu** (test qui compte autant que les autres : cf. §2.13, `GET /drivers/{uuid}` renvoie tous les drivers au lieu d'un 404, donc une vérification naïve accepterait n'importe quel UUID — c'est le contournement `getAllDrivers()` + `find()` qu'on valide là).
+
+Le script distingue explicitement « jeton enregistré localement » de « miroir Fleetbase `UserDevice` réussi », parce que le miroir est best-effort côté BFF : **un 2xx ne prouve pas que le push natif fonctionnera**. Il rappelle en sortie les deux vérifications que seule une inspection manuelle peut faire (ligne `user_devices` réellement créée, et upsert vs doublon sur un 2e appel avec le même token).
+
+Non exécuté ici (ni Docker ni Fleetbase dans le sandbox) — seules la syntaxe et les branches d'erreur ont été vérifiées.

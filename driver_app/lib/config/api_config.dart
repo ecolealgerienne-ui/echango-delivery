@@ -1,7 +1,18 @@
 class ApiConfig {
   // API Configuration
-  static const String bffBaseUrl = 'http://localhost:3000/api/v1';
-  static const String fleetbaseApiUrl = 'http://localhost:8000/api/v1';
+  //
+  // Le BFF écoute sur 3001 (backend/bff/src/main.ts) et n'a AUCUN préfixe
+  // global : les routes sont à la racine (/auth/..., /commercant/...).
+  //
+  // ⚠️ Sur un appareil physique, `localhost` désigne le téléphone lui-même.
+  // Utiliser l'IP de la machine hôte (ex. http://192.168.1.20:3001), ou
+  // http://10.0.2.2:3001 sur un émulateur Android.
+  static const String bffBaseUrl = 'http://localhost:3001';
+
+  // L'app n'appelle JAMAIS Fleetbase directement — tout passe par le BFF
+  // (decision specs_app_transporteur.md §2.1 : aucun credential Fleetbase
+  // dans un client final). Conservé pour information/debug uniquement.
+  static const String fleetbaseApiUrl = 'http://localhost:8000';
 
   // Timeouts (in seconds)
   static const int apiTimeout = 30;

@@ -91,13 +91,19 @@ class BffApiClient {
 
   // Authentication endpoints
 
+  /// Connexion email/mot de passe.
+  ///
+  /// Route réelle : POST /auth/transporteur/login (les endpoints driver sont
+  /// préfixés `transporteur`, cf. backend/bff/src/auth/auth.controller.ts).
+  /// Réponse réelle : {token, user:{id,email,firstName,lastName}} — à plat,
+  /// sans enveloppe `data`, et la clé est `token` (pas `access_token`).
   Future<Map<String, dynamic>> login({
     required String email,
     required String password,
   }) async {
     try {
       final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/login'),
+        Uri.parse('$baseUrl/auth/transporteur/login'),
         headers: _buildHeaders(),
         body: jsonEncode({
           'email': email,
@@ -105,9 +111,8 @@ class BffApiClient {
         }),
       );
       final data = _parseResponse(response);
-      if (data != null && data['data'] != null) {
-        final token = data['data']['access_token'];
-        await _saveToken(token);
+      if (data != null && data['token'] != null) {
+        await _saveToken(data['token']);
       }
       return data ?? {};
     } catch (e) {
@@ -120,6 +125,11 @@ class BffApiClient {
     }
   }
 
+  /// ⚠️ NON IMPLÉMENTÉ CÔTÉ BFF au 28/07/2026 — cet appel renverra 404.
+  /// La connexion par téléphone/OTP est bien au périmètre spec
+  /// (specs_app_transporteur.md §2), mais son arbitrage MVP vs V2 fait partie
+  /// des questions encore ouvertes (§13). Seule la connexion email/mot de
+  /// passe a une contrepartie serveur aujourd'hui.
   Future<Map<String, dynamic>> loginWithPhone({
     required String phone,
   }) async {
@@ -140,6 +150,7 @@ class BffApiClient {
     }
   }
 
+  /// ⚠️ NON IMPLÉMENTÉ CÔTÉ BFF au 28/07/2026 — voir [loginWithPhone].
   Future<Map<String, dynamic>> verifyOtp({
     required String phone,
     required String otp,
@@ -169,6 +180,9 @@ class BffApiClient {
     }
   }
 
+  /// ⚠️ Pas de route /auth/logout côté BFF (auth JWT sans état, rien à
+  /// invalider serveur). L'appel échouera silencieusement — le `finally`
+  /// efface la session locale, qui est le seul effet réellement nécessaire.
   Future<void> logout() async {
     try {
       await _httpClient.post(
@@ -179,6 +193,46 @@ class BffApiClient {
       await clearSession();
     }
   }
+
+  /// Enregistre le jeton push FCM/APN de cet appareil auprès du BFF, qui le
+  /// répercute côté Fleetbase (UserDevice) pour que le dispatch natif
+  /// (`OrderPing`) puisse atteindre l'appareil.
+  ///
+  /// À appeler après authentification (route protégée par JWT) et à chaque
+  /// rafraîchissement du jeton par Firebase (`onTokenRefresh`).
+  Future<Map<String, dynamic>> registerDeviceToken({
+    required String token,
+    required String platform, // 'ios' ou 'android'
+  }) async {
+    try {
+      final response = await _httpClient.post(
+        Uri.parse('$baseUrl/auth/transporteur/device-token'),
+        headers: _buildHeaders(),
+        body: jsonEncode({'token': token, 'platform': platform}),
+      );
+      return _parseResponse(response) ?? {};
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw AppException(
+        code: AppError.networkError,
+        message: 'Network error',
+        originalError: e,
+      );
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // ⚠️ TOUT CE QUI SUIT EST NON IMPLÉMENTÉ CÔTÉ BFF au 28/07/2026.
+  //
+  // Ces méthodes ont été écrites au scaffolding contre une API supposée, pas
+  // contre l'API réelle : le module `transporteur` du BFF (dashboard,
+  // commandes, statuts, POD, échec de livraison — specs_app_transporteur.md
+  // §3-5) reste à construire. Les chemins et les formes de payload ci-dessous
+  // sont donc à considérer comme des placeholders, à réaligner sur le serveur
+  // une fois le module écrit — comme il a fallu le faire pour login().
+  //
+  // Seule la tranche auth email/mot de passe est fonctionnelle aujourd'hui.
+  // ───────────────────────────────────────────────────────────────────────
 
   // Driver endpoints
 

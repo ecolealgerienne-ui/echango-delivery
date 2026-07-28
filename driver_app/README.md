@@ -2,6 +2,30 @@
 
 Flutter mobile application for drivers using the Echango Delivery logistics platform.
 
+## ⚠️ État réel au 28/07/2026 — lire avant de tester
+
+Le reste de ce README décrit le **périmètre visé**, pas ce qui fonctionne. Le
+code a été scaffoldé (27/07) contre une API supposée, avant que les endpoints
+BFF n'existent. État réel de l'intégration :
+
+| Fonctionnalité | Serveur | Remarque |
+|---|---|---|
+| Login email/mot de passe | ✅ | `POST /auth/transporteur/login` — client réaligné le 28/07 |
+| Enregistrement du jeton push | ✅ | `POST /auth/transporteur/device-token` — miroir Fleetbase non vérifié |
+| Login téléphone/OTP | ❌ | Au périmètre spec (§2), arbitrage MVP/V2 encore ouvert (§13) |
+| Login social (Apple/Google/Facebook) | ❌ | Idem |
+| Commandes (liste, détail, accept/start/complete) | ❌ | Module `transporteur` du BFF à construire |
+| Profil / position / statut en ligne | ❌ | Idem |
+| Échec de livraison | ❌ | Idem |
+
+Les méthodes concernées de `bff_api_client.dart` sont annotées en conséquence.
+**Aucune n'a été validée par un test réel** — même la tranche auth n'a jamais
+tourné contre une vraie instance (voir `scripts/test-driver-auth.sh` à la
+racine du repo, qui existe précisément pour ça).
+
+Avant de lancer l'app : faire tourner ce script au curl d'abord. S'il échoue,
+l'app échouera pareil, mais avec un diagnostic bien moins lisible.
+
 ## Getting Started
 
 ### Prerequisites
@@ -99,8 +123,8 @@ lib/
 ## Architecture
 
 ### Authentication & Session Management
-- **Email/Password Flow**: BFF `/auth/login` → access token → stored securely
-- **Phone OTP Flow**: BFF `/auth/login-phone` → OTP → `/auth/verify-otp` → access token
+- **Email/Password Flow**: BFF `/auth/transporteur/login` → `{token, user}` → stored securely
+- **Phone OTP Flow**: ❌ non implémenté côté BFF (voir tableau d'état ci-dessus)
 - **Session Restoration**: Automatic token restoration on app launch
 - **Inactivity Timeout**: 24-hour session expiry with automatic re-authentication prompt
 - **Secure Storage**: Tokens stored in device secure storage (iOS Keychain, Android Keystore)
@@ -130,7 +154,8 @@ lib/
    - Android: Add `google-services.json`
 
 2. **API Endpoints** (`lib/config/api_config.dart`)
-   - Set BFF base URL (default: `http://localhost:3000/api/v1`)
+   - Set BFF base URL (default: `http://localhost:3001`, sans préfixe)
+   - Sur appareil physique : IP de la machine hôte ; sur émulateur Android : `10.0.2.2`
    - Adjust location distance threshold (default: 10.0 meters)
    - Configure API timeout (default: 30 seconds)
 
