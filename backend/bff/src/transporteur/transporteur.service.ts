@@ -194,9 +194,11 @@ export class TransporteurService {
 
     let online: boolean | null = null;
     try {
-      const record = await this.findFleetbaseDriver(driver.fleetbaseDriverUuid);
-      if (record && record.online !== undefined && record.online !== null) {
-        online = Boolean(record.online);
+      const publicId = await this.getDriverPublicId(driver);
+      const record = await this.fleetbaseClient.getDriverByPublicId(publicId);
+      const payload = record?.data ?? record?.driver ?? record;
+      if (payload?.online !== undefined && payload?.online !== null) {
+        online = Boolean(payload.online);
       }
     } catch (error) {
       this.logger.warn(`Could not read online status for driver ${driverId}: ${error.message}`);
@@ -253,8 +255,28 @@ export class TransporteurService {
     const publicId = await this.getDriverPublicId(driver);
 
     try {
-      await this.fleetbaseClient.toggleDriverOnline(publicId, dto.online);
-      return { online: dto.online };
+      const response = await this.fleetbaseClient.toggleDriverOnline(publicId, dto.online);
+
+      // On rapporte ce que Fleetbase dit, pas ce qu'on lui a demandé.
+      // L'ancienne version renvoyait `dto.online` tel quel : la réponse était
+      // donc toujours celle attendue, y compris si l'écriture n'avait aucun
+      // effet. Un test vert sur cette route ne prouvait rien.
+      const payload = response?.data ?? response?.driver ?? response;
+      const confirmed = payload?.online;
+
+      if (confirmed !== undefined && confirmed !== null) {
+        const applied = Boolean(confirmed);
+        if (applied !== dto.online) {
+          this.logger.warn(
+            `Fleetbase a répondu online=${applied} pour une demande de ${dto.online} (driver ${publicId})`,
+          );
+        }
+        return { online: applied };
+      }
+
+      // Réponse sans le champ : on ne peut ni confirmer ni infirmer.
+      this.logger.warn(`toggle-online sans champ 'online' en réponse (driver ${publicId})`);
+      return { online: null as boolean | null, requested: dto.online };
     } catch (error) {
       this.logger.error(`Online toggle failed for driver ${driverId}: ${error.message}`);
       throw new BadRequestException('Failed to update online status');

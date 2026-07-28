@@ -912,3 +912,21 @@ App : **jamais compilée**, aucune toolchain Flutter ici. `flutter analyze` rest
 **Prérequis avant de relancer les tests** : `npm run prisma:migrate` (trois colonnes de position sur `DriverAccount`).
 
 **Reste ouvert** : le suivi de position s'arrête quand l'app passe en arrière plan — `ACCESS_BACKGROUND_LOCATION` et un service au premier plan (`flutter_foreground_task`, §11.2 de `specs_app_transporteur.md`) ne sont pas branchés. En l'état, un transporteur doit garder l'app ouverte pour alimenter le dispatch.
+
+### 10.10 `POST /transporteur/statut` ne rapportait pas ce que Fleetbase avait fait
+
+Le premier passage réel de l'assertion « le profil reflète le passage en ligne » l'a fait échouer : `POST /statut` renvoyait `{online: true}`, puis `GET /profil` renvoyait `online: false`.
+
+Le service recopiait `dto.online` dans sa réponse au lieu de lire la `DriverResource` que Fleetbase renvoie. La route répondait donc **toujours** la valeur demandée, y compris si l'écriture n'avait aucun effet — le test au vert de la session précédente ne prouvait rien. Corrigé : la réponse rapporte ce que Fleetbase confirme, journalise l'écart le cas échéant, et vaut `null` si le champ manque.
+
+**Piège de lecture, dans la ressource Fleetbase** (`Http/Resources/v1/Driver.php`) :
+
+```php
+'online' => data_get($this, 'online', false)
+```
+
+Elle renvoie `false` aussi bien pour « hors ligne » que pour « attribut non chargé ». Un `false` lu dans une **collection** ne distingue donc pas les deux, et se lit à tort comme une disponibilité — exactement l'ambiguïté que le `null` de `getProfile` cherchait à éviter, réintroduite par la source. La relecture passe désormais par `GET /v1/drivers/{public_id}`, fiche unique et hydratée, et non par un `find` dans la liste.
+
+Repère général : **une valeur par défaut dans une ressource amont détruit l'information d'absence**. Chercher `data_get($this, 'x', <défaut>)` avant de traiter un champ Fleetbase comme faisant autorité.
+
+Cause encore non tranchée à ce stade : si la colonne vaut bien `1` en base, le défaut de la ressource explique tout ; si elle vaut `0`, l'écriture elle-même est en cause et le `public_id` utilisé pour la bascule est le premier suspect. Le script affiche désormais la commande de vérification en cas d'échec.

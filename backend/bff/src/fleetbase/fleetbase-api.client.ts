@@ -549,6 +549,23 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Fiche complète d'un driver, par son public_id.
+   *
+   * Pourquoi pas la liste : la ressource Fleetbase expose
+   * `'online' => data_get($this, 'online', false)`, donc elle renvoie `false`
+   * aussi bien pour « hors ligne » que pour « attribut non chargé ». Un
+   * `false` lu dans une collection ne distingue pas les deux, et se lit à tort
+   * comme une disponibilité. Une fiche unique hydrate l'enregistrement.
+   *
+   * `v1` et non `int/v1` : le GET par identifiant de `int/v1` ignore le
+   * paramètre de chemin et renvoie toute la collection (journal §2.13).
+   */
+  async getDriverByPublicId(driverPublicId: string) {
+    const response = await this.callFleetOpsPublic('GET', `/drivers/${this.seg(driverPublicId)}`);
+    return response.data;
+  }
+
+  /**
    * Start an order. `assign` is how an adhoc order gets claimed — and it is
    * validated as a **public_id** (the controller requires the `driver_`
    * prefix), NOT the uuid used everywhere else. Hence DriverAccount stores

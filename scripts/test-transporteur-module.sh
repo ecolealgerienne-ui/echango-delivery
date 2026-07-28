@@ -71,10 +71,18 @@ pass "GET  /transporteur/profil"
 # Passe par POST /v1/drivers/{id}/toggle-online. On envoie toujours `online`
 # explicitement : omis, Fleetbase inverse la valeur courante, ce qui
 # désynchroniserait sur une requête rejouée.
+# La réponse rapporte ce que Fleetbase confirme, pas ce qu'on lui a demandé —
+# l'ancienne version recopiait la requête, donc cette assertion passait au vert
+# même si l'écriture n'avait aucun effet.
 RESP=$(api POST /transporteur/statut '{"online":true}')
-echo "$RESP" | jq -e '.online == true' >/dev/null 2>&1 \
-  || fail "POST /transporteur/statut" "$RESP"
-pass "POST /transporteur/statut (online=true)"
+echo "$RESP" | jq -e '.online == true' >/dev/null 2>&1 || fail \
+  "POST /transporteur/statut — Fleetbase n'a pas confirmé le passage en ligne.
+   Vérifier ce que la base Fleetbase contient réellement :
+     docker exec fleetbase-src-application-1 php artisan tinker \\
+       --execute=\"echo DB::table('drivers')->where('uuid','$DRIVER_UUID')->value('online');\"
+   Si la colonne vaut 1, le problème est en lecture ; si elle vaut 0, en écriture." \
+  "$RESP"
+pass "POST /transporteur/statut — passage en ligne confirmé par Fleetbase"
 
 # Le profil doit maintenant refléter la disponibilité réelle : c'est ce que
 # l'app lit au démarrage pour positionner son interrupteur. Sans ce champ, un
