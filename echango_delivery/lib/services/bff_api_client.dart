@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
@@ -354,6 +355,24 @@ class BffApiClient {
       headers: _buildHeaders(),
     );
     return _parseResponse(response) ?? {};
+  }
+
+  /// Télécharge une image servie par le BFF (preuve de livraison).
+  ///
+  /// Passe par le client plutôt que par `Image.network` : la route est
+  /// protégée par le JWT, et le widget ne porte pas l'en-tête d'autorisation.
+  /// Le jeton reste ainsi enfermé ici, jamais recopié dans un écran.
+  Future<Uint8List> fetchImage(String path) async {
+    final uri = Uri.parse(path.startsWith('http') ? path : '$baseUrl$path');
+    final response = await _httpClient.get(uri, headers: _buildHeaders());
+
+    if (response.statusCode >= 400) {
+      throw AppException(
+        code: AppError.unknown,
+        message: 'Image indisponible (HTTP ${response.statusCode})',
+      );
+    }
+    return response.bodyBytes;
   }
 
   /// Remonte une position GPS. Appelé par le suivi en tâche de fond.

@@ -1020,3 +1020,22 @@ C'est une variante du repère de §6.7/§6.14 : la résolution d'identifiant n'e
 Repère : **déballer une enveloppe par le nom de sa clé est fragile dès que la charge utile peut porter ce même nom.** Discriminer sur le contenu attendu, pas sur la structure supposée.
 
 Ce qui a permis de trancher : la ligne de log ajoutée en §11.5, qui distingue « photo absente » de « photo présente ». Sans elle, trois causes très différentes produisaient le même écran vide. Le service journalise maintenant aussi ce qu'il a su extraire, et les clés reçues quand il n'a rien trouvé.
+
+### 11.7 La preuve est servie par le BFF, jamais par une URL Fleetbase
+
+Une fois l'extraction corrigée, l'URL enregistrée était :
+
+```
+http://localhost:8000/storage/uploads/<company>/photos/proof_8byelnem7s.png
+```
+
+Inaffichable depuis l'émulateur — `localhost` y désigne l'émulateur lui-même. La correction évidente aurait été de réécrire l'hôte. C'est la mauvaise, pour deux raisons :
+
+1. Elle ferait appeler Fleetbase **directement par l'app**, ce que `specs_app_transporteur.md` §2.1 exclut explicitement.
+2. Ces URL de stockage ne sont protégées par **aucune authentification**. Les donner à l'app revient à publier les preuves de livraison à qui devine l'adresse — nom du commerçant, contenu du colis, parfois une porte d'entrée.
+
+Le BFF sert donc le fichier lui-même, sur `GET /transporteur/preuves/:id`, avec le contrôle d'appartenance habituel (`driverId` en plus de l'identifiant, sans quoi un transporteur lirait les preuves d'un autre en changeant un cuid). L'app reçoit un chemin relatif, jamais une URL Fleetbase, et le charge via le client HTTP — `Image.network` ne porterait pas l'en-tête d'autorisation, et le jeton n'a pas à sortir du client.
+
+`fetchStoredFile()` ne conserve que le **chemin** de l'URL stockée et le résout contre `FLEETBASE_API_URL`. Outre le problème d'hôte, une URL absolue lue en base et suivie telle quelle est une porte de sortie : quiconque parviendrait à y écrire ferait émettre au BFF, avec ses accès réseau, une requête vers l'hôte de son choix.
+
+Effet de bord bienvenu : ça règle aussi le cas S3 en production, où les fichiers peuvent être privés — le BFF les relaie avec son propre credential au lieu d'exiger un bucket public.

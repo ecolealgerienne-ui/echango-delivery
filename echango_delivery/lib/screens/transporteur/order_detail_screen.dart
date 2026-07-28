@@ -1,8 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/order.dart';
+import '../../services/bff_api_client.dart';
 import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
@@ -513,11 +516,11 @@ class _PlaceBlock extends StatelessWidget {
 
 /// Photo jointe à un signalement d'échec.
 ///
-/// Le repli n'est pas décoratif : en développement, Fleetbase stocke le
-/// fichier sur le disque `local` et renvoie une URL du type
-/// `http://localhost:8000/...`, injoignable depuis un téléphone ou un
-/// émulateur. Sans message, l'image manquante ressemble à une photo perdue
-/// alors qu'elle est bien enregistrée côté serveur.
+/// Chargée via le client HTTP et non par `Image.network` : la route est
+/// protégée par le JWT, que le widget ne porterait pas. Le BFF sert lui-même
+/// le fichier, l'app n'atteint jamais Fleetbase directement — l'URL de
+/// stockage pointe sur un hôte inaccessible depuis un téléphone, et surtout
+/// elle n'est protégée par aucune authentification.
 class _ProofImage extends StatelessWidget {
   final String url;
 
@@ -525,37 +528,48 @@ class _ProofImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        url,
-        height: 180,
-        width: double.infinity,
-        fit: BoxFit.cover,
-        loadingBuilder: (context, child, progress) => progress == null
-            ? child
-            : const SizedBox(
-                height: 180,
-                child: Center(child: CircularProgressIndicator()),
-              ),
-        errorBuilder: (context, error, stack) => Container(
-          height: 90,
-          padding: const EdgeInsets.all(12),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: Row(
-            children: [
-              const Icon(Icons.image_not_supported_outlined),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Photo enregistrée, mais non affichable depuis cet appareil.',
-                  style: Theme.of(context).textTheme.bodySmall,
+    return FutureBuilder<Uint8List>(
+      future: context.read<BffApiClient>().fetchImage(url),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 180,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasError || snapshot.data == null) {
+          // Dire que la preuve existe : sans ce message, un échec de
+          // chargement se lit comme une photo perdue alors qu'elle est bien
+          // enregistrée côté serveur.
+          return Container(
+            padding: const EdgeInsets.all(12),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: Row(
+              children: [
+                const Icon(Icons.image_not_supported_outlined),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Photo enregistrée, mais son chargement a échoué.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
+          );
+        }
+
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.memory(
+            snapshot.data!,
+            height: 180,
+            width: double.infinity,
+            fit: BoxFit.cover,
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

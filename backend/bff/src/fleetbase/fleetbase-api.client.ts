@@ -549,6 +549,43 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Récupère un fichier stocké par Fleetbase, à partir de l'URL qu'il a émise.
+   *
+   * ⚠️ **Seul le chemin de l'URL est conservé**, et il est résolu contre
+   * `FLEETBASE_API_URL`. Deux raisons, l'une pratique et l'autre de sécurité :
+   *
+   * - Fleetbase construit ses URL depuis son propre `APP_URL`, qui vaut
+   *   `localhost:8000` en développement. Cet hôte ne désigne ni le conteneur
+   *   BFF ni le téléphone — il n'est joignable depuis nulle part sauf la
+   *   machine Fleetbase elle-même.
+   * - Une URL absolue lue en base et suivie telle quelle est une porte de
+   *   sortie : quiconque parviendrait à y écrire ferait émettre au BFF, avec
+   *   ses accès réseau, une requête vers l'hôte de son choix.
+   */
+  async fetchStoredFile(fileUrl: string): Promise<{ data: Buffer; contentType: string }> {
+    let path: string;
+    try {
+      const parsed = new URL(fileUrl);
+      path = parsed.pathname + parsed.search;
+    } catch {
+      // Chemin relatif déjà stocké : l'accepter tel quel, sans le rendre
+      // absolu ailleurs que sur Fleetbase.
+      path = fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`;
+    }
+
+    const response = await this.apiClient({
+      method: 'GET',
+      url: path,
+      responseType: 'arraybuffer',
+    });
+
+    return {
+      data: Buffer.from(response.data),
+      contentType: String(response.headers['content-type'] || 'application/octet-stream'),
+    };
+  }
+
+  /**
    * Fiche complète d'un driver, par son public_id.
    *
    * Pourquoi pas la liste : la ressource Fleetbase expose

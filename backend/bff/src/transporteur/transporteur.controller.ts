@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Param, Query, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Request, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
 import {
@@ -43,6 +44,32 @@ export class TransporteurController {
   @Post('statut')
   async toggleOnline(@Request() req: any, @Body() dto: ToggleOnlineDto) {
     return this.transporteurService.toggleOnline(this.driverId(req), dto);
+  }
+
+  /**
+   * Photo d'un signalement d'échec, servie par le BFF.
+   *
+   * L'app ne reçoit jamais l'URL Fleetbase : elle pointe sur un hôte qui n'est
+   * joignable que depuis le serveur, et ces URL de stockage ne sont protégées
+   * par aucune authentification.
+   */
+  @Get('preuves/:id')
+  async getProof(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { data, contentType } = await this.transporteurService.getProofImage(
+      this.driverId(req),
+      id,
+    );
+    res.set({
+      'Content-Type': contentType,
+      'Content-Length': String(data.length),
+      // Preuve de livraison : jamais mise en cache par un intermédiaire.
+      'Cache-Control': 'private, max-age=300',
+    });
+    res.send(data);
   }
 
   @Get('commandes')

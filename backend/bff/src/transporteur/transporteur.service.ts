@@ -161,14 +161,42 @@ export class TransporteurService {
           id: failure.id,
           reason: failure.reason,
           notes: failure.notes,
-          // Était `null` en dur : la photo partait bien vers Fleetbase, son
-          // Proof était enregistré, et l'app ne pouvait jamais l'afficher. Le
-          // transporteur voyait donc son envoi réussir puis disparaître.
-          photo_url: failure.proofUrl,
+          // Chemin sur le BFF, jamais l'URL Fleetbase. Celle-ci pointe sur
+          // l'hôte tel que Fleetbase se connaît — injoignable depuis un
+          // téléphone — et surtout elle n'est protégée par rien : la donner à
+          // l'app reviendrait à publier les preuves de livraison à qui
+          // devinerait l'adresse. Ici, le jeton du transporteur fait foi.
+          photo_url: failure.proofUrl ? `/transporteur/preuves/${failure.id}` : null,
           created_at: failure.reportedAt.toISOString(),
         },
       };
     });
+  }
+
+  /**
+   * Sert la photo d'un signalement, après contrôle d'appartenance.
+   *
+   * Le filtre porte sur `driverId` en plus de l'identifiant : sans lui, un
+   * transporteur lirait les preuves d'un autre en changeant un cuid — même
+   * discipline anti-IDOR que partout ailleurs, appliquée ici à un fichier.
+   */
+  async getProofImage(driverId: string, failureId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const failure = await this.prisma.deliveryFailure.findFirst({
+      where: { id: failureId, driverId: driver.id },
+    });
+
+    if (!failure?.proofUrl) {
+      throw new NotFoundException('Aucune preuve pour ce signalement');
+    }
+
+    try {
+      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
+    } catch (error) {
+      this.logger.warn(`Lecture de la preuve ${failureId} impossible : ${error.message}`);
+      throw new NotFoundException('Preuve indisponible');
+    }
   }
 
   /**
@@ -685,7 +713,7 @@ export class TransporteurService {
       // photo, pas qu'on ait su en relire tel identifiant : l'URL est le
       // signal fiable, l'identifiant dépend de l'API empruntée.
       photoUploaded: Boolean(proofUrl || fleetbaseProofUuid),
-      photoUrl: proofUrl,
+      photoUrl: proofUrl ? `/transporteur/preuves/${failure.id}` : null,
       reportedAt: failure.reportedAt,
     };
   }
