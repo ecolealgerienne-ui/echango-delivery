@@ -90,6 +90,17 @@ export class AuthController {
    * provisionne ses transporteurs. Le jeton en clair n'est renvoyé qu'ici, à
    * transmettre hors bande.
    */
+  /**
+   * Ferme toutes les sessions du compte appelant, y compris celle qui appelle.
+   *
+   * Aucun persona requis : les trois en ont le même usage — téléphone perdu,
+   * doute sur un mot de passe.
+   */
+  @Post('revoquer-sessions')
+  async revokeSessions(@Request() req: any) {
+    return this.authService.revokeAllSessions(req.user.id, req.user.type);
+  }
+
   @Persona('fleet')
   @Post('transporteur/invitation')
   async createDriverInvitation(@Body() dto: CreateDriverInvitationDto) {

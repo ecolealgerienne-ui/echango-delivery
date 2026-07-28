@@ -7,9 +7,11 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
+import { projectOrderForMerchant } from '../common/projections/order.projection';
 
 @Injectable()
 export class CommerçantService {
@@ -19,6 +21,7 @@ export class CommerçantService {
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
+    private audit: AuditService,
   ) {}
 
   /**
@@ -48,7 +51,13 @@ export class CommerçantService {
       // Degrade rather than fail: without Fleetbase the merchant still sees
       // that the order exists, just not how far along it is.
       this.logger.warn(`Fleetbase unreachable, serving cached orders only: ${error.message}`);
-      return cached.map((c) => ({ ...c, uuid: c.fleetbaseOrderId, stale: true }));
+      // Repli dégradé : seuls l'identifiant et le drapeau sortent. Étendre la
+      // ligne Prisma exposait `merchantId` et les colonnes internes du cache.
+      return cached.map((c) => ({
+        uuid: c.fleetbaseOrderId,
+        bff_order_id: c.id,
+        stale: true,
+      }));
     }
 
     const byId = new Map(live.map((o: any) => [o?.uuid, o]));
@@ -57,11 +66,12 @@ export class CommerçantService {
       const order = byId.get(c.fleetbaseOrderId);
       if (!order) {
         // Order vanished from Fleetbase (deleted, or another organization).
-        return { ...c, uuid: c.fleetbaseOrderId, missing: true };
+        return { uuid: c.fleetbaseOrderId, bff_order_id: c.id, missing: true };
       }
-      // Fleetbase order wins on every business field; the local id is kept so
-      // the app can still address the row it came from.
-      return { ...order, bff_order_id: c.id };
+      // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
+      // non Fleetbase (revue M10). L'identifiant local est conservé pour que
+      // l'app puisse encore adresser la ligne dont il provient.
+      return projectOrderForMerchant(order, { bff_order_id: c.id });
     });
   }
 
@@ -127,7 +137,14 @@ export class CommerçantService {
     }
 
     if (order.merchantId !== merchantId) {
-      this.logger.warn(`Merchant ${merchantId} attempted to access order ${orderId}`);
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'order.access',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande appartenant à un autre commerçant',
+      });
       throw new ForbiddenException('You do not have access to this order');
     }
 
@@ -141,7 +158,10 @@ export class CommerçantService {
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
     const [merged] = await this.mergeWithFleetbase([order]);
-    return { ...merged, commissions: order.commissions };
+    // Les commissions ne sont PAS renvoyées : ce sont des données de
+    // facturation interne, sans usage dans l'app commerçant, et
+    // `include: { commissions: true }` les exposait au client (revue M10).
+    return merged;
   }
 
 

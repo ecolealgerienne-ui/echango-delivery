@@ -25,7 +25,11 @@ model MerchantAccount {
   // Link to Fleetbase
   fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
   fleetbaseCustomerUuid String? // Customer UUID in Fleetbase (for customer-portal)
-  fleetbaseSanctumToken String? @db.Text // Sanctum token for customer-portal-api (encrypted at rest)
+  // ⚠️ Stocké EN CLAIR. Le commentaire précédent annonçait « encrypted at
+  // rest » alors qu'aucun chiffrement n'existe (revue F15) — une annotation
+  // fausse est pire que pas d'annotation : elle dispense de vérifier.
+  // À chiffrer avant l'ouverture B2B, ou à cesser de stocker.
+  fleetbaseSanctumToken String? @db.Text
 
   // Business
   businessName      String
@@ -33,6 +37,9 @@ model MerchantAccount {
 
   // Status
   active            Boolean  @default(true)
+
+  // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
+  tokenVersion      Int      @default(0)
 
   // Relations
   deviceTokens      DeviceToken[]
@@ -66,6 +73,9 @@ model FleetAccount {
 
   // Status
   active            Boolean  @default(true)
+
+  // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
+  tokenVersion      Int      @default(0)
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -102,6 +112,16 @@ model DriverAccount {
 
   // Status
   active                Boolean  @default(true)
+
+  // Incrémenté pour invalider d'un coup tous les jetons déjà émis : changement
+  // de mot de passe, appareil perdu, ou soupçon de compromission. Le jeton
+  // porte la valeur qu'il avait à l'émission ; toute divergence le rejette.
+  //
+  // Sans ce champ, un jeton volé restait valide jusqu'à son expiration — 24 h —
+  // et changer son mot de passe n'y changeait rien (revue M12). La
+  // désactivation d'un compte était en revanche déjà immédiate, puisque
+  // `active` est relu à chaque requête ; il manquait son pendant sur les jetons.
+  tokenVersion          Int      @default(0)
 
   // Dernière position connue, miroir de ce que l'app vient d'envoyer à
   // Fleetbase. Fleetbase stocke bien l'historique des Position, mais son
@@ -316,12 +336,22 @@ model Commission {
 }
 
 // Audit Log (for security, traceability)
+// Piste d'audit des refus d'accès et des actions sensibles.
+//
+// Sur un système dont TOUTE l'isolation est applicative — Fleetbase ignore
+// silencieusement les filtres de requête, donc le cloisonnement ne tient que
+// par le code du BFF — l'absence de piste d'audit signifie qu'une exploitation
+// réussie ne serait ni détectée ni reconstituable (revue F14). Le modèle
+// existait déjà ; rien ne l'écrivait, et les refus ne laissaient qu'un
+// `logger.warn` non structuré, perdu à la rotation des journaux.
 model AuditLog {
   id                String   @id @default(cuid())
 
-  // Who (if any)
-  merchantId        String?
-  fleetId           String?
+  // Qui. `merchantId`/`fleetId` ne savaient pas exprimer un transporteur, et
+  // obligeaient à ajouter une colonne par persona ; le couple type + id vaut
+  // pour les trois et pour ceux à venir.
+  actorType         String?  // 'merchant' | 'fleet' | 'transporteur'
+  actorId           String?
 
   // What
   action            String   // 'order.created', 'order.assigned', etc.
@@ -339,8 +369,7 @@ model AuditLog {
 
   createdAt         DateTime @default(now())
 
-  @@index([merchantId])
-  @@index([fleetId])
+  @@index([actorType, actorId])
   @@index([action])
   @@index([createdAt])
 }

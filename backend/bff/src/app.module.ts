@@ -6,6 +6,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './database/prisma.module';
+import { AuditModule } from './common/audit/audit.module';
 import { FleetbaseModule } from './fleetbase/fleetbase.module';
 import { AuthModule } from './auth/auth.module';
 import { CommerçantModule } from './commercant/commercant.module';
@@ -51,6 +52,7 @@ import { CommonModule } from './common/common.module';
       { name: 'default', ttl: 60_000, limit: 120 },
     ]),
     PrismaModule,
+    AuditModule,
     FleetbaseModule,
     HealthModule,
     CommonModule,

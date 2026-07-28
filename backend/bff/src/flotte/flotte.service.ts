@@ -7,9 +7,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+import {
+  projectOrderForFleet,
+  projectDriverForFleet,
+} from '../common/projections/order.projection';
 
 /**
  * Projection de DriverAccount servie par getDriverPositions.
@@ -36,6 +41,7 @@ export class FlotteService {
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
+    private audit: AuditService,
   ) {}
 
   /**
@@ -67,7 +73,9 @@ export class FlotteService {
       const paged = owned.slice((page - 1) * limit, (page - 1) * limit + limit);
 
       return {
-        data: paged,
+        // Projection en liste d'autorisation : le BFF décide de ce qui sort,
+        // et non Fleetbase (revue M10).
+        data: paged.map((o: any) => projectOrderForFleet(o)),
         pagination: {
           page,
           limit,
@@ -97,10 +105,18 @@ export class FlotteService {
       }
 
       if (order.facilitator_uuid !== fleet.fleetbaseVendorUuid) {
+        this.audit.denied({
+          actorType: 'fleet',
+          actorId: fleetId,
+          action: 'order.access',
+          resourceType: 'Order',
+          resourceId: orderId,
+          reason: 'Commande rattachée à une autre flotte',
+        });
         throw new ForbiddenException('You do not have access to this order');
       }
 
-      return order;
+      return projectOrderForFleet(order);
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
@@ -122,7 +138,7 @@ export class FlotteService {
 
     try {
       const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-      return { data: owned };
+      return { data: owned.map((d: any) => projectDriverForFleet(d)) };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet drivers: ${error.message}`);
       throw new BadRequestException('Failed to fetch drivers');

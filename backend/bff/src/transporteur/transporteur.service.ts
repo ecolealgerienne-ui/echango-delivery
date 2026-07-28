@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { projectOrderForDriver } from '../common/projections/order.projection';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -23,6 +25,7 @@ export class TransporteurService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fleetbaseClient: FleetbaseApiClient,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -143,7 +146,10 @@ export class TransporteurService {
       orderBy: { reportedAt: 'desc' },
     });
 
-    if (!failures.length) return orders;
+    // Projeter même sans signalement : cette méthode est le seul point de
+    // passage des commandes assignées, et un retour anticipé laisserait sortir
+    // les objets Fleetbase bruts.
+    if (!failures.length) return orders.map((o) => projectOrderForDriver(o));
 
     // Tous les rapports d'une commande, du plus récent au plus ancien.
     //
@@ -175,14 +181,17 @@ export class TransporteurService {
 
     return orders.map((order) => {
       const list = byOrder.get(order?.uuid);
-      if (!list?.length) return order;
-      return {
-        ...order,
-        // `delivery_failure` reste le plus récent : c'est ce qu'affichent les
-        // vues résumées, et le retirer casserait la liste sans rien apporter.
-        delivery_failure: project(list[0]),
-        delivery_failures: list.map(project),
-      };
+      return projectOrderForDriver(order, {
+        extra: list?.length
+          ? {
+              // `delivery_failure` reste le plus récent : c'est ce qu'affichent
+              // les vues résumées, et le retirer casserait la liste sans rien
+              // apporter.
+              delivery_failure: project(list[0]),
+              delivery_failures: list.map(project),
+            }
+          : {},
+      });
     });
   }
 
@@ -200,7 +209,21 @@ export class TransporteurService {
       where: { id: failureId, driverId: driver.id },
     });
 
-    if (!failure?.proofUrl) {
+    if (!failure) {
+      // Distinguer « pas de preuve » de « preuve d'un autre » serait un oracle :
+      // même réponse, mais seul le second cas est journalisé.
+      this.audit.denied({
+        actorType: 'transporteur',
+        actorId: driverId,
+        action: 'proof.access',
+        resourceType: 'DeliveryFailure',
+        resourceId: failureId,
+        reason: 'Signalement inexistant ou appartenant à un autre transporteur',
+      });
+      throw new NotFoundException('Aucune preuve pour ce signalement');
+    }
+
+    if (!failure.proofUrl) {
       throw new NotFoundException('Aucune preuve pour ce signalement');
     }
 
@@ -390,7 +413,10 @@ export class TransporteurService {
     );
 
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
-    const publicAdhoc = adhoc.map((o) => this.redactUnclaimedOrder(o));
+    // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
+    // non Fleetbase (revue M10). `unclaimed` réduit le point de livraison à sa
+    // commune ; l'enlèvement, qui est un commerce, passe en entier.
+    const publicAdhoc = adhoc.map((o) => projectOrderForDriver(o, { unclaimed: true }));
 
     if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
@@ -405,123 +431,6 @@ export class TransporteurService {
       adhoc: publicAdhoc,
       history: await this.attachFailures(driver.id, assigned.filter(isFinished)),
     };
-  }
-
-  /**
-   * Retire les données personnelles d'une commande adhoc non réclamée.
-   *
-   * Une opportunité adhoc est diffusée à **tous** les transporteurs de
-   * l'organisation, dont aucun n'a encore de lien avec cette livraison. Servie
-   * telle quelle, elle livrait à chacun d'eux le nom, l'adresse exacte et le
-   * téléphone du client et du commerçant — pour des commandes qu'ils ne
-   * prendront pas. C'est une diffusion de données personnelles à des tiers,
-   * pas une fonctionnalité (revue M9).
-   *
-   * Ce qui reste est ce qui permet de décider : où ça part, où ça va (au
-   * niveau du lieu, pas de la porte), la distance et la durée estimées. Le
-   * détail complet arrive à l'acceptation, quand le transporteur devient
-   * légitimement partie prenante — `getOrder` ne passe pas par ici et vérifie
-   * l'assignation.
-   *
-   * Ce que ça ne règle PAS : la diffusion reste organisation-wide, sans filtre
-   * de proximité. Le rayon relève d'une décision produit encore ouverte.
-   */
-  private redactUnclaimedOrder(order: any) {
-    // Le point d'ENLÈVEMENT est un commerce : ses informations passent en
-    // entier, téléphone compris (décision produit, 28/07/2026). Ce sont des
-    // coordonnées professionnelles, le plus souvent déjà publiques, et le
-    // transporteur en a besoin pour juger la course — voire pour signaler un
-    // problème à l'enlèvement.
-    //
-    // Seules `owner` et `customer` sautent : ce sont des relations imbriquées
-    // qui peuvent porter les données du CLIENT de la commande, et les laisser
-    // rouvrirait par une porte de côté ce que l'expurgation de la livraison
-    // ferme.
-    const pickup = (p: any) => {
-      if (!p) return p;
-      const { owner, customer, ...rest } = p;
-      return rest;
-    };
-
-    // Le point de LIVRAISON est chez un particulier. Ne subsiste que la
-    // commune — ni rue, ni nom, ni coordonnées.
-    const dropoff = (p: any) => {
-      if (!p) return p;
-      const {
-        phone,
-        contact_name,
-        contact_phone,
-        email,
-        owner,
-        customer,
-        street1,
-        street2,
-        address,
-        name,
-        // Les coordonnées partent avec l'adresse. Les garder tout en masquant
-        // le libellé serait le même défaut dans un autre champ : un point GPS
-        // mène à la porte aussi sûrement qu'une adresse écrite, et le bouton
-        // « Itinéraire » de l'app s'en sert directement.
-        location,
-        latitude,
-        longitude,
-        ...rest
-      } = p;
-
-      return { ...rest, name: 'Destinataire', address: this.coarseLocality(p) };
-    };
-
-    const {
-      customer,
-      customer_uuid,
-      customer_type,
-      facilitator,
-      payload,
-      ...rest
-    } = order ?? {};
-
-    return {
-      ...rest,
-      // Le payload porte les lieux, qu'on veut garder — mais expurgés de
-      // leurs contacts. Le reste du payload (contenu du colis, entités)
-      // n'a pas à circuler avant acceptation.
-      payload: payload
-        ? {
-            pickup: pickup(payload.pickup),
-            dropoff: dropoff(payload.dropoff),
-          }
-        : undefined,
-      redacted: true,
-    };
-  }
-
-  /**
-   * Réduit une adresse à sa commune, pour une course pas encore réclamée.
-   *
-   * Ce qu'un transporteur a besoin de savoir pour décider, c'est d'où à où —
-   * pas le numéro dans la rue. Diffuser l'adresse exacte de chaque livraison
-   * en attente à tous les transporteurs de l'organisation reviendrait à leur
-   * distribuer le carnet d'adresses des clients de chaque commerçant.
-   *
-   * Les champs structurés sont préférés. À défaut, on retombe sur l'adresse
-   * formatée en retirant son premier segment, qui porte le nom et la rue
-   * (`MAGASIN1 - 3 AVENUE PAUL LANGEVIN, SCEAUX, 92330` → `SCEAUX, 92330`).
-   * Cette heuristique dépend du format d'adresse et peut échouer sur une
-   * saisie libre : en cas de doute, on ne renvoie **rien** plutôt qu'un
-   * fragment qui pourrait encore identifier une porte.
-   */
-  private coarseLocality(place: any): string {
-    const structured = [place?.city, place?.postal_code, place?.province, place?.country]
-      .filter((v) => typeof v === 'string' && v.trim().length > 0);
-
-    if (structured.length) {
-      return structured.join(', ');
-    }
-
-    const formatted = typeof place?.address === 'string' ? place.address : '';
-    const segments = formatted.split(',').map((s: string) => s.trim()).filter(Boolean);
-
-    return segments.length > 1 ? segments.slice(1).join(', ') : '';
   }
 
   /**
@@ -544,7 +453,14 @@ export class TransporteurService {
     const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
 
     if (!mine && !claimableAdhoc) {
-      this.logger.warn(`Driver ${driverId} attempted to access order ${orderId}`);
+      this.audit.denied({
+        actorType: 'transporteur',
+        actorId: driverId,
+        action: 'order.access',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
+      });
       throw new NotFoundException('Order not found');
     }
 
@@ -553,7 +469,7 @@ export class TransporteurService {
     // seconde : il suffirait d'ouvrir la fiche pour obtenir le nom, l'adresse
     // exacte et le téléphone que la liste venait de retirer.
     if (!mine) {
-      return this.redactUnclaimedOrder(order);
+      return projectOrderForDriver(order, { unclaimed: true });
     }
 
     const [withFailure] = await this.attachFailures(driver.id, [order]);

@@ -112,7 +112,7 @@ export class AuthService {
       this.logger.log(`Merchant registered: ${merchant.id}`);
 
       // 4. Generate JWT token
-      const token = this.generateToken(merchant.id, merchant.email, 'merchant');
+      const token = this.generateToken(merchant.id, merchant.email, 'merchant', merchant.tokenVersion);
 
       return {
         token,
@@ -234,7 +234,7 @@ export class AuthService {
     this.logger.log(`Merchant logged in: ${merchant.id}`);
 
     // Generate JWT token
-    const token = this.generateToken(merchant.id, merchant.email, 'merchant');
+    const token = this.generateToken(merchant.id, merchant.email, 'merchant', merchant.tokenVersion);
 
     return {
       token,
@@ -295,7 +295,7 @@ export class AuthService {
 
       this.logger.log(`Fleet account registered: ${fleet.id}`);
 
-      const token = this.generateToken(fleet.id, fleet.email, 'fleet');
+      const token = this.generateToken(fleet.id, fleet.email, 'fleet', fleet.tokenVersion);
 
       return {
         token,
@@ -345,7 +345,7 @@ export class AuthService {
 
     this.logger.log(`Fleet manager logged in: ${fleet.id}`);
 
-    const token = this.generateToken(fleet.id, fleet.email, 'fleet');
+    const token = this.generateToken(fleet.id, fleet.email, 'fleet', fleet.tokenVersion);
 
     return {
       token,
@@ -540,7 +540,7 @@ export class AuthService {
 
       this.logger.log(`Driver account registered: ${driver.id}`);
 
-      const token = this.generateToken(driver.id, driver.email, 'transporteur');
+      const token = this.generateToken(driver.id, driver.email, 'transporteur', driver.tokenVersion);
 
       return {
         token,
@@ -597,7 +597,7 @@ export class AuthService {
 
     this.logger.log(`Driver logged in: ${driver.id}`);
 
-    const token = this.generateToken(driver.id, driver.email, 'transporteur');
+    const token = this.generateToken(driver.id, driver.email, 'transporteur', driver.tokenVersion);
 
     return {
       token,
@@ -794,7 +794,50 @@ export class AuthService {
   /**
    * Generate JWT token
    */
-  private generateToken(userId: string, email: string, type: 'merchant' | 'fleet' | 'transporteur') {
+  /**
+   * Révoque toutes les sessions ouvertes du compte appelant.
+   *
+   * Incrémenter `tokenVersion` suffit : le garde compare la valeur portée par
+   * chaque jeton à celle du compte, donc tous les jetons déjà émis — y compris
+   * celui qui vient de servir à demander la révocation — cessent d'être
+   * acceptés immédiatement.
+   *
+   * C'est le geste utile après un téléphone perdu ou un doute sur un mot de
+   * passe. À rappeler depuis un futur changement de mot de passe : sans ça,
+   * changer son mot de passe laisserait valides les jetons émis avec l'ancien.
+   */
+  async revokeAllSessions(userId: string, type: string) {
+    const data = { tokenVersion: { increment: 1 } };
+
+    switch (type) {
+      case 'transporteur':
+        await this.prisma.driverAccount.update({ where: { id: userId }, data });
+        break;
+      case 'merchant':
+        await this.prisma.merchantAccount.update({ where: { id: userId }, data });
+        break;
+      case 'fleet':
+        await this.prisma.fleetAccount.update({ where: { id: userId }, data });
+        break;
+      default:
+        throw new BadRequestException('Profil inconnu');
+    }
+
+    this.logger.log(`Sessions révoquées pour ${type} ${userId}`);
+    return { revoked: true };
+  }
+
+  /**
+   * @param tokenVersion valeur courante du compte, embarquée dans le jeton.
+   *   Le garde la compare à chaque requête : incrémenter la colonne invalide
+   *   instantanément tous les jetons déjà émis (revue M12).
+   */
+  private generateToken(
+    userId: string,
+    email: string,
+    type: 'merchant' | 'fleet' | 'transporteur',
+    tokenVersion = 0,
+  ) {
     // Must be a number (seconds), not a bare numeric string: jsonwebtoken's `ms`
     // dependency interprets a unitless string like "86400" as milliseconds (~86s),
     // not seconds, silently producing tokens that expire almost immediately.
@@ -804,6 +847,7 @@ export class AuthService {
         sub: userId,
         email,
         type,
+        tv: tokenVersion,
       },
       { expiresIn },
     );
