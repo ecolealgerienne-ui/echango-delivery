@@ -147,10 +147,10 @@ class OrderDetailScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     Card(
                       color: Theme.of(context).colorScheme.secondaryContainer,
-                      child: ListTile(
-                        leading: const Icon(Icons.lock_outline),
-                        title: const Text('Coordonnées masquées'),
-                        subtitle: const Text(
+                      child: const ListTile(
+                        leading: Icon(Icons.lock_outline),
+                        title: Text('Coordonnées masquées'),
+                        subtitle: Text(
                           'Les contacts et l\'adresse précise s\'affichent '
                           'dès que vous acceptez cette course.',
                         ),

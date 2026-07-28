@@ -66,7 +66,7 @@ class PhotoService {
       );
     } catch (e) {
       AppLogger.error('PhotoService', 'Capture impossible', e);
-      throw PhotoCaptureException(
+      throw const PhotoCaptureException(
         'Impossible d\'ouvrir l\'appareil photo. Vérifiez l\'autorisation '
         'caméra dans les réglages.',
       );
