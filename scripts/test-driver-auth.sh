@@ -20,7 +20,9 @@ EMAIL="${EMAIL:-driver-test-$RANDOM@echango.local}"
 PASSWORD="${PASSWORD:-motdepasse123}"
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "❌ jq est requis (extraction du JWT). Installer : apt install jq / brew install jq"
+  echo "❌ jq est requis (extraction du JWT)."
+  echo "   Debian/Ubuntu/WSL : sudo apt update && sudo apt install -y jq"
+  echo "   macOS             : brew install jq"
   exit 1
 fi
 
