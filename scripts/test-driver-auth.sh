@@ -39,6 +39,22 @@ EOF
   exit 1
 fi
 
+# Piège fréquent : la console Fleetbase affiche le public_id (driver_xxxx),
+# alors que le BFF compare sur le uuid. Autant le dire tout de suite plutôt
+# que de laisser le register répondre "UUID inconnu", exact mais trompeur.
+if [[ "$DRIVER_UUID" == driver_* ]]; then
+  cat <<EOF
+❌ "$DRIVER_UUID" est un public_id, pas un uuid.
+
+Le BFF compare sur le uuid (format 8-4-4-4-12, avec tirets). Récupérer le bon :
+
+  docker exec -it \$(docker ps --format '{{.Names}}' | grep -i 'database\|mysql' | head -1) \\
+    mysql -uroot -p fleetbase \\
+    -e "SELECT uuid, public_id, name FROM drivers WHERE public_id='$DRIVER_UUID';"
+EOF
+  exit 1
+fi
+
 pass() { echo "✅ $1"; }
 fail() { echo "❌ $1"; echo "   Réponse brute : $2"; exit 1; }
 
