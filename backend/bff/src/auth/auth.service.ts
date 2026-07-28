@@ -466,13 +466,29 @@ export class AuthService {
 
     for (const old of stale) {
       if (old.fleetbaseUserDeviceUuid) {
-        try {
-          await this.fleetbaseClient.deleteUserDevice(old.fleetbaseUserDeviceUuid);
-        } catch (error) {
+        // Resolve the device to get its public_id: §6.7 established that
+        // Fleetbase resolves records by public_id, never uuid, and the mirror
+        // only ever captured a uuid. Try the public_id first, keeping the uuid
+        // as a fallback in case DELETE happens to accept it.
+        const device = await this.fleetbaseClient.findUserDeviceByToken(old.token);
+        const candidates = [device?.public_id, old.fleetbaseUserDeviceUuid].filter(Boolean);
+
+        let deleted = false;
+        for (const id of candidates) {
+          try {
+            await this.fleetbaseClient.deleteUserDevice(id);
+            deleted = true;
+            break;
+          } catch {
+            // Try the next identifier before giving up.
+          }
+        }
+
+        if (!deleted) {
           // Best-effort: a device we cannot delete must not block the new one
           // from being registered, or the driver stops receiving anything.
           this.logger.warn(
-            `Could not delete stale Fleetbase UserDevice ${old.fleetbaseUserDeviceUuid}: ${error.message}`,
+            `Could not delete stale Fleetbase UserDevice (tried: ${candidates.join(', ') || 'none'})`,
           );
         }
       }

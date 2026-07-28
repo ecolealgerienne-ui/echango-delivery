@@ -532,3 +532,21 @@ C'est un contournement, pas une correction : il faudra le retirer si l'amont cor
 Le test de rotation de jeton (§6.10) appelait `warn`, fonction définie dans `test-transporteur-module.sh` mais pas dans celui-ci. Le test tournait donc bien, mais s'écrasait au moment d'afficher son résultat — `warn: command not found` — et n'a **jamais rien validé**. Fonction ajoutée, et le bloc replacé avant le résumé final plutôt qu'après, où il était inséré par erreur.
 
 Rappel utile : `set -euo pipefail` n'attrape pas ce cas comme on l'espérerait ; la commande absente fait bien échouer la ligne, mais après que le résumé « tout est validé » a déjà été affiché — d'où une sortie trompeusement rassurante.
+
+### 6.14 Purge des jetons — la suppression échoue aussi sur l'identifiant
+
+Le test de rotation (§6.10), enfin exécutable après la correction de §6.13, échoue : `1 ancien UserDevice subsiste`. La purge ne fonctionne donc pas.
+
+Diagnostic le plus probable — **la même leçon qu'au §6.7** : le miroir n'a capturé qu'un `uuid`, or `DELETE /int/v1/user-devices/{id}` passe vraisemblablement par la même résolution `findRecordOrFail()`, qui matche `public_id` et jamais `uuid`. Deuxième fois que cet écart mord au même endroit.
+
+**Correction** : plutôt que de deviner quel identifiant la route accepte, `findUserDeviceByToken()` récupère l'enregistrement complet et la suppression essaie le `public_id` d'abord, l'`uuid` en repli. Le comportement best-effort est conservé — échouer à supprimer un ancien device ne doit jamais empêcher d'enregistrer le nouveau, sous peine de rendre le driver injoignable.
+
+**Statut : non revalidé** au moment d'écrire ces lignes. À confirmer par une nouvelle exécution de `test-driver-auth.sh`.
+
+### 6.15 `scripts/seed-test-order.sh` — commandes de test jetables
+
+Problème pratique apparu à l'usage : chaque run en `WITH_MUTATIONS=1` **consomme** la commande de test (accepter → activite → `completed`), donc le run suivant n'a plus rien à exercer — `preuve` et `echec` redeviennent non testés. C'est ce qui s'est produit au 3e run.
+
+Le script crée une commande adhoc jetable et la dispatche. Il ne tente pas d'inventer client/lieux/config — ce qui supposerait de recréer une arborescence entière — mais **recopie ceux d'une commande existante**, ce qui le rend indépendant du jeu de données. Prérequis : au moins une commande déjà en base.
+
+**Non testé** (ni Docker ni Fleetbase dans le sandbox). Écrit à partir de formes déjà établies : enveloppe `{order:{…}}` (§2.5) et adressage `v1` par `public_id` (§6.7). Rappelle en sortie que le driver doit être **en ligne et positionné** pour qu'une adhoc lui parvienne — le matching est géospatial (§3.2).

@@ -587,9 +587,31 @@ export class FleetbaseApiClient {
    * DELETE /{resource}/{id} confirmed as part of what the fleetbaseRoutes()
    * macro generates (core-api RESTRegistrar).
    */
-  async deleteUserDevice(userDeviceUuid: string) {
-    const response = await this.callFleetOps('DELETE', `/user-devices/${userDeviceUuid}`);
+  async deleteUserDevice(userDeviceId: string) {
+    const response = await this.callFleetOps('DELETE', `/user-devices/${userDeviceId}`);
     return response.data;
+  }
+
+  /**
+   * Find a UserDevice by its push token, returning the record so callers can
+   * pick whichever identifier the route they need actually resolves.
+   *
+   * Exists because the mirror only captured a uuid, and record resolution in
+   * Fleetbase is not uniform: §6.7 established that `findRecordOrFail()`
+   * matches public_id and never uuid. Rather than assume which one DELETE
+   * accepts, look the device up and try the public_id first.
+   */
+  async findUserDeviceByToken(token: string) {
+    try {
+      const response = await this.callFleetOps('GET', '/user-devices');
+      const devices =
+        response.data?.user_devices || response.data?.data ||
+        (Array.isArray(response.data) ? response.data : []);
+      return (devices || []).find((d: any) => d?.token === token) || null;
+    } catch (error) {
+      this.logger.warn(`UserDevice lookup by token failed: ${error.message}`);
+      return null;
+    }
   }
 
   /**
