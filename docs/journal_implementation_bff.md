@@ -395,8 +395,8 @@ L'upload photo est **best-effort délibérément** : un driver devant une porte 
 | `assign` = public_id | ✅ vérifié | validation du contrôleur |
 | Compilation du module | ✅ vérifié | `nest build` |
 | **Tous les appels réels** | ✅ testé le 28/07 | voir §6.8 |
-| Forme exacte de l'objet `Activity` | ❌ non testé | à relever sur une vraie commande |
-| Upload photo base64 | ❌ non testé | accepté par le contrôleur en lecture, jamais envoyé |
+| Forme exacte de l'objet `Activity` | ✅ testé le 28/07 | route dédiée `next-activity`, §6.9 |
+| Upload photo base64 | ✅ testé le 28/07 | après contournement du bug amont, §6.12/§6.17 |
 | Filtrage anti-IDOR en conditions réelles | ✅ testé le 28/07 | commande d'un autre driver → 404 (§6.8) |
 
 `scripts/test-transporteur-module.sh` couvre profil, statut, position, liste, anti-IDOR, rejet de token non-driver, absence de token et échec de livraison. Accepter/démarrer/activité en sont **volontairement absents** : ils modifient un état difficile à remettre en place, à tester à la main sur une commande jetable.
@@ -595,3 +595,27 @@ Le contournement envoyait `bucket: ""`. Ce middleware, standard dans Laravel, co
 **Dispatch du seed** — `{"error":"Order has already been dispatched!"}` traité comme un échec, alors qu'une commande créée avec `adhoc:true` est **déjà dispatchée par Fleetbase à la création**. La preuve était dans le run suivant : la commande apparaissait bien comme opportunité adhoc et a pu être acceptée. Refus reclassé en succès.
 
 Ces deux cas, plus §6.14, forment un motif : **trois faux signaux de suite venaient de l'outil de mesure, pas du code mesuré.** Un test qui échoue mérite la même suspicion qu'un test qui passe.
+
+### 6.19 État final de la tranche transporteur (28/07/2026)
+
+Trois scripts au vert intégral. Ce qui est **prouvé par exécution réelle** :
+
+| Domaine | Couverture |
+|---|---|
+| Authentification driver | register (+ rejet d'UUID inconnu), login, device-token |
+| Jetons push | miroir `UserDevice`, idempotence, **purge à la rotation** |
+| Identité & état driver | profil, position GPS, bascule en ligne |
+| Commandes | liste (3 catégories), détail, accepter une adhoc |
+| Machine à états | transitions disponibles, application d'une transition |
+| Preuve & incidents | upload photo base64, échec de livraison |
+| Sécurité | isolation entre drivers (404 sur commande d'autrui), rejet du mauvais persona (403), rejet sans token (401) |
+
+**Non couvert, et assumé comme tel** :
+
+- `demarrer` sur une commande **pré-assignée** — `accepter` couvre le chemin adhoc, mais c'est un code path distinct
+- **réception réelle d'un push** par un appareil — demande un téléphone et un projet Firebase configuré ; le pipeline serveur est validé jusqu'à l'envoi (§3.2), pas au-delà
+- **l'app Flutter n'a jamais été compilée** — aucun toolchain Flutter dans le sandbox ; le client est aligné sur les routes réelles, mais `flutter analyze` reste à passer côté Windows
+
+**Dette assumée à retirer un jour** : le contournement du bug amont §6.12 (bucket lu depuis la requête). Il doit sauter si Fleetbase corrige la ligne — sinon il masquera une configuration S3 réellement invalide.
+
+**Sur la méthode** : cette tranche a produit six corrections d'hypothèses fausses (§6.2, §6.7, §6.9, §6.14, §6.17, §6.18). Toutes venaient d'avoir accepté une description — nom de classe, résumé de méthode, message d'erreur, sortie de test — à la place du code ou de la donnée elle-même. Le taux de réussite du raisonnement à partir du code source est resté élevé ; c'est le raisonnement à partir de *ce qu'on dit du* code source qui a systématiquement échoué.
