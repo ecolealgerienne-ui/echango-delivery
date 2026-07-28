@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
+import '../../widgets/photo_field.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final String orderId;
@@ -137,6 +139,24 @@ class OrderDetailScreen extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // Dire pourquoi les contacts manquent. Sans ce message, une
+                  // fiche expurgée se lit comme une commande mal saisie, et le
+                  // transporteur cherche un numéro qui ne viendra qu'après
+                  // acceptation.
+                  if (order.redacted) ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      child: ListTile(
+                        leading: const Icon(Icons.lock_outline),
+                        title: const Text('Coordonnées masquées'),
+                        subtitle: const Text(
+                          'Les contacts et l\'adresse précise s\'affichent '
+                          'dès que vous acceptez cette course.',
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   // Delivery Failure (if exists)
                   if (order.deliveryFailure != null) ...[
@@ -253,7 +273,9 @@ class OrderDetailScreen extends StatelessWidget {
         ElevatedButton(
           onPressed: busy
               ? null
-              : () => _applyActivity(context, order.id, activity, orderState),
+              : () => requiresPod
+                  ? _applyActivityWithProof(context, order.id, activity, orderState)
+                  : _applyActivity(context, order.id, activity, orderState),
           style: ElevatedButton.styleFrom(
             backgroundColor: code == 'completed' ? Colors.green : Colors.orange,
           ),
@@ -283,11 +305,47 @@ class OrderDetailScreen extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons);
   }
 
-  /// Applique une transition serveur.
+  /// Étape marquée `require_pod` : la preuve est capturée puis envoyée avant
+  /// d'appliquer la transition.
   ///
-  /// ⚠️ `require_pod` n'est pas encore honoré : la capture photo (§5) n'est pas
-  /// branchée, donc l'étape est envoyée sans preuve. Le serveur l'accepte,
-  /// mais la preuve manquera au dossier — à traiter avec l'écran POD.
+  /// L'ordre compte — une preuve attachée après clôture n'aurait plus de
+  /// valeur probante. Et l'étape n'est pas appliquée si la preuve échoue :
+  /// mieux vaut une commande bloquée à l'étape précédente, que le transporteur
+  /// peut reprendre, qu'une commande close sans le justificatif que le serveur
+  /// exigeait.
+  Future<void> _applyActivityWithProof(
+    BuildContext context,
+    String orderId,
+    Map<String, dynamic> activity,
+    OrderState orderState,
+  ) async {
+    final photo = await showModalBottomSheet<CapturedPhoto>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _ProofSheet(),
+    );
+
+    // Annulation : ne rien appliquer. Le serveur réclame une preuve, l'envoyer
+    // sans elle contournerait sa propre règle.
+    if (photo == null || !context.mounted) return;
+
+    final sent = await orderState.captureProof(orderId, photo.base64);
+    if (!context.mounted) return;
+
+    if (!sent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(orderState.errorMessage ?? 'Envoi de la preuve impossible'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    await _applyActivity(context, orderId, activity, orderState);
+  }
+
+  /// Applique une transition serveur.
   Future<void> _applyActivity(
     BuildContext context,
     String orderId,
@@ -344,5 +402,61 @@ class OrderDetailScreen extends StatelessWidget {
       default:
         return Colors.grey;
     }
+  }
+}
+
+/// Feuille de capture de la preuve de livraison.
+///
+/// Un passage obligé plutôt qu'un champ facultatif dans l'écran : le serveur
+/// signale `require_pod` sur l'étape, et l'étape ne doit pas partir sans.
+class _ProofSheet extends StatefulWidget {
+  const _ProofSheet();
+
+  @override
+  State<_ProofSheet> createState() => _ProofSheetState();
+}
+
+class _ProofSheetState extends State<_ProofSheet> {
+  CapturedPhoto? _photo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 24,
+        // Sans ça, le clavier ou la barre système recouvre le bouton de
+        // validation sur les petits écrans.
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PhotoField(
+            label: 'Preuve de livraison',
+            required: true,
+            helperText: 'Cette étape exige une photo : colis remis, '
+                'signature, ou dépôt convenu.',
+            onChanged: (photo) => setState(() => _photo = photo),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: _photo == null
+                ? null
+                : () => Navigator.pop(context, _photo),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            child: const Text('Envoyer la preuve et valider l\'étape'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+        ],
+      ),
+    );
   }
 }

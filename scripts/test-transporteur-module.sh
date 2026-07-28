@@ -110,6 +110,33 @@ N_ACTIVE=$(echo "$RESP" | jq '.active | length')
 N_ADHOC=$(echo "$RESP" | jq '.adhoc | length')
 pass "GET  /transporteur/commandes (actives=$N_ACTIVE, adhoc=$N_ADHOC)"
 
+# Une opportunité adhoc est diffusée à TOUS les transporteurs, dont aucun n'a
+# encore de lien avec la livraison. Elle ne doit donc pas transporter le nom,
+# le téléphone ni l'adresse exacte du client (revue M9).
+if [ "$N_ADHOC" -gt 0 ]; then
+  echo "$RESP" | jq -e '.adhoc[0].redacted == true' >/dev/null 2>&1 \
+    || fail "adhoc non expurgée : le drapeau redacted manque" "$(echo "$RESP" | jq -c '.adhoc[0]')"
+
+  LEAK=$(echo "$RESP" | jq -c '[.adhoc[0] | .. | objects
+        | with_entries(select(.key | test("phone|contact_name|email")))
+        | select(length > 0)]')
+  [ "$LEAK" = "[]" ] \
+    || fail "FUITE : coordonnées présentes sur une adhoc non réclamée" "$LEAK"
+  pass "adhoc — coordonnées personnelles expurgées dans la liste"
+
+  # Et le détail ne doit pas être une porte dérobée sur les mêmes données.
+  ADHOC_ID=$(echo "$RESP" | jq -r '.adhoc[0].public_id // .adhoc[0].uuid')
+  DETAIL=$(api GET "/transporteur/commandes/$ADHOC_ID")
+  LEAK=$(echo "$DETAIL" | jq -c '[.. | objects
+        | with_entries(select(.key | test("phone|contact_name|email")))
+        | select(length > 0)]')
+  [ "$LEAK" = "[]" ] \
+    || fail "FUITE : le détail d'une adhoc non réclamée expose les coordonnées" "$LEAK"
+  pass "adhoc — détail expurgé lui aussi (pas de contournement par la fiche)"
+else
+  warn "expurgation des adhoc non testée — aucune opportunité adhoc en base."
+fi
+
 # --- 5. ⚠️ Anti-IDOR : commande d'un autre driver -------------------------
 # Le test qui compte le plus. On prend une commande RÉELLE de la compagnie qui
 # n'est pas assignée à ce driver, et on vérifie que le BFF la refuse. Sans ce

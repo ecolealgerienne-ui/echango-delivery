@@ -314,8 +314,9 @@ export class TransporteurService {
     );
 
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
+    const publicAdhoc = adhoc.map((o) => this.redactUnclaimedOrder(o));
 
-    if (query.type === 'adhoc') return { orders: adhoc };
+    if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
       return { orders: await this.attachFailures(driver.id, assigned.filter(isFinished)) };
     }
@@ -325,8 +326,58 @@ export class TransporteurService {
 
     return {
       active: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))),
-      adhoc,
+      adhoc: publicAdhoc,
       history: await this.attachFailures(driver.id, assigned.filter(isFinished)),
+    };
+  }
+
+  /**
+   * Retire les données personnelles d'une commande adhoc non réclamée.
+   *
+   * Une opportunité adhoc est diffusée à **tous** les transporteurs de
+   * l'organisation, dont aucun n'a encore de lien avec cette livraison. Servie
+   * telle quelle, elle livrait à chacun d'eux le nom, l'adresse exacte et le
+   * téléphone du client et du commerçant — pour des commandes qu'ils ne
+   * prendront pas. C'est une diffusion de données personnelles à des tiers,
+   * pas une fonctionnalité (revue M9).
+   *
+   * Ce qui reste est ce qui permet de décider : où ça part, où ça va (au
+   * niveau du lieu, pas de la porte), la distance et la durée estimées. Le
+   * détail complet arrive à l'acceptation, quand le transporteur devient
+   * légitimement partie prenante — `getOrder` ne passe pas par ici et vérifie
+   * l'assignation.
+   *
+   * Ce que ça ne règle PAS : la diffusion reste organisation-wide, sans filtre
+   * de proximité. Le rayon relève d'une décision produit encore ouverte.
+   */
+  private redactUnclaimedOrder(order: any) {
+    const place = (p: any) => {
+      if (!p) return p;
+      const { phone, contact_name, contact_phone, email, owner, customer, ...rest } = p;
+      return rest;
+    };
+
+    const {
+      customer,
+      customer_uuid,
+      customer_type,
+      facilitator,
+      payload,
+      ...rest
+    } = order ?? {};
+
+    return {
+      ...rest,
+      // Le payload porte les lieux, qu'on veut garder — mais expurgés de
+      // leurs contacts. Le reste du payload (contenu du colis, entités)
+      // n'a pas à circuler avant acceptation.
+      payload: payload
+        ? {
+            pickup: place(payload.pickup),
+            dropoff: place(payload.dropoff),
+          }
+        : undefined,
+      redacted: true,
     };
   }
 
@@ -352,6 +403,14 @@ export class TransporteurService {
     if (!mine && !claimableAdhoc) {
       this.logger.warn(`Driver ${driverId} attempted to access order ${orderId}`);
       throw new NotFoundException('Order not found');
+    }
+
+    // Une adhoc que ce driver n'a pas encore réclamée passe par la même
+    // expurgation que la liste. Sans ça, la protection ne tiendrait pas une
+    // seconde : il suffirait d'ouvrir la fiche pour obtenir le nom, l'adresse
+    // exacte et le téléphone que la liste venait de retirer.
+    if (!mine) {
+      return this.redactUnclaimedOrder(order);
     }
 
     const [withFailure] = await this.attachFailures(driver.id, [order]);

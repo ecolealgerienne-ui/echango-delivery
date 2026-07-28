@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
+import '../../widgets/photo_field.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
   final String orderId;
@@ -16,6 +18,7 @@ class DeliveryFailureScreen extends StatefulWidget {
 class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
   late String _selectedReason;
   late TextEditingController _notesController;
+  CapturedPhoto? _photo;
 
   /// Codes attendus par le BFF (DELIVERY_FAILURE_REASONS, liste fermée
   /// validée côté serveur) associés à leur libellé affiché.
@@ -122,7 +125,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             TextField(
               controller: _notesController,
               decoration: InputDecoration(
-                hintText: 'Add any additional details...',
+                hintText: 'Précisions éventuelles…',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -130,37 +133,15 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
               maxLines: 4,
             ),
             const SizedBox(height: 24),
-            // Photo section (MVP: placeholder)
-            Card(
-              color: Colors.blue.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.camera_alt_outlined,
-                      size: 48,
-                      color: Colors.blue.shade700,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Photo Evidence (MVP: Optional)',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.blue.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Photo capture will be available in future updates',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            // La preuve photo n'est pas exigée ici — contrairement à la POD,
+            // un échec de livraison n'a pas toujours quelque chose à montrer
+            // (destinataire absent). L'imposer pousserait à photographier
+            // n'importe quoi pour débloquer l'écran.
+            PhotoField(
+              label: 'Photo (facultative)',
+              helperText: 'Utile quand l\'échec se constate : porte close, '
+                  'adresse introuvable, colis refusé.',
+              onChanged: (photo) => setState(() => _photo = photo),
             ),
             const SizedBox(height: 32),
             // Submit Button
@@ -182,7 +163,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                           ),
                         )
                       : const Text(
-                          'Submit Failure Report',
+                          'Signaler l\'échec',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 );
@@ -216,6 +197,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       orderId: widget.orderId,
       reason: _selectedReason,
       notes: _notesController.text.isNotEmpty ? _notesController.text : null,
+      photoBase64: _photo?.base64,
     );
 
     if (!context.mounted) return;

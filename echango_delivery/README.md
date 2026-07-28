@@ -101,9 +101,29 @@ flutter run --dart-define=DEV_ACCOUNTS='[
 | Commerçant | ✅ validé en réel | ⚠️ jamais exécuté |
 | Gestionnaire de flotte | partiel | ❌ non commencé |
 
-**Limite connue** : la capture photo n'est pas branchée. Les étapes marquées
-`require_pod` partent sans preuve — le serveur les accepte, la preuve manque au
-dossier.
+## Capture photo
+
+Branchée sur les deux besoins (`widgets/photo_field.dart`, partagé pour que les
+deux écrans ne divergent pas) :
+
+- **Preuve de livraison** — une étape que le serveur marque `require_pod`
+  ouvre une feuille de capture, et n'est appliquée qu'après envoi réussi de la
+  photo. Refuser la capture annule l'étape : envoyer sans preuve
+  contournerait la règle que le serveur vient d'énoncer.
+- **Échec de livraison** — photo facultative. L'imposer pousserait à
+  photographier n'importe quoi pour débloquer l'écran, alors qu'un
+  destinataire absent n'a rien à montrer.
+
+Redimensionnement et compression sont faits côté natif par `image_picker`
+(1600 px, qualité 70). La limite du serveur est vérifiée **avant** l'envoi :
+au-delà, la requête partirait pour revenir en 400 après avoir consommé la
+connexion mobile du transporteur.
+
+`image_picker` délègue à l'appareil photo du système par intent, donc aucune
+permission `CAMERA` n'est nécessaire par défaut. Attention toutefois : si un
+autre plugin déclare `CAMERA` dans le manifeste, Android exige alors la
+demande à l'exécution — l'ajout d'une dépendance peut donc casser la capture
+sans qu'on touche à ce code.
 
 ## Présence du transporteur
 

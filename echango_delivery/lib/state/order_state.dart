@@ -160,6 +160,34 @@ class OrderState extends ChangeNotifier {
         'Impossible de démarrer cette livraison',
       );
 
+  /// Envoie une preuve de livraison, sans appliquer de transition.
+  ///
+  /// Séparé de [completeOrder] parce que le serveur exige une preuve sur des
+  /// étapes intermédiaires aussi (drapeau `require_pod` porté par l'activité,
+  /// journal §6.9), pas seulement à la clôture.
+  ///
+  /// Ne recharge pas la commande : l'appelant enchaîne sur la transition, qui
+  /// rechargera. Recharger ici ferait deux allers-retours pour un seul geste.
+  Future<bool> captureProof(String orderId, String photoBase64) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _apiClient.captureProofPhoto(orderId, [photoBase64]);
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
+    } catch (e) {
+      _errorMessage = 'Envoi de la preuve impossible';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Applique une transition proposée par [nextActivities].
   ///
   /// [activity] doit être renvoyé tel quel : le serveur valide l'objet

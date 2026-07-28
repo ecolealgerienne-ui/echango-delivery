@@ -27,6 +27,11 @@ class Order extends Equatable {
   final String? proofUrl;
   final DeliveryFailure? deliveryFailure;
 
+  /// Vrai quand le serveur a retiré les données personnelles : opportunité
+  /// adhoc que ce transporteur n'a pas encore réclamée. Les contacts et
+  /// l'adresse précise arrivent à l'acceptation.
+  final bool redacted;
+
   const Order({
     required this.id,
     required this.publicId,
@@ -46,6 +51,7 @@ class Order extends Equatable {
     this.estimatedDuration,
     this.proofUrl,
     this.deliveryFailure,
+    this.redacted = false,
   });
 
   // Prédicats alignés sur les statuts Fleetbase réels. L'ancienne version
@@ -97,6 +103,7 @@ class Order extends Equatable {
       estimatedDuration: estimatedDuration ?? this.estimatedDuration,
       proofUrl: proofUrl ?? this.proofUrl,
       deliveryFailure: deliveryFailure ?? this.deliveryFailure,
+      redacted: redacted,
     );
   }
 
@@ -153,6 +160,7 @@ class Order extends Equatable {
       totalDistance: (json['distance'] as num?)?.toDouble(),
       estimatedDuration: json['estimated_duration'] as int?,
       proofUrl: json['proof_url'] as String?,
+      redacted: json['redacted'] == true,
       deliveryFailure: json['delivery_failure'] is Map<String, dynamic>
           ? DeliveryFailure.fromJson(json['delivery_failure'] as Map<String, dynamic>)
           : null,
@@ -193,6 +201,7 @@ class Order extends Equatable {
         estimatedDuration,
         proofUrl,
         deliveryFailure,
+        redacted,
       ];
 }
 

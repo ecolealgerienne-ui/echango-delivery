@@ -938,3 +938,36 @@ Le contrôle « un jeton valide d'un autre persona doit être refusé » forgeai
 Remplacé par un jeton **émis par le serveur** (persona `fleet`, déjà créé pour les invitations) : toujours valide, donc le 403 obtenu prouve bien que c'est le persona qui bloque, et non la signature.
 
 Repère : dès qu'un test doit reproduire un secret du serveur pour fabriquer une entrée valide, il teste aussi la synchronisation de ce secret — et échouera pour cette raison-là plutôt que pour celle qu'il annonce. Faire émettre l'entrée par le serveur quand c'est possible.
+
+---
+
+## 11. Preuve photo et expurgation des opportunités adhoc (28/07/2026)
+
+Deux items P1 qui ne dépendaient d'aucune décision produit.
+
+### 11.1 La capture photo — une chaîne serveur validée mais inatteignable
+
+`POST /transporteur/commandes/{id}/preuve` était validé par test réel depuis le 28/07, contournement du bug amont compris (§6.12). L'app, elle, affichait « Photo capture will be available in future updates » : les étapes marquées `require_pod` partaient sans preuve, acceptées par le serveur, et le dossier restait incomplet sans que personne ne le voie.
+
+`widgets/photo_field.dart` sert les deux besoins, pour que les écrans ne divergent pas comme l'avaient fait les deux scripts de test. Deux règles opposées, chacune motivée :
+
+- **Preuve de livraison, obligatoire** — l'étape n'est appliquée qu'après envoi réussi. Annuler la capture annule l'étape : envoyer sans preuve contournerait la règle que le serveur vient d'énoncer. Et si l'envoi échoue, l'étape n'est pas appliquée — mieux vaut une commande bloquée que le transporteur peut reprendre qu'une commande close sans son justificatif.
+- **Échec de livraison, facultative** — l'imposer pousserait à photographier n'importe quoi pour débloquer l'écran, alors qu'un destinataire absent n'a rien à montrer.
+
+La borne de taille du serveur (`MAX_PHOTO_BASE64_LENGTH`) est vérifiée **avant** l'envoi. Sans ça la requête part et revient en 400 après avoir consommé la connexion mobile du transporteur — le seul acteur du système dont la connexion est incertaine par nature.
+
+### 11.2 Les opportunités adhoc diffusaient des données personnelles (revue M9)
+
+Une commande adhoc est diffusée à **tous** les transporteurs de l'organisation, dont aucun n'a encore de lien avec cette livraison. Servie telle quelle, elle livrait à chacun le nom, l'adresse exacte et le téléphone du client et du commerçant — pour des courses qu'ils ne prendront pas. C'est une diffusion de données personnelles à des tiers, pas une fonctionnalité.
+
+`redactUnclaimedOrder()` ne laisse que ce qui permet de décider : d'où à où (au niveau du lieu, pas de la porte), distance et durée estimées. Le détail complet arrive à l'acceptation.
+
+**Le point qui comptait** : `getOrder` renvoyait la commande complète pour une adhoc non réclamée — l'accès y est légitime, c'est ainsi que le driver consulte une opportunité avant de la prendre. Expurger la seule liste aurait donc été un théâtre : il suffisait d'ouvrir la fiche pour récupérer ce que la liste venait de retirer. La même expurgation s'applique aux deux chemins.
+
+Repère : **une donnée retirée d'une liste doit l'être de toutes les routes qui servent le même objet.** Chercher systématiquement l'accès unitaire quand on filtre un accès collectif.
+
+**Ce que ça ne règle pas** : la diffusion reste organisation-wide, sans filtre de proximité. Le rayon est une décision produit ouverte.
+
+### 11.3 Vérification
+
+Le script assère les deux chemins, avec un détecteur générique (`jq | .. | objects`) qui cherche toute clé `phone`/`contact_name`/`email` à n'importe quelle profondeur, plutôt qu'une liste de champs connus — un champ ajouté plus tard côté Fleetbase sera attrapé sans qu'on y pense. Détecteur éprouvé dans les deux sens avant d'être commis : il attrape un `contact_phone` planté à la main, et laisse passer une charge propre.
