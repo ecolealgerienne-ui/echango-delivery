@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import 'fleetbase_json.dart';
+
 class Order extends Equatable {
   final String id;
   final String publicId;
@@ -135,36 +137,27 @@ class Order extends Equatable {
   /// Tolérant par principe : une commande mal formée doit être ignorable, pas
   /// faire échouer la liste entière. Tout est donc nullable ou défaillable.
   factory Order.fromJson(Map<String, dynamic> json) {
-    final payload = json['payload'] as Map<String, dynamic>?;
-
     Place? place(String key) {
-      final raw = payload?[key];
-      return raw is Map<String, dynamic> ? Place.fromJson(raw) : null;
-    }
-
-    DateTime parseDate(String key) {
-      final raw = json[key];
-      return raw is String ? (DateTime.tryParse(raw) ?? DateTime.now()) : DateTime.now();
+      final raw = readPlaceJson(json, key);
+      return raw == null ? null : Place.fromJson(raw);
     }
 
     return Order(
       // `uuid` est l'identifiant interne, `public_id` celui qu'attendent les
       // routes du BFF. On garde les deux : selon l'endroit, Fleetbase expose
       // l'un ou l'autre (journal §6.7/§6.14/§6.16).
-      id: (json['uuid'] ?? json['id'] ?? json['public_id'] ?? '') as String,
-      publicId: (json['public_id'] ?? json['id'] ?? '') as String,
+      id: readId(json),
+      publicId: readPublicId(json),
       customerId: json['customer_uuid'] as String?,
       facilitatorId: json['facilitator_uuid'] as String?,
       driverId: json['driver_assigned_uuid'] as String?,
-      status: (json['status'] ?? 'created') as String,
+      status: readStatus(json),
       payloadType: (json['type'] ?? 'transport') as String,
       adhoc: json['adhoc'] == true,
-      trackingNumber: json['tracking_number'] is Map
-          ? (json['tracking_number']['tracking_number'] as String?)
-          : json['tracking_number'] as String?,
+      trackingNumber: readTrackingNumber(json),
       notes: json['notes'] as String?,
-      createdAt: parseDate('created_at'),
-      updatedAt: parseDate('updated_at'),
+      createdAt: readDate(json, 'created_at'),
+      updatedAt: readDate(json, 'updated_at'),
       pickupPlace: place('pickup'),
       dropoffPlace: place('dropoff'),
       totalDistance: (json['distance'] as num?)?.toDouble(),
@@ -225,8 +218,11 @@ class Place extends Equatable {
   final String id;
   final String name;
   final String address;
-  final double latitude;
-  final double longitude;
+  /// Nulles quand le BFF les a retirées — course non réclamée. Une valeur par
+  /// défaut à 0 aurait placé le point au large du golfe de Guinée, et
+  /// l'itinéraire y aurait mené sans rien signaler.
+  final double? latitude;
+  final double? longitude;
   final String? contactName;
   final String? contactPhone;
 
@@ -234,8 +230,8 @@ class Place extends Equatable {
     required this.id,
     required this.name,
     required this.address,
-    required this.latitude,
-    required this.longitude,
+    this.latitude,
+    this.longitude,
     this.contactName,
     this.contactPhone,
   });
@@ -245,17 +241,14 @@ class Place extends Equatable {
   /// (`location.coordinates` = [longitude, latitude] — l'ordre est inversé
   /// par rapport à l'usage courant lat/lng).
   factory Place.fromJson(Map<String, dynamic> json) {
-    final coords = (json['location'] is Map<String, dynamic>)
-        ? json['location']['coordinates']
-        : null;
-    final hasCoords = coords is List && coords.length >= 2;
+    final coords = readCoordinates(json);
 
     return Place(
-      id: (json['public_id'] ?? json['uuid'] ?? json['id'] ?? '') as String,
+      id: readAnyId(json),
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? json['street1'] ?? '') as String,
-      latitude: hasCoords ? (coords[1] as num).toDouble() : 0,
-      longitude: hasCoords ? (coords[0] as num).toDouble() : 0,
+      latitude: coords?.latitude,
+      longitude: coords?.longitude,
       contactName: json['contact_name'] as String?,
       contactPhone: json['phone'] as String? ?? json['contact_phone'] as String?,
     );

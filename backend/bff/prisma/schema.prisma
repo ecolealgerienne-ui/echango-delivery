@@ -20,16 +20,16 @@ model MerchantAccount {
   lastName          String?
   phone             String?
   emailVerified     Boolean  @default(false)
-  emailVerifiedAt   DateTime?
 
   // Link to Fleetbase
   fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
   fleetbaseCustomerUuid String? // Customer UUID in Fleetbase (for customer-portal)
-  // ⚠️ Stocké EN CLAIR. Le commentaire précédent annonçait « encrypted at
-  // rest » alors qu'aucun chiffrement n'existe (revue F15) — une annotation
-  // fausse est pire que pas d'annotation : elle dispense de vérifier.
-  // À chiffrer avant l'ouverture B2B, ou à cesser de stocker.
-  fleetbaseSanctumToken String? @db.Text
+  // `fleetbaseSanctumToken` a été SUPPRIMÉ (revue F15/archi #15). Il portait
+  // l'annotation « encrypted at rest » alors qu'aucun chiffrement n'existait,
+  // et n'était écrit ni lu nulle part depuis que le module commerçant a cessé
+  // de passer par customer-portal-api. Stocker un credential qu'on n'utilise
+  // pas est une charge sans contrepartie ; le rétablir supposerait de décider
+  // d'abord comment le chiffrer.
 
   // Business
   businessName      String
@@ -158,7 +158,6 @@ model DriverDeviceToken {
 
   token             String   @unique
   platform          String   // 'ios' or 'android'
-  appVersion        String?
 
   // UUID of the mirrored Fleetbase UserDevice record, once the write-through
   // succeeds. Null if the mirror failed or hasn't been attempted yet - the BFF
@@ -169,8 +168,10 @@ model DriverDeviceToken {
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  lastUsedAt        DateTime?
 
+  // `lastUsedAt` supprimé : jamais écrit, il laissait croire que les jetons
+  // étaient purgés selon leur fraîcheur. Un champ mort au nom évocateur est un
+  // piège — c'est la même erreur que le « encrypted at rest » ci-dessus.
   @@index([driverId])
   @@index([active])
 }
@@ -259,14 +260,14 @@ model DeviceToken {
 
   token             String   @unique
   platform          String   // 'ios' or 'android'
-  appVersion        String?
 
   active            Boolean  @default(true)
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  lastUsedAt        DateTime?
 
+  // `appVersion` et `lastUsedAt` supprimés — jamais écrits, comme leurs
+  // homologues de DriverDeviceToken.
   @@index([merchantId])
   @@index([active])
 }

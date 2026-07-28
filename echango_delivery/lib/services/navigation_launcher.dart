@@ -15,18 +15,24 @@ class NavigationLauncher {
   /// Renvoie `false` si aucune application ne peut le prendre en charge —
   /// l'appelant doit alors le dire, plutôt que de laisser un bouton sans effet.
   static Future<bool> navigateTo(Place place) async {
+    // Coordonnées absentes : course non réclamée, le BFF les a retirées avec
+    // l'adresse. Mieux vaut refuser que construire un `geo:null,null` qui
+    // ouvrirait une carte au hasard.
+    final lat = place.latitude;
+    final lon = place.longitude;
+    if (lat == null || lon == null) return false;
+
     // `geo:` est l'intent Android standard : il laisse le choix de
     // l'application (Maps, Waze, OsmAnd…) au lieu d'imposer la nôtre. Le
     // paramètre `q` avec le libellé donne une épingle nommée plutôt qu'un
     // point nu, ce qui aide à reconnaître l'adresse à l'arrivée.
     final label = Uri.encodeComponent(place.name);
     final candidates = <Uri>[
-      Uri.parse('geo:${place.latitude},${place.longitude}'
-          '?q=${place.latitude},${place.longitude}($label)'),
+      Uri.parse('geo:$lat,$lon?q=$lat,$lon($label)'),
       // Repli universel, y compris iOS et navigateur : fonctionne partout où
       // `geo:` n'est pas reconnu.
       Uri.parse('https://www.google.com/maps/dir/?api=1'
-          '&destination=${place.latitude},${place.longitude}'),
+          '&destination=$lat,$lon'),
     ];
 
     for (final uri in candidates) {

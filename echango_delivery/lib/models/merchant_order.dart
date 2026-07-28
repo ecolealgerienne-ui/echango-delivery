@@ -1,5 +1,8 @@
 import 'package:equatable/equatable.dart';
 
+import 'fleetbase_json.dart';
+import 'order.dart' show Place;
+
 /// Commande vue par le commerçant.
 ///
 /// Désérialiseur écrit contre la forme RÉELLE renvoyée par Fleetbase, relevée
@@ -20,8 +23,11 @@ class MerchantOrder extends Equatable {
   /// plutôt qu'un statut faux.
   final bool degraded;
   final DateTime createdAt;
-  final OrderPlace? pickup;
-  final OrderPlace? dropoff;
+  /// Même type que côté transporteur : `OrderPlace` n'était qu'un
+  /// sous-ensemble de `Place`, et deux classes pour la même donnée finissent
+  /// par lire le même JSON de deux façons.
+  final Place? pickup;
+  final Place? dropoff;
   final String? driverName;
 
   const MerchantOrder({
@@ -52,31 +58,21 @@ class MerchantOrder extends Equatable {
   /// `stale` (Fleetbase injoignable) et `missing` (commande disparue) — dans
   /// les deux, seuls l'identifiant et la date sont fiables.
   factory MerchantOrder.fromJson(Map<String, dynamic> json) {
-    final payload = json['payload'] as Map<String, dynamic>?;
-
-    OrderPlace? place(String key) {
-      final raw = payload?[key];
-      return raw is Map<String, dynamic> ? OrderPlace.fromJson(raw) : null;
-    }
-
-    DateTime parseDate(String key) {
-      final raw = json[key];
-      return raw is String ? (DateTime.tryParse(raw) ?? DateTime.now()) : DateTime.now();
+    Place? place(String key) {
+      final raw = readPlaceJson(json, key);
+      return raw == null ? null : Place.fromJson(raw);
     }
 
     final driver = json['driver_assigned'];
 
     return MerchantOrder(
-      id: (json['uuid'] ?? json['id'] ?? json['public_id'] ?? '') as String,
-      publicId: (json['public_id'] ?? json['id'] ?? '') as String,
-      status: (json['status'] ?? 'created') as String,
-      // `tracking_number` est tantôt une chaîne, tantôt l'objet complet.
-      trackingNumber: json['tracking_number'] is Map
-          ? json['tracking_number']['tracking_number'] as String?
-          : json['tracking_number'] as String?,
+      id: readId(json),
+      publicId: readPublicId(json),
+      status: readStatus(json),
+      trackingNumber: readTrackingNumber(json),
       dispatched: json['dispatched'] == true,
       degraded: json['stale'] == true || json['missing'] == true,
-      createdAt: parseDate('created_at'),
+      createdAt: readDate(json, 'created_at'),
       pickup: place('pickup'),
       dropoff: place('dropoff'),
       driverName: driver is Map<String, dynamic> ? driver['name'] as String? : null,
@@ -87,28 +83,6 @@ class MerchantOrder extends Equatable {
   List<Object?> get props => [id, publicId, status, dispatched, createdAt];
 }
 
-class OrderPlace extends Equatable {
-  final String name;
-  final String address;
-
-  const OrderPlace({required this.name, required this.address});
-
-  factory OrderPlace.fromJson(Map<String, dynamic> json) {
-    return OrderPlace(
-      name: (json['name'] ?? '') as String,
-      address: (json['address'] ?? json['street1'] ?? '') as String,
-    );
-  }
-
-  @override
-  List<Object?> get props => [name, address];
-}
-
-/// Adresse du carnet, réutilisable d'une commande à l'autre.
-///
-/// Côté Fleetbase c'est un `Place` rattaché au Vendor du commerçant par
-/// `owner_uuid` — un vrai filtre serveur, vérifié en réel (journal §2.7),
-/// contrairement aux filtres de `/orders` et `/drivers` qui sont ignorés.
 class SavedAddress extends Equatable {
   final String id;
   final String name;
@@ -129,19 +103,17 @@ class SavedAddress extends Equatable {
   });
 
   factory SavedAddress.fromJson(Map<String, dynamic> json) {
-    // GeoJSON : coordinates = [longitude, latitude], ordre inverse de
-    // l'habitude lat/lng.
-    final coords = (json['location'] is Map<String, dynamic>)
-        ? json['location']['coordinates']
-        : null;
-    final hasCoords = coords is List && coords.length >= 2;
+    // Une adresse enregistrée sans coordonnées est inexploitable : elle sert à
+    // pré-remplir une commande, qui exige un point. D'où le repli à 0 ici, là
+    // où `Place` laisse la valeur nulle — la nuance est délibérée.
+    final coords = readCoordinates(json);
 
     return SavedAddress(
-      id: (json['public_id'] ?? json['uuid'] ?? json['id'] ?? '') as String,
+      id: readAnyId(json),
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? json['street1'] ?? '') as String,
-      latitude: hasCoords ? (coords[1] as num).toDouble() : 0,
-      longitude: hasCoords ? (coords[0] as num).toDouble() : 0,
+      latitude: coords?.latitude ?? 0,
+      longitude: coords?.longitude ?? 0,
       contactName: json['contact_name'] as String?,
       contactPhone: json['phone'] as String? ?? json['contact_phone'] as String?,
     );

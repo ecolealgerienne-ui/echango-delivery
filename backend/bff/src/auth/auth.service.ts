@@ -63,6 +63,13 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
 
+    // Retenu pour la compensation ci-dessous : une inscription qui échoue
+    // après la création du Vendor laissait un enregistrement orphelin dans
+    // Fleetbase, invisible du BFF et impossible à réutiliser — le `@unique` sur
+    // `fleetbaseVendorUuid` n'y voit rien, et une seconde tentative avec le
+    // même email recréait un second Vendor (revue archi #11).
+    let createdVendorUuid: string | null = null;
+
     try {
       // 1. Create Vendor in Fleetbase
       this.logger.log(`Creating Vendor in Fleetbase for ${dto.businessName}`);
@@ -76,6 +83,7 @@ export class AuthService {
       if (!vendorUuid) {
         throw new Error('Vendor UUID not returned from Fleetbase');
       }
+      createdVendorUuid = vendorUuid;
 
       // 2. Create Customer in Fleetbase
       this.logger.log(`Creating Customer in Fleetbase for vendor ${vendorUuid}`);
@@ -124,11 +132,41 @@ export class AuthService {
       };
     } catch (error) {
       this.logger.error(`Merchant registration failed: ${error.message}`, error);
+      await this.rollbackVendor(createdVendorUuid);
+
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       throw new BadRequestException(
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to register merchant: ${detail}`
           : 'Failed to register merchant',
+      );
+    }
+  }
+
+  /**
+   * Compense la création d'un Vendor quand la suite de l'inscription échoue.
+   *
+   * L'inscription commerçant écrit dans deux systèmes sans transaction
+   * commune : Fleetbase d'abord (Vendor puis Contact), le BFF ensuite. Un échec
+   * à la deuxième ou troisième étape laissait un Vendor que plus rien ne
+   * référençait — invisible du BFF, non réutilisable, et qu'une nouvelle
+   * tentative avec le même email dupliquait au lieu de récupérer.
+   *
+   * La compensation est **best-effort et ne masque jamais l'erreur d'origine**
+   * : si la suppression échoue à son tour, on le journalise avec l'uuid, pour
+   * qu'un nettoyage manuel reste possible, et on laisse remonter l'échec
+   * initial — c'est lui qui intéresse l'appelant.
+   */
+  private async rollbackVendor(vendorUuid: string | null): Promise<void> {
+    if (!vendorUuid) return;
+
+    try {
+      await this.fleetbaseClient.deleteVendor(vendorUuid);
+      this.logger.log(`Vendor ${vendorUuid} supprimé après échec d'inscription`);
+    } catch (error) {
+      this.logger.error(
+        `Vendor ${vendorUuid} orphelin dans Fleetbase — suppression impossible : ${error.message}. ` +
+          'À supprimer manuellement depuis la console Fleet-Ops.',
       );
     }
   }

@@ -1111,3 +1111,59 @@ La commune est reconstruite depuis les champs structurés quand ils existent, si
 Le détecteur de fuite du script couvre maintenant `street`, `latitude` et `longitude` en plus des contacts.
 
 Repère : **quand une interface annonce une garantie, c'est une assertion testable.** Celle-ci était fausse depuis son écriture et n'aurait été démentie par aucun test — ils vérifiaient l'absence des champs retirés, jamais la présence de ceux qui restaient.
+
+---
+
+## 12. P2 de la revue (28/07/2026)
+
+Les sept points restants, dont trois structurels.
+
+### 12.1 Projection par persona — le correctif qui referme une classe entière (M10)
+
+Les trois modules relayaient l'objet Fleetbase **intégral**. Ce qui sortait du BFF n'était donc pas décidé ici mais en amont, et changeait silencieusement à chaque mise à jour de Fleetbase.
+
+Toutes les fuites corrigées à la main pendant la session sont la même erreur répétée : `driver_assigned_uuid` exploitable pour usurper l'identité d'un transporteur (C2), adresses et téléphones sur les courses non réclamées (M9), relation `customer` imbriquée dans un lieu, commissions exposées au commerçant par un `include` Prisma. À chaque fois, **on retirait ce qu'on avait pensé à retirer**.
+
+Une liste d'exclusion est fausse par défaut : un champ ajouté en amont sort sans que personne ne le décide. Une liste d'autorisation est vide par défaut : un champ nouveau ne sort pas tant qu'on ne l'a pas voulu. Le coût est symétrique — il faut penser à ajouter ce dont l'app a besoin — mais **l'oubli devient visible à l'écran plutôt qu'invisible sur le réseau**.
+
+### 12.2 Révocation de session (M12)
+
+Un jeton volé restait valide 24 h, et changer son mot de passe n'y changeait rien — alors que la désactivation d'un compte était déjà immédiate, les trois modules relisant `active` à chaque requête. Il manquait le pendant sur les jetons.
+
+`tokenVersion` par compte, porté par le jeton et comparé à chaque requête, plus `POST /auth/revoquer-sessions`. **Le contrôle vit dans le garde**, pas dans chaque service : un contrôle de sécurité qu'il faut se rappeler d'appeler finit par manquer sur la route qu'on vient d'ajouter. Coût assumé : une requête par appel authentifié.
+
+Les jetons émis avant l'ajout du champ n'ont pas de `tv` et sont comparés à la valeur par défaut : le déploiement ne coupe pas les sessions en cours.
+
+### 12.3 Piste d'audit (F14)
+
+Le modèle existait, rien ne l'écrivait, et les refus anti-IDOR ne laissaient qu'un `logger.warn` non structuré, perdu à la rotation. Sur un système dont **tout** le cloisonnement est applicatif, une exploitation réussie n'aurait été ni détectée ni reconstituable.
+
+`merchantId`/`fleetId` ne savaient pas exprimer un transporteur et obligeaient à une colonne par persona : remplacés par le couple `actorType` + `actorId`. L'écriture ne bloque pas la réponse — on est dans le chemin d'un refus, et une base d'audit indisponible ne doit pas transformer un 403 propre en 500 — mais son échec est journalisé en `error`, seul cas où la disparition d'une trace doit se voir.
+
+### 12.4 Compensation de l'inscription commerçant (archi #11)
+
+L'inscription écrit dans deux systèmes sans transaction commune : Fleetbase d'abord (Vendor puis Contact), le BFF ensuite. Un échec à la deuxième ou troisième étape laissait un `Vendor` que plus rien ne référençait — invisible du BFF, non réutilisable, et qu'une nouvelle tentative avec le même email **dupliquait** au lieu de récupérer.
+
+La compensation supprime le Vendor et **ne masque jamais l'erreur d'origine** : si la suppression échoue à son tour, l'uuid est journalisé pour un nettoyage manuel, et c'est l'échec initial qui remonte — c'est lui qui intéresse l'appelant.
+
+### 12.5 Nettoyage du schéma (archi #15)
+
+Supprimés : `fleetbaseSanctumToken` (jamais écrit ni lu depuis que le module commerçant est passé au cache local — et il portait l'annotation « encrypted at rest » alors qu'aucun chiffrement n'existe), `emailVerifiedAt`, `appVersion`, `lastUsedAt`.
+
+Le motif commun mérite d'être nommé : **un champ mort au nom évocateur est un piège**. `lastUsedAt` laissait croire que les jetons push étaient purgés selon leur fraîcheur ; « encrypted at rest » dispensait de vérifier le chiffrement. Une annotation fausse est pire que pas d'annotation.
+
+**Non corrigé délibérément** : `create_login: false` sur la création de Contact. Chaque inscription commerçant provisionne un User Fleetbase inutilisé — une surface d'authentification gratuite. Mais l'inscription est un chemin validé par test réel, et le paramètre n'est pas éprouvable dans ce bac à sable : le passer à l'aveugle risquerait de casser un parcours qui fonctionne. Documenté dans le code, à traiter avec un test sous la main.
+
+### 12.6 Fusion des désérialiseurs Dart (archi #14)
+
+Les deux modèles de commande désérialisaient les mêmes champs chacun de son côté, et avaient **déjà divergé** : seul l'un traitait `tracking_number` sous ses deux formes, et les replis d'identifiant différaient. Une troisième copie de la lecture des coordonnées vivait dans `SavedAddress`.
+
+`fleetbase_json.dart` porte les lectures communes. `OrderPlace` disparaît au profit de `Place`, dont il n'était qu'un sous-ensemble.
+
+Un défaut trouvé en fusionnant : `Place.latitude/longitude` valaient `0` quand les coordonnées manquaient — ce qui place le point **au large du golfe de Guinée**, et l'itinéraire y aurait mené sans rien signaler. Le cas est devenu courant depuis que le BFF retire les coordonnées d'une course non réclamée. Elles sont désormais nulles, et la navigation refuse plutôt que d'ouvrir une carte au hasard. `SavedAddress` garde son repli à 0, délibérément : une adresse enregistrée sert à pré-remplir une commande, qui exige un point.
+
+### 12.7 État
+
+BFF : compile. **Non exécuté** — pas d'instance ici. App : `flutter analyze` à passer.
+
+**Prérequis** : `npm run prisma:migrate` puis `prisma generate` (trois colonnes `tokenVersion`, refonte d'`AuditLog`, quatre colonnes supprimées).

@@ -149,9 +149,32 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Supprime un Vendor. Utilisé en compensation quand une inscription
+   * commerçant échoue après sa création.
+   *
+   * Best-effort par nature : si Fleetbase refuse la suppression, le Vendor
+   * orphelin reste, mais l'inscription doit quand même signaler son échec à
+   * l'appelant. L'appelant journalise, il ne relance pas.
+   */
+  async deleteVendor(vendorUuid: string) {
+    const response = await this.callFleetOps('DELETE', `/vendors/${this.seg(vendorUuid)}`);
+    return response.data;
+  }
+
+  /**
    * Attach a Contact as personnel of a Vendor, with type 'customer'.
-   * Fleetbase auto-provisions a linked User (role "Fleet-Ops Customer")
-   * unless create_login is set to false.
+   *
+   * ⚠️ Fleetbase provisionne au passage un **User** lié (rôle « Fleet-Ops
+   * Customer »), sauf si `create_login: false` est envoyé. Chaque inscription
+   * commerçant crée donc un compte Fleetbase dont nous ne nous servons pas —
+   * le module commerçant est passé au cache local et n'utilise plus
+   * customer-portal-api. C'est une surface d'authentification gratuite (revue
+   * archi #15).
+   *
+   * Non corrigé ici **délibérément** : l'inscription commerçant est un chemin
+   * validé par test réel, et je ne peux pas éprouver l'effet de ce paramètre
+   * dans ce bac à sable. Le passer à l'aveugle risquerait de casser un parcours
+   * qui fonctionne. À traiter avec un test d'inscription sous la main.
    */
   async createCustomer(vendorUuid: string, email: string, firstName: string, lastName: string) {
     try {
