@@ -59,7 +59,15 @@ docker exec echango_bff_app npm run prisma:migrate
 ### Auth (Public)
 - `POST /auth/merchant/register` - Register merchant account
 - `POST /auth/merchant/login` - Login merchant
+- `POST /auth/flotte/register` - Register fleet manager account
+- `POST /auth/flotte/login` - Login fleet manager
+- `POST /auth/transporteur/register` - Link an Echango account to an already-provisioned Fleetbase Driver (manual provisioning - see docs/specs_app_transporteur.md §2.1)
+- `POST /auth/transporteur/login` - Login driver
 - `POST /auth/verify` - Verify current token
+
+### Auth (Requires Auth)
+- `POST /auth/device-token` - Register push token (merchant)
+- `POST /auth/transporteur/device-token` - Register push token (driver) - mirrored to a Fleetbase `UserDevice` record so native FCM/APN dispatch can reach it, see `docs/journal_implementation_bff.md`
 
 ### Merchant (`/commercant/*`, Requires Auth)
 - `POST /commercant/commandes` - Create order
@@ -84,7 +92,9 @@ docker exec echango_bff_app npm run prisma:migrate
 Key models in `prisma/schema.prisma`:
 - **MerchantAccount** - Echango merchant user (not Fleetbase User)
 - **FleetAccount** - Fleet manager account
-- **DeviceToken** - FCM tokens for push notifications
+- **DriverAccount** - Echango driver ("transporteur") account, linked to an already-provisioned Fleetbase Driver
+- **DeviceToken** - FCM tokens for push notifications (merchant)
+- **DriverDeviceToken** - FCM tokens for push notifications (driver), mirrored to Fleetbase `UserDevice`
 - **Order** - Order cache from Fleetbase
 - **Commission** - Commission ledger
 - **AuditLog** - Audit trail for security

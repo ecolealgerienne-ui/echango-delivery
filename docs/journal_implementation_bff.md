@@ -1,4 +1,4 @@
-# Journal d'implémentation BFF — 27-28 juillet 2026
+# Journal d'implémentation BFF — 27-28 juillet 2026, complété le 28/07/2026 (endpoints driver)
 
 Ce document trace en détail la session d'implémentation Docker + debugging réel du BFF (Backend For Frontend) des 27-28 juillet 2026 : scaffolding Week 1-2 (auth, commandes commerçant), mise en place Docker, et surtout la découverte par test réel de plusieurs écarts entre les hypothèses de `docs/specs_bff.md` et le comportement effectif de l'API Fleetbase. Le `CLAUDE.md` à la racine reste la source de vérité condensée ; ce journal sert de trace détaillée pour ne rien perdre de ce qui a été testé et pourquoi, dans le même esprit que `docs/journal_exploration_fleetbase.md`.
 
@@ -239,3 +239,39 @@ Face à des erreurs opaques ou identiques sur des variations de requête, la vé
 - `php artisan tinker --execute="echo route('...')"` pour obtenir l'URL absolue réelle générée par Laravel, sans ambiguïté sur les préfixes
 - Lecture directe des fichiers de contrôleurs/requests (`grep -n ... -A N`) pour voir les règles de validation exactes plutôt que de les déduire de messages d'erreur tronqués
 - Quand une erreur est strictement identique quel que soit l'input testé, chercher le message littéral dans le code source (`grep -rln "message exact"`) plutôt que de continuer à varier l'input — ça a directement mené à la découverte du §2.1 (NotFoundHttpException masqué, pas un problème d'auth)
+
+---
+
+## 5. Endpoints BFF pour l'authentification driver (28/07/2026)
+
+Suite de session (reprise sur branche `claude/echango-delivery-bff-resume-zf24yd`, après merge de la PR précédente #4 dans `main`) : implémentation de la partie "reste ouvert" #3 du contexte de reprise — les endpoints BFF pour l'authentification de l'app conducteur Flutter (`driver_app/`), scaffoldée mais jamais branchée côté serveur. **Aucune instance Fleetbase locale n'était accessible dans ce sandbox** (pas de daemon Docker, comme d'habitude) — le code ci-dessous suit la méthode habituelle de lecture directe du code source Fleetbase, mais cette fois via le dépôt public GitHub (`fleetbase/fleetops`, `fleetbase/core-api`) plutôt que `docker exec` sur une instance locale, faute d'alternative. **Rien de ce qui suit n'a été testé par appel réel** — à revalider dès qu'une instance Fleetbase locale est disponible, avec la même discipline que le reste de ce journal (jamais supposer un comportement sans test, ici seulement approché par lecture de code).
+
+### 5.1 ⚠️ Découverte structurante — le jeton push driver ne se pose pas sur `Driver`, mais sur un `UserDevice` séparé
+
+`docs/specs_app_transporteur.md` §2.1/§11.1 supposait que le BFF écrirait le jeton FCM/APN directement sur l'enregistrement `Driver` Fleetbase correspondant. **Faux**, confirmé en lisant le modèle `Driver` (`fleetbase/fleetops`, `server/src/Models/Driver.php`) :
+- `$fillable` du modèle `Driver` ne contient **aucune** colonne de jeton push (ni `fcm_token`, ni `device_token`, ni équivalent) — seulement `location`, `heading`, `bearing`, `altitude`, `speed`, `online`, `current_status`, etc.
+- `Driver::routeNotificationForFcm()` et `routeNotificationForApn()` (les méthodes que Laravel appelle pour router une notification `ShouldQueue` comme `OrderPing` vers les canaux `FcmChannel`/`ApnChannel`) lisent en réalité une relation `devices(): HasMany` vers `\Fleetbase\Models\UserDevice::class`, **jointe sur `user_uuid`** (pas `driver_uuid`) — `UserDevice` est un modèle du package `core-api`, entièrement distinct de FleetOps.
+- `UserDevice::$fillable` (lu dans `fleetbase/core-api`, `src/Models/UserDevice.php`) : `['user_uuid', 'platform', 'token', 'status']`.
+- Route confirmée en lisant `core-api/src/routes.php` : `$router->fleetbaseRoutes('user-devices')`, sous le même groupe `int/v1` + middleware `fleetbase.protected` que le reste de l'API interne — donc `POST /int/v1/user-devices` par analogie avec le pattern déjà établi (`callFleetOps`).
+
+**Conséquence pratique** : pour qu'un driver reçoive un `OrderPing` par push natif, le BFF doit connaître le `user_uuid` du `Driver` (pas seulement son `uuid`), et créer/mettre à jour un `UserDevice` avec ce `user_uuid`, pas patcher le `Driver`. Le `Driver.user_uuid` est déjà présent dans les réponses `GET /drivers` existantes (colonne `$fillable` standard) — capturé au moment du `registerDriver()` BFF (voir §5.2) et stocké dans `DriverAccount.fleetbaseUserUuid`.
+
+**Non vérifié** : la forme exacte du payload de création (`POST /int/v1/user-devices` — payload plat supposé par analogie avec `/vendors`/`/places`, qui utilisent la même macro générique `fleetbaseRoutes()` que `/user-devices`, contrairement à `/orders`/`/drivers` qui ont des contrôleurs custom exigeant une enveloppe, cf. §2.5/§2.12 — mais c'est une analogie, pas un test), la clé de la réponse (`user_device` supposé par le pattern §2.4), et si des appels répétés avec le même token créent des doublons ou font un vrai upsert. `FleetbaseApiClient.upsertDriverDeviceToken()` documente ces incertitudes explicitement en commentaire.
+
+### 5.2 Modèle de comptes driver — `DriverAccount`, provisioning manuel
+
+Cohérent avec la décision déjà actée (`docs/specs_app_transporteur.md` §2.1, §13 Q8 : "commencer manuel") : contrairement à `MerchantAccount`/`FleetAccount` (dont l'enregistrement *crée* un `Vendor` Fleetbase), `DriverAccount.register()` ne crée **rien** côté Fleetbase — il **lie** un compte Echango (email/mot de passe) à un `Driver` Fleetbase déjà existant, provisionné manuellement par un opérateur au préalable (console Fleetbase, ou `POST /flotte/drivers` existant). Le endpoint `POST /auth/transporteur/register` prend un `fleetbaseDriverUuid` en entrée (communiqué au driver hors-bande par l'opérateur) et vérifie qu'il correspond à un vrai `Driver` avant de créer le compte — jamais fait confiance à l'UUID fourni sans vérification.
+
+Cette vérification réutilise `getAllDrivers()` + un `find()` côté BFF plutôt qu'un `GET /drivers/{uuid}`, en cohérence directe avec **§2.13 ci-dessus** : `GET /drivers/{uuid}` ignore le paramètre de chemin et renvoie tous les drivers de la compagnie, donc un lookup par id accepterait silencieusement n'importe quel UUID (y compris une faute de frappe) sans jamais renvoyer 404 — seul un `find()` côté BFF sur la liste complète confirme réellement l'existence du driver.
+
+### 5.3 Nouveaux endpoints (`AuthController`/`AuthService`, pas de nouveau module `transporteur` cette session)
+
+- `POST /auth/transporteur/register` — voir §5.2
+- `POST /auth/transporteur/login` — symétrique à `loginMerchant`/`loginFleet`
+- `POST /auth/transporteur/device-token` — enregistre le jeton localement (nouveau modèle `DriverDeviceToken`, séparé de `DeviceToken` qui est câblé en dur sur `MerchantAccount`) puis tente le miroir Fleetbase `UserDevice` (§5.1) en best-effort : un échec du miroir est loggé mais ne fait pas échouer la requête (le polling REST reste fonctionnel même si le push natif est cassé)
+
+Pas de nouveau module `transporteur/` créé cette session (structure `commercant`/`flotte`) — seuls les endpoints d'auth existent pour l'instant, mêmes dans `AuthController` que `merchant`/`flotte`. Le futur module `transporteur` (dashboard, liste/détail commande, accepter/rejeter adhoc, changement d'activité, POD, toggle en ligne/hors ligne, échec de livraison — cf. `docs/specs_app_transporteur.md` §3-5) reste à construire, volontairement laissé pour une session dédiée plutôt que fait à moitié sans capacité de test.
+
+### 5.4 Limite d'environnement rencontrée — `prisma generate` bloqué par la politique de proxy sortant
+
+Nouveau dans ce sandbox (pas rencontré dans les sessions précédentes, qui avaient peut-être un accès différent) : `npx prisma generate` échoue systématiquement, y compris avec `PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1` — `binaries.prisma.sh` est bloqué par la politique du proxy sortant (`403` sur le `CONNECT`, confirmé via `$HTTPS_PROXY/__agentproxy/status`), pas seulement absent de la liste blanche par erreur temporaire. Le client Prisma présent dans `node_modules/.prisma/client` est donc le template générique non généré (0 modèle, y compris `MerchantAccount`/`FleetAccount` qui existaient déjà avant cette session) — **jamais généré avec succès dans ce sandbox**, avant même les modèles `DriverAccount`/`DriverDeviceToken` ajoutés ici. `npx nest build` compile néanmoins sans erreur (le client non généré expose apparemment un typage assez permissif pour ne pas faire échouer `tsc`), donc ce n'est pas bloquant pour committer/pousser du code, mais ça signifie qu'aucune vérification de type stricte contre le schéma Prisma réel n'a eu lieu ici — à garder en tête, et à re-générer/tester dans l'environnement Docker de l'utilisateur avant de faire confiance à ce code en pratique.

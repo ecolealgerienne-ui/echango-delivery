@@ -76,6 +76,69 @@ model FleetAccount {
   @@index([active])
 }
 
+// Driver ("transporteur") Account - not a Fleetbase User either.
+// Provisioning is manual (docs/specs_app_transporteur.md §2.1, §13 Q8): a real
+// Driver record must already exist in Fleetbase (created by an Echango operator,
+// e.g. via the flotte module or the Fleetbase console) before a driver can link
+// an Echango account against it - registerDriver() verifies fleetbaseDriverUuid
+// against a live Fleetbase Driver before creating this row.
+model DriverAccount {
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  password              String   // bcrypted
+  firstName             String?
+  lastName              String?
+  phone                 String?
+
+  // Link to Fleetbase
+  fleetbaseDriverUuid   String   @unique // Driver UUID in Fleetbase
+  fleetbaseUserUuid     String?          // Driver.user_uuid - push tokens route through
+                                          // UserDevice (user_uuid), not the Driver record
+                                          // itself (see docs/journal_implementation_bff.md)
+
+  // Status
+  active                Boolean  @default(true)
+
+  // Relations
+  deviceTokens          DriverDeviceToken[]
+
+  // Timestamps
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  lastLoginAt           DateTime?
+
+  @@index([fleetbaseDriverUuid])
+  @@index([active])
+}
+
+// Push Token for a Driver's device. Mirrored to a Fleetbase UserDevice record
+// (see FleetbaseApiClient.upsertDriverDeviceToken) so native FCM/APN dispatch
+// (OrderPing) can reach it directly - kept as its own model rather than reusing
+// DeviceToken below, which is hard-wired to MerchantAccount.
+model DriverDeviceToken {
+  id                String   @id @default(cuid())
+  driverId          String
+  driver            DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  token             String   @unique
+  platform          String   // 'ios' or 'android'
+  appVersion        String?
+
+  // UUID of the mirrored Fleetbase UserDevice record, once the write-through
+  // succeeds. Null if the mirror failed or hasn't been attempted yet - the BFF
+  // still works via REST polling either way, this only affects native push.
+  fleetbaseUserDeviceUuid String?
+
+  active            Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastUsedAt        DateTime?
+
+  @@index([driverId])
+  @@index([active])
+}
+
 // Device Token for Push Notifications
 model DeviceToken {
   id                String   @id @default(cuid())

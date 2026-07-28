@@ -360,6 +360,49 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Create or update a push-notification device record for a Fleetbase user.
+   *
+   * IMPORTANT, discovered 28/07/2026 while implementing driver auth (reading
+   * the public fleetbase/fleetops and fleetbase/core-api source, no local
+   * Fleetbase instance was available to test against in this sandbox): the
+   * `Driver` model has NO fcm/apn token column at all. `Driver::
+   * routeNotificationForFcm()`/`routeNotificationForApn()` (used by the
+   * OrderPing notification, docs/specs_echango_delivery.md §3.2) instead read
+   * a `devices()` HasMany relation to `UserDevice`, joined on `user_uuid` (not
+   * `driver_uuid`) - a separate core-api model/table entirely. This
+   * contradicts the assumption in docs/specs_app_transporteur.md §2.1/§11.1
+   * that the BFF "writes the push token onto the Driver record" - it must
+   * instead write a UserDevice keyed by the Driver's `user_uuid`.
+   *
+   * Route confirmed by reading core-api's routes.php: `$router->
+   * fleetbaseRoutes('user-devices')`, the same macro used by `/vendors` and
+   * `/places` (both take a flat, non-enveloped payload) rather than the
+   * custom `/orders`/`/drivers` controllers (which require an enveloped
+   * payload, see docs/journal_implementation_bff.md §2.5/§2.12) - a flat
+   * payload is used here by that analogy.
+   *
+   * NOT independently verified end-to-end - no live Fleetbase instance nor
+   * real driver device was available to test this against in this session.
+   * Before relying on this in production, confirm: the request payload shape
+   * (flat vs `{user_device: {...}}` envelope), the response wrapper key, and
+   * whether repeat calls with the same token upsert or create duplicate rows.
+   */
+  async upsertDriverDeviceToken(userUuid: string, token: string, platform: string) {
+    try {
+      const response = await this.callFleetOps('POST', '/user-devices', {
+        user_uuid: userUuid,
+        token,
+        platform,
+        status: 'active',
+      });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Upsert driver device token failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * List ALL company Position records, unfiltered. Confirmed by reading
    * PositionFilter.php (28/07/2026) that there is no `driver_uuid` (or any
    * per-driver) query filter on this endpoint - it only supports a free-text

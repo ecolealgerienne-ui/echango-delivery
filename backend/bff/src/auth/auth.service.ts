@@ -4,7 +4,14 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
-import { MerchantRegisterDto, MerchantLoginDto, FleetRegisterDto, FleetLoginDto } from './dto/register.dto';
+import {
+  MerchantRegisterDto,
+  MerchantLoginDto,
+  FleetRegisterDto,
+  FleetLoginDto,
+  DriverRegisterDto,
+  DriverLoginDto,
+} from './dto/register.dto';
 
 @Injectable()
 export class AuthService {
@@ -260,6 +267,199 @@ export class AuthService {
   }
 
   /**
+   * Register (link) an Echango driver account to an already-provisioned
+   * Fleetbase Driver. Unlike merchant/fleet registration, this never creates
+   * anything in Fleetbase itself - the Driver must already exist (manual
+   * provisioning, docs/specs_app_transporteur.md §2.1/§13 Q8). We still
+   * verify the given uuid resolves to a real Driver before linking, rather
+   * than trusting it blindly, and capture its `user_uuid` (needed later to
+   * route push tokens through UserDevice, see fleetbase-api.client.ts
+   * upsertDriverDeviceToken).
+   *
+   * Uses getAllDrivers() + a client-side find rather than a single-record
+   * GET: docs/journal_implementation_bff.md §2.13 found that `GET
+   * /drivers/{uuid}` ignores the path param entirely and returns the full
+   * company driver list regardless, so a per-id lookup would silently "find"
+   * any uuid, including typos - fetching everything and matching ourselves
+   * is the only way to actually confirm the uuid is real.
+   */
+  async registerDriver(dto: DriverRegisterDto) {
+    const existingEmail = await this.prisma.driverAccount.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingEmail) {
+      throw new ConflictException('Email already registered');
+    }
+
+    const existingUuid = await this.prisma.driverAccount.findUnique({
+      where: { fleetbaseDriverUuid: dto.fleetbaseDriverUuid },
+    });
+
+    if (existingUuid) {
+      throw new ConflictException('This driver is already linked to an account');
+    }
+
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers();
+      const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
+      const fleetbaseDriver = (drivers || []).find((d: any) => d?.uuid === dto.fleetbaseDriverUuid);
+
+      if (!fleetbaseDriver) {
+        throw new BadRequestException('Unknown Fleetbase driver UUID - ask an operator to verify provisioning');
+      }
+
+      const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+      const driver = await this.prisma.driverAccount.create({
+        data: {
+          email: dto.email,
+          password: hashedPassword,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          phone: dto.phone,
+          fleetbaseDriverUuid: dto.fleetbaseDriverUuid,
+          fleetbaseUserUuid: fleetbaseDriver.user_uuid || null,
+        },
+      });
+
+      this.logger.log(`Driver account registered: ${driver.id}`);
+
+      const token = this.generateToken(driver.id, driver.email, 'transporteur');
+
+      return {
+        token,
+        user: {
+          id: driver.id,
+          email: driver.email,
+          firstName: driver.firstName,
+          lastName: driver.lastName,
+        },
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error(`Driver registration failed: ${error.message}`, error);
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      throw new BadRequestException(
+        this.configService.get('NODE_ENV') === 'development'
+          ? `Failed to register driver: ${detail}`
+          : 'Failed to register driver',
+      );
+    }
+  }
+
+  /**
+   * Login driver with email/password
+   */
+  async loginDriver(dto: DriverLoginDto) {
+    const driver = await this.prisma.driverAccount.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!driver) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const passwordMatches = await bcrypt.compare(dto.password, driver.password);
+
+    if (!passwordMatches) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (!driver.active) {
+      throw new UnauthorizedException('Account is inactive');
+    }
+
+    await this.prisma.driverAccount.update({
+      where: { id: driver.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    this.logger.log(`Driver logged in: ${driver.id}`);
+
+    const token = this.generateToken(driver.id, driver.email, 'transporteur');
+
+    return {
+      token,
+      user: {
+        id: driver.id,
+        email: driver.email,
+        firstName: driver.firstName,
+        lastName: driver.lastName,
+      },
+    };
+  }
+
+  /**
+   * Register a driver's push token. Kept separate from the merchant
+   * registerDeviceToken below (different Prisma model - DriverDeviceToken vs
+   * DeviceToken - since DeviceToken is hard-wired to MerchantAccount).
+   *
+   * Also mirrors the token to Fleetbase as a UserDevice record so the native
+   * OrderPing FCM/APN channel (docs/specs_echango_delivery.md §3.2) can reach
+   * this device directly (see fleetbase-api.client.ts
+   * upsertDriverDeviceToken for the full discovery notes on why this targets
+   * UserDevice rather than the Driver record). The mirror is best-effort: if
+   * it fails, the local token is still saved and REST polling keeps working,
+   * only native push delivery is affected - so we log and continue rather
+   * than failing the whole request.
+   */
+  async registerDriverDeviceToken(driverId: string, token: string, platform: string) {
+    const driver = await this.prisma.driverAccount.findUnique({
+      where: { id: driverId },
+    });
+
+    if (!driver) {
+      throw new BadRequestException('Driver not found');
+    }
+
+    const existing = await this.prisma.driverDeviceToken.findUnique({
+      where: { token },
+    });
+
+    let record = existing;
+
+    if (existing) {
+      if (existing.driverId !== driverId) {
+        record = await this.prisma.driverDeviceToken.update({
+          where: { id: existing.id },
+          data: { driverId, active: true },
+        });
+      }
+    } else {
+      record = await this.prisma.driverDeviceToken.create({
+        data: { driverId, token, platform },
+      });
+    }
+
+    if (driver.fleetbaseUserUuid && !record.fleetbaseUserDeviceUuid) {
+      try {
+        const response = await this.fleetbaseClient.upsertDriverDeviceToken(
+          driver.fleetbaseUserUuid,
+          token,
+          platform,
+        );
+        const userDeviceUuid = response?.user_device?.uuid || response?.data?.uuid;
+
+        if (userDeviceUuid) {
+          record = await this.prisma.driverDeviceToken.update({
+            where: { id: record.id },
+            data: { fleetbaseUserDeviceUuid: userDeviceUuid },
+          });
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to mirror device token to Fleetbase UserDevice for driver ${driverId}: ${error.message}`,
+        );
+      }
+    }
+
+    return record;
+  }
+
+  /**
    * Register device token for push notifications
    */
   async registerDeviceToken(merchantId: string, token: string, platform: string) {
@@ -311,7 +511,7 @@ export class AuthService {
   /**
    * Generate JWT token
    */
-  private generateToken(userId: string, email: string, type: 'merchant' | 'fleet') {
+  private generateToken(userId: string, email: string, type: 'merchant' | 'fleet' | 'transporteur') {
     // Must be a number (seconds), not a bare numeric string: jsonwebtoken's `ms`
     // dependency interprets a unitless string like "86400" as milliseconds (~86s),
     // not seconds, silently producing tokens that expire almost immediately.

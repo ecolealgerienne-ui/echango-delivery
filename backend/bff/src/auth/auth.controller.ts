@@ -1,6 +1,13 @@
-import { Controller, Post, Body, Request } from '@nestjs/common';
+import { Controller, Post, Body, Request, ForbiddenException } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { MerchantRegisterDto, MerchantLoginDto, FleetRegisterDto, FleetLoginDto } from './dto/register.dto';
+import {
+  MerchantRegisterDto,
+  MerchantLoginDto,
+  FleetRegisterDto,
+  FleetLoginDto,
+  DriverRegisterDto,
+  DriverLoginDto,
+} from './dto/register.dto';
 import { RegisterDeviceTokenDto } from './dto/device-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 
@@ -35,6 +42,26 @@ export class AuthController {
   @Post('device-token')
   async registerDeviceToken(@Request() req: any, @Body() dto: RegisterDeviceTokenDto) {
     return this.authService.registerDeviceToken(req.user.id, dto.token, dto.platform);
+  }
+
+  @Public()
+  @Post('transporteur/register')
+  async registerDriver(@Body() dto: DriverRegisterDto) {
+    return this.authService.registerDriver(dto);
+  }
+
+  @Public()
+  @Post('transporteur/login')
+  async loginDriver(@Body() dto: DriverLoginDto) {
+    return this.authService.loginDriver(dto);
+  }
+
+  @Post('transporteur/device-token')
+  async registerDriverDeviceToken(@Request() req: any, @Body() dto: RegisterDeviceTokenDto) {
+    if (req.user?.type !== 'transporteur') {
+      throw new ForbiddenException('This endpoint requires a driver account');
+    }
+    return this.authService.registerDriverDeviceToken(req.user.id, dto.token, dto.platform);
   }
 
   @Post('verify')
