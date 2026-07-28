@@ -185,6 +185,22 @@ Lecture de `PositionFilter.php` : **aucun filtre par `driver_uuid` n'existe** �
 
 **Fix, dans `flotte.service.ts::getDriverPositions`** : `fetchAll` sur `/positions` (sans filtre de confiance) puis filtrage en mémoire par les UUID des drivers possédés par la flotte — même pattern anti-IDOR que pour `/orders`/`/drivers`. **Non vérifié de bout en bout** : la compagnie de test a 0 enregistrement `Position` (aucun driver n'a jamais envoyé de position GPS réelle dans cette instance de dev), donc la forme exacte du champ de référence driver (`subject_uuid` vs `driver_uuid`, actuellement les deux tentés en fallback) reste à confirmer avec une vraie donnée.
 
+### 2.12 Création de driver — même bug d'enveloppe que §2.5, payload doit être `{driver: {...}}`
+
+**Hypothèse initiale (fausse)** : `POST /drivers` avec un payload plat `{name, email, phone}`, par analogie avec `/vendors` et `/places` (qui, eux, acceptent bien un payload plat).
+
+**Réalité, découverte par test réel** : crash PHP identique à celui du §2.5, cette fois dans `DriverController::createRecord()` ligne 67 — `Illuminate\Validation\Factory::make(): Argument #1 ($data) must be of type array, null given`, exactement le même symptôme (`$request->input('driver')` vaut `null` faute d'enveloppe).
+
+**Fix** : `createDriver()` dans `fleetbase-api.client.ts` envoie maintenant `{driver: {name, email, phone}}`. **Vérifié par test réel de bout en bout** : `201`, driver créé avec succès (`Driver Alice1`, `uuid: 5ba69e4f-...`), puis correctement assigné à son Vendor via `assignDriverToVendor()` dans la foulée.
+
+**Leçon** : tous les contrôleurs Fleetbase n'attendent pas la même convention d'enveloppe — `/vendors` et `/places` acceptent un payload plat, `/orders` et `/drivers` exigent une clé racine nommée d'après la ressource. Ne pas généraliser une convention d'un endpoint à l'autre sans test.
+
+### 2.13 `GET /vendors/{uuid}` ignore le paramètre de chemin, renvoie tous les vendors
+
+Découvert incidemment en cherchant le `public_id` d'un Vendor : `GET /int/v1/vendors/{uuid}` ne renvoie pas la ressource unique attendue mais `{"vendors": [...]}`, la liste complète des 7 vendors de la compagnie, avec la meta de pagination habituelle (`{"total": 7, ...}`) — quel que soit l'UUID demandé dans le chemin. Même famille de problème que §2.8 (paramètre silencieusement ignoré), mais ici sur un paramètre de **chemin** (`{uuid}`), pas une query string, et sur un endpoint de lecture simple plutôt qu'un filtre de liste explicite.
+
+**Pas d'implication de sécurité directe pour nous** (les endpoints `/vendors` ne sont utilisés côté BFF que via le compte de service, jamais exposés en lecture par UUID au client final), mais **généralise encore plus largement la leçon du §2.8** : ne jamais supposer qu'un endpoint `GET /resource/{id}` retourne effectivement la ressource unique demandée sans le vérifier — y compris pour un simple `findRecord` en apparence standard. Non creusé plus loin (pas bloquant pour cette session), mais à garder en tête avant de construire une future fonctionnalité qui dépendrait de ce comportement.
+
 ---
 
 ## 3. Bugs BFF (indépendants de Fleetbase)
