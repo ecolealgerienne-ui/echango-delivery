@@ -746,3 +746,22 @@ Le module passait pourtant les tests : ils vérifiaient qu'une commande est cré
 ### 8.3 État
 
 `scripts/test-commercant-module.sh` passe au vert intégral, **anti-IDOR compris** — un second commerçant ne voit ni la commande de l'autre (403), ni quoi que ce soit dans sa liste. L'app, elle, **n'a jamais été compilée** : `flutter analyze` reste le premier test réel.
+
+### 8.4 Fusion en application unique (décision 28/07/2026)
+
+Le scaffolding partait sur **une app par persona**. L'utilisateur a fait remarquer que c'est un seul produit — on commande une livraison et on la livre, avec des profils différents. Argument juste, et le code le confirmait : `merchant_app` avait été créé en **copiant** `errors/`, `theme/`, la structure du client HTTP et celle de l'auth depuis `driver_app`. Dupliquer un socle est le signal qu'il devrait être partagé.
+
+**Fusion** : `driver_app` + `merchant_app` → `echango_app`, avec `screens/transporteur/` et `screens/commercant/`. Le découpage par profil n'est pas cosmétique — il existe pour que la séparation en deux binaires reste peu coûteuse si le coût ci-dessous devenait bloquant.
+
+**Coût assumé** : les permissions Android sont déclarées dans le manifeste, pas à l'exécution. La géolocalisation en tâche de fond, nécessaire au transporteur, apparaîtra donc pour un commerçant qui ne livrera jamais — y compris sur une fiche Play Store, qui impose en plus une procédure de validation pour cette permission. Elles ne sont *demandées* qu'à l'usage, et une distribution B2B par APK direct ne pose pas la question ; ça reste une dette à surveiller.
+
+**Le profil n'est pas demandé à l'utilisateur** (correction en cours de fusion — la première version affichait un sélecteur transporteur/commerçant, friction inutile pour une information que le serveur détient). Nouvel endpoint **`POST /auth/login`** : il cherche l'email dans les trois tables et vérifie le mot de passe dans chacune, **sans court-circuiter sur la première correspondance d'email** — un même email peut légitimement exister pour deux profils, seul le mot de passe tranche alors. Le profil résolu est renvoyé dans `user.type` et fait autorité pour la navigation.
+
+Deux points de conception à noter :
+
+- **Cas ambigu non deviné** : si le même couple email/mot de passe vaut pour plusieurs profils, le serveur renvoie `requiresRoleSelection` et la liste, plutôt que d'en choisir un. Ouvrir le mauvais espace serait pire qu'une question.
+- **Message d'échec uniforme** : un identifiant inconnu et un mot de passe faux donnent la même réponse, sans révéler quels emails existent ni dans quelle table — un endpoint qui interroge trois tables serait sinon un bel oracle d'énumération.
+
+Les endpoints par persona restent en place : les scripts de test s'en servent, et seul l'endpoint unifié enrichit la réponse, puisque lui seul détenait l'information à transmettre.
+
+**Retrait du parcours OTP** : les écrans de connexion par téléphone appelaient `/auth/login-phone` et `/auth/verify-otp`, qui n'existent pas côté BFF. Un écran qui ne peut qu'échouer vaut moins que son absence. Toujours au périmètre spec, à réintroduire avec son serveur.

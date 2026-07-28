@@ -1,0 +1,280 @@
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../errors/app_error.dart';
+import '../services/bff_api_client.dart';
+
+/// Profil de l'utilisateur connecté.
+///
+/// Une seule app sert les trois publics (décision 28/07/2026) : c'est le même
+/// produit vu de trois côtés. Le BFF utilise un émetteur JWT unique dont le
+/// jeton porte un `type` — c'est lui qui fait autorité, pas ce que
+/// l'utilisateur a coché à l'écran.
+enum UserRole { transporteur, commercant, flotte }
+
+extension UserRoleX on UserRole {
+  /// Valeur du champ `type` dans le JWT du BFF.
+  String get jwtType => switch (this) {
+        UserRole.transporteur => 'transporteur',
+        UserRole.commercant => 'merchant',
+        UserRole.flotte => 'fleet',
+      };
+
+  String get label => switch (this) {
+        UserRole.transporteur => 'Transporteur',
+        UserRole.commercant => 'Commerçant',
+        UserRole.flotte => 'Gestionnaire de flotte',
+      };
+
+  /// Écran d'accueil du profil.
+  String get homePath => switch (this) {
+        UserRole.transporteur => '/transporteur',
+        UserRole.commercant => '/commercant',
+        UserRole.flotte => '/flotte',
+      };
+
+  static UserRole? fromJwtType(String? type) => switch (type) {
+        'transporteur' => UserRole.transporteur,
+        'merchant' => UserRole.commercant,
+        'fleet' => UserRole.flotte,
+        _ => null,
+      };
+}
+
+enum SessionStatus { unauthenticated, authenticated, sessionExpired }
+
+const _statusKey = 'echango_session_status';
+const _roleKey = 'echango_session_role';
+const _userIdKey = 'echango_user_id';
+const _emailKey = 'echango_user_email';
+const _displayNameKey = 'echango_user_display_name';
+const _lastActivityKey = 'echango_last_activity';
+
+/// Session expirée après 24 h d'inactivité, vérifiée au retour au premier
+/// plan, en complément de l'expiration du jeton côté serveur.
+const sessionInactivityLimit = Duration(hours: 24);
+
+class AuthState extends ChangeNotifier {
+  final SharedPreferences _prefs;
+  final BffApiClient _apiClient;
+
+  SessionStatus _status = SessionStatus.unauthenticated;
+  UserRole? _role;
+  String? _userId;
+  String? _email;
+  String? _displayName;
+  String? _errorMessage;
+  bool _isLoading = false;
+
+  AuthState({required SharedPreferences prefs, required BffApiClient apiClient})
+      : _prefs = prefs,
+        _apiClient = apiClient;
+
+  SessionStatus get status => _status;
+  bool get isAuthenticated => _status == SessionStatus.authenticated;
+  bool get isSessionExpired => _status == SessionStatus.sessionExpired;
+  UserRole? get role => _role;
+  String? get userId => _userId;
+  String? get email => _email;
+
+  /// Nom d'affichage : raison sociale pour un commerçant, prénom/nom sinon.
+  String? get displayName => _displayName;
+  String? get errorMessage => _errorMessage;
+  bool get isLoading => _isLoading;
+
+  /// Chemin d'accueil du profil connecté, ou l'écran de connexion.
+  String get homePath => _role?.homePath ?? '/login';
+
+  Future<void> restoreSession() async {
+    await _apiClient.restoreSession();
+    _role = UserRoleX.fromJwtType(_prefs.getString(_roleKey));
+    _userId = _prefs.getString(_userIdKey);
+    _email = _prefs.getString(_emailKey);
+    _displayName = _prefs.getString(_displayNameKey);
+
+    // Un jeton sans rôle connu est inexploitable : on ne saurait pas quel
+    // écran ouvrir. Repartir de la connexion plutôt que de deviner.
+    if (_apiClient.isAuthenticated() && _role != null) {
+      _status = SessionStatus.authenticated;
+      checkInactivity();
+    }
+    notifyListeners();
+  }
+
+  void checkInactivity() {
+    final raw = _prefs.getString(_lastActivityKey);
+    if (raw == null) return;
+    final last = DateTime.tryParse(raw);
+    if (last == null) return;
+    if (DateTime.now().difference(last) > sessionInactivityLimit) {
+      _status = SessionStatus.sessionExpired;
+      notifyListeners();
+    }
+  }
+
+  void touchActivity() {
+    _prefs.setString(_lastActivityKey, DateTime.now().toIso8601String());
+  }
+
+  Future<void> _persist({
+    required UserRole role,
+    required Map<String, dynamic> response,
+    required String email,
+  }) async {
+    // Réponse du BFF : {token, user:{...}} à plat, sans enveloppe `data`.
+    final user = response['user'];
+    _role = role;
+    _userId = user is Map ? user['id'] as String? : null;
+    _email = (user is Map ? user['email'] as String? : null) ?? email;
+    _displayName = user is Map
+        ? (user['businessName'] as String? ??
+            [user['firstName'], user['lastName']]
+                .whereType<String>()
+                .join(' ')
+                .trim())
+        : null;
+    if (_displayName != null && _displayName!.isEmpty) _displayName = null;
+
+    await _prefs.setString(_roleKey, role.jwtType);
+    await _prefs.setString(_emailKey, _email!);
+    if (_userId != null) await _prefs.setString(_userIdKey, _userId!);
+    if (_displayName != null) {
+      await _prefs.setString(_displayNameKey, _displayName!);
+    } else {
+      await _prefs.remove(_displayNameKey);
+    }
+    await _prefs.setString(_statusKey, 'authenticated');
+
+    _status = SessionStatus.authenticated;
+    touchActivity();
+  }
+
+  Future<bool> _run(Future<void> Function() action, String fallbackError) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await action();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message ?? fallbackError;
+      return false;
+    } catch (e) {
+      _errorMessage = fallbackError;
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Profils possibles quand un même couple email/mot de passe existe pour
+  /// plusieurs personas. Vide dans le cas normal.
+  List<UserRole> _ambiguousRoles = [];
+  List<UserRole> get ambiguousRoles => _ambiguousRoles;
+
+  /// Connexion. **Le profil n'est pas demandé à l'utilisateur** : le serveur
+  /// le détermine depuis l'email, seul à savoir dans quelle table le compte
+  /// existe.
+  ///
+  /// [role] ne sert qu'à lever une ambiguïté déjà signalée par le serveur —
+  /// cas rare d'un même identifiant valable pour deux profils.
+  Future<bool> login({
+    required String email,
+    required String password,
+    UserRole? role,
+  }) =>
+      _run(() async {
+        _ambiguousRoles = [];
+
+        final response = role == null
+            ? await _apiClient.loginUnified(email: email, password: password)
+            : switch (role) {
+                UserRole.transporteur =>
+                  await _apiClient.login(email: email, password: password),
+                UserRole.commercant =>
+                  await _apiClient.loginMerchant(email: email, password: password),
+                UserRole.flotte => throw AppException(
+                    code: AppError.unknown,
+                    message: 'Le profil gestionnaire de flotte n\'est pas '
+                        'encore disponible dans l\'application.',
+                  ),
+              };
+
+        // Le serveur ne tranche pas à la place de l'utilisateur quand
+        // plusieurs profils correspondent : il renvoie la liste.
+        if (response['requiresRoleSelection'] == true) {
+          _ambiguousRoles = (response['roles'] as List? ?? const [])
+              .map((r) => UserRoleX.fromJwtType(r as String?))
+              .whereType<UserRole>()
+              .toList();
+          throw AppException(
+            code: AppError.unknown,
+            message: 'Plusieurs profils correspondent à cet identifiant. '
+                'Choisissez celui à ouvrir.',
+          );
+        }
+
+        // Le rôle vient de la réponse serveur, jamais d'une supposition.
+        final user = response['user'];
+        final resolved =
+            UserRoleX.fromJwtType(user is Map ? user['type'] as String? : null) ??
+                UserRoleX.fromJwtType(response['type'] as String?) ??
+                role;
+
+        if (resolved == null) {
+          throw AppException(
+            code: AppError.unknown,
+            message: 'Profil non reconnu dans la réponse du serveur.',
+          );
+        }
+
+        await _persist(role: resolved, response: response, email: email);
+      }, 'Connexion impossible');
+
+  /// Inscription — réservée au commerçant.
+  ///
+  /// Un transporteur ne s'inscrit pas seul : son `Driver` Fleetbase est
+  /// provisionné par un opérateur, et le compte Echango s'y rattache
+  /// (docs/specs_app_transporteur.md §2.1).
+  Future<bool> registerMerchant({
+    required String email,
+    required String password,
+    required String businessName,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) =>
+      _run(() async {
+        final response = await _apiClient.registerMerchant(
+          email: email,
+          password: password,
+          businessName: businessName,
+          firstName: firstName,
+          lastName: lastName,
+          phone: phone,
+        );
+        await _persist(
+            role: UserRole.commercant, response: response, email: email);
+        _displayName ??= businessName;
+      }, 'Inscription impossible');
+
+  Future<void> logout() async {
+    await _apiClient.clearSession();
+    _status = SessionStatus.unauthenticated;
+    _role = null;
+    _userId = null;
+    _displayName = null;
+    _errorMessage = null;
+    await _prefs.remove(_roleKey);
+    await _prefs.remove(_userIdKey);
+    await _prefs.remove(_displayNameKey);
+    await _prefs.remove(_statusKey);
+    notifyListeners();
+  }
+
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+}

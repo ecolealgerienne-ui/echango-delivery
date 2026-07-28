@@ -111,6 +111,70 @@ export class AuthService {
   /**
    * Login merchant with email/password
    */
+  /**
+   * Connexion unifiée : le serveur détermine le profil depuis l'email.
+   *
+   * Les trois personas ont chacun leur table et leur endpoint historique, mais
+   * demander à l'utilisateur de choisir son profil avant de se connecter est
+   * une friction inutile — et une information que le serveur possède déjà.
+   *
+   * Les trois tables sont interrogées et le mot de passe vérifié dans chacune,
+   * sans court-circuit sur la première correspondance d'email : un même email
+   * peut légitimement exister dans deux tables (un commerçant qui livre
+   * lui-même), auquel cas seul le mot de passe tranche.
+   *
+   * Cas ambigu — même email ET même mot de passe dans plusieurs tables : on ne
+   * choisit pas à la place de l'utilisateur, on renvoie les profils possibles
+   * pour que l'app demande. Deviner reviendrait à ouvrir le mauvais espace.
+   */
+  async loginUnified(dto: MerchantLoginDto) {
+    const matches: { role: string; login: () => Promise<any> }[] = [];
+
+    const merchant = await this.prisma.merchantAccount.findUnique({
+      where: { email: dto.email },
+    });
+    if (merchant && (await bcrypt.compare(dto.password, merchant.password))) {
+      matches.push({ role: 'merchant', login: () => this.loginMerchant(dto) });
+    }
+
+    const driver = await this.prisma.driverAccount.findUnique({
+      where: { email: dto.email },
+    });
+    if (driver && (await bcrypt.compare(dto.password, driver.password))) {
+      matches.push({ role: 'transporteur', login: () => this.loginDriver(dto) });
+    }
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { email: dto.email },
+    });
+    if (fleet && (await bcrypt.compare(dto.password, fleet.password))) {
+      matches.push({ role: 'fleet', login: () => this.loginFleet(dto) });
+    }
+
+    if (matches.length === 0) {
+      // Message volontairement identique quel que soit l'échec : ne pas
+      // révéler quels emails existent, ni dans quelle table.
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (matches.length > 1) {
+      return {
+        requiresRoleSelection: true,
+        roles: matches.map((m) => m.role),
+      };
+    }
+
+    // Déléguer au login du persona : lui seul applique ses propres règles
+    // (email vérifié, compte actif, horodatage de connexion).
+    const result = await matches[0].login();
+
+    // Exposer le profil résolu dans la réponse : sans lui, le client devrait
+    // le déduire de la forme du payload, ce qui reviendrait à deviner. Les
+    // endpoints par persona restent inchangés — seul l'endpoint unifié
+    // enrichit, puisque lui seul avait l'information à transmettre.
+    return { ...result, user: { ...result.user, type: matches[0].role } };
+  }
+
   async loginMerchant(dto: MerchantLoginDto) {
     const merchant = await this.prisma.merchantAccount.findUnique({
       where: { email: dto.email },

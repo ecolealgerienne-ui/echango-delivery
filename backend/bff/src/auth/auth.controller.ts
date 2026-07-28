@@ -44,6 +44,15 @@ export class AuthController {
     return this.authService.registerDeviceToken(req.user.id, dto.token, dto.platform);
   }
 
+  /// Connexion unifiée : l'app n'a pas à savoir quel profil est l'utilisateur.
+  /// Les endpoints par persona restent en place pour les scripts et les
+  /// intégrations existantes.
+  @Public()
+  @Post('login')
+  async loginUnified(@Body() dto: MerchantLoginDto) {
+    return this.authService.loginUnified(dto);
+  }
+
   @Public()
   @Post('transporteur/register')
   async registerDriver(@Body() dto: DriverRegisterDto) {
