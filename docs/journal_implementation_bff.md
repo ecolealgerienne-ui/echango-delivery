@@ -499,3 +499,36 @@ Ajoutées à `test-transporteur-module.sh` sous `WITH_MUTATIONS=1` :
 
 - **`POST .../activite`** — renvoie l'objet `Activity` complet tel que reçu de `activites-suivantes` (§6.9) et vérifie que la transition est acceptée. Sur la commande de test, la seule transition proposée était `enroute`, sans preuve exigée.
 - **`POST .../preuve`** — envoie un PNG 1×1 transparent encodé en base64, le plus petit fichier valide possible. Valide que le contrôleur accepte bien du base64 plutôt que du multipart, hypothèse retenue en §6.1 pour éviter d'introduire du multipart dans le BFF.
+
+### 6.12 ⚠️ Bug amont Fleetbase — tout upload de preuve est cassé hors S3
+
+Constaté au premier essai réel de `POST .../preuve` (28/07/2026) :
+
+```
+500 POST /v1/orders/order_4ioz8zuyve/capture-photo
+storeProofPhoto(): Argument #4 ($bucket) must be of type string, null given
+```
+
+Cause, dans `OrderController@capturePhoto` :
+
+```php
+$disk   = $request->input('disk', config('filesystems.default'));
+$bucket = $request->input(
+    "filesystems.disks.{$disk}.bucket",       // ← lit la REQUÊTE, devrait être config()
+    config('filesystems.disks.s3.bucket')      // ← repli systématique : null sans S3
+);
+```
+
+La première ligne est manifestement une faute de frappe amont : elle interroge `$request->input()` avec une clé de configuration. Cette clé n'étant jamais présente dans une requête, le repli s'applique **toujours** — et vaut `null` sur une installation sans S3. Comme `storeProofPhoto()` type ce paramètre `string`, l'appel meurt en `TypeError`.
+
+**Portée** : ce n'est pas propre à notre BFF. **Tout** upload de preuve échoue sur une installation Fleetbase non-S3, y compris depuis Navigator ou la console. Ça concerne la POD (§5 de la spec app) *et* la photo d'échec de livraison (§4.3) — les deux passent par ce contrôleur.
+
+**Contournement retenu** : le bug est son propre remède. La valeur étant lue depuis la requête, on l'y place — le BFF envoie `disk` et l'objet imbriqué `filesystems.disks.<disk>.bucket`. Les deux sont surchargeables par `FLEETBASE_PROOF_DISK`/`FLEETBASE_PROOF_BUCKET` pour un déploiement S3 réel.
+
+C'est un contournement, pas une correction : il faudra le retirer si l'amont corrige la ligne. **À signaler en amont** (issue Fleetbase) — non fait à ce stade.
+
+### 6.13 `warn` non défini dans `test-driver-auth.sh`
+
+Le test de rotation de jeton (§6.10) appelait `warn`, fonction définie dans `test-transporteur-module.sh` mais pas dans celui-ci. Le test tournait donc bien, mais s'écrasait au moment d'afficher son résultat — `warn: command not found` — et n'a **jamais rien validé**. Fonction ajoutée, et le bloc replacé avant le résumé final plutôt qu'après, où il était inséré par erreur.
+
+Rappel utile : `set -euo pipefail` n'attrape pas ce cas comme on l'espérerait ; la commande absente fait bien échouer la ligne, mais après que le résumé « tout est validé » a déjà été affiché — d'où une sortie trompeusement rassurante.

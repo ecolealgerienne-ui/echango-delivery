@@ -62,6 +62,7 @@ EOF
 fi
 
 pass() { echo "✅ $1"; }
+warn() { echo "⚠️  $1"; }
 fail() { echo "❌ $1"; echo "   Réponse brute : $2"; exit 1; }
 
 echo "BFF        : $BFF_URL"
@@ -165,27 +166,6 @@ else
   echo "    cette route à chaque démarrage avec le même jeton Firebase."
 fi
 
-# --- 4. Rejets attendus ---------------------------------------------------
-# Un register doit refuser un UUID inconnu. Ce test compte autant que les
-# autres : §2.13 du journal a montré que GET /drivers/{uuid} renvoie TOUS les
-# drivers au lieu d'un 404, donc une vérification naïve accepterait n'importe
-# quel UUID. C'est ce contournement qu'on valide ici.
-BOGUS_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg email "bogus-$RANDOM@echango.local" --arg pw "$PASSWORD" \
-        '{fleetbaseDriverUuid:"00000000-0000-0000-0000-000000000000", email:$email, password:$pw}')")
-
-if echo "$BOGUS_RESP" | jq -e '.token' >/dev/null 2>&1; then
-  fail "SÉCURITÉ : un UUID Fleetbase bidon a été accepté" "$BOGUS_RESP"
-fi
-pass "register — UUID inconnu correctement rejeté"
-
-echo ""
-echo "──────────────────────────────────────────────────────────"
-echo "Tranche auth validée. Identifiants réutilisables pour l'app :"
-echo "  email    : $EMAIL"
-echo "  password : $PASSWORD"
-echo ""
 # --- 3c. Rotation de jeton : l'ancien UserDevice est-il retiré ? ----------
 # Cas réel : réinstallation de l'app, effacement des données, restauration de
 # sauvegarde — Firebase délivre alors un jeton différent. Sans retrait de
@@ -215,6 +195,28 @@ else
   warn "rotation de jeton non testée (2e enregistrement refusé)"
 fi
 
+
+# --- 4. Rejets attendus ---------------------------------------------------
+# Un register doit refuser un UUID inconnu. Ce test compte autant que les
+# autres : §2.13 du journal a montré que GET /drivers/{uuid} renvoie TOUS les
+# drivers au lieu d'un 404, donc une vérification naïve accepterait n'importe
+# quel UUID. C'est ce contournement qu'on valide ici.
+BOGUS_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg email "bogus-$RANDOM@echango.local" --arg pw "$PASSWORD" \
+        '{fleetbaseDriverUuid:"00000000-0000-0000-0000-000000000000", email:$email, password:$pw}')")
+
+if echo "$BOGUS_RESP" | jq -e '.token' >/dev/null 2>&1; then
+  fail "SÉCURITÉ : un UUID Fleetbase bidon a été accepté" "$BOGUS_RESP"
+fi
+pass "register — UUID inconnu correctement rejeté"
+
+echo ""
+echo "──────────────────────────────────────────────────────────"
+echo "Tranche auth validée. Identifiants réutilisables pour l'app :"
+echo "  email    : $EMAIL"
+echo "  password : $PASSWORD"
+echo ""
 echo ""
 echo "──────────────────────────────────────────────────────────"
 echo "Inspection manuelle si besoin — l'état des devices de ce driver :"

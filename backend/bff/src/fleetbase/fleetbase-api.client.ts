@@ -529,8 +529,33 @@ export class FleetbaseApiClient {
     const path = subjectId
       ? `/orders/${orderPublicId}/capture-photo/${subjectId}`
       : `/orders/${orderPublicId}/capture-photo`;
-    const body: any = { photos };
+
+    // ── Contournement d'un bug amont Fleetbase ──────────────────────────
+    // capturePhoto() résout le bucket ainsi :
+    //
+    //   $bucket = $request->input("filesystems.disks.{$disk}.bucket",
+    //                             config('filesystems.disks.s3.bucket'));
+    //
+    // La première ligne devrait être `config(...)` : elle lit une clé de la
+    // REQUÊTE, jamais présente, donc le repli S3 s'applique toujours — et vaut
+    // null sans S3 configuré. `storeProofPhoto()` typant ce paramètre `string`,
+    // l'appel meurt en TypeError 500. Tout upload de preuve est donc cassé sur
+    // une installation non-S3, quel que soit l'appelant (constaté en réel le
+    // 28/07/2026, journal §6.12).
+    //
+    // Le bug est aussi son propre remède : la valeur venant de la requête, on
+    // l'y place. Le disque et le bucket restent surchargeables par
+    // environnement pour un déploiement S3 réel.
+    const disk = process.env.FLEETBASE_PROOF_DISK || 'local';
+    const bucket = process.env.FLEETBASE_PROOF_BUCKET || '';
+
+    const body: any = {
+      photos,
+      disk,
+      filesystems: { disks: { [disk]: { bucket } } },
+    };
     if (remarks) body.remarks = remarks;
+
     const response = await this.callFleetOpsPublic('POST', path, body);
     return response.data;
   }
