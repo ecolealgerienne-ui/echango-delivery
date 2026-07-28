@@ -686,3 +686,17 @@ Cause réelle : l'écran construisait ses actions à partir de prédicats **loca
 - **Liste vide en permanence** : l'app ne demandait que `type=assigned`. Une commande adhoc n'étant assignée à personne, elle ne pouvait jamais apparaître — l'onglet destiné aux opportunités était structurellement vide. Bascule sur les trois catégories renvoyées ensemble par le BFF.
 - **Erreur de chargement invisible** : une liste vide et un échec de requête produisaient exactement le même écran. Le message d'erreur est maintenant affiché — c'est ce qui rendait le premier lancement impossible à diagnostiquer.
 - **Couleurs de statut inertes** : `_getStatusColor` testait `accepted` et `picked_up`, absents de Fleetbase ; tout tombait dans le gris par défaut.
+
+### 7.7 Un échec de livraison signalé n'était visible nulle part
+
+Signalé par test réel : le driver déclare un échec, « ça ne marche pas », et la commande reste en `enroute` dans « En cours ». Le log Android ne contient aucune erreur Dart.
+
+**Le comportement était en partie correct et entièrement indiscernable d'une panne.** Trois défauts distincts se cumulaient :
+
+1. **Le statut inchangé est voulu** (§6.5) : un signalement ne modifie pas la commande Fleetbase, faute de statut natif confirmé. Mais rien ne l'expliquait à l'écran — l'écart entre « j'ai signalé un échec » et « statut : enroute » passait pour une incohérence.
+2. **Le signalement n'était renvoyé par aucun endpoint.** Il était bien enregistré côté BFF, mais `GET /transporteur/commandes` ne l'exposait pas : l'app n'avait aucun moyen de savoir qu'un rapport existait. Un signalement partait dans le vide, du point de vue de l'utilisateur. Corrigé — les commandes renvoyées portent désormais `delivery_failure` (clé que le modèle Dart lisait déjà), avec le rapport le plus récent par commande, un driver pouvant réessayer puis échouer à nouveau.
+3. **Un échec du signalement n'affichait rien** : le `if (success)` n'avait pas de `else`. Ni message, ni navigation — un bouton mort. C'est ce qui a rendu le diagnostic difficile.
+
+Corrigé aussi : le double `context.pop()` renvoyait à la liste, où rien ne change, au lieu du détail où le rapport est maintenant affiché. Et l'état local ne fabrique plus un statut `'failed'` inexistant côté serveur — il recharge, plutôt que de mentir puis d'être écrasé au rafraîchissement suivant.
+
+**Leçon** : une fonctionnalité dont l'effet n'est visible nulle part est équivalente, pour l'utilisateur, à une fonctionnalité cassée. Le stockage côté BFF (§6.5) était un choix défendable, mais incomplet tant que rien ne le relisait.

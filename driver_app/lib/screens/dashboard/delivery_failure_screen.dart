@@ -218,13 +218,25 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       notes: _notesController.text.isNotEmpty ? _notesController.text : null,
     );
 
+    if (!context.mounted) return;
+
     if (success) {
-      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Delivery failure reported')),
+        const SnackBar(content: Text('Échec de livraison signalé')),
       );
+      // Un seul pop : revenir au détail, qui recharge et affiche désormais le
+      // signalement. Deux pops renvoyaient à la liste, où rien ne change —
+      // le driver ne voyait aucune trace de ce qu'il venait de déclarer.
       context.pop();
-      context.pop();
+    } else {
+      // Sans ça, un échec du signalement ne produisait STRICTEMENT rien à
+      // l'écran : ni message, ni navigation. Indiscernable d'un bouton mort.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(orderState.errorMessage ?? 'Signalement impossible'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 }

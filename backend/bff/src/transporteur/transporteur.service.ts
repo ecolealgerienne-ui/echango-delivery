@@ -119,6 +119,54 @@ export class TransporteurService {
     return order.public_id;
   }
 
+  /**
+   * Attach this driver's reported failures to the orders being returned.
+   *
+   * Without this a reported failure is invisible: it lives only in the BFF
+   * (§6.5 — no confirmed native per-waypoint failed status), and the Fleetbase
+   * order keeps its own status, so the app has no way to show that anything
+   * was reported. The driver files a report and the screen looks unchanged,
+   * which is indistinguishable from the feature being broken.
+   *
+   * Exposed as `delivery_failure` because that is the key the app's model
+   * already reads.
+   */
+  private async attachFailures(driverId: string, orders: any[]) {
+    if (!orders.length) return orders;
+
+    const failures = await this.prisma.deliveryFailure.findMany({
+      where: {
+        driverId,
+        fleetbaseOrderUuid: { in: orders.map((o) => o?.uuid).filter(Boolean) },
+      },
+      orderBy: { reportedAt: 'desc' },
+    });
+
+    if (!failures.length) return orders;
+
+    // Keep the most recent report per order: a driver may retry a delivery
+    // and fail again, and only the latest one describes the current state.
+    const byOrder = new Map<string, any>();
+    for (const f of failures) {
+      if (!byOrder.has(f.fleetbaseOrderUuid)) byOrder.set(f.fleetbaseOrderUuid, f);
+    }
+
+    return orders.map((order) => {
+      const failure = byOrder.get(order?.uuid);
+      if (!failure) return order;
+      return {
+        ...order,
+        delivery_failure: {
+          id: failure.id,
+          reason: failure.reason,
+          notes: failure.notes,
+          photo_url: null,
+          created_at: failure.reportedAt.toISOString(),
+        },
+      };
+    });
+  }
+
   private isAssignedTo(order: any, driverUuid: string) {
     return (
       order?.driver_assigned_uuid === driverUuid ||
@@ -202,13 +250,17 @@ export class TransporteurService {
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
 
     if (query.type === 'adhoc') return { orders: adhoc };
-    if (query.type === 'history') return { orders: assigned.filter(isFinished) };
-    if (query.type === 'assigned') return { orders: assigned.filter((o) => !isFinished(o)) };
+    if (query.type === 'history') {
+      return { orders: await this.attachFailures(driver.id, assigned.filter(isFinished)) };
+    }
+    if (query.type === 'assigned') {
+      return { orders: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))) };
+    }
 
     return {
-      active: assigned.filter((o) => !isFinished(o)),
+      active: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))),
       adhoc,
-      history: assigned.filter(isFinished),
+      history: await this.attachFailures(driver.id, assigned.filter(isFinished)),
     };
   }
 
@@ -236,7 +288,8 @@ export class TransporteurService {
       throw new NotFoundException('Order not found');
     }
 
-    return order;
+    const [withFailure] = await this.attachFailures(driver.id, [order]);
+    return withFailure;
   }
 
   /**

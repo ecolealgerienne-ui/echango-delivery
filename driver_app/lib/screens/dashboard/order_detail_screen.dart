@@ -142,18 +142,32 @@ class OrderDetailScreen extends StatelessWidget {
                               children: [
                                 Icon(Icons.error_outline, color: Colors.red.shade700),
                                 const SizedBox(width: 8),
-                                Text(
-                                  'Delivery Failed',
-                                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    color: Colors.red.shade700,
+                                Expanded(
+                                  child: Text(
+                                    'Échec de livraison signalé',
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      color: Colors.red.shade700,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 12),
-                            _buildInfoRow('Reason:', order.deliveryFailure!.reason),
+                            _buildInfoRow('Motif :', order.deliveryFailure!.reason),
                             if (order.deliveryFailure!.notes != null)
-                              _buildInfoRow('Notes:', order.deliveryFailure!.notes!),
+                              _buildInfoRow('Notes :', order.deliveryFailure!.notes!),
+                            const SizedBox(height: 8),
+                            // Le statut Fleetbase reste inchangé par un
+                            // signalement (§6.5) : le dire, sinon l'écart
+                            // entre « échec signalé » et « statut enroute »
+                            // passe pour une incohérence.
+                            Text(
+                              'La commande conserve son statut : le signalement '
+                              'est transmis à l\'opérateur, qui décide de la suite.',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Colors.red.shade700,
+                                  ),
+                            ),
                           ],
                         ),
                       ),

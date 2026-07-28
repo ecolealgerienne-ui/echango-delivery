@@ -252,31 +252,12 @@ class OrderState extends ChangeNotifier {
         waypointUuid: waypointUuid,
         photo: photoBase64,
       );
-      final index = _orders.indexWhere((o) => o.id == orderId);
-      if (index >= 0) {
-        _orders[index] = _orders[index].copyWith(
-          status: 'failed',
-          deliveryFailure: DeliveryFailure(
-            id: orderId,
-            reason: reason,
-            photoUrl: null,
-            notes: notes,
-            createdAt: DateTime.now(),
-          ),
-        );
-      }
-      if (_selectedOrder?.id == orderId) {
-        _selectedOrder = _selectedOrder?.copyWith(
-          status: 'failed',
-          deliveryFailure: DeliveryFailure(
-            id: orderId,
-            reason: reason,
-            photoUrl: null,
-            notes: notes,
-            createdAt: DateTime.now(),
-          ),
-        );
-      }
+      // Recharger depuis le serveur : le statut Fleetbase n'est PAS modifié
+      // par un signalement (§6.5), le BFF joint simplement le rapport à la
+      // commande. Fabriquer un statut 'failed' local mentirait sur l'état réel
+      // et serait écrasé au prochain rafraîchissement.
+      await selectOrder(orderId);
+      await loadOrders();
       return true;
     } on AppException catch (e) {
       _errorMessage = e.message;
