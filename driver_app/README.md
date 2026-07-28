@@ -2,29 +2,31 @@
 
 Flutter mobile application for drivers using the Echango Delivery logistics platform.
 
-## ⚠️ État réel au 28/07/2026 — lire avant de tester
+## État réel au 28/07/2026 — lire avant de tester
 
-Le reste de ce README décrit le **périmètre visé**, pas ce qui fonctionne. Le
-code a été scaffoldé (27/07) contre une API supposée, avant que les endpoints
-BFF n'existent. État réel de l'intégration :
+Le reste de ce README décrit le **périmètre visé**. État réel de l'intégration :
 
-| Fonctionnalité | Serveur | Remarque |
+| Fonctionnalité | Serveur | Client |
 |---|---|---|
-| Login email/mot de passe | ✅ | `POST /auth/transporteur/login` — client réaligné le 28/07 |
-| Enregistrement du jeton push | ✅ | `POST /auth/transporteur/device-token` — miroir Fleetbase non vérifié |
-| Login téléphone/OTP | ❌ | Au périmètre spec (§2), arbitrage MVP/V2 encore ouvert (§13) |
-| Login social (Apple/Google/Facebook) | ❌ | Idem |
-| Commandes (liste, détail, accept/start/complete) | ❌ | Module `transporteur` du BFF à construire |
-| Profil / position / statut en ligne | ❌ | Idem |
-| Échec de livraison | ❌ | Idem |
+| Login email/mot de passe | ✅ validé en réel | ✅ aligné |
+| Jeton push (+ purge à la rotation) | ✅ validé en réel | ✅ aligné |
+| Profil / position / disponibilité | ✅ validé en réel | ✅ aligné |
+| Commandes : liste, détail, accepter | ✅ validé en réel | ✅ aligné |
+| Transitions d'état (`activites-suivantes` → `activite`) | ✅ validé en réel | ✅ aligné |
+| Preuve photo, échec de livraison | ✅ validé en réel | ✅ aligné |
+| Login téléphone/OTP et social | ❌ non implémenté | écrans présents, appels annotés |
 
-Les méthodes concernées de `bff_api_client.dart` sont annotées en conséquence.
-**Aucune n'a été validée par un test réel** — même la tranche auth n'a jamais
-tourné contre une vraie instance (voir `scripts/test-driver-auth.sh` à la
-racine du repo, qui existe précisément pour ça).
+Le serveur est validé de bout en bout par `scripts/test-{driver-auth,transporteur-module}.sh`
+(détail : `docs/journal_implementation_bff.md` §6.19). Le client compile
+(`flutter analyze` propre) et sa couche de données a été revue contre les
+formes réelles (§7), mais **les écrans n'ont pas encore rendu de vraies
+données** — c'est là que les écarts restants apparaîtront.
 
-Avant de lancer l'app : faire tourner ce script au curl d'abord. S'il échoue,
-l'app échouera pareil, mais avec un diagnostic bien moins lisible.
+Deux limites connues côté écrans :
+- l'écran détail propose des boutons figés « accepter / démarrer / terminer »,
+  alors que les transitions réelles viennent du serveur et varient selon la
+  commande (`activites-suivantes`) ;
+- la capture photo n'est pas branchée : la clôture se fait sans preuve.
 
 ## Premier lancement — 3 étapes obligatoires
 
