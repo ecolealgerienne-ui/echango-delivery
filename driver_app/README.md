@@ -26,6 +26,44 @@ racine du repo, qui existe précisément pour ça).
 Avant de lancer l'app : faire tourner ce script au curl d'abord. S'il échoue,
 l'app échouera pareil, mais avec un diagnostic bien moins lisible.
 
+## Premier lancement — 3 étapes obligatoires
+
+Le projet ne contient que `lib/` : **aucun dossier `android/` ou `ios/`**, donc
+`flutter run` échoue tant que le scaffolding de plateforme n'est pas généré.
+
+**1. Générer les plateformes** (à faire une fois, depuis `driver_app/`) :
+
+```bash
+flutter create . --platforms=android --org com.echango
+flutter pub get
+```
+
+**2. Pointer le BFF sur une adresse joignable depuis l'appareil**
+(`lib/config/api_config.dart`). `localhost` désigne le téléphone lui-même, pas
+la machine de développement :
+
+| Cible | Valeur de `bffBaseUrl` |
+|---|---|
+| Émulateur Android | `http://10.0.2.2:3001` |
+| Appareil physique | `http://<IP-LAN-de-la-machine>:3001` |
+| Windows/desktop | `http://localhost:3001` |
+
+**3. Autoriser le HTTP en clair** — Android bloque le trafic non-TLS depuis
+l'API 28. Sans ça, chaque appel échoue en `CLEARTEXT communication not
+permitted`. Pour du développement local uniquement, dans
+`android/app/src/main/AndroidManifest.xml`, sur la balise `<application>` :
+
+```xml
+<application android:usesCleartextTraffic="true" …>
+```
+
+À retirer avant toute distribution : le BFF devra être servi en HTTPS.
+
+**Firebase est optionnel.** `lib/config/firebase_options.dart` est un gabarit ;
+l'initialisation est encadrée par un `try/catch` pour que l'app démarre sans.
+Conséquence : pas de notification à l'arrivée d'une commande, il faut
+rafraîchir manuellement. Tout le reste fonctionne.
+
 ## Getting Started
 
 ### Prerequisites

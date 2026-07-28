@@ -15,13 +15,28 @@ import 'theme/app_theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // Initialize notification service
-  await NotificationService.initialize();
+  // Firebase est OPTIONNEL au démarrage.
+  //
+  // `firebase_options.dart` est encore un gabarit ('YOUR_PROJECT_ID'…) : sans
+  // ce garde-fou, `initializeApp` lève et l'app ne démarre pas du tout, ce qui
+  // empêche de tester connexion et commandes — qui n'ont pourtant aucun besoin
+  // de Firebase. Les notifications push sont un confort (le déclencheur d'un
+  // rafraîchissement REST, specs_app_transporteur.md §11.1), pas une
+  // dépendance de fonctionnement.
+  //
+  // Conséquence quand la config manque : pas de notification à l'arrivée d'une
+  // commande. Le reste fonctionne, le driver doit rafraîchir manuellement.
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    await NotificationService.initialize();
+  } catch (e) {
+    debugPrint(
+      'Firebase non initialisé — notifications push désactivées. '
+      'Renseigner lib/config/firebase_options.dart pour les activer. Détail : $e',
+    );
+  }
 
   // Get shared preferences and API client
   final prefs = await SharedPreferences.getInstance();

@@ -655,4 +655,14 @@ L'écran envoyait des libellés anglais (`'Recipient not available'`) comme vale
 
 Les deux listes divergeaient aussi sur le fond : le scaffolding proposait « Traffic/delay » et « Vehicle issue » — des retards, pas des échecs de livraison — et omettait « accès impossible » présent dans la spec §4.3. Remplacé par un couple code/libellé aligné exactement sur le serveur.
 
-**Statut** : ces trois corrections viennent d'une revue de cohérence, pas d'une exécution. La compilation (`flutter analyze`) et le test réel restent à faire côté Windows.
+**Statut** : ✅ `flutter analyze` **passe sans aucune anomalie** (28/07/2026, côté utilisateur). Une seule erreur avait été remontée sur l'ensemble de la revue — `BffApiClient.isAuthenticated()` appelée par `auth_state` mais jamais définie — corrigée. Le code compile ; il n'a pas encore été exécuté.
+
+### 7.4 Blocages structurels au premier lancement
+
+Trois obstacles identifiés avant même d'essayer, aucun lié au code métier :
+
+1. **Aucun scaffolding de plateforme** — `driver_app/` ne contient que `lib/`, pas de `android/` ni `ios/`. `flutter run` ne peut pas aboutir tant que `flutter create . --platforms=android` n'a pas été lancé. Le scaffolding du 27/07 avait produit le code Dart sans les dossiers de plateforme.
+2. **Firebase bloquait le démarrage** — `firebase_options.dart` est encore un gabarit (`YOUR_PROJECT_ID`), et `currentPlatform` renvoie systématiquement la config `web`. `Firebase.initializeApp()` levait donc au lancement et empêchait **toute** utilisation de l'app, y compris la connexion et les commandes, qui n'ont aucun besoin de Firebase. Encadré par un `try/catch` : le push est un déclencheur de rafraîchissement (§11.1 de la spec), pas une dépendance de fonctionnement. Sans config, le driver rafraîchit à la main.
+3. **HTTP en clair bloqué par Android** depuis l'API 28 — un BFF local en `http://` échouera en `CLEARTEXT communication not permitted` tant que `usesCleartextTraffic` n'est pas posé. À retirer avant distribution, le BFF devant passer en HTTPS.
+
+Le point 2 illustre un principe utile pour la suite : **une dépendance de confort ne doit pas conditionner le démarrage.** Une intégration tierce non configurée doit dégrader une fonctionnalité, pas rendre l'application inutilisable.
