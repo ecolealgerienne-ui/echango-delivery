@@ -585,6 +585,16 @@ export class TransporteurService {
     let fleetbaseProofUuid: string | null = null;
     let proofUrl: string | null = null;
 
+    // Tracé explicitement, y compris l'absence : sans cette ligne, « aucune
+    // photo envoyée » et « photo envoyée mais rejetée » ne se distinguent que
+    // par la présence d'un avertissement — donc pas du tout, dès que les logs
+    // ont défilé. Le diagnostic a coûté un aller-retour pour cette raison.
+    this.logger.log(
+      `Delivery failure report on ${orderId}: photo ${
+        dto.photo ? `présente (${Math.round(dto.photo.length / 1024)} ko base64)` : 'absente'
+      }`,
+    );
+
     if (dto.photo) {
       try {
         const remarks = `Échec de livraison : ${dto.reason}${dto.notes ? ` — ${dto.notes}` : ''}`;
@@ -600,8 +610,14 @@ export class TransporteurService {
         // ici, à la seule occasion où Fleetbase nous la donne.
         proofUrl = record?.url || null;
       } catch (error) {
+        // `error` d'axios porte le détail utile dans response.data ; le
+        // `message` seul dit « Request failed with status code 500 », ce qui
+        // n'aide à rien quand c'est justement le serveur amont qui refuse.
+        const detail = error?.response?.data
+          ? JSON.stringify(error.response.data)
+          : error.message;
         this.logger.warn(
-          `Delivery failure photo upload failed (${orderId}), keeping the report: ${error.message}`,
+          `Delivery failure photo upload failed (${orderId}), keeping the report: ${detail}`,
         );
       }
     }
