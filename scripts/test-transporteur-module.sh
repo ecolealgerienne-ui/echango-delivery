@@ -33,6 +33,9 @@ pass() { echo "✅ $1"; }
 warn() { echo "⚠️  $1"; }
 fail() { echo "❌ $1"; echo "   Réponse : $2"; exit 1; }
 
+# shellcheck source=lib/driver-session.sh
+. "$(dirname "$0")/lib/driver-session.sh"
+
 api() { # method path [body]
   local method="$1" path="$2" body="${3:-}"
   if [ -n "$body" ]; then
@@ -48,53 +51,15 @@ echo "Driver UUID: $DRIVER_UUID"
 echo ""
 
 # --- Auth (prérequis) -----------------------------------------------------
-REG=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
-  -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg u "$DRIVER_UUID" --arg e "$EMAIL" --arg p "$PASSWORD" \
-        '{fleetbaseDriverUuid:$u, email:$e, password:$p, firstName:"Test", lastName:"Transporteur"}')")
+# Séquence partagée avec test-driver-auth.sh : elle était dupliquée ici, et le
+# passage à l'inscription sur invitation n'y avait pas été répercuté — ce
+# script échouait donc avant d'avoir testé le module qu'il valide.
+obtain_driver_token "$DRIVER_UUID" \
+  || fail "impossible d'obtenir un JWT driver" "$DRIVER_SESSION_ERROR"
 
-TOKEN=$(echo "$REG" | jq -r '.token // empty')
-
-if [ -z "$TOKEN" ]; then
-  # Le driver est déjà lié à un compte (cas normal dès la 2e exécution, ou
-  # après test-driver-auth.sh). On ne peut pas deviner l'email de ce compte —
-  # il faut le relire dans la base du BFF, puis se connecter avec.
-  if echo "$REG" | grep -q 'already linked'; then
-    EXISTING=$(docker exec echango_bff_postgres \
-      psql -U bff_user -d echango_bff -tAc \
-      "SELECT email FROM \"DriverAccount\" WHERE \"fleetbaseDriverUuid\"='$DRIVER_UUID';" \
-      2>/dev/null | tr -d '[:space:]' || true)
-
-    if [ -n "$EXISTING" ]; then
-      TOKEN=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
-        -H 'Content-Type: application/json' \
-        -d "$(jq -n --arg e "$EXISTING" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
-        | jq -r '.token // empty')
-
-      if [ -n "$TOKEN" ]; then
-        pass "auth — compte existant réutilisé ($EXISTING)"
-      else
-        echo "❌ Compte existant trouvé ($EXISTING) mais mot de passe différent."
-        echo "   Relancer en le fournissant :"
-        echo "     EMAIL='$EXISTING' PASSWORD='<le bon>' $0 $DRIVER_UUID"
-        echo "   Ou repartir de zéro pour ce driver :"
-        echo "     docker exec echango_bff_postgres psql -U bff_user -d echango_bff \\"
-        echo "       -c \"DELETE FROM \\\"DriverAccount\\\" WHERE \\\"fleetbaseDriverUuid\\\"='$DRIVER_UUID';\""
-        exit 1
-      fi
-    fi
-  else
-    # Register a échoué pour une autre raison : tenter quand même un login,
-    # au cas où EMAIL/PASSWORD auraient été fournis explicitement.
-    TOKEN=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
-      -H 'Content-Type: application/json' \
-      -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
-      | jq -r '.token // empty')
-  fi
-fi
-
-[ -n "$TOKEN" ] || fail "impossible d'obtenir un JWT driver" "$REG"
-[ -n "${EXISTING:-}" ] || pass "auth — JWT driver obtenu"
+TOKEN="$DRIVER_TOKEN"
+EMAIL="$DRIVER_EMAIL"
+pass "auth — $DRIVER_SESSION_NOTE"
 
 # --- 1. Profil ------------------------------------------------------------
 RESP=$(api GET /transporteur/profil)
