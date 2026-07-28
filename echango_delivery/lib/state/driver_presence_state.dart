@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../errors/app_error.dart';
 import '../services/bff_api_client.dart';
+import '../services/foreground_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../utils/logger.dart';
@@ -30,6 +31,7 @@ class DriverPresenceState extends ChangeNotifier {
   final OrderState _orderState;
   final LocationService _location;
   final NotificationService _notifications;
+  final DriverForegroundService _foreground = DriverForegroundService();
 
   DriverPresenceState({
     required BffApiClient apiClient,
@@ -77,6 +79,7 @@ class DriverPresenceState extends ChangeNotifier {
     // pour rien.
     if (_online == true) {
       await _location.startTracking();
+      await _foreground.start();
     }
 
     _restartPolling();
@@ -105,6 +108,10 @@ class DriverPresenceState extends ChangeNotifier {
     _notifications.onOrderEvent = null;
     _notifications.onTokenChanged = null;
     await _location.stopTracking();
+    // Sans ça, la notification « Vous êtes en ligne » survivrait à la
+    // déconnexion, affirmant à l'écran verrouillé du transporteur exactement
+    // le contraire de son état réel.
+    await _foreground.stop();
     await _notifications.release();
 
     _online = null;
@@ -147,6 +154,21 @@ class DriverPresenceState extends ChangeNotifier {
       return false;
     }
 
+    // La notification permanente n'est pas un confort : Android n'autorise pas
+    // de service au premier plan sans elle, donc son refus signifie que le
+    // suivi s'arrêtera à chaque extinction d'écran. On prévient plutôt que de
+    // laisser croire à un service continu.
+    //
+    // Non bloquant : le suivi fonctionne au premier plan, et refuser de passer
+    // en ligne pour ça priverait le transporteur de courses. L'avertissement
+    // est gardé de côté puis réappliqué après la remise à zéro ci-dessous, qui
+    // l'effacerait sinon.
+    String? warning;
+    if (value && !await _foreground.requestPermissions()) {
+      warning = 'Sans autorisation de notification, le partage de position '
+          's\'arrêtera dès que vous quitterez l\'application.';
+    }
+
     _isBusy = true;
     _errorMessage = null;
     notifyListeners();
@@ -157,15 +179,21 @@ class DriverPresenceState extends ChangeNotifier {
 
       if (value) {
         await _location.startTracking();
+        // Le service au premier plan et le suivi GPS vont ensemble : sans lui,
+        // Android suspend le processus dès que l'écran s'éteint et le suivi
+        // s'arrête sans rien signaler.
+        await _foreground.start();
         // Un premier point tout de suite : sans ça le driver reste invisible
         // jusqu'à ce qu'il se déplace du seuil de distance configuré.
         await _location.pushCurrentPosition();
       } else {
         await _location.stopTracking();
+        await _foreground.stop();
       }
 
       _restartPolling();
       await _orderState.loadOrders();
+      _errorMessage = warning;
       return true;
     } on AppException catch (e) {
       _errorMessage = e.message ?? 'Changement de disponibilité impossible';

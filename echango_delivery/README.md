@@ -70,18 +70,40 @@ dans `android/app/src/main/AndroidManifest.xml`.
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- Suivi de position écran éteint : le service au premier plan maintient le
+     processus vivant. Sans le `foregroundServiceType`, Android 14+ refuse de
+     démarrer le service et le suivi s'arrête à la première mise en veille. -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
 ```
 
-Sans elles, `Geolocator.requestPermission()` échoue **sans dialogue** : la
-bascule « en ligne » refuse de s'activer et affiche le message d'autorisation,
-ce qui ressemble à un refus de l'utilisateur alors que le système n'a jamais
-posé la question.
+et, à l'intérieur de `<application>` :
 
-**Limite connue** : le suivi de position s'arrête quand l'app passe en arrière
-plan. La permission `ACCESS_BACKGROUND_LOCATION` et un service au premier plan
-(`flutter_foreground_task`, prévu en §11.2 de `docs/specs_app_transporteur.md`)
-restent à ajouter — en l'état, un transporteur doit garder l'app ouverte pour
-que sa position alimente le dispatch.
+```xml
+<service
+    android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+    android:foregroundServiceType="location"
+    android:exported="false" />
+```
+
+Sans les permissions de localisation, `Geolocator.requestPermission()` échoue
+**sans dialogue** : la bascule « en ligne » refuse de s'activer et affiche le
+message d'autorisation, ce qui ressemble à un refus de l'utilisateur alors que
+le système n'a jamais posé la question.
+
+**Limite restante** : `ACCESS_BACKGROUND_LOCATION` n'est pas demandée. Le
+service au premier plan couvre le cas courant — app en arrière plan, écran
+éteint — mais pas un suivi après fermeture complète de l'application. C'est
+volontaire : cette permission déclenche un examen manuel sur le Play Store, et
+un transporteur qui ferme l'app a de bonnes raisons d'être considéré hors
+service.
+
+**Optimisations constructeur** : Xiaomi, Huawei et Samsung coupent les services
+au bout de quelques minutes malgré tout. L'app demande l'exemption
+(`requestIgnoreBatteryOptimization`), mais son refus ne bloque pas — à vérifier
+sur les appareils réels du pilote.
 
 **Comptes de test** (debug uniquement, jamais versionnés). Le `role` ne sert
 qu'à l'icône du raccourci — c'est le serveur qui résout le profil :

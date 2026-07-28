@@ -971,3 +971,17 @@ Repère : **une donnée retirée d'une liste doit l'être de toutes les routes q
 ### 11.3 Vérification
 
 Le script assère les deux chemins, avec un détecteur générique (`jq | .. | objects`) qui cherche toute clé `phone`/`contact_name`/`email` à n'importe quelle profondeur, plutôt qu'une liste de champs connus — un champ ajouté plus tard côté Fleetbase sera attrapé sans qu'on y pense. Détecteur éprouvé dans les deux sens avant d'être commis : il attrape un `contact_phone` planté à la main, et laisse passer une charge propre.
+
+### 11.4 Suivi en arrière plan et navigation externe
+
+`flutter_foreground_task` figurait dans le `pubspec` depuis l'initialisation du projet et n'était appelé nulle part — le même motif que la présence, la capture photo et les jetons push : une dépendance déclarée, jamais branchée, qui donne l'illusion que le besoin est couvert.
+
+Sans service au premier plan, Android suspend le processus dès que le transporteur passe à une autre application ou éteint son écran : l'abonnement Geolocator cesse d'émettre et le dispatch travaille sur une position figée. C'est le mode d'échec le plus insidieux du profil, puisque **tout fonctionne tant qu'on regarde l'écran** — c'est-à-dire exactement pendant qu'on teste.
+
+Le service tourne **sans `TaskHandler`**, délibérément : on n'a pas besoin d'exécuter du code dans un isolate séparé, seulement d'empêcher le système de tuer le processus. L'abonnement GPS continue alors dans l'isolate principal, avec la session et le client HTTP déjà en place. Un isolate séparé imposerait de re-créer les deux et de faire transiter les positions par messages, pour aucun gain.
+
+Deux choix de comportement valent d'être notés. `autoRunOnBoot: false` : être en ligne est une décision du transporteur, pas un état qu'on lui rétablit au redémarrage du téléphone — il se retrouverait éligible à des courses sans le savoir. Et la notification est en importance `LOW` : permanente pendant tout un service, la faire sonner la rendrait odieuse et pousserait à la couper, donc à se rendre invisible.
+
+Défaut introduit puis corrigé en cours d'écriture : l'avertissement « sans notification, le suivi s'arrêtera » était posé sur `_errorMessage` juste avant la remise à zéro de ce même champ, deux lignes plus bas. Il n'aurait jamais été affiché.
+
+**Navigation externe** : `url_launcher` avec un intent `geo:` d'abord (Android laisse alors le choix entre Maps, Waze, OsmAnd) puis un repli HTTPS universel. On délègue plutôt que d'embarquer un guidage : refaire un GPS routier correct n'a aucun rapport avec ce que ce produit apporte. Les deux blocs d'adresse, jusque-là recopiés avec des libellés anglais et aucune action, deviennent un composant unique portant itinéraire et appel.

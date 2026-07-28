@@ -42,6 +42,9 @@ dependencies:
   # Capture photo (preuve de livraison, signalement d'échec)
   image_picker: ^1.1.2
 
+  # Ouverture d'une application de navigation externe
+  url_launcher: ^6.3.1
+
   # UI
   cupertino_icons: ^1.0.8
 

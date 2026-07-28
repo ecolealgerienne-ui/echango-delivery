@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/order.dart';
+import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
@@ -22,7 +24,7 @@ class OrderDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Order Details'),
+          title: const Text('Détail de la commande'),
           elevation: 0,
         ),
         body: Consumer<OrderState>(
@@ -34,7 +36,7 @@ class OrderDetailScreen extends StatelessWidget {
             }
 
             if (order == null) {
-              return const Center(child: Text('Order not found'));
+              return const Center(child: Text('Commande introuvable'));
             }
 
             return SingleChildScrollView(
@@ -76,8 +78,8 @@ class OrderDetailScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          _buildInfoRow('Created:', order.createdAt.toString().split('.')[0]),
-                          _buildInfoRow('Updated:', order.updatedAt.toString().split('.')[0]),
+                          _buildInfoRow('Créée le :', order.createdAt.toString().split('.')[0]),
+                          _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),
                         ],
                       ),
                     ),
@@ -90,51 +92,15 @@ class OrderDetailScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Pickup',
-                            style: Theme.of(context).textTheme.titleMedium,
+                          _PlaceBlock(
+                            label: 'Enlèvement',
+                            place: order.pickupPlace,
                           ),
-                          const SizedBox(height: 8),
-                          if (order.pickupPlace != null)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  order.pickupPlace!.name,
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                Text(order.pickupPlace!.address),
-                                if (order.pickupPlace!.contactName != null)
-                                  Text('Contact: ${order.pickupPlace!.contactName}'),
-                                if (order.pickupPlace!.contactPhone != null)
-                                  Text('Phone: ${order.pickupPlace!.contactPhone}'),
-                              ],
-                            ),
                           const SizedBox(height: 16),
-                          Text(
-                            'Dropoff',
-                            style: Theme.of(context).textTheme.titleMedium,
+                          _PlaceBlock(
+                            label: 'Livraison',
+                            place: order.dropoffPlace,
                           ),
-                          const SizedBox(height: 8),
-                          if (order.dropoffPlace != null)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  order.dropoffPlace!.name,
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                Text(order.dropoffPlace!.address),
-                                if (order.dropoffPlace!.contactName != null)
-                                  Text('Contact: ${order.dropoffPlace!.contactName}'),
-                                if (order.dropoffPlace!.contactPhone != null)
-                                  Text('Phone: ${order.dropoffPlace!.contactPhone}'),
-                              ],
-                            ),
                         ],
                       ),
                     ),
@@ -379,7 +345,7 @@ class OrderDetailScreen extends StatelessWidget {
     if (success) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Order accepted')),
+        const SnackBar(content: Text('Course acceptée')),
       );
     }
   }
@@ -457,6 +423,86 @@ class _ProofSheetState extends State<_ProofSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Un point de la course, avec ses actions.
+///
+/// Enlèvement et livraison avaient le même bloc recopié deux fois, avec des
+/// libellés anglais et aucune action. Un transporteur qui lit une adresse doit
+/// pouvoir la suivre et appeler sur place — sans ça il ressaisit tout à la
+/// main dans une autre application, au volant.
+class _PlaceBlock extends StatelessWidget {
+  final String label;
+  final Place? place;
+
+  const _PlaceBlock({required this.label, required this.place});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (place == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text('Adresse non renseignée', style: theme.textTheme.bodySmall),
+        ],
+      );
+    }
+
+    final p = place!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: theme.textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(
+          p.name,
+          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        if (p.address.isNotEmpty) Text(p.address),
+        if (p.contactName != null) Text('Contact : ${p.contactName}'),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: () => _navigate(context, p),
+              icon: const Icon(Icons.directions_outlined),
+              label: const Text('Itinéraire'),
+            ),
+            if (p.contactPhone != null)
+              TextButton.icon(
+                onPressed: () => _call(context, p.contactPhone!),
+                icon: const Icon(Icons.phone_outlined),
+                label: Text(p.contactPhone!),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _navigate(BuildContext context, Place p) async {
+    final ok = await NavigationLauncher.navigateTo(p);
+    if (!context.mounted || ok) return;
+    // Un bouton qui ne fait rien est indiscernable d'une application figée.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Aucune application de navigation trouvée sur cet appareil.'),
+      ),
+    );
+  }
+
+  Future<void> _call(BuildContext context, String phone) async {
+    final ok = await NavigationLauncher.call(phone);
+    if (!context.mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Impossible de lancer l\'appel.')),
     );
   }
 }
