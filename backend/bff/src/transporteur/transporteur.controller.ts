@@ -1,13 +1,5 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Param,
-  Query,
-  Request,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Request } from '@nestjs/common';
+import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
 import {
   UpdatePositionDto,
@@ -17,6 +9,7 @@ import {
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
 } from './dto/transporteur.dto';
+import { Persona } from '../common/decorators/persona.decorator';
 
 /**
  * Driver-facing API for the Flutter app (docs/specs_app_transporteur.md §3-5).
@@ -26,14 +19,14 @@ import {
  * issuer, so without this a merchant token would be structurally valid here
  * and would resolve `req.user.id` against the wrong table.
  */
+@Persona('transporteur')
 @Controller('transporteur')
 export class TransporteurController {
   constructor(private readonly transporteurService: TransporteurService) {}
 
+  // Le contrôle de type est porté par @Persona sur la classe ; il ne reste
+  // qu'à extraire l'identifiant.
   private driverId(req: any): string {
-    if (req.user?.type !== 'transporteur') {
-      throw new ForbiddenException('This endpoint requires a driver account');
-    }
     return req.user.id;
   }
 
@@ -58,48 +51,48 @@ export class TransporteurController {
   }
 
   @Get('commandes/:id')
-  async getOrder(@Request() req: any, @Param('id') id: string) {
+  async getOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
     return this.transporteurService.getOrder(this.driverId(req), id);
   }
 
   @Post('commandes/:id/accepter')
-  async acceptOrder(@Request() req: any, @Param('id') id: string) {
+  async acceptOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
     return this.transporteurService.acceptOrder(this.driverId(req), id);
   }
 
   @Post('commandes/:id/demarrer')
-  async startOrder(@Request() req: any, @Param('id') id: string) {
+  async startOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
     return this.transporteurService.startOrder(this.driverId(req), id);
   }
 
   @Post('commandes/:id/terminer')
-  async completeOrder(@Request() req: any, @Param('id') id: string) {
+  async completeOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
     return this.transporteurService.completeOrder(this.driverId(req), id);
   }
 
   @Get('commandes/:id/activites-suivantes')
   async getNextActivities(
     @Request() req: any,
-    @Param('id') id: string,
+    @Param('id', FleetbaseIdPipe) id: string,
     @Query('waypoint') waypoint?: string,
   ) {
     return this.transporteurService.getNextActivities(this.driverId(req), id, waypoint);
   }
 
   @Post('commandes/:id/activite')
-  async updateActivity(@Request() req: any, @Param('id') id: string, @Body() dto: UpdateActivityDto) {
+  async updateActivity(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string, @Body() dto: UpdateActivityDto) {
     return this.transporteurService.updateActivity(this.driverId(req), id, dto);
   }
 
   @Post('commandes/:id/preuve')
-  async capturePhoto(@Request() req: any, @Param('id') id: string, @Body() dto: CapturePhotoDto) {
+  async capturePhoto(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string, @Body() dto: CapturePhotoDto) {
     return this.transporteurService.capturePhoto(this.driverId(req), id, dto);
   }
 
   @Post('commandes/:id/echec')
   async reportFailure(
     @Request() req: any,
-    @Param('id') id: string,
+    @Param('id', FleetbaseIdPipe) id: string,
     @Body() dto: ReportDeliveryFailureDto,
   ) {
     return this.transporteurService.reportDeliveryFailure(this.driverId(req), id, dto);

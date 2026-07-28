@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
+import { ThrottlerModule } from '@nestjs/throttler';
 
+import { validateEnv } from './config/env.validation';
+import { HealthModule } from './health/health.module';
 import { PrismaModule } from './database/prisma.module';
 import { FleetbaseModule } from './fleetbase/fleetbase.module';
 import { AuthModule } from './auth/auth.module';
@@ -16,20 +18,41 @@ import { CommonModule } from './common/common.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      // Refuse de démarrer si un secret manque ou est trop faible (C1).
+      validate: validateEnv,
     }),
     JwtModule.registerAsync({
       global: true,
       inject: [ConfigService],
+      // SEUL point de configuration du secret. `global: true` fait que ce
+      // JwtService est celui injecté partout — signature (AuthService) comme
+      // vérification (JwtAuthGuard). Avant, AuthModule enregistrait son propre
+      // JwtModule avec un repli différent : les deux secrets divergeaient dès
+      // que la variable manquait, et toutes les requêtes partaient en 401.
+      // Aucune valeur de repli ici : validateEnv a déjà refusé le démarrage.
       useFactory: (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET') || 'dev-secret-key-change-in-prod',
+        secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: configService.get('JWT_EXPIRATION') || '24h',
+          expiresIn: parseInt(configService.get('JWT_EXPIRATION') || '86400', 10),
         },
       }),
     }),
-    PassportModule,
+    // Limitation de débit globale.
+    //
+    // Sans elle, les endpoints d'authentification acceptaient un bruteforce en
+    // ligne illimité (revue E5) — d'autant plus rentable que la politique de
+    // mot de passe s'arrête à 8 caractères, et que `loginUnified` coûte trois
+    // bcrypt par tentative : l'attaquant envoie une requête HTTP, le serveur
+    // dépense ~300 ms de CPU. Le rapport de forces était inversé.
+    //
+    // Un plafond serré et spécifique est posé sur /auth via @Throttle, celui-ci
+    // sert de filet pour le reste de l'API.
+    ThrottlerModule.forRoot([
+      { name: 'default', ttl: 60_000, limit: 120 },
+    ]),
     PrismaModule,
     FleetbaseModule,
+    HealthModule,
     CommonModule,
     AuthModule,
     CommerçantModule,

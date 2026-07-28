@@ -34,12 +34,12 @@ services:
       target: development
     container_name: echango_bff_app
     environment:
-      NODE_ENV: development
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: 3001
       DATABASE_URL: postgresql://bff_user:bff_password@postgres:5432/echango_bff
       FLEETBASE_API_URL: http://host.docker.internal:8000
       FLEETBASE_API_KEY: ${FLEETBASE_API_KEY:-dev-key}
-      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET est obligatoire — le générer : openssl rand -base64 48}
       REDIS_URL: redis://redis:6379
     ports:
       - "3001:3001"

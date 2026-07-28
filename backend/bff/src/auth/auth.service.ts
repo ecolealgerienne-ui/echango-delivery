@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, UnauthorizedException, Logger, Conflic
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import {
@@ -12,6 +13,30 @@ import {
   DriverRegisterDto,
   DriverLoginDto,
 } from './dto/register.dto';
+
+/**
+ * Hash bcrypt d'une valeur arbitraire, comparé quand aucun compte n'existe.
+ *
+ * Sans lui, `loginUnified` ne payait un bcrypt que si la ligne existait :
+ * email inconnu ≈ 5 ms, email connu ≈ 100 ms. Un écart d'un ordre de grandeur,
+ * mesurable à travers Internet — donc un oracle d'énumération de comptes, alors
+ * même que le commentaire du code affirmait le contraire (revue M7).
+ *
+ * Généré une fois au chargement du module : le coût est payé au démarrage, pas
+ * à chaque requête.
+ */
+const DUMMY_HASH = bcrypt.hashSync('__no_such_account__', 10);
+
+/**
+ * Message unique pour tout échec d'authentification.
+ *
+ * `loginMerchant` distinguait « Email not verified » et « Account is inactive »
+ * de « Invalid email or password » : trois messages, donc trois oracles
+ * confirmant qu'un compte existe. L'utilisateur légitime, lui, apprend l'état
+ * de son compte par un autre canal (support, email) — pas par un formulaire de
+ * connexion anonyme.
+ */
+const INVALID_CREDENTIALS = 'Invalid email or password';
 
 @Injectable()
 export class AuthService {
@@ -130,33 +155,38 @@ export class AuthService {
   async loginUnified(dto: MerchantLoginDto) {
     const matches: { role: string; login: () => Promise<any> }[] = [];
 
-    const merchant = await this.prisma.merchantAccount.findUnique({
-      where: { email: dto.email },
-    });
-    if (merchant && (await bcrypt.compare(dto.password, merchant.password))) {
+    const [merchant, driver, fleet] = await Promise.all([
+      this.prisma.merchantAccount.findUnique({ where: { email: dto.email } }),
+      this.prisma.driverAccount.findUnique({ where: { email: dto.email } }),
+      this.prisma.fleetAccount.findUnique({ where: { email: dto.email } }),
+    ]);
+
+    // Chemin à coût constant : on compare TOUJOURS trois hashes, contre le
+    // hash réel si le compte existe, contre DUMMY_HASH sinon. Le temps de
+    // réponse ne dépend donc plus de l'existence du compte (revue M7).
+    const [merchantOk, driverOk, fleetOk] = await Promise.all([
+      bcrypt.compare(dto.password, merchant?.password ?? DUMMY_HASH),
+      bcrypt.compare(dto.password, driver?.password ?? DUMMY_HASH),
+      bcrypt.compare(dto.password, fleet?.password ?? DUMMY_HASH),
+    ]);
+
+    if (merchant && merchantOk) {
       matches.push({ role: 'merchant', login: () => this.loginMerchant(dto) });
     }
-
-    const driver = await this.prisma.driverAccount.findUnique({
-      where: { email: dto.email },
-    });
-    if (driver && (await bcrypt.compare(dto.password, driver.password))) {
+    if (driver && driverOk) {
       matches.push({ role: 'transporteur', login: () => this.loginDriver(dto) });
     }
-
-    const fleet = await this.prisma.fleetAccount.findUnique({
-      where: { email: dto.email },
-    });
-    if (fleet && (await bcrypt.compare(dto.password, fleet.password))) {
+    if (fleet && fleetOk) {
       matches.push({ role: 'fleet', login: () => this.loginFleet(dto) });
     }
 
     if (matches.length === 0) {
-      // Message volontairement identique quel que soit l'échec : ne pas
-      // révéler quels emails existent, ni dans quelle table.
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
+    // Un même email peut légitimement valoir pour deux profils (un commerçant
+    // qui livre lui-même). On ne choisit pas à sa place : ouvrir le mauvais
+    // espace serait pire qu'une question.
     if (matches.length > 1) {
       return {
         requiresRoleSelection: true,
@@ -164,16 +194,13 @@ export class AuthService {
       };
     }
 
-    // Déléguer au login du persona : lui seul applique ses propres règles
-    // (email vérifié, compte actif, horodatage de connexion).
     const result = await matches[0].login();
 
-    // Exposer le profil résolu dans la réponse : sans lui, le client devrait
-    // le déduire de la forme du payload, ce qui reviendrait à deviner. Les
-    // endpoints par persona restent inchangés — seul l'endpoint unifié
-    // enrichit, puisque lui seul avait l'information à transmettre.
+    // Exposer le profil résolu : sans lui, le client devrait le déduire de la
+    // forme du payload, ce qui reviendrait à deviner.
     return { ...result, user: { ...result.user, type: matches[0].role } };
   }
+
 
   async loginMerchant(dto: MerchantLoginDto) {
     const merchant = await this.prisma.merchantAccount.findUnique({
@@ -181,21 +208,21 @@ export class AuthService {
     });
 
     if (!merchant) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, merchant.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     if (!merchant.emailVerified) {
-      throw new UnauthorizedException('Email not verified');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     if (!merchant.active) {
-      throw new UnauthorizedException('Account is inactive');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     // Update last login
@@ -298,17 +325,17 @@ export class AuthService {
     });
 
     if (!fleet) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, fleet.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     if (!fleet.active) {
-      throw new UnauthorizedException('Account is inactive');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     await this.prisma.fleetAccount.update({
@@ -328,6 +355,49 @@ export class AuthService {
         businessName: fleet.businessName,
       },
     };
+  }
+
+  /**
+   * Hachage du jeton d'invitation.
+   *
+   * SHA-256 sans sel suffit ici, contrairement à un mot de passe : le jeton
+   * fait 32 octets aléatoires, il n'est ni deviné ni réutilisé ailleurs. Ce
+   * qu'on veut, c'est qu'une fuite de la base ne livre pas d'invitations
+   * utilisables.
+   */
+  private hashInvitationToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Émet une invitation pour un Driver Fleetbase donné (action opérateur).
+   *
+   * Le jeton en clair n'est renvoyé qu'ici, une seule fois : la base n'en
+   * garde que l'empreinte. À transmettre au transporteur hors bande.
+   */
+  async createDriverInvitation(fleetbaseDriverUuid: string, email?: string, validForDays = 7) {
+    const existing = await this.prisma.driverAccount.findUnique({
+      where: { fleetbaseDriverUuid },
+    });
+    if (existing) {
+      throw new ConflictException('This driver already has an Echango account');
+    }
+
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + validForDays * 24 * 60 * 60 * 1000);
+
+    await this.prisma.driverInvitation.create({
+      data: {
+        tokenHash: this.hashInvitationToken(token),
+        fleetbaseDriverUuid,
+        email,
+        expiresAt,
+      },
+    });
+
+    this.logger.log(`Driver invitation issued for ${fleetbaseDriverUuid}`);
+
+    return { invitationToken: token, expiresAt };
   }
 
   /**
@@ -361,8 +431,29 @@ export class AuthService {
         throw new ConflictException('Email already registered');
       }
 
+      // Le driver visé vient de l'INVITATION, jamais de la requête : c'est
+      // toute la correction de C2. Un appelant ne peut plus désigner le
+      // transporteur qu'il souhaite devenir.
+      const invitation = await this.prisma.driverInvitation.findUnique({
+        where: { tokenHash: this.hashInvitationToken(dto.invitationToken) },
+      });
+
+      // Message identique pour un jeton inconnu, expiré ou déjà consommé :
+      // aucun de ces cas ne doit permettre de sonder les invitations valides.
+      const invitationValid =
+        invitation && !invitation.usedAt && invitation.expiresAt > new Date();
+
+      if (!invitationValid) {
+        throw new BadRequestException('Invitation invalide ou expirée');
+      }
+
+      // Une invitation nominative ne vaut que pour l'email visé.
+      if (invitation.email && invitation.email.toLowerCase() !== dto.email.toLowerCase()) {
+        throw new BadRequestException('Invitation invalide ou expirée');
+      }
+
       const existingUuid = await this.prisma.driverAccount.findUnique({
-        where: { fleetbaseDriverUuid: dto.fleetbaseDriverUuid },
+        where: { fleetbaseDriverUuid: invitation.fleetbaseDriverUuid },
       });
 
       if (existingUuid) {
@@ -371,7 +462,9 @@ export class AuthService {
 
       const response = await this.fleetbaseClient.getAllDrivers();
       const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
-      const fleetbaseDriver = (drivers || []).find((d: any) => d?.uuid === dto.fleetbaseDriverUuid);
+      const fleetbaseDriver = (drivers || []).find(
+        (d: any) => d?.uuid === invitation.fleetbaseDriverUuid,
+      );
 
       if (!fleetbaseDriver) {
         throw new BadRequestException('Unknown Fleetbase driver UUID - ask an operator to verify provisioning');
@@ -386,10 +479,17 @@ export class AuthService {
           firstName: dto.firstName,
           lastName: dto.lastName,
           phone: dto.phone,
-          fleetbaseDriverUuid: dto.fleetbaseDriverUuid,
+          fleetbaseDriverUuid: invitation.fleetbaseDriverUuid,
           fleetbaseUserUuid: fleetbaseDriver.user_uuid || null,
           fleetbaseDriverPublicId: fleetbaseDriver.public_id || null,
         },
+      });
+
+      // Consommée après coup : si la création du compte échoue, l'invitation
+      // reste utilisable plutôt que d'être perdue pour le transporteur.
+      await this.prisma.driverInvitation.update({
+        where: { id: invitation.id },
+        data: { usedAt: new Date() },
       });
 
       this.logger.log(`Driver account registered: ${driver.id}`);
@@ -441,17 +541,17 @@ export class AuthService {
     });
 
     if (!driver) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, driver.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     if (!driver.active) {
-      throw new UnauthorizedException('Account is inactive');
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
 
     await this.prisma.driverAccount.update({

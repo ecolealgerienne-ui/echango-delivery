@@ -1,8 +1,13 @@
 import { Controller, Get, Post, Param, Body, Request, Query } from '@nestjs/common';
+import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { CommerçantService } from './commercant.service';
+import { Persona } from '../common/decorators/persona.decorator';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 
+// Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
+// E4) : un jeton transporteur ou flotte y était structurellement valide.
+@Persona('merchant')
 @Controller('commercant')
 export class CommerçantController {
   constructor(private commercantService: CommerçantService) {}
@@ -13,7 +18,7 @@ export class CommerçantController {
   }
 
   @Get('commandes/:id')
-  async getOrderDetail(@Request() req: any, @Param('id') orderId: string) {
+  async getOrderDetail(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.getOrderDetail(req.user.id, orderId);
   }
 
@@ -23,12 +28,12 @@ export class CommerçantController {
   }
 
   @Post('commandes/:id/annuler')
-  async cancelOrder(@Request() req: any, @Param('id') orderId: string) {
+  async cancelOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.cancelOrder(req.user.id, orderId);
   }
 
   @Get('commandes/:id/suivi')
-  async getOrderTracking(@Request() req: any, @Param('id') orderId: string) {
+  async getOrderTracking(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.getOrderTracking(req.user.id, orderId);
   }
 

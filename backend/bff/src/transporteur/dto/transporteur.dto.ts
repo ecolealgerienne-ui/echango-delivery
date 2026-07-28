@@ -1,5 +1,6 @@
 import {
   IsString,
+  Matches,
   IsOptional,
   IsBoolean,
   IsNumber,
@@ -7,9 +8,24 @@ import {
   IsIn,
   IsObject,
   ArrayMinSize,
+  ArrayMaxSize,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+
+/**
+ * Identifiants Fleetbase acceptés : uuid (8-4-4-4-12) ou public_id
+ * (`order_xxx`, `driver_xxx`, `place_xxx`…). Aucun des deux ne contient de
+ * slash, de point ou d'espace.
+ *
+ * Cette contrainte n'est pas cosmétique : ces valeurs finissent interpolées
+ * dans une URL Fleetbase appelée avec le token de service. Sans elle,
+ * `"../../ORDER_X/cancel"` détournait la requête vers une autre commande
+ * (revue E3). Le client HTTP ré-encode aussi les segments — deux barrières,
+ * pour qu'un futur appelant qui oublierait l'une ne rouvre pas la faille.
+ */
+export const FLEETBASE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class UpdatePositionDto {
   @Type(() => Number)
@@ -69,6 +85,13 @@ export const DELIVERY_FAILURE_REASONS = [
   'autre',
 ] as const;
 
+/**
+ * ~7 Mo de base64 ≈ 5 Mo d'image — au-delà, la borne HTTP de main.ts
+ * (MAX_REQUEST_BODY) rendrait un 413 opaque. Refuser ici donne une erreur de
+ * validation lisible, et empêche de garder en mémoire une charge non bornée.
+ */
+export const MAX_PHOTO_BASE64_LENGTH = 7_000_000;
+
 export class ReportDeliveryFailureDto {
   @IsIn(DELIVERY_FAILURE_REASONS as unknown as string[])
   reason: string;
@@ -80,6 +103,9 @@ export class ReportDeliveryFailureDto {
 
   @IsOptional()
   @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, {
+    message: 'waypointUuid doit être un identifiant Fleetbase valide',
+  })
   waypointUuid?: string;
 
   // Base64-encoded image. The Fleetbase capture-photo controller accepts
@@ -87,13 +113,21 @@ export class ReportDeliveryFailureDto {
   // JSON endpoint.
   @IsOptional()
   @IsString()
+  @MaxLength(MAX_PHOTO_BASE64_LENGTH, {
+    message: 'Photo trop volumineuse (5 Mo maximum)',
+  })
   photo?: string;
 }
 
 export class CapturePhotoDto {
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
+  @MaxLength(MAX_PHOTO_BASE64_LENGTH, {
+    each: true,
+    message: 'Photo trop volumineuse (5 Mo maximum)',
+  })
   photos: string[];
 
   @IsOptional()
@@ -103,6 +137,9 @@ export class CapturePhotoDto {
 
   @IsOptional()
   @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, {
+    message: 'subjectId doit être un identifiant Fleetbase valide',
+  })
   subjectId?: string;
 }
 

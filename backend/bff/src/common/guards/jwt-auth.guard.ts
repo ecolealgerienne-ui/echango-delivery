@@ -1,17 +1,31 @@
-import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AuthGuard } from '@nestjs/passport';
 import { JwtService } from '@nestjs/jwt';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
+/**
+ * Vérifie le jeton Bearer et pose `request.user`.
+ *
+ * N'étend plus `AuthGuard('jwt')` : la version précédente surchargeait
+ * `canActivate` sans jamais appeler `super.canActivate()`, si bien que Passport
+ * et `JwtStrategy` n'étaient jamais sollicités. La stratégie était donc du code
+ * mort — un piège classique, puisqu'une modification faite là en croyant
+ * durcir l'authentification n'aurait eu aucun effet (revue F15). La stratégie a
+ * été supprimée et l'héritage avec.
+ */
 @Injectable()
-export class JwtAuthGuard extends AuthGuard('jwt') {
-  constructor(private reflector: Reflector, private jwtService: JwtService) {
-    super();
-  }
+export class JwtAuthGuard implements CanActivate {
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly jwtService: JwtService,
+  ) {}
 
-  canActivate(context: ExecutionContext) {
-    // Check if endpoint is public
+  canActivate(context: ExecutionContext): boolean {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -30,19 +44,23 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     const [scheme, token] = authHeader.split(' ');
 
-    if (scheme !== 'Bearer') {
+    if (scheme !== 'Bearer' || !token) {
       throw new UnauthorizedException('Invalid authorization scheme');
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      // `algorithms` explicite : sans contrainte, la bibliothèque accepte tout
+      // algorithme annoncé par le jeton lui-même. Le défaut de `jsonwebtoken`
+      // écarte déjà `alg:none`, mais le rendre explicite coûte une ligne et
+      // supprime la dépendance à ce défaut.
+      const payload = this.jwtService.verify(token, { algorithms: ['HS256'] });
       request.user = {
         id: payload.sub,
         email: payload.email,
         type: payload.type,
       };
       return true;
-    } catch (error) {
+    } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
   }

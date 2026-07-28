@@ -1,4 +1,5 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, Matches, IsInt, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class MerchantRegisterDto {
   @IsEmail()
@@ -78,8 +79,18 @@ export class FleetLoginDto {
 // out-of-band. Registering here just links an Echango account to that
 // already-existing Driver - it never creates one.
 export class DriverRegisterDto {
+  /**
+   * Jeton d'invitation remis par un opérateur Echango, hors bande.
+   *
+   * Remplace le `fleetbaseDriverUuid` que l'appelant fournissait lui-même :
+   * cet uuid est lisible par n'importe quel commerçant sur ses propres
+   * commandes, si bien que l'inscription revenait à « premier arrivé, premier
+   * servi » sur l'identité d'un transporteur (revue C2). Le driver visé est
+   * désormais figé à l'émission de l'invitation, côté serveur.
+   */
   @IsString()
-  fleetbaseDriverUuid: string;
+  @MinLength(20)
+  invitationToken: string;
 
   @IsEmail()
   email: string;
@@ -107,4 +118,27 @@ export class DriverLoginDto {
 
   @IsString()
   password: string;
+}
+
+/**
+ * Émission d'une invitation transporteur (action opérateur).
+ */
+export class CreateDriverInvitationDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{1,64}$/, {
+    message: 'fleetbaseDriverUuid doit être un identifiant Fleetbase valide',
+  })
+  fleetbaseDriverUuid: string;
+
+  /** Restreint l'invitation à cet email. Recommandé, non obligatoire. */
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(90)
+  validForDays?: number;
 }

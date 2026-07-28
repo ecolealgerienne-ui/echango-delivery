@@ -155,6 +155,48 @@ class BffApiClient {
     }
   }
 
+  /// Inscription transporteur, sur invitation d'un opérateur.
+  ///
+  /// Le driver visé est porté par le jeton d'invitation, plus par la requête :
+  /// l'ancienne version laissait l'appelant désigner n'importe quel
+  /// `driverUuid`, ce qui permettait de s'enregistrer à la place d'un vrai
+  /// transporteur (revue de sécurité C2).
+  Future<Map<String, dynamic>> registerDriverWithInvitation({
+    required String invitationToken,
+    required String email,
+    required String password,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) async {
+    try {
+      final response = await _httpClient.post(
+        Uri.parse('$baseUrl/auth/transporteur/register'),
+        headers: _buildHeaders(),
+        body: jsonEncode({
+          'invitationToken': invitationToken,
+          'email': email,
+          'password': password,
+          if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
+          if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
+          if (phone != null && phone.isNotEmpty) 'phone': phone,
+        }),
+      );
+      final data = _parseResponse(response);
+      if (data != null && data['token'] != null) {
+        await _saveToken(data['token'] as String);
+      }
+      return (data ?? <String, dynamic>{}) as Map<String, dynamic>;
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw AppException(
+        code: AppError.networkError,
+        message: _networkErrorMessage(e),
+        originalError: e,
+      );
+    }
+  }
+
   /// ⚠️ NON IMPLÉMENTÉ CÔTÉ BFF au 28/07/2026 — cet appel renverra 404.
   /// La connexion par téléphone/OTP est bien au périmètre spec
   /// (specs_app_transporteur.md §2), mais son arbitrage MVP vs V2 fait partie

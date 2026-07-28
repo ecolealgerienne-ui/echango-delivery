@@ -90,12 +90,46 @@ pass "BFF joignable"
 # Vérifie au passage que le BFF sait parler à Fleetbase : registerDriver()
 # appelle getAllDrivers() pour confirmer que l'UUID existe réellement. Un
 # échec ici peut donc venir du BFF *ou* de la config Fleetbase (token Sanctum).
-REGISTER_BODY=$(jq -n \
-  --arg uuid "$DRIVER_UUID" --arg email "$EMAIL" --arg pw "$PASSWORD" \
-  '{fleetbaseDriverUuid:$uuid, email:$email, password:$pw, firstName:"Test", lastName:"Driver"}')
+# L'inscription transporteur exige désormais une INVITATION émise par un
+# opérateur (correction de sécurité C2 : l'ancienne version laissait n'importe
+# qui s'enregistrer sur n'importe quel driver dont il connaissait l'uuid).
+# L'émission est réservée au persona `fleet` : il faut donc un compte flotte.
+FLEET_EMAIL="${FLEET_EMAIL:-flotte-test-$RANDOM@echango.local}"
+FLEET_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/flotte/register" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" \
+     '{email:$e, password:$p, businessName:"Flotte de test"}')" \
+  | jq -r '.token // empty')
 
-REGISTER_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
-  -H 'Content-Type: application/json' -d "$REGISTER_BODY")
+if [ -z "$FLEET_TOKEN" ]; then
+  FLEET_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/flotte/login" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
+    | jq -r '.token // empty')
+fi
+[ -n "$FLEET_TOKEN" ] || fail "impossible d'obtenir un compte opérateur (flotte)" "-"
+pass "opérateur — compte flotte obtenu (émetteur d'invitations)"
+
+INVITE=$(curl -sS -X POST "$BFF_URL/auth/transporteur/invitation" \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $FLEET_TOKEN" \
+  -d "$(jq -n --arg u "$DRIVER_UUID" --arg e "$EMAIL" \
+     '{fleetbaseDriverUuid:$u, email:$e}')")
+INVITE_TOKEN=$(echo "$INVITE" | jq -r '.invitationToken // empty')
+
+REGISTER_RESP=""
+if [ -n "$INVITE_TOKEN" ]; then
+  pass "invitation émise pour le driver"
+  REGISTER_BODY=$(jq -n \
+    --arg t "$INVITE_TOKEN" --arg email "$EMAIL" --arg pw "$PASSWORD" \
+    '{invitationToken:$t, email:$email, password:$pw, firstName:"Test", lastName:"Driver"}')
+  REGISTER_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
+    -H 'Content-Type: application/json' -d "$REGISTER_BODY")
+else
+  # Driver déjà lié : l'émission est refusée, c'est le cas normal en rejeu.
+  echo "$INVITE" | grep -q 'already has an Echango account' \
+    && REGISTER_RESP='{"message":"This driver is already linked to an account"}' \
+    || fail "émission d'invitation échouée" "$INVITE"
+fi
 
 if echo "$REGISTER_RESP" | jq -e '.token' >/dev/null 2>&1; then
   pass "register — compte créé et lié au Driver Fleetbase"

@@ -49,6 +49,27 @@ export class FleetbaseApiClient {
     });
   }
 
+
+  /**
+   * Encode un identifiant destiné à un segment d'URL Fleetbase.
+   *
+   * ⚠️ Sans ça, un identifiant contrôlé par le client détourne la requête vers
+   * une autre route, exécutée avec le token de service qui a tous les droits
+   * sur l'organisation (revue E3/M8). Exemple réel :
+   * `subjectId = "../../ORDER_X/cancel"` transforme
+   * `/v1/orders/ORDER_A/capture-photo/<subjectId>` en
+   * `/v1/orders/ORDER_X/cancel` après normalisation par le serveur amont — le
+   * contrôle d'appartenance ayant porté sur ORDER_A.
+   *
+   * Deux barrières, volontairement redondantes : les DTO valident le format en
+   * entrée, et cette fonction ré-encode à la sortie. Une seule des deux
+   * suffirait aujourd'hui ; les deux garantissent qu'un nouvel appelant qui
+   * oublierait la validation ne rouvre pas la faille.
+   */
+  private seg(value: string): string {
+    return encodeURIComponent(value);
+  }
+
   /**
    * Call the PUBLIC FleetOps API (`/v1`, middleware `fleetbase.api`) as
    * opposed to the internal one (`/int/v1`, middleware `fleetbase.protected`).
@@ -134,7 +155,7 @@ export class FleetbaseApiClient {
    */
   async createCustomer(vendorUuid: string, email: string, firstName: string, lastName: string) {
     try {
-      const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/personnels`, {
+      const response = await this.callFleetOps('POST', `/vendors/${this.seg(vendorUuid)}/personnels`, {
         email,
         name: `${firstName} ${lastName}`.trim(),
         type: 'customer',
@@ -298,7 +319,7 @@ export class FleetbaseApiClient {
    */
   async getOrder(orderUuid: string) {
     try {
-      const response = await this.callFleetOps('GET', `/orders/${orderUuid}`);
+      const response = await this.callFleetOps('GET', `/orders/${this.seg(orderUuid)}`);
       return response.data;
     } catch (error) {
       this.logger.error(`Get order failed: ${error.message}`);
@@ -457,7 +478,7 @@ export class FleetbaseApiClient {
     driverPublicId: string,
     position: { latitude: number; longitude: number; altitude?: number; heading?: number; speed?: number },
   ) {
-    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverPublicId}/track`, position);
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${this.seg(driverPublicId)}/track`, position);
     return response.data;
   }
 
@@ -467,7 +488,7 @@ export class FleetbaseApiClient {
    * blind toggle would desync if a request were retried.
    */
   async toggleDriverOnline(driverPublicId: string, online: boolean) {
-    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverPublicId}/toggle-online`, { online });
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${this.seg(driverPublicId)}/toggle-online`, { online });
     return response.data;
   }
 
@@ -479,7 +500,7 @@ export class FleetbaseApiClient {
    */
   async startOrder(orderPublicId: string, assignDriverPublicId?: string) {
     const body = assignDriverPublicId ? { assign: assignDriverPublicId } : {};
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/start`, body);
+    const response = await this.callFleetOpsPublic('POST', `/orders/${this.seg(orderPublicId)}/start`, body);
     return response.data;
   }
 
@@ -502,7 +523,7 @@ export class FleetbaseApiClient {
   async getNextActivities(orderPublicId: string, waypoint?: string) {
     const response = await this.callFleetOpsPublic(
       'GET',
-      `/orders/${orderPublicId}/next-activity`,
+      `/orders/${this.seg(orderPublicId)}/next-activity`,
       undefined,
       waypoint ? { waypoint } : undefined,
     );
@@ -516,7 +537,7 @@ export class FleetbaseApiClient {
   async updateOrderActivity(orderPublicId: string, activity: any, proof?: string) {
     const body: any = { activity };
     if (proof) body.proof = proof;
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/update-activity`, body);
+    const response = await this.callFleetOpsPublic('POST', `/orders/${this.seg(orderPublicId)}/update-activity`, body);
     return response.data;
   }
 
@@ -527,8 +548,8 @@ export class FleetbaseApiClient {
    */
   async captureOrderPhoto(orderPublicId: string, photos: string[], remarks?: string, subjectId?: string) {
     const path = subjectId
-      ? `/orders/${orderPublicId}/capture-photo/${subjectId}`
-      : `/orders/${orderPublicId}/capture-photo`;
+      ? `/orders/${this.seg(orderPublicId)}/capture-photo/${this.seg(subjectId)}`
+      : `/orders/${this.seg(orderPublicId)}/capture-photo`;
 
     // ── Contournement d'un bug amont Fleetbase ──────────────────────────
     // capturePhoto() résout le bucket ainsi :
@@ -570,12 +591,12 @@ export class FleetbaseApiClient {
    * button maps to.
    */
   async completeOrder(orderPublicId: string) {
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/complete`, {});
+    const response = await this.callFleetOpsPublic('POST', `/orders/${this.seg(orderPublicId)}/complete`, {});
     return response.data;
   }
 
   async getOrderPublic(orderPublicId: string) {
-    const response = await this.callFleetOpsPublic('GET', `/orders/${orderPublicId}`);
+    const response = await this.callFleetOpsPublic('GET', `/orders/${this.seg(orderPublicId)}`);
     return response.data;
   }
 
@@ -592,7 +613,7 @@ export class FleetbaseApiClient {
    * macro generates (core-api RESTRegistrar).
    */
   async deleteUserDevice(userDeviceId: string) {
-    const response = await this.callFleetOps('DELETE', `/user-devices/${userDeviceId}`);
+    const response = await this.callFleetOps('DELETE', `/user-devices/${this.seg(userDeviceId)}`);
     return response.data;
   }
 

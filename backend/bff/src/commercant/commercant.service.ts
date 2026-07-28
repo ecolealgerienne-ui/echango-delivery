@@ -101,17 +101,25 @@ export class CommerçantService {
     }
   }
 
-  async getOrderDetail(merchantId: string, orderId: string) {
-    this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
-
-    await this.getMerchantWithValidation(merchantId);
-
-    // Accept either identifier: the app may hold the local id returned at
-    // creation, or a Fleetbase one seen in a list.
+  /**
+   * Résout une commande du commerçant par l'un OU l'autre de ses identifiants,
+   * et vérifie l'appartenance.
+   *
+   * ⚠️ Deux identifiants coexistent : le `cuid` local (renvoyé à la création)
+   * et l'`uuid` Fleetbase (présent partout ailleurs). L'app envoie l'uuid, or
+   * `cancelOrder` et `getOrderTracking` cherchaient le cuid — les deux
+   * répondaient donc **404 systématiquement**, et le suivi échouait en
+   * silence côté client (revue archi #3). `getOrderDetail` faisait déjà la
+   * bonne chose ; ce helper évite que les trois divergent à nouveau.
+   *
+   * L'appartenance est décidée **ici**, sur la table locale, jamais sur ce que
+   * renvoie Fleetbase : §2.8 a établi que Fleetbase ignore silencieusement les
+   * filtres non supportés, donc lui demander « quelles commandes sont à ce
+   * commerçant » renverrait toute la compagnie.
+   */
+  private async resolveOwnedOrder(merchantId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
-      where: {
-        OR: [{ id: orderId }, { fleetbaseOrderId: orderId }],
-      },
+      where: { OR: [{ id: orderId }, { fleetbaseOrderId: orderId }] },
       include: { commissions: true },
     });
 
@@ -119,16 +127,24 @@ export class CommerçantService {
       throw new NotFoundException('Order not found');
     }
 
-    // Anti-IDOR: ownership is decided on the local mapping, never on anything
-    // Fleetbase returns — see mergeWithFleetbase().
     if (order.merchantId !== merchantId) {
       this.logger.warn(`Merchant ${merchantId} attempted to access order ${orderId}`);
       throw new ForbiddenException('You do not have access to this order');
     }
 
+    return order;
+  }
+
+  async getOrderDetail(merchantId: string, orderId: string) {
+    this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
+
+    await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
     const [merged] = await this.mergeWithFleetbase([order]);
     return { ...merged, commissions: order.commissions };
   }
+
 
 
   /**
@@ -195,39 +211,47 @@ export class CommerçantService {
 
     await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-    });
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    if (!order) {
-      throw new NotFoundException('Order not found');
+    // Le garde de transition lit l'état RÉEL chez Fleetbase, pas le champ
+    // `status` du cache — celui-ci est figé à 'pending' depuis la création et
+    // n'est jamais resynchronisé (revue archi #15). S'y fier laissait annuler
+    // une commande déjà livrée.
+    const [live] = await this.mergeWithFleetbase([order]);
+    const liveStatus = (live as any)?.status ?? null;
+
+    if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
+      throw new BadRequestException(`Commande déjà ${liveStatus}, annulation impossible`);
     }
 
-    if (order.merchantId !== merchantId) {
-      throw new ForbiddenException('You do not have access to this order');
-    }
-
-    if (['completed', 'cancelled', 'failed'].includes(order.status)) {
-      throw new BadRequestException(`Cannot cancel order with status: ${order.status}`);
+    // Annuler pendant qu'un transporteur est en route est une décision qui
+    // engage : le driver peut être devant la porte. Le refus par défaut protège
+    // les deux parties tant que la règle métier n'est pas tranchée
+    // (specs_echango_delivery.md §6) ; l'opérateur, lui, peut toujours annuler
+    // depuis la console Fleetbase.
+    if (liveStatus && ['started', 'enroute'].includes(liveStatus)) {
+      throw new BadRequestException(
+        'Le transporteur est déjà en route. Contactez Echango pour annuler cette livraison.',
+      );
     }
 
     try {
-      // Cancel in Fleetbase
       await this.fleetbaseClient.cancelOrder(order.fleetbaseOrderId);
 
-      // Update local cache
       const updated = await this.prisma.order.update({
-        where: { id: orderId },
+        where: { id: order.id },
         data: { status: 'cancelled' },
       });
 
-      this.logger.log(`Order cancelled: ${orderId}`);
+      this.logger.log(`Order cancelled: ${order.id}`);
       return updated;
     } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       this.logger.error(`Failed to cancel order: ${error.message}`);
       throw new BadRequestException('Failed to cancel order');
     }
   }
+
 
   /**
    * Get secure tracking info for an order
@@ -237,36 +261,23 @@ export class CommerçantService {
 
     await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-    });
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
-    if (order.merchantId !== merchantId) {
-      throw new ForbiddenException('You do not have access to this order');
-    }
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
 
     try {
-      // Fetch latest data from Fleetbase
-      const response = await this.fleetbaseClient.callFleetOps(
-        'GET',
-        `/orders/${order.fleetbaseOrderId}`,
-      );
-
+      const [live] = await this.mergeWithFleetbase([order]);
       return {
         id: order.id,
-        status: order.status,
+        // Statut issu de Fleetbase, pas du cache : c'est tout l'objet du suivi.
+        status: (live as any)?.status ?? null,
         trackingNumber: order.trackingNumber,
-        fleetbaseData: response.data,
+        fleetbaseData: live,
       };
     } catch (error) {
       this.logger.error(`Failed to fetch tracking: ${error.message}`);
       throw new BadRequestException('Failed to fetch tracking information');
     }
   }
+
 
   /**
    * Get merchant's saved addresses, stored as Fleetbase Places owned by

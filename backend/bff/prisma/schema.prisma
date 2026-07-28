@@ -144,6 +144,42 @@ model DriverDeviceToken {
   @@index([active])
 }
 
+// Invitation nominative permettant à un transporteur de créer son compte
+// Echango et de le rattacher à son Driver Fleetbase.
+//
+// Pourquoi ce modèle existe (revue C2) : `POST /auth/transporteur/register`
+// était public et n'exigeait aucune preuve de possession — il suffisait de
+// connaître un `driver_assigned_uuid`, que n'importe quel commerçant lit sur
+// sa propre commande, pour s'enregistrer À LA PLACE du transporteur et prendre
+// ses courses. Le vrai driver se retrouvait alors bloqué, l'uuid étant marqué
+// comme déjà lié.
+//
+// L'invitation rétablit ce que la décision de provisioning manuel supposait
+// déjà (specs_app_transporteur.md §2.1) : c'est l'opérateur qui décide qui
+// devient transporteur, pas le premier arrivé.
+model DriverInvitation {
+  id                  String   @id @default(cuid())
+
+  // Jeton remis au transporteur hors bande (SMS, papier, oral).
+  // Stocké haché : une fuite de la base ne doit pas livrer des invitations
+  // utilisables, exactement comme pour un mot de passe.
+  tokenHash           String   @unique
+
+  // Driver Fleetbase auquel ce jeton donne droit — figé à l'émission, donc
+  // non choisi par l'appelant au moment de l'inscription.
+  fleetbaseDriverUuid String
+
+  // Facultatif : restreint l'invitation à un email précis.
+  email               String?
+
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime @default(now())
+
+  @@index([fleetbaseDriverUuid])
+  @@index([expiresAt])
+}
+
 // Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
 //
 // Stored here rather than in Fleetbase because whether a per-waypoint "failed"

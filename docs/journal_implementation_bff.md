@@ -765,3 +765,84 @@ Deux points de conception à noter :
 Les endpoints par persona restent en place : les scripts de test s'en servent, et seul l'endpoint unifié enrichit la réponse, puisque lui seul détenait l'information à transmettre.
 
 **Retrait du parcours OTP** : les écrans de connexion par téléphone appelaient `/auth/login-phone` et `/auth/verify-otp`, qui n'existent pas côté BFF. Un écran qui ne peut qu'échouer vaut moins que son absence. Toujours au périmètre spec, à réintroduire avec son serveur.
+
+---
+
+## 9. Correction du P0 de la revue croisée (28/07/2026)
+
+Neuf points traités, issus de `docs/rapports_revue_2026-07-28/00_synthese.md`. Le fil conducteur : **une configuration absente ou une entrée non validée ne doit jamais dégrader silencieusement la sécurité**.
+
+### 9.1 Secret JWT — un seul point de configuration, validé au démarrage (C1)
+
+Le défaut était plus profond qu'un mauvais défaut : `AuthModule` enregistrait **son propre** `JwtModule` avec un repli (`'dev-secret'`) différent de celui d'`AppModule` (`'dev-secret-key-change-in-prod'`). La signature et la vérification utilisaient donc deux `JwtService` distincts — sans la variable d'environnement, les secrets divergeaient et 100 % des requêtes authentifiées partaient en 401 sans indice. Avec la variable posée d'un seul côté, c'était pire : ça marchait, avec un secret public.
+
+Corrections : suppression du `JwtModule` local (celui d'`AppModule` est `global: true`), suppression des trois replis, et `validateEnv()` qui **refuse le démarrage** si `JWT_SECRET` manque, fait moins de 32 caractères, ou reprend une des valeurs présentes dans l'historique Git. Le `docker-compose.yml` utilise désormais `${JWT_SECRET:?...}` — Docker refuse de démarrer plutôt que de substituer un défaut.
+
+Au passage, `JwtStrategy` supprimée : `JwtAuthGuard` surchargeait `canActivate` sans jamais appeler `super`, donc Passport n'était jamais sollicité. Le fichier était du code mort **piégeur** — une modification faite là en croyant durcir l'authentification n'aurait rien changé. Le garde n'hérite plus d'`AuthGuard` et fixe explicitement `algorithms: ['HS256']`.
+
+### 9.2 Inscription transporteur — invitation obligatoire (C2)
+
+La revue a démontré une chaîne complète de prise de contrôle : un commerçant lit `driver_assigned_uuid` sur **sa propre** commande, appelle `POST /auth/transporteur/register` avec cet uuid et ses propres identifiants, et devient ce transporteur — le vrai driver se retrouvant bloqué, l'uuid étant marqué comme lié.
+
+La correction rétablit ce que la décision de provisioning manuel supposait déjà : **c'est l'opérateur qui décide qui devient transporteur**. Nouveau modèle `DriverInvitation` ; le driver visé est figé à l'émission, plus fourni par l'appelant. Points de conception :
+
+- **Jeton haché en base** (SHA-256 — 32 octets aléatoires, ni devinables ni réutilisés ailleurs, un sel n'apporterait rien) : une fuite de la base ne livre pas d'invitations utilisables.
+- **Message identique** pour un jeton inconnu, expiré ou déjà consommé — sinon l'endpoint devient un oracle sur les invitations valides.
+- **Consommation après création du compte** : si la création échoue, l'invitation reste utilisable plutôt que d'être perdue pour le transporteur.
+- **Émission réservée au persona `fleet`** (`POST /auth/transporteur/invitation`).
+
+### 9.3 Injection de chemin vers le token de service (E3/M8)
+
+`subjectId = "../../ORDER_X/cancel"` transformait `/v1/orders/ORDER_A/capture-photo/<subjectId>` en `/v1/orders/ORDER_X/cancel` après normalisation amont — exécuté avec le token de service qui a tous les droits sur l'organisation. Le contrôle d'appartenance portait sur ORDER_A pendant que la requête partait vers ORDER_X.
+
+**Deux barrières volontairement redondantes** : validation en entrée (`@Matches(FLEETBASE_ID_PATTERN)` sur les DTO, `FleetbaseIdPipe` sur les `@Param('id')` des trois modules — un `@Param` n'est pas couvert par le `ValidationPipe` global) et ré-encodage en sortie (`encodeURIComponent` sur tous les segments interpolés du client Fleetbase). Une seule suffirait aujourd'hui ; les deux garantissent qu'un futur appelant qui oublierait la validation ne rouvre pas la faille.
+
+### 9.4 Garde de persona unifié (E4)
+
+`CommerçantController` était le seul des trois à ne pas vérifier `req.user.type`. Il n'était protégé que par une propriété **non voulue** du schéma — les `cuid` de tables différentes ne se rencontrent pas, donc la recherche échouait en 404. Une garantie probabiliste, qui tombait au premier compte multi-profils.
+
+Décorateur `@Persona(...)` + `PersonaGuard` global, appliqués aux trois contrôleurs et à `POST /auth/device-token` (qui écrit dans `DeviceToken`, lié à `MerchantAccount`). Les trois helpers dupliqués disparaissent, et l'oubli sur une route future devient visible.
+
+### 9.5 Limitation de débit, ciblée par nature de risque (E5)
+
+Un plafond uniforme sur `/auth` aurait cassé les scripts de test (13 appels d'auth par exécution) sans gain : **personne ne bruteforce un endpoint d'inscription**. Deux plafonds distincts :
+
+- **connexion : 5/minute** — laisse place aux fautes de frappe, rend un dictionnaire inexploitable ;
+- **inscription : 10/heure** — le risque y est la pollution (chaque inscription crée un `Vendor` Fleetbase durable), pas la devinette.
+
+`ThrottlerGuard` est enregistré **avant** `JwtAuthGuard` : borner le débit avant tout travail coûteux, sinon chaque requête rejetée fait quand même payer une vérification de jeton.
+
+### 9.6 Taille de corps et bornes photo (M11 / archi #4)
+
+Express plafonne le JSON à **100 ko** par défaut : toute vraie photo de téléphone (1–4 Mo en base64) partait en 413. La preuve de livraison, pourtant validée côté serveur et pour laquelle le contournement du bug amont Fleetbase avait été payé, était **inutilisable en conditions réelles**. Le test qui passait au vert envoyait un PNG 1×1 — il ne pouvait pas le révéler.
+
+Deux bornes cohérentes plutôt qu'une : `MAX_REQUEST_BODY` (10 Mo, configurable) protège le processus, `@ArrayMaxSize(5)` + `@MaxLength(7_000_000)` renvoient une erreur de validation lisible au lieu d'un 413 opaque.
+
+**Leçon** : un test qui utilise une donnée minimale valide vérifie le chemin, pas la charge réelle. Le PNG 1×1 était le bon choix pour tester l'API — pas pour conclure que la fonctionnalité marche.
+
+### 9.7 Annulation et suivi commerçant (archi #3 + #15)
+
+Deux identifiants coexistent — le `cuid` local et l'`uuid` Fleetbase — et l'app envoie l'uuid. `cancelOrder` et `getOrderTracking` cherchaient le cuid : **404 systématique**, le suivi échouant en silence côté client. Ma correction du 28/07 n'avait touché que `getOrderDetail`.
+
+`resolveOwnedOrder()` factorise la résolution (les deux identifiants) et le contrôle d'appartenance, pour que les trois méthodes ne divergent plus. Deux corrections s'y ajoutent :
+
+- **Le garde de transition lit l'état réel chez Fleetbase**, plus le champ `status` du cache — figé à `'pending'` depuis la création et jamais resynchronisé, il laissait annuler une commande déjà livrée.
+- **Annulation refusée après `started`/`enroute`** : le transporteur peut être devant la porte. Le refus protège les deux parties tant que la règle métier n'est pas tranchée (§6), et l'opérateur garde la main depuis la console.
+
+### 9.8 Oracle de timing sur la connexion unifiée (M7)
+
+`loginUnified` n'appelait `bcrypt.compare` que si la ligne existait : ~5 ms pour un email inconnu, ~100 ms pour un email connu. Un ordre de grandeur, mesurable à travers Internet — **et le commentaire du code affirmait le contraire**. C'est le cas le plus instructif de la revue : un commentaire qui décrit une intention peut certifier une propriété que le code n'a pas.
+
+Chemin à coût constant : trois `bcrypt.compare` systématiques, contre le hash réel ou contre un `DUMMY_HASH` calculé au chargement du module. Messages d'échec uniformisés (`INVALID_CREDENTIALS`) — « Email not verified » et « Account is inactive » étaient deux oracles de plus.
+
+### 9.9 Sonde de disponibilité (archi #13)
+
+Le `HEALTHCHECK` du Dockerfile interrogeait `/health`, route inexistante : conteneur `unhealthy` en permanence, redémarrage en boucle selon l'orchestrateur. `HealthController` vérifie la base (`SELECT 1`).
+
+Fleetbase n'est **délibérément pas** vérifié : son indisponibilité dégrade le service sans le rendre inutile, et faire redémarrer le BFF parce qu'un tiers est tombé ne réparerait rien.
+
+### 9.10 État
+
+Le BFF compile, les scripts sont syntaxiquement valides, l'app Flutter est équilibrée. **Rien n'a été exécuté** — pas d'instance dans le sandbox. `scripts/test-driver-auth.sh` a été réécrit pour le parcours par invitation (émission via un compte flotte) et vérifie deux nouveaux contrôles : rejet d'une invitation inventée, et refus qu'un transporteur s'auto-émette une invitation.
+
+**Prérequis avant de relancer les tests** : `npm run prisma:migrate` (nouveau modèle `DriverInvitation`) et un `JWT_SECRET` d'au moins 32 caractères dans `.env` — le service refuse désormais de démarrer sans.
