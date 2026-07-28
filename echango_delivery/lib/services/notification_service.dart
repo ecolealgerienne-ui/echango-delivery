@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
@@ -48,6 +49,15 @@ class NotificationService {
   void Function(String token)? onTokenChanged;
 
   Future<void> initialize() async {
+    // Firebase pas démarré (configuration absente) : ne rien tenter. Sans ce
+    // contrôle, chaque connexion transporteur produit une exception bruyante
+    // pour une fonctionnalité qu'on sait indisponible.
+    if (Firebase.apps.isEmpty) {
+      _available = false;
+      AppLogger.info('NotificationService', 'Firebase absent — push désactivé');
+      return;
+    }
+
     try {
       FirebaseMessaging.onBackgroundMessage(handleBackgroundMessage);
 

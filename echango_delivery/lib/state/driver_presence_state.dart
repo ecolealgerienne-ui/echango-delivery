@@ -71,6 +71,13 @@ class DriverPresenceState extends ChangeNotifier {
     _notifications.onOrderEvent = _onRemoteChange;
     _notifications.onTokenChanged = _registerToken;
 
+    // Ici et pas dans `main()` : l'initialisation demande la permission de
+    // notification, donc elle attend une réponse de l'utilisateur. La placer
+    // avant `runApp` bloquait le démarrage sur un écran noir. Ici, l'interface
+    // est déjà à l'écran et seul le persona concerné est sollicité — un
+    // commerçant n'a rien à voir avec les notifications de course.
+    await _notifications.initialize();
+
     await _syncDeviceToken();
     await refreshAvailability();
 

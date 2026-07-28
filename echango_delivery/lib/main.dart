@@ -8,7 +8,6 @@ import 'config/firebase_options.dart';
 import 'navigation/app_router.dart';
 import 'services/bff_api_client.dart';
 import 'services/location_service.dart';
-import 'services/notification_service.dart';
 import 'state/auth_state.dart';
 import 'state/driver_presence_state.dart';
 import 'state/merchant_order_state.dart';
@@ -20,23 +19,30 @@ Future<void> main() async {
 
   // Firebase est OPTIONNEL au démarrage.
   //
-  // `firebase_options.dart` est encore un gabarit ('YOUR_PROJECT_ID'…) : sans
-  // ce garde-fou, `initializeApp` lève et l'app ne démarre pas du tout, ce qui
-  // empêche de tester connexion et commandes — qui n'ont pourtant aucun besoin
-  // de Firebase. Les notifications push sont un déclencheur de rafraîchissement
+  // Les notifications push sont un déclencheur de rafraîchissement
   // (specs_app_transporteur.md §11.1), pas une dépendance de fonctionnement :
   // quand elles manquent, le repli par interrogation périodique prend le relais
   // (voir DriverPresenceState).
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    await NotificationService().initialize();
-  } catch (e) {
+  //
+  // ⚠️ Rien ici ne doit demander d'autorisation ni attendre l'utilisateur.
+  // `NotificationService.initialize()` était appelé à cet endroit et sollicite
+  // la permission de notification : `runApp` attendait donc que l'utilisateur
+  // réponde au dialogue système, et l'application restait sur un écran noir
+  // sans jamais rendre la main. L'initialisation a désormais lieu à l'ouverture
+  // d'une session transporteur, c'est-à-dire au seul moment où elle sert.
+  if (DefaultFirebaseOptions.isConfigured) {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (e) {
+      debugPrint('Firebase non initialisé, notifications désactivées : $e');
+    }
+  } else {
     debugPrint(
-      'Firebase non initialisé — notifications push désactivées, '
-      'rafraîchissement par interrogation périodique. '
-      'Renseigner lib/config/firebase_options.dart pour les activer. Détail : $e',
+      'Firebase non configuré (lib/config/firebase_options.dart est un '
+      'gabarit) — notifications push désactivées, rafraîchissement par '
+      'interrogation périodique du BFF.',
     );
   }
 

@@ -1,8 +1,38 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
+/// Configuration Firebase.
+///
+/// ⚠️ Ce fichier est un **gabarit** : les valeurs sont des marqueurs. Le
+/// remplacer par celui que génère `flutterfire configure` pour activer les
+/// notifications push.
 class DefaultFirebaseOptions {
+  /// Marqueur reconnaissable des valeurs non renseignées.
+  static const _placeholder = 'YOUR_';
+
+  /// Faux tant que le gabarit n'a pas été remplacé.
+  ///
+  /// Sans ce contrôle, `Firebase.initializeApp` **réussit** avec ces valeurs :
+  /// elles sont structurellement valides, seule leur authenticité est fausse.
+  /// L'application se retrouvait donc à moitié initialisée — un isolate
+  /// d'arrière-plan créé, une permission demandée à l'utilisateur — pour un
+  /// service qui échouait ensuite sur chaque appel réseau
+  /// (« Please set a valid API key »). Mieux vaut ne pas démarrer Firebase du
+  /// tout que faire semblant.
+  static bool get isConfigured => !currentPlatform.apiKey.startsWith(_placeholder);
+
+  /// Configuration de la plateforme courante.
+  ///
+  /// L'ancienne version renvoyait `web` inconditionnellement : sur Android,
+  /// Firebase recevait donc un `appId` de type web, qu'il n'aurait pas accepté
+  /// même avec de vraies valeurs.
   static FirebaseOptions get currentPlatform {
-    return web;
+    if (kIsWeb) return web;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => android,
+      TargetPlatform.iOS => ios,
+      _ => web,
+    };
   }
 
   static const FirebaseOptions web = FirebaseOptions(
