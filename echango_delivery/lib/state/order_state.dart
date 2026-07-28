@@ -224,24 +224,39 @@ class OrderState extends ChangeNotifier {
   /// Le statut Fleetbase n'est PAS modifié par un signalement (§6.5) : le BFF
   /// joint le rapport à la commande, c'est tout. Fabriquer un statut `failed`
   /// local mentirait sur l'état réel et serait écrasé au rechargement.
+  /// `false` quand le dernier signalement portait une photo que le serveur n'a
+  /// pas réussi à joindre. Le signalement est bien enregistré dans ce cas —
+  /// l'envoi de la preuve est volontairement best-effort côté BFF — mais le
+  /// transporteur doit l'apprendre : il croit sinon avoir fourni un
+  /// justificatif qui ne figure nulle part.
+  bool? _lastPhotoUploaded;
+  bool? get lastPhotoUploaded => _lastPhotoUploaded;
+
   Future<bool> reportDeliveryFailure({
     required String orderId,
     required String reason,
     String? photoBase64,
     String? notes,
     String? waypointUuid,
-  }) =>
-      _mutateOrder(
-        orderId,
-        () => _apiClient.reportDeliveryFailure(
+  }) {
+    _lastPhotoUploaded = null;
+    return _mutateOrder(
+      orderId,
+      () async {
+        final response = await _apiClient.reportDeliveryFailure(
           orderId,
           reason: reason,
           notes: notes,
           waypointUuid: waypointUuid,
           photo: photoBase64,
-        ),
-        'Impossible d\'enregistrer ce signalement',
-      );
+        );
+        if (photoBase64 != null) {
+          _lastPhotoUploaded = response['photoUploaded'] == true;
+        }
+      },
+      'Impossible d\'enregistrer ce signalement',
+    );
+  }
 
   void clearError() {
     _errorMessage = null;

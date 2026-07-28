@@ -203,8 +203,17 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
     if (!context.mounted) return;
 
     if (success) {
+      // Le serveur enregistre le signalement même quand la photo n'a pas pu
+      // être jointe. Le taire laisserait le transporteur croire qu'il a fourni
+      // un justificatif absent du dossier.
+      final photoLost = _photo != null && orderState.lastPhotoUploaded == false;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Échec de livraison signalé')),
+        SnackBar(
+          content: Text(photoLost
+              ? 'Signalement enregistré, mais la photo n\'a pas pu être jointe.'
+              : 'Échec de livraison signalé'),
+          backgroundColor: photoLost ? Colors.orange.shade800 : null,
+        ),
       );
       // Un seul pop : revenir au détail, qui recharge et affiche désormais le
       // signalement. Deux pops renvoyaient à la liste, où rien ne change —
