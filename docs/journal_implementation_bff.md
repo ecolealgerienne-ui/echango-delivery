@@ -700,3 +700,20 @@ Signalé par test réel : le driver déclare un échec, « ça ne marche pas »,
 Corrigé aussi : le double `context.pop()` renvoyait à la liste, où rien ne change, au lieu du détail où le rapport est maintenant affiché. Et l'état local ne fabrique plus un statut `'failed'` inexistant côté serveur — il recharge, plutôt que de mentir puis d'être écrasé au rafraîchissement suivant.
 
 **Leçon** : une fonctionnalité dont l'effet n'est visible nulle part est équivalente, pour l'utilisateur, à une fonctionnalité cassée. Le stockage côté BFF (§6.5) était un choix défendable, mais incomplet tant que rien ne le relisait.
+
+### 7.8 ⚠️ Piège au passage en S3 — le contournement de §6.12 doit être reconfiguré
+
+À traiter **au moment du déploiement VPS**, sinon la preuve de livraison cassera de façon silencieuse.
+
+Rappel du bug amont (§6.12) : `capturePhoto()` lit le bucket depuis la **requête** au lieu de la config. Notre contournement envoie donc `disk` et `filesystems.disks.<disk>.bucket` dans le corps de la requête, avec par défaut `local` et une valeur factice `fleetbase` — ignorée par le disque local, ce qui convient en développement.
+
+**Ce que ça implique en S3** : la valeur envoyée par le BFF **prend le pas** sur la configuration Fleetbase. Laisser les valeurs par défaut ferait écrire dans un bucket nommé `fleetbase` sur le disque `local`, alors même que Fleetbase serait correctement configuré pour S3 — la config serveur serait ignorée sans qu'aucune erreur ne le signale. Il faut donc impérativement renseigner :
+
+```
+FLEETBASE_PROOF_DISK=s3
+FLEETBASE_PROOF_BUCKET=<nom réel du bucket>
+```
+
+**À vérifier en même temps** : si l'amont a corrigé la ligne entre-temps (`config()` au lieu de `$request->input()`), le contournement devient inutile *et nuisible* — il continuerait d'imposer une valeur là où la config serveur devrait décider. Tester d'abord un upload sans ces variables : s'il passe, retirer le contournement de `captureOrderPhoto()`.
+
+C'est le seul endroit du BFF où une valeur d'environnement écrase silencieusement une configuration Fleetbase. Il mérite d'être revu à chaque montée de version.
