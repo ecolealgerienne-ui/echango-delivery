@@ -47,13 +47,22 @@ class OrderDetailScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Expanded + ellipsis : le titre et la puce se
+                          // partagent une largeur fixe, et un public_id long
+                          // faisait déborder la Row (5.7 px sur émulateur).
+                          // Sans contrainte, chaque enfant prend sa taille
+                          // naturelle et la somme peut dépasser l'écran.
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                'Order #${order.publicId}',
-                                style: Theme.of(context).textTheme.headlineSmall,
+                              Expanded(
+                                child: Text(
+                                  'Commande ${order.publicId}',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
+                              const SizedBox(width: 8),
                               Chip(
                                 label: Text(order.status),
                                 backgroundColor: _getStatusColor(order.status),
