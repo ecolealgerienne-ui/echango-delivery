@@ -1051,3 +1051,21 @@ L'affirmation est vraie d'un **badge de statut**, fausse d'un **signalement**. U
 L'écran numérote à rebours — le plus récent porte le numéro le plus élevé — et affiche le compte dans l'en-tête. C'est cette information qui change la décision, et elle se perdrait dans une liste qu'il faudrait dénombrer soi-même.
 
 Défaut corrigé au même endroit : `_ProofImage` construisait son `Future` dans `build()`. Un `FutureBuilder` ainsi alimenté relance sa requête à chaque reconstruction — sans conséquence visible avec une seule photo, coûteux dès qu'il y en a une par tentative. Le futur est mémorisé dans l'état et recalculé seulement si l'URL change.
+
+### 11.9 Le fichier était écrit là où aucun serveur web ne le sert
+
+Le relais du BFF fonctionnait, mais Fleetbase répondait `400` avec son 404 masqué :
+
+```
+{"errors":["There is nothing to see here."]}
+```
+
+Cause structurelle, pas accidentelle. Le contournement du bug de bucket (§6.12) écrivait sur le disque **`local`**, dont la racine est `storage/app` — répertoire qu'aucun serveur web ne sert. Fleetbase construit pourtant l'URL du fichier en `/storage/...`, qui suppose le disque **`public`** et son lien symbolique vers `public/storage`. Le fichier était donc correctement écrit, et introuvable par HTTP par construction.
+
+Le défaut n'était visible d'aucune façon jusqu'ici : l'upload réussissait, la ressource renvoyait une URL d'apparence normale, et rien ne signalait qu'elle ne mènerait nulle part. Il a fallu relayer le fichier pour que l'erreur apparaisse.
+
+`FLEETBASE_PROOF_DISK` vaut désormais `public` par défaut. **Prérequis** : `php artisan storage:link` côté Fleetbase — sans ce lien, le disque public écrit correctement et reste tout aussi inaccessible. Le message d'avertissement du BFF nomme les deux causes, pour que le prochain diagnostic ne reparte pas de zéro.
+
+Les preuves déjà enregistrées sur le disque `local` restent inaccessibles : leur URL est en base, le fichier est sur le disque, mais aucune route ne les relie.
+
+Repère : **une URL renvoyée par un service ne prouve pas qu'elle est servie.** Ici l'émetteur du fichier et le serveur du fichier sont deux composants distincts d'une même application, configurés séparément.

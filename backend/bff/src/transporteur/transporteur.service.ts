@@ -207,7 +207,12 @@ export class TransporteurService {
     try {
       return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
     } catch (error) {
-      this.logger.warn(`Lecture de la preuve ${failureId} impossible : ${error.message}`);
+      this.logger.warn(
+        `Lecture de la preuve ${failureId} impossible (${failure.proofUrl}) : ${error.message}. ` +
+          'Si Fleetbase répond « There is nothing to see here », le fichier existe mais ' +
+          'aucune route ne le sert : vérifier FLEETBASE_PROOF_DISK=public et que ' +
+          '`php artisan storage:link` a bien été exécuté côté Fleetbase.',
+      );
       throw new NotFoundException('Preuve indisponible');
     }
   }

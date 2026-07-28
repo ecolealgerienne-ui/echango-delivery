@@ -681,7 +681,16 @@ export class FleetbaseApiClient {
     // pile Laravel, donc une chaîne vide arrive à `null` au contrôleur et
     // reproduit exactement le TypeError qu'on cherche à éviter (constaté au
     // 2e essai, 28/07). Le disque `local` ignore la valeur de toute façon.
-    const disk = process.env.FLEETBASE_PROOF_DISK || 'local';
+    // Disque `public` et non `local` : la racine de `local` est
+    // `storage/app`, qu'aucun serveur web ne sert. Fleetbase construit
+    // pourtant une URL `/storage/...`, qui suppose le disque public et son
+    // lien symbolique vers `public/storage`. Avec `local`, le fichier était
+    // donc bien écrit — et introuvable par HTTP, avec le 404 masqué
+    // « There is nothing to see here » (constaté en réel le 28/07/2026).
+    //
+    // ⚠️ Prérequis côté Fleetbase : `php artisan storage:link`. Sans ce lien,
+    // le disque public écrit correctement mais reste tout aussi inaccessible.
+    const disk = process.env.FLEETBASE_PROOF_DISK || 'public';
     const bucket = process.env.FLEETBASE_PROOF_BUCKET || 'fleetbase';
 
     const body: any = {
