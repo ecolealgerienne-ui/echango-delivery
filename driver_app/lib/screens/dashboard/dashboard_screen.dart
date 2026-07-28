@@ -112,14 +112,35 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
   @override
   Widget build(BuildContext context) {
+    final errorMessage = context.watch<OrderState>().errorMessage;
+
     return Column(
       children: [
+        // Sans ça, un échec de chargement est indiscernable d'une liste
+        // réellement vide — c'est exactement ce qui rend un premier lancement
+        // impossible à diagnostiquer.
+        if (errorMessage != null)
+          Container(
+            width: double.infinity,
+            color: Theme.of(context).colorScheme.errorContainer,
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              errorMessage,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
         TabBar(
           controller: _tabController,
+          // Les trois catégories de la spec §4.1. « Opportunités » remplace
+          // « Pending » : ce sont les commandes adhoc diffusées à proximité,
+          // que le driver peut réclamer — elles ne lui sont pas encore
+          // assignées, donc invisibles dans une vue « mes commandes ».
           tabs: const [
-            Tab(text: 'Pending'),
-            Tab(text: 'Active'),
-            Tab(text: 'Completed'),
+            Tab(text: 'Opportunités'),
+            Tab(text: 'En cours'),
+            Tab(text: 'Historique'),
           ],
         ),
         Expanded(
@@ -127,13 +148,18 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             controller: _tabController,
             children: [
               _buildOrdersList(
-                context.watch<OrderState>().pendingOrders,
+                context.watch<OrderState>().adhocOrders,
+                emptyLabel: 'Aucune opportunité à proximité',
+                emptyHint: 'Vérifier que vous êtes en ligne : le dispatch '
+                    'est géographique.',
               ),
               _buildOrdersList(
                 context.watch<OrderState>().activeOrders,
+                emptyLabel: 'Aucune commande en cours',
               ),
               _buildOrdersList(
-                context.watch<OrderState>().completedOrders,
+                context.watch<OrderState>().historyOrders,
+                emptyLabel: 'Aucune commande terminée',
               ),
             ],
           ),
@@ -142,9 +168,37 @@ class _OrdersListScreenState extends State<OrdersListScreen>
     );
   }
 
-  Widget _buildOrdersList(List<dynamic> orders) {
+  Widget _buildOrdersList(
+    List<dynamic> orders, {
+    String emptyLabel = 'Aucune commande',
+    String? emptyHint,
+  }) {
+    // RefreshIndicator exige un enfant défilable pour capter le geste : sans
+    // AlwaysScrollableScrollPhysics sur une liste vide, tirer vers le bas ne
+    // déclenche rien — précisément le cas où l'on veut recharger.
     if (orders.isEmpty) {
-      return Center(
+      return RefreshIndicator(
+        onRefresh: () => context.read<OrderState>().loadOrders(),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: _emptyState(emptyLabel, emptyHint),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => context.read<OrderState>().loadOrders(),
+      child: _ordersListView(orders),
+    );
+  }
+
+  Widget _emptyState(String emptyLabel, String? emptyHint) {
+    return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -155,17 +209,32 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             ),
             const SizedBox(height: 16),
             Text(
-              'No orders yet',
+              emptyLabel,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: Colors.grey[600],
                   ),
             ),
+            if (emptyHint != null) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  emptyHint,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[500],
+                      ),
+                ),
+              ),
+            ],
           ],
-        ),
-      );
-    }
+      ),
+    );
+  }
 
+  Widget _ordersListView(List<dynamic> orders) {
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(8),
       itemCount: orders.length,
       itemBuilder: (context, index) {

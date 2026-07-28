@@ -9,6 +9,8 @@ class OrderState extends ChangeNotifier {
   final BffApiClient _apiClient;
 
   List<Order> _orders = [];
+  List<Order> _adhocOrders = [];
+  List<Order> _historyOrders = [];
   Order? _selectedOrder;
   bool _isLoading = false;
   String? _errorMessage;
@@ -20,26 +22,42 @@ class OrderState extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
+  /// Commandes assignées à ce driver et non terminées.
+  List<Order> get activeOrders => _orders;
+
+  /// Opportunités diffusées par le dispatch géospatial, pas encore réclamées
+  /// (specs_app_transporteur.md §4.1). Elles ne sont assignées à personne :
+  /// une vue filtrée sur les commandes du driver ne les montrerait jamais.
+  List<Order> get adhocOrders => _adhocOrders;
+
+  /// Commandes terminées ou annulées.
+  List<Order> get historyOrders => _historyOrders;
+
   List<Order> get pendingOrders =>
       _orders.where((order) => order.isPending).toList();
-  List<Order> get activeOrders =>
-      _orders.where((order) => order.isInProgress).toList();
-  List<Order> get completedOrders =>
-      _orders.where((order) => order.isCompleted).toList();
+  List<Order> get completedOrders => _historyOrders;
 
-  /// Charge les commandes du driver.
+  /// Charge les trois catégories en un seul appel.
   ///
-  /// [type] : 'assigned' (en cours), 'adhoc' (opportunités diffusées) ou
-  /// 'history'. Le filtrage par driver est fait côté BFF, jamais par
-  /// paramètre serveur — Fleetbase ignore les filtres non supportés et
-  /// renverrait toute la compagnie.
-  Future<void> loadOrders({String type = 'assigned'}) async {
+  /// Le BFF les renvoie ensemble sur `GET /transporteur/commandes` sans
+  /// paramètre `type` — c'est ce qu'attend l'écran liste (§4.1). L'ancienne
+  /// version ne demandait que `type=assigned` : les opportunités adhoc
+  /// n'étaient donc jamais chargées, et l'écran restait vide tant qu'aucune
+  /// commande n'était déjà assignée au driver.
+  ///
+  /// Le filtrage par driver est fait côté BFF, jamais par paramètre serveur —
+  /// Fleetbase ignore les filtres non supportés et renverrait toute la
+  /// compagnie (journal §2.8/§6.4).
+  Future<void> loadOrders() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      _orders = await _apiClient.getOrders(type: type);
+      final buckets = await _apiClient.getOrderBuckets();
+      _orders = buckets['active'] ?? [];
+      _adhocOrders = buckets['adhoc'] ?? [];
+      _historyOrders = buckets['history'] ?? [];
     } on AppException catch (e) {
       _errorMessage = e.message;
     } catch (e) {
