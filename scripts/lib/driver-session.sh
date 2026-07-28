@@ -40,6 +40,19 @@ _existing_driver_email() { # driver_uuid -> email sur stdout, vide si aucun
     2>/dev/null | tr -d '[:space:]' || true
 }
 
+# Jeton d'un autre persona, utile pour vérifier le cloisonnement des rôles.
+#
+# Préférable à un jeton forgé localement : forger suppose de connaître le
+# JWT_SECRET du serveur, et le lire dans un .env ne garantit pas que c'est
+# celui du conteneur en cours d'exécution. Quand les deux diffèrent, le jeton
+# est rejeté à la vérification de signature (401) et le contrôle de rôle n'est
+# jamais atteint — le test passe alors sans rien démontrer. Un jeton émis par
+# le serveur lui-même est toujours valide, donc toujours concluant.
+obtain_operator_token() { # -> renseigne OPERATOR_TOKEN
+  OPERATOR_TOKEN=$(_operator_token)
+  [ -n "$OPERATOR_TOKEN" ]
+}
+
 # Compte opérateur (persona `fleet`), seul habilité à émettre une invitation.
 _operator_token() { # -> token sur stdout
   local email="operateur-test-$RANDOM@echango.local" token

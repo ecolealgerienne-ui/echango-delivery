@@ -930,3 +930,11 @@ Elle renvoie `false` aussi bien pour « hors ligne » que pour « attribut non c
 Repère général : **une valeur par défaut dans une ressource amont détruit l'information d'absence**. Chercher `data_get($this, 'x', <défaut>)` avant de traiter un champ Fleetbase comme faisant autorité.
 
 Cause encore non tranchée à ce stade : si la colonne vaut bien `1` en base, le défaut de la ressource explique tout ; si elle vaut `0`, l'écriture elle-même est en cause et le `public_id` utilisé pour la bascule est le premier suspect. Le script affiche désormais la commande de vérification en cas d'échec.
+
+### 10.11 Un test de cloisonnement qui ne pouvait pas conclure
+
+Le contrôle « un jeton valide d'un autre persona doit être refusé » forgeait son jeton avec le `JWT_SECRET` lu dans `backend/bff/.env`. Rien ne garantit que c'est celui du conteneur — `docker-compose.yml` le prend de l'environnement du shell. Quand les deux diffèrent, le jeton forgé est rejeté à la **vérification de signature** (401), et le contrôle de rôle n'est jamais atteint : le test ne démontrait rien. Il le disait au moins honnêtement (« non concluant »), mais un contrôle de sécurité qui ne conclut jamais ne protège de rien.
+
+Remplacé par un jeton **émis par le serveur** (persona `fleet`, déjà créé pour les invitations) : toujours valide, donc le 403 obtenu prouve bien que c'est le persona qui bloque, et non la signature.
+
+Repère : dès qu'un test doit reproduire un secret du serveur pour fabriquer une entrée valide, il teste aussi la synchronisation de ce secret — et échouera pour cette raison-là plutôt que pour celle qu'il annonce. Faire émettre l'entrée par le serveur quand c'est possible.

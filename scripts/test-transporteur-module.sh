@@ -141,31 +141,29 @@ fi
 # contrôle explicite `req.user.type !== 'transporteur'`. C'est précisément ce
 # contrôle qu'on teste ici.
 #
-# On forge le token plutôt que de créer un compte commerçant : l'inscription
-# commerçant crée un Vendor + un Contact côté Fleetbase, des effets de bord
-# qu'un script de test n'a pas à laisser derrière lui. Signer nous-mêmes avec
-# le vrai JWT_SECRET produit exactement ce qu'on veut éprouver — un jeton
-# légitime, du mauvais type.
-JWT_SECRET=$(grep -E '^JWT_SECRET=' backend/bff/.env 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'' || true)
-
-if [ -n "$JWT_SECRET" ] && command -v openssl >/dev/null 2>&1; then
-  b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
-  NOW=$(date +%s)
-  H=$(printf '%s' '{"alg":"HS256","typ":"JWT"}' | b64url)
-  P=$(printf '%s' "{\"sub\":\"fake-merchant-id\",\"email\":\"faux@echango.local\",\"type\":\"merchant\",\"iat\":$NOW,\"exp\":$((NOW+3600))}" | b64url)
-  S=$(printf '%s' "$H.$P" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | b64url)
-  FORGED="$H.$P.$S"
-
+# On prend un persona `fleet` et non `merchant` : l'inscription commerçant crée
+# un Vendor et un Contact côté Fleetbase, des effets de bord qu'un script de
+# test n'a pas à laisser derrière lui. Le garde ne distingue pas les deux — il
+# n'accepte que `transporteur`.
+#
+# Un jeton parfaitement valide, mais d'un autre persona, doit être refusé ici.
+#
+# La version précédente forgeait ce jeton avec le JWT_SECRET lu dans
+# backend/bff/.env. Rien ne garantit que c'est celui du conteneur : quand ils
+# diffèrent, le jeton est rejeté dès la vérification de signature (401) et le
+# contrôle de rôle n'est jamais atteint — le test ne démontrait alors rien, et
+# le disait. Un jeton émis par le serveur est toujours valide, donc le 403
+# ci-dessous prouve bien que c'est le persona qui bloque.
+if obtain_operator_token; then
   CODE=$(curl -sS -o /dev/null -w '%{http_code}' "$BFF_URL/transporteur/profil" \
-    -H "Authorization: Bearer $FORGED")
+    -H "Authorization: Bearer $OPERATOR_TOKEN")
   case "$CODE" in
-    403) pass "token valide mais non-driver rejeté (403)" ;;
-    401) warn "token forgé rejeté en 401 — JWT_SECRET du .env ≠ celui du conteneur ?"
-         echo "    Le contrôle de type n'a donc pas été atteint : non concluant." ;;
-    *)   fail "FUITE : un token de type 'merchant' est accepté (HTTP $CODE)" "-" ;;
+    403) pass "token valide d'un autre persona rejeté (403)" ;;
+    401) fail "le jeton opérateur devrait être valide — 401 inattendu" "-" ;;
+    *)   fail "FUITE : un token de persona 'fleet' est accepté sur /transporteur (HTTP $CODE)" "-" ;;
   esac
 else
-  warn "rejet non-driver non testé (JWT_SECRET introuvable dans backend/bff/.env, ou openssl absent)"
+  warn "cloisonnement des rôles non testé (impossible d'obtenir un compte opérateur)"
 fi
 
 # --- 7. Sans token --------------------------------------------------------
