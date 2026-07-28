@@ -127,53 +127,11 @@ class OrderDetailScreen extends StatelessWidget {
                     ),
                   ],
                   const SizedBox(height: 16),
-                  // Delivery Failure (if exists)
-                  if (order.deliveryFailure != null) ...[
-                    Card(
-                      color: Colors.red.shade50,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.error_outline, color: Colors.red.shade700),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Échec de livraison signalé',
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      color: Colors.red.shade700,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            _buildInfoRow('Motif :', order.deliveryFailure!.reason),
-                            if (order.deliveryFailure!.notes != null)
-                              _buildInfoRow('Notes :', order.deliveryFailure!.notes!),
-                            if (order.deliveryFailure!.photoUrl != null) ...[
-                              const SizedBox(height: 12),
-                              _ProofImage(url: order.deliveryFailure!.photoUrl!),
-                            ],
-                            const SizedBox(height: 8),
-                            // Le statut Fleetbase reste inchangé par un
-                            // signalement (§6.5) : le dire, sinon l'écart
-                            // entre « échec signalé » et « statut enroute »
-                            // passe pour une incohérence.
-                            Text(
-                              'La commande conserve son statut : le signalement '
-                              'est transmis à l\'opérateur, qui décide de la suite.',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Colors.red.shade700,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  // Tous les signalements, du plus récent au plus ancien.
+                  // N'en montrer qu'un effaçait l'historique des tentatives —
+                  // et avec lui les photos des précédentes.
+                  if (order.deliveryFailures.isNotEmpty) ...[
+                    _FailureHistory(failures: order.deliveryFailures),
                     const SizedBox(height: 16),
                   ],
                   // Action Buttons
@@ -183,22 +141,6 @@ class OrderDetailScreen extends StatelessWidget {
             );
           },
         ),
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          Expanded(child: Text(value)),
-        ],
       ),
     );
   }
@@ -521,15 +463,41 @@ class _PlaceBlock extends StatelessWidget {
 /// le fichier, l'app n'atteint jamais Fleetbase directement — l'URL de
 /// stockage pointe sur un hôte inaccessible depuis un téléphone, et surtout
 /// elle n'est protégée par aucune authentification.
-class _ProofImage extends StatelessWidget {
+class _ProofImage extends StatefulWidget {
   final String url;
 
   const _ProofImage({required this.url});
 
   @override
+  State<_ProofImage> createState() => _ProofImageState();
+}
+
+class _ProofImageState extends State<_ProofImage> {
+  late Future<Uint8List> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  @override
+  void didUpdateWidget(_ProofImage old) {
+    super.didUpdateWidget(old);
+    if (old.url != widget.url) _future = _load();
+  }
+
+  // Mémorisé dans l'état, jamais construit dans `build` : un FutureBuilder
+  // dont le `future` est recréé à chaque reconstruction relance le
+  // téléchargement à chaque fois — et l'écran en contient désormais un par
+  // tentative de livraison.
+  Future<Uint8List> _load() =>
+      context.read<BffApiClient>().fetchImage(widget.url);
+
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<Uint8List>(
-      future: context.read<BffApiClient>().fetchImage(url),
+      future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
@@ -570,6 +538,124 @@ class _ProofImage extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Ligne « libellé : valeur ».
+///
+/// Hissée hors de l'écran : l'historique des signalements en a besoin, et une
+/// méthode privée de widget n'est pas atteignable depuis un autre widget.
+Widget _buildInfoRow(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        Expanded(child: Text(value)),
+      ],
+    ),
+  );
+}
+
+/// Historique des signalements d'échec d'une commande.
+///
+/// Une seule carte quand il n'y a qu'un rapport, une série numérotée sinon.
+/// Le compte figure dans l'en-tête : c'est l'information qui change la
+/// décision de l'opérateur, et elle se perdrait dans une liste qu'il faut
+/// dénombrer soi-même.
+class _FailureHistory extends StatelessWidget {
+  final List<DeliveryFailure> failures;
+
+  const _FailureHistory({required this.failures});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final multiple = failures.length > 1;
+
+    return Card(
+      color: Colors.red.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.error_outline, color: Colors.red.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    multiple
+                        ? '${failures.length} échecs de livraison signalés'
+                        : 'Échec de livraison signalé',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(color: Colors.red.shade700),
+                  ),
+                ),
+              ],
+            ),
+            for (var i = 0; i < failures.length; i++) ...[
+              const SizedBox(height: 12),
+              if (multiple) ...[
+                const Divider(height: 1),
+                const SizedBox(height: 12),
+                Text(
+                  // Numérotation à rebours : le plus récent porte le numéro le
+                  // plus élevé, ce qui rend l'ordre chronologique lisible sans
+                  // avoir à comparer les dates.
+                  'Tentative ${failures.length - i} — ${_formatDate(failures[i].createdAt)}',
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(color: Colors.red.shade700),
+                ),
+                const SizedBox(height: 8),
+              ],
+              _FailureEntry(failure: failures[i]),
+            ],
+            const SizedBox(height: 12),
+            // Le statut Fleetbase reste inchangé par un signalement (§6.5) :
+            // le dire, sinon l'écart entre « échec signalé » et « statut
+            // enroute » passe pour une incohérence.
+            Text(
+              'La commande conserve son statut : le signalement est transmis '
+              'à l\'opérateur, qui décide de la suite.',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade700),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _formatDate(DateTime date) {
+    final local = date.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
+  }
+}
+
+class _FailureEntry extends StatelessWidget {
+  final DeliveryFailure failure;
+
+  const _FailureEntry({required this.failure});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildInfoRow('Motif :', failure.reason),
+        if (failure.notes != null) _buildInfoRow('Notes :', failure.notes!),
+        if (failure.photoUrl != null) ...[
+          const SizedBox(height: 8),
+          _ProofImage(url: failure.photoUrl!),
+        ],
+      ],
     );
   }
 }

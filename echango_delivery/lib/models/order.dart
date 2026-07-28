@@ -27,6 +27,14 @@ class Order extends Equatable {
   final String? proofUrl;
   final DeliveryFailure? deliveryFailure;
 
+  /// Tous les signalements de cette commande, du plus récent au plus ancien.
+  ///
+  /// [deliveryFailure] n'en est que le premier : gardé pour les vues résumées,
+  /// où une seule ligne a du sens. Le détail affiche la série — une livraison
+  /// qui a échoué trois fois n'est pas celle qui a échoué une fois, et chaque
+  /// tentative porte sa propre photo.
+  final List<DeliveryFailure> deliveryFailures;
+
   /// Vrai quand le serveur a retiré les données personnelles : opportunité
   /// adhoc que ce transporteur n'a pas encore réclamée. Les contacts et
   /// l'adresse précise arrivent à l'acceptation.
@@ -51,6 +59,7 @@ class Order extends Equatable {
     this.estimatedDuration,
     this.proofUrl,
     this.deliveryFailure,
+    this.deliveryFailures = const [],
     this.redacted = false,
   });
 
@@ -103,6 +112,7 @@ class Order extends Equatable {
       estimatedDuration: estimatedDuration ?? this.estimatedDuration,
       proofUrl: proofUrl ?? this.proofUrl,
       deliveryFailure: deliveryFailure ?? this.deliveryFailure,
+      deliveryFailures: deliveryFailures,
       redacted: redacted,
     );
   }
@@ -161,6 +171,11 @@ class Order extends Equatable {
       estimatedDuration: json['estimated_duration'] as int?,
       proofUrl: json['proof_url'] as String?,
       redacted: json['redacted'] == true,
+      deliveryFailures: (json['delivery_failures'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .map(DeliveryFailure.fromJson)
+              .toList() ??
+          const [],
       deliveryFailure: json['delivery_failure'] is Map<String, dynamic>
           ? DeliveryFailure.fromJson(json['delivery_failure'] as Map<String, dynamic>)
           : null,
@@ -201,6 +216,7 @@ class Order extends Equatable {
         estimatedDuration,
         proofUrl,
         deliveryFailure,
+        deliveryFailures,
         redacted,
       ];
 }

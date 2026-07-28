@@ -145,30 +145,43 @@ export class TransporteurService {
 
     if (!failures.length) return orders;
 
-    // Keep the most recent report per order: a driver may retry a delivery
-    // and fail again, and only the latest one describes the current state.
-    const byOrder = new Map<string, any>();
+    // Tous les rapports d'une commande, du plus récent au plus ancien.
+    //
+    // Une version précédente ne gardait que le dernier, au motif que « seul le
+    // dernier décrit l'état courant ». C'est vrai d'un badge de statut, faux
+    // d'un signalement : une livraison qui a échoué trois fois n'est pas celle
+    // qui a échoué une fois, et l'opérateur qui décide de la suite a besoin de
+    // la série. Chaque rapport porte de surcroît sa propre photo — n'en
+    // exposer qu'une revenait à effacer les preuves précédentes.
+    const byOrder = new Map<string, any[]>();
     for (const f of failures) {
-      if (!byOrder.has(f.fleetbaseOrderUuid)) byOrder.set(f.fleetbaseOrderUuid, f);
+      const list = byOrder.get(f.fleetbaseOrderUuid) ?? [];
+      list.push(f);
+      byOrder.set(f.fleetbaseOrderUuid, list);
     }
 
+    const project = (failure: any) => ({
+      id: failure.id,
+      reason: failure.reason,
+      notes: failure.notes,
+      // Chemin sur le BFF, jamais l'URL Fleetbase. Celle-ci pointe sur
+      // l'hôte tel que Fleetbase se connaît — injoignable depuis un
+      // téléphone — et surtout elle n'est protégée par rien : la donner à
+      // l'app reviendrait à publier les preuves de livraison à qui
+      // devinerait l'adresse. Ici, le jeton du transporteur fait foi.
+      photo_url: failure.proofUrl ? `/transporteur/preuves/${failure.id}` : null,
+      created_at: failure.reportedAt.toISOString(),
+    });
+
     return orders.map((order) => {
-      const failure = byOrder.get(order?.uuid);
-      if (!failure) return order;
+      const list = byOrder.get(order?.uuid);
+      if (!list?.length) return order;
       return {
         ...order,
-        delivery_failure: {
-          id: failure.id,
-          reason: failure.reason,
-          notes: failure.notes,
-          // Chemin sur le BFF, jamais l'URL Fleetbase. Celle-ci pointe sur
-          // l'hôte tel que Fleetbase se connaît — injoignable depuis un
-          // téléphone — et surtout elle n'est protégée par rien : la donner à
-          // l'app reviendrait à publier les preuves de livraison à qui
-          // devinerait l'adresse. Ici, le jeton du transporteur fait foi.
-          photo_url: failure.proofUrl ? `/transporteur/preuves/${failure.id}` : null,
-          created_at: failure.reportedAt.toISOString(),
-        },
+        // `delivery_failure` reste le plus récent : c'est ce qu'affichent les
+        // vues résumées, et le retirer casserait la liste sans rien apporter.
+        delivery_failure: project(list[0]),
+        delivery_failures: list.map(project),
       };
     });
   }

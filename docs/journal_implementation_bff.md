@@ -1039,3 +1039,15 @@ Le BFF sert donc le fichier lui-même, sur `GET /transporteur/preuves/:id`, avec
 `fetchStoredFile()` ne conserve que le **chemin** de l'URL stockée et le résout contre `FLEETBASE_API_URL`. Outre le problème d'hôte, une URL absolue lue en base et suivie telle quelle est une porte de sortie : quiconque parviendrait à y écrire ferait émettre au BFF, avec ses accès réseau, une requête vers l'hôte de son choix.
 
 Effet de bord bienvenu : ça règle aussi le cas S3 en production, où les fichiers peuvent être privés — le BFF les relaie avec son propre credential au lieu d'exiger un bucket public.
+
+### 11.8 L'historique des signalements était écrasé à chaque tentative
+
+Remarque de l'utilisateur au premier essai : un seul signalement s'affichait, jamais les précédents. C'était un choix explicite d'`attachFailures`, avec ce commentaire — « seul le dernier décrit l'état courant ».
+
+L'affirmation est vraie d'un **badge de statut**, fausse d'un **signalement**. Une livraison qui a échoué trois fois n'est pas celle qui a échoué une fois : c'est précisément la série qui fonde la décision de l'opérateur — relancer, réaffecter, rembourser. Et chaque tentative portant sa propre photo, n'en exposer qu'une revenait à effacer les preuves antérieures.
+
+`delivery_failures` porte désormais la liste complète, du plus récent au plus ancien. `delivery_failure` reste le premier élément : les vues résumées n'ont besoin que de lui, et le retirer aurait cassé la liste sans rien apporter.
+
+L'écran numérote à rebours — le plus récent porte le numéro le plus élevé — et affiche le compte dans l'en-tête. C'est cette information qui change la décision, et elle se perdrait dans une liste qu'il faudrait dénombrer soi-même.
+
+Défaut corrigé au même endroit : `_ProofImage` construisait son `Future` dans `build()`. Un `FutureBuilder` ainsi alimenté relance sa requête à chaque reconstruction — sans conséquence visible avec une seule photo, coûteux dès qu'il y en a une par tentative. Le futur est mémorisé dans l'état et recalculé seulement si l'URL change.
