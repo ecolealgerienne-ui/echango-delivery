@@ -452,6 +452,40 @@ export class AuthService {
       });
     }
 
+    // Retire this driver's other tokens before registering the new one.
+    //
+    // Firebase hands back a different token after a reinstall, cleared app
+    // data or a restored backup. Nothing deletes the previous UserDevice, and
+    // Driver::routeNotificationForFcm() returns every device on the user_uuid
+    // — so without this, Fleetbase accumulates dead tokens and keeps pushing
+    // to them indefinitely. Nothing errors; the notifications simply never
+    // arrive, which is the hardest kind of failure to notice in production.
+    const stale = await this.prisma.driverDeviceToken.findMany({
+      where: { driverId, active: true, token: { not: token } },
+    });
+
+    for (const old of stale) {
+      if (old.fleetbaseUserDeviceUuid) {
+        try {
+          await this.fleetbaseClient.deleteUserDevice(old.fleetbaseUserDeviceUuid);
+        } catch (error) {
+          // Best-effort: a device we cannot delete must not block the new one
+          // from being registered, or the driver stops receiving anything.
+          this.logger.warn(
+            `Could not delete stale Fleetbase UserDevice ${old.fleetbaseUserDeviceUuid}: ${error.message}`,
+          );
+        }
+      }
+      await this.prisma.driverDeviceToken.update({
+        where: { id: old.id },
+        data: { active: false },
+      });
+    }
+
+    if (stale.length) {
+      this.logger.log(`Retired ${stale.length} stale push token(s) for driver ${driverId}`);
+    }
+
     if (driver.fleetbaseUserUuid && !record.fleetbaseUserDeviceUuid) {
       try {
         const response = await this.fleetbaseClient.upsertDriverDeviceToken(

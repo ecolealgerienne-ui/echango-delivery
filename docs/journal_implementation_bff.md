@@ -262,6 +262,8 @@ Suite de session (reprise sur branche `claude/echango-delivery-bff-resume-zf24yd
 
 En pratique le risque immédiat est couvert : le cas courant (Firebase renvoie le même jeton à chaque démarrage) ne crée pas de doublon, grâce à ce garde.
 
+**✅ CORRIGÉ le 28/07/2026 (§6.10)** — le trou décrit ci-dessous est désormais traité et testé automatiquement.
+
 **En revanche, ce test met au jour un vrai trou, lui non couvert** : quand Firebase **fait tourner** un jeton (réinstallation, effacement des données de l'app, restauration de sauvegarde), l'app enregistre un jeton neuf → nouvelle ligne `DriverDeviceToken` **et** nouveau `UserDevice` côté Fleetbase — mais **l'ancien `UserDevice` n'est jamais supprimé**. Or `Driver::routeNotificationForFcm()` renvoie *tous* les devices rattachés au `user_uuid` (§5.1) : Fleetbase continuera donc d'émettre vers des jetons morts indéfiniment, et les lignes mortes s'accumuleront. À traiter avec le module `transporteur` (piste : supprimer le `UserDevice` correspondant quand un jeton est remplacé, ou purger côté Fleetbase les devices du `user_uuid` avant d'en écrire un neuf). **Non corrigé à ce stade** — nécessite de connaître la route de suppression `user-devices`, non vérifiée.
 
 ### 5.2 Modèle de comptes driver — `DriverAccount`, provisioning manuel
@@ -480,3 +482,20 @@ Elle accepte un paramètre `waypoint` pour cibler une étape précise d'une tour
 **Bénéfice secondaire, non anticipé** : le drapeau `require_pod`/`pod_method` porté par chaque activité est précisément ce dont l'app a besoin pour savoir quand router vers l'écran de preuve de livraison (`docs/specs_app_transporteur.md` §5, « quand la config de la commande l'exige »). Cette information n'a donc pas à être déduite ailleurs.
 
 **Ajouté** : `GET /transporteur/commandes/:id/activites-suivantes` (BFF) et `getNextActivities()` (client Flutter), avec les mêmes contrôles d'appartenance que le reste du module. Le script de test affiche les codes proposés et ceux exigeant une preuve.
+
+### 6.10 Purge des jetons push périmés — le trou de §5.1 refermé
+
+§5.1 avait identifié, sans le corriger, le seul défaut de cette tranche capable de **dégrader la production en silence** : à chaque rotation de jeton Firebase (réinstallation, effacement des données, restauration de sauvegarde), l'app enregistre un jeton neuf et l'ancien `UserDevice` reste en base. Or `Driver::routeNotificationForFcm()` renvoie **tous** les devices rattachés au `user_uuid` — Fleetbase émet donc indéfiniment vers des appareils morts. Aucune exception, aucun log, aucune alerte : juste des notifications qui n'arrivent pas.
+
+**Correction** : `registerDriverDeviceToken()` retire d'abord les autres jetons actifs du driver — suppression du `UserDevice` côté Fleetbase (`DELETE /int/v1/user-devices/{uuid}`, route confirmée comme faisant partie de ce que génère la macro `fleetbaseRoutes()`, cf. `RESTRegistrar`), puis passage à `active:false` côté BFF.
+
+La suppression est **best-effort à dessein** : si l'ancien device ne peut pas être supprimé, il ne faut surtout pas bloquer l'enregistrement du nouveau — le driver cesserait alors de recevoir quoi que ce soit. Un jeton mort de trop est un moindre mal comparé à un driver injoignable.
+
+**Testé automatiquement** : `scripts/test-driver-auth.sh` enregistre désormais un second jeton (simulant la rotation) puis **compte les `user_devices` portant l'ancien** — attendu `0`. C'est le seul moyen de vérifier la purge : la réponse du BFF ne dit rien de l'état côté Fleetbase, comme l'avait montré la fausse conclusion de §5.1.
+
+### 6.11 Couverture des deux dernières écritures non testées
+
+Ajoutées à `test-transporteur-module.sh` sous `WITH_MUTATIONS=1` :
+
+- **`POST .../activite`** — renvoie l'objet `Activity` complet tel que reçu de `activites-suivantes` (§6.9) et vérifie que la transition est acceptée. Sur la commande de test, la seule transition proposée était `enroute`, sans preuve exigée.
+- **`POST .../preuve`** — envoie un PNG 1×1 transparent encodé en base64, le plus petit fichier valide possible. Valide que le contrôleur accepte bien du base64 plutôt que du multipart, hypothèse retenue en §6.1 pour éviter d'introduire du multipart dans le BFF.

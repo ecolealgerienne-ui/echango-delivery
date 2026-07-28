@@ -551,6 +551,23 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Delete a UserDevice, used to retire a push token the driver no longer has.
+   *
+   * Firebase rotates tokens (reinstall, cleared app data, restored backup) and
+   * nothing removes the old record on its own, while
+   * Driver::routeNotificationForFcm() returns EVERY device on the user_uuid.
+   * Left alone, Fleetbase keeps pushing to dead tokens forever — a failure
+   * that produces no error anywhere, just notifications that never arrive.
+   *
+   * DELETE /{resource}/{id} confirmed as part of what the fleetbaseRoutes()
+   * macro generates (core-api RESTRegistrar).
+   */
+  async deleteUserDevice(userDeviceUuid: string) {
+    const response = await this.callFleetOps('DELETE', `/user-devices/${userDeviceUuid}`);
+    return response.data;
+  }
+
+  /**
    * List ALL company Position records, unfiltered. Confirmed by reading
    * PositionFilter.php (28/07/2026) that there is no `driver_uuid` (or any
    * per-driver) query filter on this endpoint - it only supports a free-text

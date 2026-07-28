@@ -169,11 +169,39 @@ echo "Tranche auth validée. Identifiants réutilisables pour l'app :"
 echo "  email    : $EMAIL"
 echo "  password : $PASSWORD"
 echo ""
-echo "Reste à vérifier côté Fleetbase (le script ne voit que la réponse du BFF) :"
-echo "combien de lignes user_devices portent ce jeton. Le BFF peut très bien"
-echo "réutiliser SON enregistrement tout en recréant un UserDevice à chaque"
-echo "appel — attendu : 1."
+# --- 3c. Rotation de jeton : l'ancien UserDevice est-il retiré ? ----------
+# Cas réel : réinstallation de l'app, effacement des données, restauration de
+# sauvegarde — Firebase délivre alors un jeton différent. Sans retrait de
+# l'ancien, Fleetbase pousse indéfiniment vers un appareil mort, sans jamais
+# produire d'erreur (routeNotificationForFcm renvoie TOUS les devices du user).
+ROTATED="fake-fcm-token-rotation-$RANDOM"
+api_post_token() {
+  curl -sS -X POST "$BFF_URL/auth/transporteur/device-token" \
+    -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+    -d "$(jq -n --arg t "$1" '{token:$t, platform:"android"}')"
+}
+ROT_RESP=$(api_post_token "$ROTATED")
+
+if echo "$ROT_RESP" | jq -e '.id' >/dev/null 2>&1; then
+  REMAINING=$(docker exec fleetbase-src-application-1 php artisan tinker \
+    --execute="echo DB::table('user_devices')->where('token','fake-fcm-token-pour-test')->count();" \
+    2>/dev/null | tr -d '[:space:]' || echo "?")
+  if [ "$REMAINING" = "0" ]; then
+    pass "rotation de jeton — l'ancien UserDevice a bien été retiré côté Fleetbase"
+  elif [ "$REMAINING" = "?" ]; then
+    warn "rotation de jeton — impossible de compter les user_devices (conteneur introuvable)"
+  else
+    warn "rotation de jeton — $REMAINING ancien(s) UserDevice subsiste(nt)"
+    echo "    Fleetbase continuera d'émettre vers un jeton mort. Voir journal §5.1."
+  fi
+else
+  warn "rotation de jeton non testée (2e enregistrement refusé)"
+fi
+
+echo ""
+echo "──────────────────────────────────────────────────────────"
+echo "Inspection manuelle si besoin — l'état des devices de ce driver :"
 echo ""
 echo "    docker exec fleetbase-src-application-1 php artisan tinker \\"
-echo "      --execute=\"echo DB::table('user_devices')->where('token','fake-fcm-token-pour-test')->count();\""
+echo "      --execute=\"print_r(DB::table('user_devices')->get(['uuid','platform','token'])->toArray());\""
 echo "──────────────────────────────────────────────────────────"

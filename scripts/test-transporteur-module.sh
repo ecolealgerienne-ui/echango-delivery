@@ -229,6 +229,37 @@ if [ -n "$MINE" ]; then
     echo "    Réponse : $(echo "$RESP" | head -c 300)"
   fi
 
+  # --- 8b. Envoi effectif d'une transition (opt-in) ------------------------
+  # Fait réellement avancer la commande — d'où l'opt-in. On renvoie l'objet
+  # Activity COMPLET tel que reçu, ce que valide OrderController@updateActivity.
+  if [ "${WITH_MUTATIONS:-0}" = "1" ]; then
+    ACT=$(echo "$RESP" | jq -c '(if type=="array" then . else .activities end)[0] // empty' 2>/dev/null)
+    if [ -n "$ACT" ]; then
+      CODE_ACT=$(echo "$ACT" | jq -r '.code')
+      OUT=$(api POST "/transporteur/commandes/$MINE/activite" "$(jq -n --argjson a "$ACT" '{activity:$a}')")
+      if echo "$OUT" | jq -e '.statusCode // .errors' >/dev/null 2>&1; then
+        warn "POST .../activite a échoué (transition « $CODE_ACT »)"
+        echo "    Réponse : $(echo "$OUT" | head -c 300)"
+      else
+        pass "POST /transporteur/commandes/:id/activite (« $CODE_ACT » appliquée)"
+      fi
+    fi
+
+    # --- 8c. Upload de preuve photo ---------------------------------------
+    # PNG 1x1 transparent en base64 : le plus petit fichier valide possible,
+    # suffisant pour valider que le contrôleur accepte du base64 plutôt que
+    # du multipart.
+    PNG='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    OUT=$(api POST "/transporteur/commandes/$MINE/preuve" \
+      "$(jq -n --arg p "$PNG" '{photos:[$p], remarks:"Test automatisé"}')")
+    if echo "$OUT" | jq -e '.statusCode // .errors' >/dev/null 2>&1; then
+      warn "POST .../preuve (upload base64) a échoué"
+      echo "    Réponse : $(echo "$OUT" | head -c 300)"
+    else
+      pass "POST /transporteur/commandes/:id/preuve (photo base64)"
+    fi
+  fi
+
   RESP=$(api POST "/transporteur/commandes/$MINE/echec" \
     '{"reason":"client_absent","notes":"Test automatisé — sonnette sans réponse"}')
   echo "$RESP" | jq -e '.reason == "client_absent"' >/dev/null 2>&1 \
