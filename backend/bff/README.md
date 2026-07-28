@@ -54,6 +54,25 @@ docker-compose up
 docker exec echango_bff_app npm run prisma:migrate
 ```
 
+
+## Ajouter une dépendance npm en environnement Docker
+
+`docker-compose.yml` monte `/app/node_modules` comme **volume anonyme** : il
+masque le dossier de l'image et survit aux redémarrages. Ajouter une
+dépendance à `package.json` ne suffit donc pas — le conteneur continue de voir
+l'ancien arbre de dépendances et échoue en `Cannot find module`.
+
+```bash
+# Le plus rapide : installer dans le conteneur qui tourne
+docker exec echango_bff_app npm install
+docker restart echango_bff_app
+
+# Ou reconstruire proprement (recrée le volume anonyme)
+docker compose up -d --build --force-recreate bff
+```
+
+Le `start:dev` en watch recompile ensuite tout seul.
+
 ## API Endpoints
 
 ### Auth (Public)
