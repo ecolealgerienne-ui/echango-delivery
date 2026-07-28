@@ -392,10 +392,10 @@ L'upload photo est **best-effort délibérément** : un driver devant une porte 
 | Sanctum accepté sur `v1` | ✅ vérifié | lecture `AuthenticateOnceWithBasicAuth::handle()` |
 | `assign` = public_id | ✅ vérifié | validation du contrôleur |
 | Compilation du module | ✅ vérifié | `nest build` |
-| **Tous les appels réels** | ❌ **non testé** | aucune instance dans le sandbox |
+| **Tous les appels réels** | ✅ testé le 28/07 | voir §6.8 |
 | Forme exacte de l'objet `Activity` | ❌ non testé | à relever sur une vraie commande |
 | Upload photo base64 | ❌ non testé | accepté par le contrôleur en lecture, jamais envoyé |
-| Filtrage anti-IDOR en conditions réelles | ❌ **non testé** | `scripts/test-transporteur-module.sh` étape 5 |
+| Filtrage anti-IDOR en conditions réelles | ✅ testé le 28/07 | commande d'un autre driver → 404 (§6.8) |
 
 `scripts/test-transporteur-module.sh` couvre profil, statut, position, liste, anti-IDOR, rejet de token non-driver, absence de token et échec de livraison. Accepter/démarrer/activité en sont **volontairement absents** : ils modifient un état difficile à remettre en place, à tester à la main sur une commande jetable.
 
@@ -426,3 +426,25 @@ L'hypothèse (a) est écartée au passage, et c'est utile : le scope compagnie e
 **Correction** : `resolveOrder()` retrouve la commande par uuid *ou* public_id dans la liste de la compagnie, et toute mutation `v1` passe par `orderPublicId(order)` ; côté driver, `getDriverPublicId()` était déjà là pour `assign` et sert maintenant à `track`/`toggle-online`. Les paramètres du client sont renommés `orderPublicId`/`driverPublicId` pour que l'exigence soit lisible à l'appel plutôt qu'enfouie dans un commentaire.
 
 **Leçon de méthode, la deuxième en deux sections** : §6.2 rappelait qu'un nom de classe n'est pas une spécification ; §6.7 rappelle qu'un **résumé** de méthode n'en est pas une non plus. Les deux erreurs ont la même racine — avoir accepté une description au lieu du corps de la fonction. Sur les points qui décident d'une implémentation, lire le code, pas ce qu'on en dit.
+
+### 6.8 Résultats du test réel (28/07/2026)
+
+`scripts/test-transporteur-module.sh` après la correction §6.7 :
+
+| Contrôle | Résultat |
+|---|---|
+| `GET /transporteur/profil` | ✅ |
+| `POST /transporteur/statut` (toggle-online) | ✅ |
+| `POST /transporteur/position` (track) | ✅ |
+| `GET /transporteur/commandes` (3 catégories) | ✅ (0 active, 1 adhoc) |
+| **Anti-IDOR — commande d'un autre driver** | ✅ **404**, sur une vraie commande assignée ailleurs |
+| Requête sans token | ✅ 401 |
+
+**Le résultat le plus important est l'anti-IDOR**, testé en conditions réelles : une commande réellement assignée à un autre driver, existante en base, est refusée. C'est la vérification qui donne sa valeur au filtrage BFF de §6.4 — sans elle, on n'aurait su qu'une chose, à savoir que le code *a l'air* de filtrer.
+
+**Deux contrôles initialement non concluants, désormais couverts** :
+
+1. **Rejet d'un token valide mais du mauvais persona** — sautait faute de compte commerçant. Le script **forge** maintenant un JWT `type:"merchant"` signé avec le vrai `JWT_SECRET` : c'est exactement l'objet à éprouver (un jeton légitime, du mauvais type), sans créer de Vendor/Contact parasite côté Fleetbase comme le ferait une inscription commerçant. Un 401 est distingué d'un 403 et signalé comme **non concluant** (secret désynchronisé ⇒ le contrôle de type n'a jamais été atteint), plutôt que compté comme un succès.
+2. **Échec de livraison** — demandait une commande assignée, il n'y en avait aucune. Ajout d'un mode opt-in `WITH_MUTATIONS=1` qui réclame une commande adhoc disponible puis déroule accepter → échec. **Jamais par défaut** : accepter assigne *et* démarre la commande, un état que le script ne sait pas défaire.
+
+**Reste non testé** : `demarrer`/`activite` (même raison d'état), la forme exacte de l'objet `Activity`, et l'upload photo base64.

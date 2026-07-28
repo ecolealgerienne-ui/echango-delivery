@@ -156,17 +156,35 @@ fi
 
 # --- 6. Rejet d'un token non-driver --------------------------------------
 # Les 3 personas partagent le même émetteur JWT : un token commerçant est donc
-# structurellement valide ici et doit être rejeté explicitement.
-MERCHANT_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/merchant/login" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"inexistant@echango.local","password":"x"}' | jq -r '.token // empty')
-if [ -n "$MERCHANT_TOKEN" ]; then
+# cryptographiquement VALIDE sur ces routes et ne peut être écarté que par le
+# contrôle explicite `req.user.type !== 'transporteur'`. C'est précisément ce
+# contrôle qu'on teste ici.
+#
+# On forge le token plutôt que de créer un compte commerçant : l'inscription
+# commerçant crée un Vendor + un Contact côté Fleetbase, des effets de bord
+# qu'un script de test n'a pas à laisser derrière lui. Signer nous-mêmes avec
+# le vrai JWT_SECRET produit exactement ce qu'on veut éprouver — un jeton
+# légitime, du mauvais type.
+JWT_SECRET=$(grep -E '^JWT_SECRET=' backend/bff/.env 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'' || true)
+
+if [ -n "$JWT_SECRET" ] && command -v openssl >/dev/null 2>&1; then
+  b64url() { openssl base64 -e -A | tr '+/' '-_' | tr -d '='; }
+  NOW=$(date +%s)
+  H=$(printf '%s' '{"alg":"HS256","typ":"JWT"}' | b64url)
+  P=$(printf '%s' "{\"sub\":\"fake-merchant-id\",\"email\":\"faux@echango.local\",\"type\":\"merchant\",\"iat\":$NOW,\"exp\":$((NOW+3600))}" | b64url)
+  S=$(printf '%s' "$H.$P" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | b64url)
+  FORGED="$H.$P.$S"
+
   CODE=$(curl -sS -o /dev/null -w '%{http_code}' "$BFF_URL/transporteur/profil" \
-    -H "Authorization: Bearer $MERCHANT_TOKEN")
-  [ "$CODE" = "403" ] && pass "token non-driver rejeté (403)" \
-    || fail "un token non-driver est accepté (HTTP $CODE)" "-"
+    -H "Authorization: Bearer $FORGED")
+  case "$CODE" in
+    403) pass "token valide mais non-driver rejeté (403)" ;;
+    401) warn "token forgé rejeté en 401 — JWT_SECRET du .env ≠ celui du conteneur ?"
+         echo "    Le contrôle de type n'a donc pas été atteint : non concluant." ;;
+    *)   fail "FUITE : un token de type 'merchant' est accepté (HTTP $CODE)" "-" ;;
+  esac
 else
-  warn "rejet non-driver non testé (pas de compte commerçant sous la main)"
+  warn "rejet non-driver non testé (JWT_SECRET introuvable dans backend/bff/.env, ou openssl absent)"
 fi
 
 # --- 7. Sans token --------------------------------------------------------
@@ -177,7 +195,25 @@ CODE=$(curl -sS -o /dev/null -w '%{http_code}' "$BFF_URL/transporteur/profil")
 # --- 8. Échec de livraison ------------------------------------------------
 # Testé sur une commande réellement assignée à ce driver, sinon sauté : le
 # endpoint refuse (à raison) une commande qui n'est pas la sienne.
-MINE=$(echo "$(api GET /transporteur/commandes)" | jq -r '.active[0].uuid // .active[0].id // empty')
+MINE=$(echo "$(api GET /transporteur/commandes)" | jq -r '.active[0].public_id // .active[0].uuid // empty')
+
+# Rien d'assigné, mais une opportunité adhoc disponible : on peut la réclamer
+# pour dérouler le flux complet. Opt-in seulement — accepter une commande
+# l'assigne ET la démarre, un état que le script ne sait pas défaire.
+if [ -z "$MINE" ] && [ "${WITH_MUTATIONS:-0}" = "1" ]; then
+  ADHOC=$(echo "$(api GET /transporteur/commandes)" | jq -r '.adhoc[0].public_id // .adhoc[0].uuid // empty')
+  if [ -n "$ADHOC" ]; then
+    RESP=$(api POST "/transporteur/commandes/$ADHOC/accepter" '{}')
+    if echo "$RESP" | jq -e '.errors // .statusCode' >/dev/null 2>&1; then
+      warn "POST .../accepter a échoué"
+      echo "    Réponse : $(echo "$RESP" | head -c 300)"
+    else
+      pass "POST /transporteur/commandes/:id/accepter (commande $ADHOC réclamée)"
+      MINE="$ADHOC"
+    fi
+  fi
+fi
+
 if [ -n "$MINE" ]; then
   RESP=$(api POST "/transporteur/commandes/$MINE/echec" \
     '{"reason":"client_absent","notes":"Test automatisé — sonnette sans réponse"}')
@@ -186,7 +222,12 @@ if [ -n "$MINE" ]; then
   pass "POST /transporteur/commandes/:id/echec"
 else
   warn "échec de livraison non testé — aucune commande active assignée à ce driver."
-  echo "    Assigner une commande à ce driver dans la console, puis relancer."
+  if [ "${WITH_MUTATIONS:-0}" != "1" ]; then
+    echo "    Deux options : assigner une commande à ce driver dans la console,"
+    echo "    ou relancer avec WITH_MUTATIONS=1 pour réclamer une commande adhoc"
+    echo "    disponible et dérouler accepter → échec (⚠️ modifie l'état, la"
+    echo "    commande restera assignée et démarrée)."
+  fi
 fi
 
 # --- Remise du driver hors ligne -----------------------------------------
@@ -196,9 +237,8 @@ pass "driver remis hors ligne (nettoyage)"
 echo ""
 echo "──────────────────────────────────────────────────────────"
 echo "Non couvert par ce script, à vérifier séparément :"
-echo "  - accepter/démarrer/activité : demandent une commande adhoc réelle et"
-echo "    modifient un état non trivial à remettre en place. Tester à la main"
-echo "    avec une commande jetable."
+echo "  - démarrer/activité : modifient un état non trivial à remettre en place."
+echo "    (accepter + échec sont couverts via WITH_MUTATIONS=1)"
 echo "  - update-activity attend un objet Activity COMPLET issu de la config de"
 echo "    la commande, pas une chaîne de statut. Vérifier la forme exacte"
 echo "    renvoyée par GET /transporteur/commandes/:id avant de câbler l'app."
