@@ -398,3 +398,31 @@ L'upload photo est **best-effort délibérément** : un driver devant une porte 
 | Filtrage anti-IDOR en conditions réelles | ❌ **non testé** | `scripts/test-transporteur-module.sh` étape 5 |
 
 `scripts/test-transporteur-module.sh` couvre profil, statut, position, liste, anti-IDOR, rejet de token non-driver, absence de token et échec de livraison. Accepter/démarrer/activité en sont **volontairement absents** : ils modifient un état difficile à remettre en place, à tester à la main sur une commande jetable.
+
+### 6.7 ⚠️ Correction par test réel — l'API `v1` s'adresse par `public_id`, jamais par `uuid`
+
+Premier test réel du module (28/07/2026) : `POST /transporteur/statut` échoue. Log Fleetbase sans ambiguïté :
+
+```
+404 POST /v1/drivers/eec8c72d-fd1e-4416-b516-69b584a1a65b/toggle-online
+   - {"error":"Driver resource not found."}
+```
+
+Le driver existe pourtant, et `php artisan route:list --path=toggle-online` confirme que la route est bien `v1/drivers/{id}/toggle-online`. Deux hypothèses étaient en lice : (a) perte du contexte d'organisation, `fleetbase.api` n'incluant pas `SetupFleetbaseSession` contrairement à `fleetbase.protected` ; (b) mauvais identifiant.
+
+**C'est (b)**, tranché en lisant `findRecordOrFail()` (core-api, `HasApiModelBehavior`) :
+
+```php
+$query->where('public_id', $id);
+if ($hasInternalId) { $query->orWhere('internal_id', $id); }
+```
+
+**Le `uuid` n'est jamais matché.** L'API publique `v1` adresse ses ressources par `public_id` (`driver_xxx`, `order_xxx`) exclusivement — alors que `int/v1` travaille en uuid. Ma lecture initiale (« findRecordOrFail supporte les deux ») était **fausse** : elle venait d'un résumé de la méthode, pas de son corps.
+
+L'hypothèse (a) est écartée au passage, et c'est utile : le scope compagnie est conditionné à `session('company')`, vide sans `SetupFleetbaseSession`, donc **aucune** contrainte n'est appliquée. La conclusion de §6.2 (un seul token Sanctum suffit) tient toujours.
+
+**Portée de l'erreur** : elle ne touchait pas que `toggle-online` mais **toutes** les routes `v1` du module — position, start, complete, update-activity, capture-photo. Elles auraient toutes échoué en 404 l'une après l'autre.
+
+**Correction** : `resolveOrder()` retrouve la commande par uuid *ou* public_id dans la liste de la compagnie, et toute mutation `v1` passe par `orderPublicId(order)` ; côté driver, `getDriverPublicId()` était déjà là pour `assign` et sert maintenant à `track`/`toggle-online`. Les paramètres du client sont renommés `orderPublicId`/`driverPublicId` pour que l'exigence soit lisible à l'appel plutôt qu'enfouie dans un commentaire.
+
+**Leçon de méthode, la deuxième en deux sections** : §6.2 rappelait qu'un nom de classe n'est pas une spécification ; §6.7 rappelle qu'un **résumé** de méthode n'en est pas une non plus. Les deux erreurs ont la même racine — avoir accepté une description au lieu du corps de la fonction. Sur les points qui décident d'une implémentation, lire le code, pas ce qu'on en dit.
