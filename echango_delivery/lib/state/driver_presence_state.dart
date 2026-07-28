@@ -31,7 +31,7 @@ class DriverPresenceState extends ChangeNotifier {
   final OrderState _orderState;
   final LocationService _location;
   final NotificationService _notifications;
-  final DriverForegroundService _foreground = DriverForegroundService();
+  final DriverForegroundService _foregroundService = DriverForegroundService();
 
   DriverPresenceState({
     required BffApiClient apiClient,
@@ -79,7 +79,7 @@ class DriverPresenceState extends ChangeNotifier {
     // pour rien.
     if (_online == true) {
       await _location.startTracking();
-      await _foreground.start();
+      await _foregroundService.start();
     }
 
     _restartPolling();
@@ -111,7 +111,7 @@ class DriverPresenceState extends ChangeNotifier {
     // Sans ça, la notification « Vous êtes en ligne » survivrait à la
     // déconnexion, affirmant à l'écran verrouillé du transporteur exactement
     // le contraire de son état réel.
-    await _foreground.stop();
+    await _foregroundService.stop();
     await _notifications.release();
 
     _online = null;
@@ -164,7 +164,7 @@ class DriverPresenceState extends ChangeNotifier {
     // est gardé de côté puis réappliqué après la remise à zéro ci-dessous, qui
     // l'effacerait sinon.
     String? warning;
-    if (value && !await _foreground.requestPermissions()) {
+    if (value && !await _foregroundService.requestPermissions()) {
       warning = 'Sans autorisation de notification, le partage de position '
           's\'arrêtera dès que vous quitterez l\'application.';
     }
@@ -182,13 +182,13 @@ class DriverPresenceState extends ChangeNotifier {
         // Le service au premier plan et le suivi GPS vont ensemble : sans lui,
         // Android suspend le processus dès que l'écran s'éteint et le suivi
         // s'arrête sans rien signaler.
-        await _foreground.start();
+        await _foregroundService.start();
         // Un premier point tout de suite : sans ça le driver reste invisible
         // jusqu'à ce qu'il se déplace du seuil de distance configuré.
         await _location.pushCurrentPosition();
       } else {
         await _location.stopTracking();
-        await _foreground.stop();
+        await _foregroundService.stop();
       }
 
       _restartPolling();

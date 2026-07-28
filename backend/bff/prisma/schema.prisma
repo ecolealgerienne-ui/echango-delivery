@@ -214,6 +214,12 @@ model DeliveryFailure {
   // Null when the driver reported without one, or when the upload failed.
   fleetbaseProofUuid String?
 
+  // URL du fichier, telle que Fleetbase la renvoie à la capture (`url` sur la
+  // ressource Proof). Conservée à l'écriture plutôt que relue à chaque
+  // affichage : la retrouver ensuite imposerait un appel par signalement, et
+  // Fleetbase n'offre pas de lecture de Proof par uuid sur `int/v1`.
+  proofUrl          String?
+
   reportedAt        DateTime @default(now())
 
   @@index([driverId])

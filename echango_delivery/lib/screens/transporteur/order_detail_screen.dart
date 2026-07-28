@@ -151,6 +151,10 @@ class OrderDetailScreen extends StatelessWidget {
                             _buildInfoRow('Motif :', order.deliveryFailure!.reason),
                             if (order.deliveryFailure!.notes != null)
                               _buildInfoRow('Notes :', order.deliveryFailure!.notes!),
+                            if (order.deliveryFailure!.photoUrl != null) ...[
+                              const SizedBox(height: 12),
+                              _ProofImage(url: order.deliveryFailure!.photoUrl!),
+                            ],
                             const SizedBox(height: 8),
                             // Le statut Fleetbase reste inchangé par un
                             // signalement (§6.5) : le dire, sinon l'écart
@@ -503,6 +507,55 @@ class _PlaceBlock extends StatelessWidget {
     if (!context.mounted || ok) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Impossible de lancer l\'appel.')),
+    );
+  }
+}
+
+/// Photo jointe à un signalement d'échec.
+///
+/// Le repli n'est pas décoratif : en développement, Fleetbase stocke le
+/// fichier sur le disque `local` et renvoie une URL du type
+/// `http://localhost:8000/...`, injoignable depuis un téléphone ou un
+/// émulateur. Sans message, l'image manquante ressemble à une photo perdue
+/// alors qu'elle est bien enregistrée côté serveur.
+class _ProofImage extends StatelessWidget {
+  final String url;
+
+  const _ProofImage({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Image.network(
+        url,
+        height: 180,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, progress) => progress == null
+            ? child
+            : const SizedBox(
+                height: 180,
+                child: Center(child: CircularProgressIndicator()),
+              ),
+        errorBuilder: (context, error, stack) => Container(
+          height: 90,
+          padding: const EdgeInsets.all(12),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Row(
+            children: [
+              const Icon(Icons.image_not_supported_outlined),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Photo enregistrée, mais non affichable depuis cet appareil.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

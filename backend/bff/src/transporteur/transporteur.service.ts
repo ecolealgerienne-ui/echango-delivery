@@ -161,7 +161,10 @@ export class TransporteurService {
           id: failure.id,
           reason: failure.reason,
           notes: failure.notes,
-          photo_url: null,
+          // Était `null` en dur : la photo partait bien vers Fleetbase, son
+          // Proof était enregistré, et l'app ne pouvait jamais l'afficher. Le
+          // transporteur voyait donc son envoi réussir puis disparaître.
+          photo_url: failure.proofUrl,
           created_at: failure.reportedAt.toISOString(),
         },
       };
@@ -580,6 +583,7 @@ export class TransporteurService {
     }
 
     let fleetbaseProofUuid: string | null = null;
+    let proofUrl: string | null = null;
 
     if (dto.photo) {
       try {
@@ -590,7 +594,11 @@ export class TransporteurService {
           remarks.slice(0, 255),
           dto.waypointUuid,
         );
-        fleetbaseProofUuid = proof?.data?.uuid || proof?.proof?.uuid || null;
+        const record = proof?.data ?? proof?.proof ?? proof;
+        fleetbaseProofUuid = record?.uuid || null;
+        // La ressource Proof expose `url` (alias de `file_url`) : on la garde
+        // ici, à la seule occasion où Fleetbase nous la donne.
+        proofUrl = record?.url || null;
       } catch (error) {
         this.logger.warn(
           `Delivery failure photo upload failed (${orderId}), keeping the report: ${error.message}`,
@@ -606,6 +614,7 @@ export class TransporteurService {
         reason: dto.reason,
         notes: dto.notes,
         fleetbaseProofUuid,
+        proofUrl,
       },
     });
 
