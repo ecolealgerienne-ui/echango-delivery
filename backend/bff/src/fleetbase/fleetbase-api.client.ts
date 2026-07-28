@@ -440,6 +440,13 @@ export class FleetbaseApiClient {
   // ── Opérations driver (API publique v1) ────────────────────────────────
   // Formes de payload lues dans fleetops server/src/Http/Controllers/Api/v1/
   // {Order,Driver}Controller.php le 28/07/2026, pas supposées.
+  //
+  // ⚠️ TOUTES ces routes s'adressent par **public_id** (`driver_xxx`,
+  // `order_xxx`), jamais par uuid — `findRecordOrFail()` (core-api,
+  // HasApiModelBehavior) matche `public_id`/`internal_id` et rien d'autre.
+  // Passer un uuid donne un 404 « resource not found » parfaitement
+  // trompeur, puisque l'enregistrement existe. Vérifié par test réel le
+  // 28/07/2026 (journal §6.7). Les paramètres sont nommés en conséquence.
 
   /**
    * Push a GPS fix. `track()` accepts latitude/longitude plus optional
@@ -447,10 +454,10 @@ export class FleetbaseApiClient {
    * takes either a public_id or a uuid.
    */
   async trackDriver(
-    driverId: string,
+    driverPublicId: string,
     position: { latitude: number; longitude: number; altitude?: number; heading?: number; speed?: number },
   ) {
-    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverId}/track`, position);
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverPublicId}/track`, position);
     return response.data;
   }
 
@@ -459,8 +466,8 @@ export class FleetbaseApiClient {
    * makes Fleetbase toggle whatever is current — we always pass it, since a
    * blind toggle would desync if a request were retried.
    */
-  async toggleDriverOnline(driverId: string, online: boolean) {
-    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverId}/toggle-online`, { online });
+  async toggleDriverOnline(driverPublicId: string, online: boolean) {
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverPublicId}/toggle-online`, { online });
     return response.data;
   }
 
@@ -470,9 +477,9 @@ export class FleetbaseApiClient {
    * prefix), NOT the uuid used everywhere else. Hence DriverAccount stores
    * both identifiers.
    */
-  async startOrder(orderId: string, assignDriverPublicId?: string) {
+  async startOrder(orderPublicId: string, assignDriverPublicId?: string) {
     const body = assignDriverPublicId ? { assign: assignDriverPublicId } : {};
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/start`, body);
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/start`, body);
     return response.data;
   }
 
@@ -481,10 +488,10 @@ export class FleetbaseApiClient {
    * Activity object from the order config, not a status string — the app gets
    * it from the order detail payload and hands it back.
    */
-  async updateOrderActivity(orderId: string, activity: any, proof?: string) {
+  async updateOrderActivity(orderPublicId: string, activity: any, proof?: string) {
     const body: any = { activity };
     if (proof) body.proof = proof;
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/update-activity`, body);
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/update-activity`, body);
     return response.data;
   }
 
@@ -493,10 +500,10 @@ export class FleetbaseApiClient {
    * OR as an array of base64 strings — we use base64, which keeps the BFF a
    * plain JSON service with no multipart handling.
    */
-  async captureOrderPhoto(orderId: string, photos: string[], remarks?: string, subjectId?: string) {
+  async captureOrderPhoto(orderPublicId: string, photos: string[], remarks?: string, subjectId?: string) {
     const path = subjectId
-      ? `/orders/${orderId}/capture-photo/${subjectId}`
-      : `/orders/${orderId}/capture-photo`;
+      ? `/orders/${orderPublicId}/capture-photo/${subjectId}`
+      : `/orders/${orderPublicId}/capture-photo`;
     const body: any = { photos };
     if (remarks) body.remarks = remarks;
     const response = await this.callFleetOpsPublic('POST', path, body);
@@ -508,13 +515,13 @@ export class FleetbaseApiClient {
    * dedicated terminal transition, and it is what the app's "delivered"
    * button maps to.
    */
-  async completeOrder(orderId: string) {
-    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/complete`, {});
+  async completeOrder(orderPublicId: string) {
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderPublicId}/complete`, {});
     return response.data;
   }
 
-  async getOrderPublic(orderId: string) {
-    const response = await this.callFleetOpsPublic('GET', `/orders/${orderId}`);
+  async getOrderPublic(orderPublicId: string) {
+    const response = await this.callFleetOpsPublic('GET', `/orders/${orderPublicId}`);
     return response.data;
   }
 

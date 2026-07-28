@@ -80,6 +80,45 @@ export class TransporteurService {
     return response?.orders || response?.data || (Array.isArray(response) ? response : []);
   }
 
+  /**
+   * Resolve an order by whichever identifier the app sent, from the company
+   * order list.
+   *
+   * Why not a direct GET by id: the public `v1` API addresses records by
+   * public_id only — `findRecordOrFail()` matches `public_id`/`internal_id`
+   * and never `uuid` (verified 28/07/2026 in core-api HasApiModelBehavior,
+   * after a 404 on a perfectly valid uuid). Meanwhile `int/v1` works in uuids,
+   * and §2.13 showed its by-id GET ignores the path param entirely. Matching
+   * both identifiers here means the app can send either and neither quirk
+   * leaks into the rest of the module.
+   *
+   * Cost: one list fetch per operation. Acceptable at this scale, and the
+   * ownership check below needs the record anyway.
+   */
+  private async resolveOrder(orderId: string) {
+    let orders: any[];
+    try {
+      const response = await this.fleetbaseClient.getAllOrders();
+      orders = this.extractOrders(response);
+    } catch (error) {
+      this.logger.error(`Order lookup failed (${orderId}): ${error.message}`);
+      throw new BadRequestException('Failed to fetch orders');
+    }
+
+    return orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+  }
+
+  /**
+   * The identifier to use when calling the public v1 API for this order.
+   * Fails loudly rather than sending a uuid that would 404 confusingly.
+   */
+  private orderPublicId(order: any): string {
+    if (!order?.public_id) {
+      throw new BadRequestException('This order has no public_id — cannot address it on the v1 API');
+    }
+    return order.public_id;
+  }
+
   private isAssignedTo(order: any, driverUuid: string) {
     return (
       order?.driver_assigned_uuid === driverUuid ||
@@ -100,11 +139,15 @@ export class TransporteurService {
     };
   }
 
+  // Note on identifiers below: every /v1 call takes the driver's public_id,
+  // never the uuid — see resolveOrder() for why.
+
   async updatePosition(driverId: string, dto: UpdatePositionDto) {
     const driver = await this.getDriverOrFail(driverId);
+    const publicId = await this.getDriverPublicId(driver);
 
     try {
-      await this.fleetbaseClient.trackDriver(driver.fleetbaseDriverUuid, dto);
+      await this.fleetbaseClient.trackDriver(publicId, dto);
       return { success: true };
     } catch (error) {
       this.logger.error(`Position update failed for driver ${driverId}: ${error.message}`);
@@ -114,9 +157,10 @@ export class TransporteurService {
 
   async toggleOnline(driverId: string, dto: ToggleOnlineDto) {
     const driver = await this.getDriverOrFail(driverId);
+    const publicId = await this.getDriverPublicId(driver);
 
     try {
-      await this.fleetbaseClient.toggleDriverOnline(driver.fleetbaseDriverUuid, dto.online);
+      await this.fleetbaseClient.toggleDriverOnline(publicId, dto.online);
       return { online: dto.online };
     } catch (error) {
       this.logger.error(`Online toggle failed for driver ${driverId}: ${error.message}`);
@@ -178,15 +222,7 @@ export class TransporteurService {
    */
   async getOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
-
-    let order: any;
-    try {
-      const response = await this.fleetbaseClient.getOrderPublic(orderId);
-      order = response?.data || response?.order || response;
-    } catch (error) {
-      this.logger.error(`Order fetch failed (${orderId}): ${error.message}`);
-      throw new NotFoundException('Order not found');
-    }
+    const order = await this.resolveOrder(orderId);
 
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -220,7 +256,7 @@ export class TransporteurService {
     const publicId = await this.getDriverPublicId(driver);
 
     try {
-      const result = await this.fleetbaseClient.startOrder(orderId, publicId);
+      const result = await this.fleetbaseClient.startOrder(this.orderPublicId(order), publicId);
       this.logger.log(`Driver ${driverId} accepted order ${orderId}`);
       return result;
     } catch (error) {
@@ -241,7 +277,7 @@ export class TransporteurService {
     }
 
     try {
-      return await this.fleetbaseClient.startOrder(orderId);
+      return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
     } catch (error) {
       this.logger.error(`Start failed (${orderId}): ${error.message}`);
       throw new BadRequestException(
@@ -259,7 +295,7 @@ export class TransporteurService {
     }
 
     try {
-      return await this.fleetbaseClient.completeOrder(orderId);
+      return await this.fleetbaseClient.completeOrder(this.orderPublicId(order));
     } catch (error) {
       this.logger.error(`Complete failed (${orderId}): ${error.message}`);
       throw new BadRequestException(
@@ -277,7 +313,11 @@ export class TransporteurService {
     }
 
     try {
-      return await this.fleetbaseClient.updateOrderActivity(orderId, dto.activity, dto.proof);
+      return await this.fleetbaseClient.updateOrderActivity(
+        this.orderPublicId(order),
+        dto.activity,
+        dto.proof,
+      );
     } catch (error) {
       this.logger.error(`Activity update failed (${orderId}): ${error.message}`);
       throw new BadRequestException(
@@ -296,7 +336,7 @@ export class TransporteurService {
 
     try {
       return await this.fleetbaseClient.captureOrderPhoto(
-        orderId,
+        this.orderPublicId(order),
         dto.photos,
         dto.remarks,
         dto.subjectId,
@@ -334,7 +374,7 @@ export class TransporteurService {
       try {
         const remarks = `Échec de livraison : ${dto.reason}${dto.notes ? ` — ${dto.notes}` : ''}`;
         const proof = await this.fleetbaseClient.captureOrderPhoto(
-          orderId,
+          this.orderPublicId(order),
           [dto.photo],
           remarks.slice(0, 255),
           dto.waypointUuid,
@@ -350,7 +390,7 @@ export class TransporteurService {
     const failure = await this.prisma.deliveryFailure.create({
       data: {
         driverId: driver.id,
-        fleetbaseOrderUuid: orderId,
+        fleetbaseOrderUuid: order.uuid || orderId,
         waypointUuid: dto.waypointUuid,
         reason: dto.reason,
         notes: dto.notes,
