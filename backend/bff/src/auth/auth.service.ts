@@ -201,7 +201,10 @@ export class AuthService {
    * Generate JWT token
    */
   private generateToken(userId: string, email: string, type: 'merchant' | 'fleet') {
-    const expiresIn = this.configService.get('JWT_EXPIRATION') || '24h';
+    // Must be a number (seconds), not a bare numeric string: jsonwebtoken's `ms`
+    // dependency interprets a unitless string like "86400" as milliseconds (~86s),
+    // not seconds, silently producing tokens that expire almost immediately.
+    const expiresIn = parseInt(this.configService.get('JWT_EXPIRATION') || '86400', 10);
     return this.jwtService.sign(
       {
         sub: userId,
