@@ -466,12 +466,14 @@ export class AuthService {
 
     for (const old of stale) {
       if (old.fleetbaseUserDeviceUuid) {
-        // Resolve the device to get its public_id: §6.7 established that
-        // Fleetbase resolves records by public_id, never uuid, and the mirror
-        // only ever captured a uuid. Try the public_id first, keeping the uuid
-        // as a fallback in case DELETE happens to accept it.
-        const device = await this.fleetbaseClient.findUserDeviceByToken(old.token);
-        const candidates = [device?.public_id, old.fleetbaseUserDeviceUuid].filter(Boolean);
+        // uuid first, public_id as fallback — the opposite of the /v1 routes.
+        // Established by testing on 28/07/2026: DELETE /int/v1/user-devices/
+        // {public_id} answers 404 "User Device not found", while the uuid
+        // works. So resolution is NOT uniform across Fleetbase: the public v1
+        // API resolves by public_id (§6.7), this internal route by uuid.
+        // Both are tried rather than trusting either, since that assumption
+        // has now been wrong in both directions.
+        const candidates: string[] = [old.fleetbaseUserDeviceUuid];
 
         let deleted = false;
         for (const id of candidates) {
@@ -481,6 +483,19 @@ export class AuthService {
             break;
           } catch {
             // Try the next identifier before giving up.
+          }
+        }
+
+        // Only pay for a lookup if the stored identifier did not work.
+        if (!deleted) {
+          const device = await this.fleetbaseClient.findUserDeviceByToken(old.token);
+          if (device?.public_id) {
+            try {
+              await this.fleetbaseClient.deleteUserDevice(device.public_id);
+              deleted = true;
+            } catch {
+              // Fall through to the warning below.
+            }
           }
         }
 

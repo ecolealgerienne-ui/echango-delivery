@@ -60,18 +60,40 @@ CUSTOMER_TYPE=$(echo "$TEMPLATE" | jq -r '.customer_type // "fleet-ops:contact"'
 TEMPLATE_ID=$(echo "$TEMPLATE" | jq -r '.public_id // empty')
 
 # Les lieux ne sont pas dans la liste : il faut le détail de la commande.
+#
+# ⚠️ Le détail vient de l'API v1, qui n'expose QUE des identifiants publics,
+# sous la clé `id` — jamais d'uuid (constaté le 28/07 : `.payload.pickup.uuid`
+# revenait vide alors que la commande était bien formée). Or la création passe
+# par int/v1, qui veut des uuid. Il faut donc traduire public_id → uuid via la
+# liste des places.
 DETAIL=$(fb GET "/v1/orders/$TEMPLATE_ID")
-PICKUP=$(echo "$DETAIL" | jq -r '(.data // .) | .payload.pickup.uuid // .payload.pickup_uuid // empty')
-DROPOFF=$(echo "$DETAIL" | jq -r '(.data // .) | .payload.dropoff.uuid // .payload.dropoff_uuid // empty')
+PICKUP_PID=$(echo "$DETAIL" | jq -r '(.data // .) | .payload.pickup.id // empty')
+DROPOFF_PID=$(echo "$DETAIL" | jq -r '(.data // .) | .payload.dropoff.id // empty')
 
-if [ -z "$CONFIG" ] || [ -z "$PICKUP" ] || [ -z "$DROPOFF" ]; then
-  echo "❌ Impossible d'extraire config/lieux de la commande modèle ($TEMPLATE_ID)."
-  echo "   config=$CONFIG pickup=$PICKUP dropoff=$DROPOFF"
-  echo "   Détail reçu :"
-  echo "$DETAIL" | head -c 500
+if [ -z "$PICKUP_PID" ] || [ -z "$DROPOFF_PID" ]; then
+  echo "❌ La commande modèle ($TEMPLATE_ID) n'a pas de départ/arrivée exploitables."
+  echo "   pickup=$PICKUP_PID dropoff=$DROPOFF_PID"
+  echo "   Payload reçu :"
+  echo "$DETAIL" | jq '(.data // .) | .payload' 2>/dev/null | head -c 500
   exit 1
 fi
-echo "✅ Modèle : $TEMPLATE_ID"
+
+PLACES=$(fb GET "/int/v1/places?limit=200")
+pid_to_uuid() {
+  echo "$PLACES" | jq -r --arg p "$1" \
+    '((.places // .data // .) | map(select(.public_id == $p)) | .[0].uuid) // empty'
+}
+PICKUP=$(pid_to_uuid "$PICKUP_PID")
+DROPOFF=$(pid_to_uuid "$DROPOFF_PID")
+
+if [ -z "$CONFIG" ] || [ -z "$PICKUP" ] || [ -z "$DROPOFF" ]; then
+  echo "❌ Impossible de résoudre les lieux en uuid."
+  echo "   config=$CONFIG"
+  echo "   pickup  $PICKUP_PID → ${PICKUP:-(introuvable)}"
+  echo "   dropoff $DROPOFF_PID → ${DROPOFF:-(introuvable)}"
+  exit 1
+fi
+echo "✅ Modèle : $TEMPLATE_ID (départ $PICKUP_PID, arrivée $DROPOFF_PID)"
 
 # --- 2. Créer la commande adhoc ------------------------------------------
 # Enveloppe {order:{…}} obligatoire (journal §2.5).

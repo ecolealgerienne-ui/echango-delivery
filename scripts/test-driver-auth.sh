@@ -19,6 +19,11 @@ DRIVER_UUID="${1:-${FLEETBASE_DRIVER_UUID:-}}"
 EMAIL="${EMAIL:-driver-test-$RANDOM@echango.local}"
 PASSWORD="${PASSWORD:-motdepasse123}"
 
+# Jeton propre à CETTE exécution. Une constante partagée entre runs laisse des
+# UserDevice orphelins en base et rend le test de rotation ininterprétable :
+# on compterait des reliquats d'anciens runs au lieu de ce qu'on vient de faire.
+FCM_TOKEN="fcm-test-$RANDOM$RANDOM"
+
 if ! command -v jq >/dev/null 2>&1; then
   echo "❌ jq est requis (extraction du JWT)."
   echo "   Debian/Ubuntu/WSL : sudo apt update && sudo apt install -y jq"
@@ -131,7 +136,7 @@ pass "login — JWT obtenu"
 # manuelle ci-dessous.
 DEVICE_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/device-token" \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-  -d '{"token":"fake-fcm-token-pour-test","platform":"android"}')
+  -d "$(jq -n --arg t "$FCM_TOKEN" '{token:$t, platform:"android"}')")
 
 echo "$DEVICE_RESP" | jq -e '.id' >/dev/null 2>&1 \
   || fail "device-token a échoué" "$DEVICE_RESP"
@@ -153,7 +158,7 @@ fi
 # finit avec N enregistrements identiques et reçoit N notifications.
 DEVICE_RESP2=$(curl -sS -X POST "$BFF_URL/auth/transporteur/device-token" \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
-  -d '{"token":"fake-fcm-token-pour-test","platform":"android"}')
+  -d "$(jq -n --arg t "$FCM_TOKEN" '{token:$t, platform:"android"}')")
 
 ID1=$(echo "$DEVICE_RESP"  | jq -r '.id // empty')
 ID2=$(echo "$DEVICE_RESP2" | jq -r '.id // empty')
@@ -181,7 +186,7 @@ ROT_RESP=$(api_post_token "$ROTATED")
 
 if echo "$ROT_RESP" | jq -e '.id' >/dev/null 2>&1; then
   REMAINING=$(docker exec fleetbase-src-application-1 php artisan tinker \
-    --execute="echo DB::table('user_devices')->where('token','fake-fcm-token-pour-test')->count();" \
+    --execute="echo DB::table('user_devices')->where('token','$FCM_TOKEN')->count();" \
     2>/dev/null | tr -d '[:space:]' || echo "?")
   if [ "$REMAINING" = "0" ]; then
     pass "rotation de jeton — l'ancien UserDevice a bien été retiré côté Fleetbase"
@@ -222,5 +227,5 @@ echo "────────────────────────�
 echo "Inspection manuelle si besoin — l'état des devices de ce driver :"
 echo ""
 echo "    docker exec fleetbase-src-application-1 php artisan tinker \\"
-echo "      --execute=\"print_r(DB::table('user_devices')->get(['uuid','platform','token'])->toArray());\""
+echo "      --execute=\"print_r(DB::table('user_devices')->get(['uuid','public_id','token'])->toArray());\""
 echo "──────────────────────────────────────────────────────────"

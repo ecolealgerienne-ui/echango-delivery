@@ -541,7 +541,20 @@ Diagnostic le plus probable — **la même leçon qu'au §6.7** : le miroir n'a 
 
 **Correction** : plutôt que de deviner quel identifiant la route accepte, `findUserDeviceByToken()` récupère l'enregistrement complet et la suppression essaie le `public_id` d'abord, l'`uuid` en repli. Le comportement best-effort est conservé — échouer à supprimer un ancien device ne doit jamais empêcher d'enregistrer le nouveau, sous peine de rendre le driver injoignable.
 
-**Statut : non revalidé** au moment d'écrire ces lignes. À confirmer par une nouvelle exécution de `test-driver-auth.sh`.
+**Hypothèse démentie par le test (28/07/2026)** — le log est sans appel :
+
+```
+404 DELETE /int/v1/user-devices/user_device_clo2hpiu10 - {"message":"User Device not found"}
+[AuthService] Retired 1 stale push token(s)
+```
+
+Le `public_id` échoue, le repli en **uuid réussit** (aucun warning « Could not delete » n'est émis). C'est donc **l'exact inverse du §6.7** : l'API publique `v1` résout par `public_id`, cette route interne `int/v1` par `uuid`. **La résolution d'enregistrement n'est pas uniforme dans Fleetbase** — il n'existe pas de règle générale à appliquer, seulement des routes à vérifier une par une. Mon code d'origine était correct ; c'est le diagnostic qui était faux.
+
+Ordre inversé en conséquence (uuid d'abord, recherche du public_id seulement en repli), pour éviter un aller-retour 404 systématique à chaque rotation.
+
+**Le voyant orange du test était par ailleurs un faux positif** : le script comptait un jeton constant partagé entre exécutions, dont les `UserDevice` s'étaient accumulés au fil des runs *antérieurs à la purge*. Il mesurait donc un reliquat historique, pas l'effet de la rotation qu'il venait de déclencher. Corrigé : chaque exécution utilise désormais un jeton unique, ce qui rend l'assertion auto-suffisante.
+
+**Leçon** : un test qui s'appuie sur un identifiant partagé entre exécutions mesure l'histoire du jeu de données, pas le comportement qu'il prétend vérifier. Le symptôme est trompeur dans les deux sens — il aurait aussi bien pu masquer une vraie régression.
 
 ### 6.15 `scripts/seed-test-order.sh` — commandes de test jetables
 
@@ -550,3 +563,15 @@ Problème pratique apparu à l'usage : chaque run en `WITH_MUTATIONS=1` **consom
 Le script crée une commande adhoc jetable et la dispatche. Il ne tente pas d'inventer client/lieux/config — ce qui supposerait de recréer une arborescence entière — mais **recopie ceux d'une commande existante**, ce qui le rend indépendant du jeu de données. Prérequis : au moins une commande déjà en base.
 
 **Non testé** (ni Docker ni Fleetbase dans le sandbox). Écrit à partir de formes déjà établies : enveloppe `{order:{…}}` (§2.5) et adressage `v1` par `public_id` (§6.7). Rappelle en sortie que le driver doit être **en ligne et positionné** pour qu'une adhoc lui parvienne — le matching est géospatial (§3.2).
+
+### 6.16 Le seed échouait aussi sur un identifiant — l'API `v1` n'expose pas d'uuid
+
+Premier essai de `seed-test-order.sh` : `pickup=` et `dropoff=` vides alors que la commande modèle est bien formée. Cause visible dans la réponse — l'API `v1` n'expose **que** des identifiants publics, sous la clé `id` :
+
+```json
+"customer": { "id": "contact_0c7hx0i0lu", "customer_id": "customer_0c7hx0i0lu", … }
+```
+
+Aucun champ `uuid` nulle part. Or la création de commande passe par `int/v1`, qui exige des `*_uuid`. Le script traduit donc désormais `public_id → uuid` via la liste des places.
+
+C'est le troisième incident d'identifiant de cette session (§6.7, §6.14, §6.16). Le motif est constant et mérite d'être retenu : **`int/v1` parle uuid, `v1` parle public_id, et traverser la frontière impose une traduction explicite.** Le §6.14 montre que l'inverse existe aussi ponctuellement — d'où la règle pratique : ne jamais présumer, vérifier route par route.
