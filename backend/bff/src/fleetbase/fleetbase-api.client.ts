@@ -56,7 +56,7 @@ export class FleetbaseApiClient {
   async callFleetOps(method: string, path: string, data?: any, params?: any) {
     return this.apiClient({
       method,
-      url: `/v1${path}`,
+      url: `/int/v1${path}`,
       data,
       params,
     });
