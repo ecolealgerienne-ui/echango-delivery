@@ -22,11 +22,13 @@ Le serveur est validé de bout en bout par `scripts/test-{driver-auth,transporte
 formes réelles (§7), mais **les écrans n'ont pas encore rendu de vraies
 données** — c'est là que les écarts restants apparaîtront.
 
-Deux limites connues côté écrans :
-- l'écran détail propose des boutons figés « accepter / démarrer / terminer »,
-  alors que les transitions réelles viennent du serveur et varient selon la
-  commande (`activites-suivantes`) ;
-- la capture photo n'est pas branchée : la clôture se fait sans preuve.
+Validé en usage réel le 28/07 : connexion, liste, détail, acceptation d'une
+adhoc, enchaînement des étapes, signalement d'échec.
+
+**Limite connue restante** : la capture photo n'est pas branchée. Les étapes
+marquées « preuve requise » (`require_pod`) sont donc envoyées **sans photo** —
+le serveur les accepte, mais la preuve manque au dossier. C'est le dernier
+chantier fonctionnel de l'app.
 
 ## Premier lancement — 3 étapes obligatoires
 
