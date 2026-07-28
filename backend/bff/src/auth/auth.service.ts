@@ -324,6 +324,7 @@ export class AuthService {
           phone: dto.phone,
           fleetbaseDriverUuid: dto.fleetbaseDriverUuid,
           fleetbaseUserUuid: fleetbaseDriver.user_uuid || null,
+          fleetbaseDriverPublicId: fleetbaseDriver.public_id || null,
         },
       });
 

@@ -95,12 +95,17 @@ model DriverAccount {
   fleetbaseUserUuid     String?          // Driver.user_uuid - push tokens route through
                                           // UserDevice (user_uuid), not the Driver record
                                           // itself (see docs/journal_implementation_bff.md)
+  // Driver.public_id ("driver_xxxx"). Needed because POST /v1/orders/{id}/start
+  // validates its `assign` param as a public_id and rejects a uuid - the one
+  // place in the API that will not take the uuid.
+  fleetbaseDriverPublicId String?
 
   // Status
   active                Boolean  @default(true)
 
   // Relations
   deviceTokens          DriverDeviceToken[]
+  deliveryFailures      DeliveryFailure[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -137,6 +142,35 @@ model DriverDeviceToken {
 
   @@index([driverId])
   @@index([active])
+}
+
+// Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
+//
+// Stored here rather than in Fleetbase because whether a per-waypoint "failed"
+// status exists natively is still unverified (§4.3 flags it as to-confirm, and
+// nothing in the routes or the Activity model contradicts that). Until it is,
+// the BFF is the source of truth for the failure itself; what we do push to
+// Fleetbase is the operator-visible trace (photo proof + remarks), so a
+// dispatcher looking at the order sees something rather than silence.
+model DeliveryFailure {
+  id                String   @id @default(cuid())
+  driverId          String
+  driver            DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  fleetbaseOrderUuid String
+  waypointUuid      String?  // which stop failed, when the order has several
+
+  reason            String   // see DeliveryFailureReason in the DTO
+  notes             String?
+
+  // Uuid of the Proof record created in Fleetbase when a photo was attached.
+  // Null when the driver reported without one, or when the upload failed.
+  fleetbaseProofUuid String?
+
+  reportedAt        DateTime @default(now())
+
+  @@index([driverId])
+  @@index([fleetbaseOrderUuid])
 }
 
 // Device Token for Push Notifications

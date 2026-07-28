@@ -28,13 +28,18 @@ class OrderState extends ChangeNotifier {
       _orders.where((order) => order.isCompleted).toList();
 
   /// Charge les commandes du driver.
-  Future<void> loadOrders({String status = 'assigned'}) async {
+  ///
+  /// [type] : 'assigned' (en cours), 'adhoc' (opportunités diffusées) ou
+  /// 'history'. Le filtrage par driver est fait côté BFF, jamais par
+  /// paramètre serveur — Fleetbase ignore les filtres non supportés et
+  /// renverrait toute la compagnie.
+  Future<void> loadOrders({String type = 'assigned'}) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      _orders = await _apiClient.getOrders(status: status);
+      _orders = await _apiClient.getOrders(type: type);
     } on AppException catch (e) {
       _errorMessage = e.message;
     } catch (e) {
@@ -121,28 +126,29 @@ class OrderState extends ChangeNotifier {
   }
 
   /// Marque une commande comme livrée.
+  ///
+  /// [proofPhotoBase64] est optionnelle : quand elle est fournie, la preuve
+  /// est envoyée d'abord, puis la commande est clôturée. L'ordre compte —
+  /// une preuve attachée après clôture n'aurait plus de valeur probante.
   Future<bool> completeOrder({
     required String orderId,
-    required String proofUrl,
+    String? proofPhotoBase64,
   }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      await _apiClient.completeOrder(orderId: orderId, proofUrl: proofUrl);
+      if (proofPhotoBase64 != null) {
+        await _apiClient.captureProofPhoto(orderId, [proofPhotoBase64]);
+      }
+      await _apiClient.completeOrder(orderId);
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index >= 0) {
-        _orders[index] = _orders[index].copyWith(
-          status: 'completed',
-          proofUrl: proofUrl,
-        );
+        _orders[index] = _orders[index].copyWith(status: 'completed');
       }
       if (_selectedOrder?.id == orderId) {
-        _selectedOrder = _selectedOrder?.copyWith(
-          status: 'completed',
-          proofUrl: proofUrl,
-        );
+        _selectedOrder = _selectedOrder?.copyWith(status: 'completed');
       }
       return true;
     } on AppException catch (e) {
@@ -161,8 +167,9 @@ class OrderState extends ChangeNotifier {
   Future<bool> reportDeliveryFailure({
     required String orderId,
     required String reason,
-    String? photoUrl,
+    String? photoBase64,
     String? notes,
+    String? waypointUuid,
   }) async {
     _isLoading = true;
     _errorMessage = null;
@@ -170,10 +177,11 @@ class OrderState extends ChangeNotifier {
 
     try {
       await _apiClient.reportDeliveryFailure(
-        orderId: orderId,
+        orderId,
         reason: reason,
-        photoUrl: photoUrl,
         notes: notes,
+        waypointUuid: waypointUuid,
+        photo: photoBase64,
       );
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index >= 0) {
@@ -182,7 +190,7 @@ class OrderState extends ChangeNotifier {
           deliveryFailure: DeliveryFailure(
             id: orderId,
             reason: reason,
-            photoUrl: photoUrl,
+            photoUrl: null,
             notes: notes,
             createdAt: DateTime.now(),
           ),
@@ -194,7 +202,7 @@ class OrderState extends ChangeNotifier {
           deliveryFailure: DeliveryFailure(
             id: orderId,
             reason: reason,
-            photoUrl: photoUrl,
+            photoUrl: null,
             notes: notes,
             createdAt: DateTime.now(),
           ),

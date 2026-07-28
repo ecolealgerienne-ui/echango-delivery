@@ -222,134 +222,201 @@ class BffApiClient {
   }
 
   // ───────────────────────────────────────────────────────────────────────
-  // ⚠️ TOUT CE QUI SUIT EST NON IMPLÉMENTÉ CÔTÉ BFF au 28/07/2026.
-  //
-  // Ces méthodes ont été écrites au scaffolding contre une API supposée, pas
-  // contre l'API réelle : le module `transporteur` du BFF (dashboard,
-  // commandes, statuts, POD, échec de livraison — specs_app_transporteur.md
-  // §3-5) reste à construire. Les chemins et les formes de payload ci-dessous
-  // sont donc à considérer comme des placeholders, à réaligner sur le serveur
-  // une fois le module écrit — comme il a fallu le faire pour login().
-  //
-  // Seule la tranche auth email/mot de passe est fonctionnelle aujourd'hui.
+  // Module transporteur — réaligné le 28/07/2026 sur les routes réelles du
+  // BFF (backend/bff/src/transporteur/). Formes de payload vérifiées contre
+  // le code source Fleetbase, mais la plupart ne sont PAS encore validées par
+  // un appel réel : voir docs/journal_implementation_bff.md §6.
   // ───────────────────────────────────────────────────────────────────────
 
   // Driver endpoints
 
   Future<Map<String, dynamic>> getDriver() async {
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/driver/profile'),
+      Uri.parse('$baseUrl/transporteur/profil'),
       headers: _buildHeaders(),
     );
     return _parseResponse(response) ?? {};
   }
 
+  /// Remonte une position GPS. Appelé par le suivi en tâche de fond.
   Future<void> updateDriverLocation({
     required double latitude,
     required double longitude,
+    double? heading,
+    double? speed,
+    double? altitude,
   }) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/driver/location'),
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/position'),
       headers: _buildHeaders(),
       body: jsonEncode({
         'latitude': latitude,
         'longitude': longitude,
+        if (heading != null) 'heading': heading,
+        if (speed != null) 'speed': speed,
+        if (altitude != null) 'altitude': altitude,
       }),
     );
     _parseResponse(response);
   }
 
-  Future<void> updateDriverStatus(String status) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/driver/status'),
+  /// Bascule la disponibilité. Toujours explicite : omettre la valeur ferait
+  /// inverser l'état courant côté Fleetbase, donc désynchroniser sur un rejeu.
+  Future<void> setOnline(bool online) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/statut'),
       headers: _buildHeaders(),
-      body: jsonEncode({'status': status}),
+      body: jsonEncode({'online': online}),
     );
     _parseResponse(response);
   }
 
   // Order endpoints
 
-  Future<List<Order>> getOrders({
-    String status = 'assigned',
-    int page = 1,
-    int limit = 20,
-  }) async {
+  /// Sans [type], le BFF renvoie les trois catégories d'un coup
+  /// (active/adhoc/history) — c'est ce qu'attend l'écran liste (§4.1).
+  /// Avec [type], une seule liste à plat.
+  Future<Map<String, List<Order>>> getOrderBuckets() async {
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/orders')
-          .replace(queryParameters: {
-        'status': status,
-        'page': page.toString(),
-        'limit': limit.toString(),
-      }),
+      Uri.parse('$baseUrl/transporteur/commandes'),
       headers: _buildHeaders(),
     );
     final data = _parseResponse(response);
-    if (data != null && data['data'] is List) {
-      return (data['data'] as List)
+    if (data == null) return {'active': [], 'adhoc': [], 'history': []};
+
+    List<Order> parse(String key) {
+      final raw = data[key];
+      if (raw is! List) return [];
+      return raw
+          .map((o) => Order.fromJson(o as Map<String, dynamic>))
+          .toList();
+    }
+
+    return {
+      'active': parse('active'),
+      'adhoc': parse('adhoc'),
+      'history': parse('history'),
+    };
+  }
+
+  Future<List<Order>> getOrders({String type = 'assigned'}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/transporteur/commandes')
+          .replace(queryParameters: {'type': type}),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    if (data != null && data['orders'] is List) {
+      return (data['orders'] as List)
           .map((order) => Order.fromJson(order as Map<String, dynamic>))
           .toList();
     }
     return [];
   }
 
+  /// Le BFF renvoie la commande Fleetbase telle quelle, sans enveloppe.
+  /// Une commande qui n'appartient pas au driver remonte en 404 (jamais 403 :
+  /// un driver n'a pas à apprendre qu'un identifiant existe).
   Future<Order> getOrder(String orderId) async {
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/orders/$orderId'),
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId'),
       headers: _buildHeaders(),
     );
     final data = _parseResponse(response);
-    if (data != null && data['data'] != null) {
-      return Order.fromJson(data['data'] as Map<String, dynamic>);
+    if (data != null) {
+      return Order.fromJson(data as Map<String, dynamic>);
     }
     throw AppException(code: AppError.orderNotFound);
   }
 
+  /// Accepte une commande adhoc : côté Fleetbase, l'assignation et le
+  /// démarrage sont une seule opération (§4.2 « assigne le driver et démarre
+  /// immédiatement »). Peut échouer si un autre driver a été plus rapide.
   Future<void> acceptOrder(String orderId) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/orders/$orderId/accept'),
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/accepter'),
       headers: _buildHeaders(),
     );
     _parseResponse(response);
   }
 
   Future<void> startOrder(String orderId) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/orders/$orderId/start'),
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/demarrer'),
       headers: _buildHeaders(),
     );
     _parseResponse(response);
   }
 
-  Future<void> completeOrder({
-    required String orderId,
-    required String proofUrl,
-  }) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/orders/$orderId/complete'),
+  /// Marque la commande comme terminée. Distinct de [updateActivity] : c'est
+  /// la transition terminale dédiée côté Fleetbase.
+  Future<void> completeOrder(String orderId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/terminer'),
       headers: _buildHeaders(),
-      body: jsonEncode({'proof_url': proofUrl}),
     );
     _parseResponse(response);
   }
 
-  Future<void> reportDeliveryFailure({
-    required String orderId,
-    required String reason,
-    String? photoUrl,
-    String? notes,
-  }) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/orders/$orderId/failure'),
+  /// Fait progresser la commande dans sa machine à états.
+  ///
+  /// [activity] doit être l'objet Activity COMPLET issu de la config de la
+  /// commande (obtenu via [getOrder]), pas une chaîne de statut — c'est ce que
+  /// valide POST /v1/orders/{id}/update-activity côté Fleetbase.
+  Future<void> updateActivity(String orderId, Map<String, dynamic> activity,
+      {String? proof}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/activite'),
       headers: _buildHeaders(),
       body: jsonEncode({
-        'reason': reason,
-        'photo_url': photoUrl,
-        'notes': notes,
+        'activity': activity,
+        if (proof != null) 'proof': proof,
       }),
     );
     _parseResponse(response);
   }
 
-  bool isAuthenticated() => _accessToken != null;
+  /// Preuve de livraison photo (§5). [photos] sont des images encodées en
+  /// base64 — le contrôleur Fleetbase les accepte au même titre qu'un upload
+  /// multipart, ce qui évite au BFF de gérer du multipart.
+  Future<void> captureProofPhoto(String orderId, List<String> photos,
+      {String? remarks, String? subjectId}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/preuve'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'photos': photos,
+        if (remarks != null) 'remarks': remarks,
+        if (subjectId != null) 'subjectId': subjectId,
+      }),
+    );
+    _parseResponse(response);
+  }
+
+  /// Signale un échec de livraison (§4.3).
+  ///
+  /// [reason] doit appartenir à la liste fermée du BFF : client_absent,
+  /// adresse_introuvable, colis_refuse, colis_endommage, acces_impossible,
+  /// autre. La photo est optionnelle et son upload est best-effort côté
+  /// serveur — le signalement est conservé même si l'envoi échoue, pour qu'un
+  /// driver en mauvaise couverture puisse quand même le déclarer.
+  Future<Map<String, dynamic>> reportDeliveryFailure(
+    String orderId, {
+    required String reason,
+    String? notes,
+    String? waypointUuid,
+    String? photo,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/echec'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'reason': reason,
+        if (notes != null) 'notes': notes,
+        if (waypointUuid != null) 'waypointUuid': waypointUuid,
+        if (photo != null) 'photo': photo,
+      }),
+    );
+    return _parseResponse(response) ?? {};
+  }
 }

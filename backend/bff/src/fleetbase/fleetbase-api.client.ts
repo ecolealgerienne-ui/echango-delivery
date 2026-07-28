@@ -50,6 +50,38 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Call the PUBLIC FleetOps API (`/v1`, middleware `fleetbase.api`) as
+   * opposed to the internal one (`/int/v1`, middleware `fleetbase.protected`).
+   *
+   * Why this exists (verified 28/07/2026 by reading fleetbase/fleetops
+   * server/src/routes.php and fleetbase/core-api CoreServiceProvider): the
+   * driver-critical operations simply DO NOT EXIST on `int/v1`. Order activity
+   * updates, start, proof capture, driver tracking and the online toggle are
+   * only declared under the `v1` group. `int/v1` only carries bulk/dispatch
+   * variants aimed at the console.
+   *
+   * Why the same Sanctum token still works, despite journal §2.2 concluding
+   * the two auth schemes were separate: `fleetbase.api` maps to
+   * `AuthenticateOnceWithBasicAuth`, whose name is misleading — it reads
+   * `$request->bearerToken()` and tries `PersonalAccessToken::findToken()`
+   * FIRST, falling back to an `ApiCredential` lookup on `key` only if that
+   * misses. A Sanctum personal access token is therefore accepted on `v1`
+   * exactly as it is on `int/v1`, and no second credential is needed.
+   *
+   * That corrects §2.2's "the flb_live_ key is nearly useless to us" framing:
+   * the accurate statement is that BOTH credentials work on `v1`, while only
+   * Sanctum works on `int/v1` — so a single Sanctum token covers everything.
+   */
+  async callFleetOpsPublic(method: string, path: string, data?: any, params?: any) {
+    return this.apiClient({
+      method,
+      url: `/v1${path}`,
+      data,
+      params,
+    });
+  }
+
+  /**
    * Call standard FleetOps API endpoint
    * Used for fleet operations (internal, with service account)
    */
@@ -403,6 +435,87 @@ export class FleetbaseApiClient {
       this.logger.error(`Upsert driver device token failed: ${error.message}`);
       throw error;
     }
+  }
+
+  // ── Opérations driver (API publique v1) ────────────────────────────────
+  // Formes de payload lues dans fleetops server/src/Http/Controllers/Api/v1/
+  // {Order,Driver}Controller.php le 28/07/2026, pas supposées.
+
+  /**
+   * Push a GPS fix. `track()` accepts latitude/longitude plus optional
+   * altitude/heading/speed, and resolves {id} through findRecordOrFail, which
+   * takes either a public_id or a uuid.
+   */
+  async trackDriver(
+    driverId: string,
+    position: { latitude: number; longitude: number; altitude?: number; heading?: number; speed?: number },
+  ) {
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverId}/track`, position);
+    return response.data;
+  }
+
+  /**
+   * Flip driver availability. Passing `online` sets it explicitly; omitting it
+   * makes Fleetbase toggle whatever is current — we always pass it, since a
+   * blind toggle would desync if a request were retried.
+   */
+  async toggleDriverOnline(driverId: string, online: boolean) {
+    const response = await this.callFleetOpsPublic('POST', `/drivers/${driverId}/toggle-online`, { online });
+    return response.data;
+  }
+
+  /**
+   * Start an order. `assign` is how an adhoc order gets claimed — and it is
+   * validated as a **public_id** (the controller requires the `driver_`
+   * prefix), NOT the uuid used everywhere else. Hence DriverAccount stores
+   * both identifiers.
+   */
+  async startOrder(orderId: string, assignDriverPublicId?: string) {
+    const body = assignDriverPublicId ? { assign: assignDriverPublicId } : {};
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/start`, body);
+    return response.data;
+  }
+
+  /**
+   * Advance the order through its state machine. `activity` must be a full
+   * Activity object from the order config, not a status string — the app gets
+   * it from the order detail payload and hands it back.
+   */
+  async updateOrderActivity(orderId: string, activity: any, proof?: string) {
+    const body: any = { activity };
+    if (proof) body.proof = proof;
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/update-activity`, body);
+    return response.data;
+  }
+
+  /**
+   * Attach photo proof. The controller accepts `photos` as multipart uploads
+   * OR as an array of base64 strings — we use base64, which keeps the BFF a
+   * plain JSON service with no multipart handling.
+   */
+  async captureOrderPhoto(orderId: string, photos: string[], remarks?: string, subjectId?: string) {
+    const path = subjectId
+      ? `/orders/${orderId}/capture-photo/${subjectId}`
+      : `/orders/${orderId}/capture-photo`;
+    const body: any = { photos };
+    if (remarks) body.remarks = remarks;
+    const response = await this.callFleetOpsPublic('POST', path, body);
+    return response.data;
+  }
+
+  /**
+   * Mark an order complete. Distinct from updateActivity: this is the
+   * dedicated terminal transition, and it is what the app's "delivered"
+   * button maps to.
+   */
+  async completeOrder(orderId: string) {
+    const response = await this.callFleetOpsPublic('POST', `/orders/${orderId}/complete`, {});
+    return response.data;
+  }
+
+  async getOrderPublic(orderId: string) {
+    const response = await this.callFleetOpsPublic('GET', `/orders/${orderId}`);
+    return response.data;
   }
 
   /**

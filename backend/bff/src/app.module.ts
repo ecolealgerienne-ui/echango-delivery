@@ -8,6 +8,7 @@ import { FleetbaseModule } from './fleetbase/fleetbase.module';
 import { AuthModule } from './auth/auth.module';
 import { CommerçantModule } from './commercant/commercant.module';
 import { FlotteModule } from './flotte/flotte.module';
+import { TransporteurModule } from './transporteur/transporteur.module';
 import { CommonModule } from './common/common.module';
 
 @Module({
@@ -33,6 +34,7 @@ import { CommonModule } from './common/common.module';
     AuthModule,
     CommerçantModule,
     FlotteModule,
+    TransporteurModule,
   ],
 })
 export class AppModule {}

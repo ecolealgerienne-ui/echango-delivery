@@ -276,10 +276,10 @@ class OrderDetailScreen extends StatelessWidget {
     String orderId,
     OrderState orderState,
   ) async {
-    final success = await orderState.completeOrder(
-      orderId: orderId,
-      proofUrl: 'placeholder_proof_url',
-    );
+    // Sans preuve photo pour l'instant : la capture caméra (§5) n'est pas
+    // encore branchée. Le BFF accepte la clôture sans preuve, donc le flux
+    // fonctionne — passer une image base64 ici quand l'écran POD existera.
+    final success = await orderState.completeOrder(orderId: orderId);
 
     if (success) {
       if (!context.mounted) return;

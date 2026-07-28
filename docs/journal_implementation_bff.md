@@ -336,3 +336,65 @@ Bilan de ce qui est **réellement prouvé par exécution**, par opposition à ce
 | Module `transporteur` métier | ❌ non écrit | bloquant pour tester l'app au-delà du login |
 
 **Ce que ça change pour la suite** : la couche d'identité driver (compte Echango ↔ `Driver` Fleetbase ↔ `UserDevice`) est solide et vérifiée, donc le module `transporteur` peut être construit dessus sans réserve. Les deux lignes rouges du milieu du tableau ne bloquent pas ce développement, mais doivent être traitées **avant** toute mise en service réelle : des jetons morts jamais purgés dégradent silencieusement le dispatch, sans erreur visible nulle part.
+
+---
+
+## 6. Module `transporteur` — implémentation (28/07/2026)
+
+Construit après validation de la tranche auth (§5.7). Méthode identique au reste de ce journal : **chaque route vérifiée dans le code source Fleetbase avant d'écrire**, cette fois par lecture du dépôt public (`fleetbase/fleetops`, `fleetbase/core-api`) faute d'instance dans le sandbox.
+
+### 6.1 ⚠️ Découverte structurante — les opérations driver n'existent pas sur `int/v1`
+
+Le BFF n'avait jusqu'ici parlé qu'à `int/v1` (middleware `fleetbase.protected`, token Sanctum — §2.1/§2.2). **Aucune** des opérations dont l'app driver a besoin n'y est déclarée. En lisant `server/src/routes.php` :
+
+| Opération | Route réelle | Groupe |
+|---|---|---|
+| Mise à jour d'activité | `POST /v1/orders/{id}/update-activity` | `v1` |
+| Démarrer une commande | `POST /v1/orders/{id}/start` | `v1` |
+| Terminer une commande | `POST /v1/orders/{id}/complete` | `v1` |
+| Preuve photo / signature / QR | `POST /v1/orders/{id}/capture-{photo,signature,qr}` | `v1` |
+| Position GPS | `POST /v1/drivers/{id}/track` | `v1` |
+| Bascule en ligne | `POST /v1/drivers/{id}/toggle-online` | `v1` |
+
+`int/v1` ne porte que les variantes *bulk*/dispatch pensées pour la console (`bulk-assign-driver`, `bulk-dispatch`…). Il fallait donc ouvrir un second canal vers l'API publique `v1` : `FleetbaseApiClient.callFleetOpsPublic()`.
+
+### 6.2 ⚠️ Correction de §2.2 — le token Sanctum fonctionne AUSSI sur `v1`
+
+§2.2 concluait que la clé `flb_live_` « ne sert (presque) à rien » et que les deux schémas d'auth étaient séparés. **La conclusion était trop étroite.** En lisant `CoreServiceProvider`, le groupe `v1` utilise l'alias `fleetbase.api` → `AuthenticateOnceWithBasicAuth`. Ce nom est trompeur : la classe **ne fait pas de Basic Auth**. Son `handle()` lit `$request->bearerToken()` puis tente **`PersonalAccessToken::findToken()` en premier**, et ne se rabat sur une recherche `ApiCredential` (clé `flb_live_`) que si ça échoue.
+
+**Conséquence pratique** : un seul token Sanctum couvre tout — `int/v1` **et** `v1`. Aucun second credential à provisionner, aucune variable d'environnement supplémentaire. La formulation exacte est : *les deux credentials marchent sur `v1`, seul Sanctum marche sur `int/v1`*.
+
+**Leçon** : un nom de classe n'est pas une spécification. `AuthenticateOnceWithBasicAuth` aurait justifié de conclure « il faut du Basic Auth » sans lire le corps de la méthode — c'était faux, et ça aurait conduit à provisionner un credential inutile.
+
+### 6.3 `assign` attend un `public_id`, pas un `uuid`
+
+`OrderController@startOrder` valide son paramètre `assign` comme un **public_id** (préfixe `driver_` obligatoire) — le seul endroit de l'API qui refuse l'uuid utilisé partout ailleurs. Ironique vu le piège inverse rencontré en §5.6. D'où la colonne `DriverAccount.fleetbaseDriverPublicId`, remplie à l'inscription et rattrapée à la volée pour les comptes antérieurs (`getDriverPublicId()`).
+
+### 6.4 Anti-IDOR — filtrage systématiquement côté BFF
+
+`GET /transporteur/commandes` récupère **toutes** les commandes de la compagnie puis filtre sur `driver_assigned_uuid` **dans le BFF**. Ce n'est pas de la prudence excessive : §2.8 a établi que Fleetbase **ignore silencieusement** les filtres non supportés sur `/orders` et renvoie la collection entière. Un filtre passé en paramètre aurait donc *l'air* de marcher tout en exposant les commandes de toute l'organisation à chaque driver.
+
+Même discipline sur l'accès unitaire : `getOrder()` autorise soit une commande assignée au driver, soit une commande adhoc non réclamée (opportunité légitime), et répond **404** — pas 403 — dans tous les autres cas : un driver n'a pas à apprendre qu'un identifiant existe.
+
+Troisième garde, souvent oublié : les 3 personas partagent le même émetteur JWT, donc un token commerçant est *structurellement* valide sur ces routes. Chaque endpoint vérifie `req.user.type === 'transporteur'`.
+
+### 6.5 Échec de livraison — stocké côté BFF, faute de statut natif confirmé
+
+`docs/specs_app_transporteur.md` §4.3 laissait ouvert l'existence d'un statut « failed » natif par étape. Rien dans les routes ni dans le modèle `Activity` ne permet de l'affirmer, et aucun test n'a pu être mené. Décision : le modèle `DeliveryFailure` (BFF) est source de vérité pour l'échec lui-même ; ce qui est poussé vers Fleetbase est la trace visible par l'opérateur — la photo en `Proof`, avec la raison dans les `remarks`.
+
+L'upload photo est **best-effort délibérément** : un driver devant une porte close, en mauvaise couverture, doit pouvoir déclarer l'échec même si l'envoi de l'image échoue. Perdre le signalement pour cause d'image serait le pire compromis possible.
+
+### 6.6 État de vérification
+
+| Élément | Statut | Preuve |
+|---|---|---|
+| Routes `v1` existent et leurs payloads | ✅ vérifié | lecture `routes.php` + `{Order,Driver}Controller` |
+| Sanctum accepté sur `v1` | ✅ vérifié | lecture `AuthenticateOnceWithBasicAuth::handle()` |
+| `assign` = public_id | ✅ vérifié | validation du contrôleur |
+| Compilation du module | ✅ vérifié | `nest build` |
+| **Tous les appels réels** | ❌ **non testé** | aucune instance dans le sandbox |
+| Forme exacte de l'objet `Activity` | ❌ non testé | à relever sur une vraie commande |
+| Upload photo base64 | ❌ non testé | accepté par le contrôleur en lecture, jamais envoyé |
+| Filtrage anti-IDOR en conditions réelles | ❌ **non testé** | `scripts/test-transporteur-module.sh` étape 5 |
+
+`scripts/test-transporteur-module.sh` couvre profil, statut, position, liste, anti-IDOR, rejet de token non-driver, absence de token et échec de livraison. Accepter/démarrer/activité en sont **volontairement absents** : ils modifient un état difficile à remettre en place, à tester à la main sur une commande jetable.
