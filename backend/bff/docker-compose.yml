@@ -43,6 +43,8 @@ services:
       REDIS_URL: redis://redis:6379
     ports:
       - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
