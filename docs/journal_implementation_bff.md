@@ -173,7 +173,9 @@ Au cours de cette session, une variable shell (`$VENDOR_A_UUID`) censée porter 
 
 Découverte pendant l'investigation ci-dessus (en lisant `OrderController::normalizeCustomerType()`) : cette méthode ne lit que `input['customer_uuid']` ou `input['customer']['uuid']` (objet imbriqué) — **jamais** une simple chaîne `input['customer']`. Or `commercant.service.ts`/`fleetbase-api.client.ts` envoyaient depuis le début `customer: merchant.fleetbaseVendorUuid` (chaîne plate), silencieusement ignorée par `normalizeCustomerType()` : validation passe (`ExistsInAny` sur `uuid`, qui matche bien), mais `customer_uuid` reste `null` en base sur **toutes** les commandes commerçant créées jusqu'ici, y compris la toute première commande de test de la session précédente — jamais vérifié jusqu'à aujourd'hui.
 
-**Fix** : envoyer directement `customer_uuid`/`customer_type` (les colonnes `$fillable` réelles du modèle `Order`, même pattern que `facilitator_uuid`/`facilitator_type` confirmé en §2.9) plutôt que la clé virtuelle `customer`. Corrigé dans `fleetbase-api.client.ts::createOrder()` et son appel dans `commercant.service.ts`. **Pas re-testé de bout en bout après le fix** (à faire : recréer une commande commerçant et vérifier `customer_uuid` non-null dans la réponse).
+**Fix** : envoyer directement `customer_uuid`/`customer_type` (les colonnes `$fillable` réelles du modèle `Order`, même pattern que `facilitator_uuid`/`facilitator_type` confirmé en §2.9) plutôt que la clé virtuelle `customer`. Corrigé dans `fleetbase-api.client.ts::createOrder()` et son appel dans `commercant.service.ts`.
+
+**✅ Vérifié par test réel de bout en bout (28/07/2026)** : nouveau commerçant enregistré, commande créée via `POST /commercant/commandes`, puis vérification directe côté Fleetbase — `customer_uuid` correctement peuplé avec l'UUID du Vendor du commerçant, `customer_type: "vendor"`. Le fix est confirmé correct, pas seulement plausible.
 
 ### 2.11 `GET /driver-positions` n'existe pas — vraie ressource `/int/v1/positions`, sans filtre par driver
 
