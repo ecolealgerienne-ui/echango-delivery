@@ -73,6 +73,22 @@ docker compose up -d --build --force-recreate bff
 
 Le `start:dev` en watch recompile ensuite tout seul.
 
+### Même cause : le client Prisma après un changement de schéma
+
+Les types générés par Prisma vivent dans `node_modules/.prisma/client`, donc
+dans ce même volume. Modifier `schema.prisma` et lancer la migration ne suffit
+pas : les colonnes existent en base, mais TypeScript ne les connaît pas encore.
+
+```
+error TS2353: 'lastPositionAt' does not exist in type 'DriverAccountWhereInput'
+```
+
+C'est le symptôme, pas une erreur de code :
+
+```bash
+docker exec echango_bff_app npx prisma generate
+```
+
 ## API Endpoints
 
 ### Auth (Public)

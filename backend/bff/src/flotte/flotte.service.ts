@@ -11,7 +11,14 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 
-/** Projection de DriverAccount servie par getDriverPositions. */
+/**
+ * Projection de DriverAccount servie par getDriverPositions.
+ *
+ * Annotée sur le paramètre du `.map()` plutôt qu'imposée par une conversion
+ * sur le résultat de Prisma : une conversion aurait masqué le vrai problème
+ * quand le client Prisma n'est pas régénéré après un changement de schéma —
+ * les colonnes manquent alors dans les types, et l'erreur doit se voir.
+ */
 interface LastKnownPosition {
   fleetbaseDriverUuid: string;
   firstName: string | null;
@@ -170,7 +177,7 @@ export class FlotteService {
         },
       });
 
-      return (accounts as LastKnownPosition[]).map((a) => ({
+      return accounts.map((a: LastKnownPosition) => ({
         driver_uuid: a.fleetbaseDriverUuid,
         name: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
         latitude: a.lastLatitude,
