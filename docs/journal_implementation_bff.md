@@ -1069,3 +1069,20 @@ Le défaut n'était visible d'aucune façon jusqu'ici : l'upload réussissait, l
 Les preuves déjà enregistrées sur le disque `local` restent inaccessibles : leur URL est en base, le fichier est sur le disque, mais aucune route ne les relie.
 
 Repère : **une URL renvoyée par un service ne prouve pas qu'elle est servie.** Ici l'émetteur du fichier et le serveur du fichier sont deux composants distincts d'une même application, configurés séparément.
+
+### 11.10 Chaîne preuve photo validée de bout en bout (28/07/2026)
+
+Résolu après `php artisan storage:link` et le passage au disque `public`. Un nouveau signalement avec photo s'affiche correctement dans l'app.
+
+Ce que ce test valide, et qui ne dépend pas du stockage retenu :
+
+- le contournement du bug de bucket amont (§6.12) — le point le plus fragile ;
+- l'extraction de l'URL depuis une ressource `Proof` qui masque `uuid` hors requête interne (§11.6) ;
+- le relais authentifié par le BFF, avec sa garde d'appartenance sur `driverId` (§11.7) ;
+- le chargement côté app via le client HTTP plutôt que `Image.network`, qui ne porterait pas le jeton.
+
+Le passage à S3 ne changera que deux variables d'environnement — `FLEETBASE_PROOF_DISK=s3` et `FLEETBASE_PROOF_BUCKET` — avec le piège déjà noté : ces valeurs prennent le pas sur la configuration serveur, donc les oublier ferait écrire sur le disque public malgré une config S3 correcte, sans erreur visible.
+
+Bénéfice du relais qui n'apparaît qu'en production : le bucket S3 peut rester **privé**. Sans relais il faudrait le rendre public pour que l'app y accède, c'est-à-dire publier les preuves de livraison à qui devine l'adresse.
+
+**Les preuves antérieures au correctif restent inaccessibles** : leur URL est en base, leur fichier sur le disque `local`, et aucune route ne les relie. Sans conséquence — ce sont des essais.
