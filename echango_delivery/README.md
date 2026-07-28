@@ -44,7 +44,7 @@ lib/
 Le dépôt ne contient que `lib/` — le scaffolding de plateforme se génère :
 
 ```bash
-cd echango_app
+cd echango_delivery
 flutter create . --platforms=android --org com.echango
 flutter pub get
 flutter analyze

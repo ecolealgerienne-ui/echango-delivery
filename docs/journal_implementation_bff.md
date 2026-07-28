@@ -751,7 +751,7 @@ Le module passait pourtant les tests : ils vérifiaient qu'une commande est cré
 
 Le scaffolding partait sur **une app par persona**. L'utilisateur a fait remarquer que c'est un seul produit — on commande une livraison et on la livre, avec des profils différents. Argument juste, et le code le confirmait : `merchant_app` avait été créé en **copiant** `errors/`, `theme/`, la structure du client HTTP et celle de l'auth depuis `driver_app`. Dupliquer un socle est le signal qu'il devrait être partagé.
 
-**Fusion** : `driver_app` + `merchant_app` → `echango_app`, avec `screens/transporteur/` et `screens/commercant/`. Le découpage par profil n'est pas cosmétique — il existe pour que la séparation en deux binaires reste peu coûteuse si le coût ci-dessous devenait bloquant.
+**Fusion** : `driver_app` + `merchant_app` → `echango_delivery`, avec `screens/transporteur/` et `screens/commercant/`. Le découpage par profil n'est pas cosmétique — il existe pour que la séparation en deux binaires reste peu coûteuse si le coût ci-dessous devenait bloquant.
 
 **Coût assumé** : les permissions Android sont déclarées dans le manifeste, pas à l'exécution. La géolocalisation en tâche de fond, nécessaire au transporteur, apparaîtra donc pour un commerçant qui ne livrera jamais — y compris sur une fiche Play Store, qui impose en plus une procédure de validation pour cette permission. Elles ne sont *demandées* qu'à l'usage, et une distribution B2B par APK direct ne pose pas la question ; ça reste une dette à surveiller.
 
