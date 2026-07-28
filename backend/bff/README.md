@@ -89,6 +89,27 @@ C'est le symptôme, pas une erreur de code :
 docker exec echango_bff_app npx prisma generate
 ```
 
+**L'ordre compte, et l'oubli inverse est plus déroutant.** Générer le client
+sans avoir joué la migration produit un client qui réclame des colonnes que la
+base n'a pas :
+
+```
+The column `DriverAccount.lastLatitude` does not exist in the current database
+```
+
+Et ça casse **toutes** les requêtes sur le modèle, y compris celles qui n'ont
+rien à voir avec la colonne ajoutée — le client sélectionne toutes les
+colonnes. Donc migration d'abord, génération ensuite :
+
+```bash
+docker exec -it echango_bff_app npx prisma migrate dev --name <nom>
+docker exec    echango_bff_app npx prisma generate
+```
+
+Le `-it` est nécessaire : sans lui, `migrate dev` reste bloqué sur son prompt
+de nom et **ne joue jamais la migration**, sans le dire clairement. Passer
+`--name` évite complètement la question.
+
 ## API Endpoints
 
 ### Auth (Public)

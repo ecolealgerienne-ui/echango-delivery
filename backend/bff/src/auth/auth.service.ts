@@ -370,30 +370,76 @@ export class AuthService {
   }
 
   /**
+   * Traduit les deux pannes d'installation Prisma en message actionnable.
+   *
+   * Elles sont indiscernables les unes des autres dans un 500 nu, et aucune ne
+   * vient de l'appelant :
+   *
+   * - `P2021` — table absente : migration jamais jouée ;
+   * - `P2022` — colonne absente : `prisma generate` a été lancé mais pas la
+   *   migration, donc le client réclame des colonnes que la base n'a pas.
+   *   Piège particulier : la requête qui casse n'a rien à voir avec la colonne
+   *   ajoutée, puisque le client sélectionne toutes les colonnes du modèle ;
+   * - modèle `undefined` — l'inverse : migration jouée, client pas régénéré.
+   *
+   * Toutes se corrigent côté serveur en une commande, et frappent au premier
+   * appel d'un chemin neuf. D'où le réflexe de brancher ceci sur toute route
+   * touchant un modèle récemment modifié, plutôt que de laisser un 500 opaque
+   * le jour du test.
+   */
+  private rethrowIfPrismaSetupIssue(error: any, ...modelNames: string[]): void {
+    const message = error?.message ?? '';
+    const looksUndefined = modelNames.some((m) =>
+      new RegExp(`${m}|Cannot read properties of undefined`, 'i').test(message),
+    );
+
+    if (['P2021', 'P2022'].includes(error?.code) || looksUndefined) {
+      throw new BadRequestException(
+        `Schéma Prisma désynchronisé (modèles concernés : ${modelNames.join(', ')}). ` +
+          'Lancer : npm run prisma:migrate PUIS npm run prisma:generate. ' +
+          `Détail : ${message.split('\n').pop()}`,
+      );
+    }
+  }
+
+  /**
    * Émet une invitation pour un Driver Fleetbase donné (action opérateur).
    *
    * Le jeton en clair n'est renvoyé qu'ici, une seule fois : la base n'en
    * garde que l'empreinte. À transmettre au transporteur hors bande.
    */
   async createDriverInvitation(fleetbaseDriverUuid: string, email?: string, validForDays = 7) {
-    const existing = await this.prisma.driverAccount.findUnique({
-      where: { fleetbaseDriverUuid },
-    });
-    if (existing) {
-      throw new ConflictException('This driver already has an Echango account');
-    }
-
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + validForDays * 24 * 60 * 60 * 1000);
 
-    await this.prisma.driverInvitation.create({
-      data: {
-        tokenHash: this.hashInvitationToken(token),
-        fleetbaseDriverUuid,
-        email,
-        expiresAt,
-      },
-    });
+    try {
+      const existing = await this.prisma.driverAccount.findUnique({
+        where: { fleetbaseDriverUuid },
+      });
+      if (existing) {
+        throw new ConflictException('This driver already has an Echango account');
+      }
+
+      await this.prisma.driverInvitation.create({
+        data: {
+          tokenHash: this.hashInvitationToken(token),
+          fleetbaseDriverUuid,
+          email,
+          expiresAt,
+        },
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+      this.logger.error(`Driver invitation failed: ${error.message}`, error);
+      this.rethrowIfPrismaSetupIssue(error, 'driverInvitation', 'driverAccount');
+      throw new BadRequestException(
+        this.configService.get('NODE_ENV') === 'development'
+          ? `Émission d'invitation impossible : ${error.message}`
+          : 'Could not issue driver invitation',
+      );
+    }
 
     this.logger.log(`Driver invitation issued for ${fleetbaseDriverUuid}`);
 
@@ -511,17 +557,7 @@ export class AuthService {
       }
       this.logger.error(`Driver registration failed: ${error.message}`, error);
 
-      // Deux pannes d'installation très probables tant que la tranche driver
-      // n'a jamais tourné, et indiscernables l'une de l'autre dans un 500 nu.
-      // P2021 = table absente ; `driverAccount` undefined = client Prisma pas
-      // régénéré depuis l'ajout du modèle. Les deux se corrigent côté dev, pas
-      // côté appelant — autant le dire explicitement.
-      if (error?.code === 'P2021' || /driverAccount/.test(error?.message ?? '')) {
-        throw new BadRequestException(
-          'Table DriverAccount introuvable ou client Prisma obsolète. ' +
-            'Lancer : npm run prisma:generate && npm run prisma:migrate',
-        );
-      }
+      this.rethrowIfPrismaSetupIssue(error, 'driverAccount');
 
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       throw new BadRequestException(
