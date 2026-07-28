@@ -175,7 +175,7 @@ export class CommerçantService {
 
     try {
       // Cancel in Fleetbase
-      await this.fleetbaseClient.callFleetOps('POST', `/orders/${order.fleetbaseOrderId}/cancel`);
+      await this.fleetbaseClient.cancelOrder(order.fleetbaseOrderId);
 
       // Update local cache
       const updated = await this.prisma.order.update({

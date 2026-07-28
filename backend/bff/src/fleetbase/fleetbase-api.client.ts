@@ -207,6 +207,20 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Cancel an order. Note: no {id} in the path - the order UUID goes in
+   * the request body as 'order', per OrderController::cancel().
+   */
+  async cancelOrder(orderUuid: string) {
+    try {
+      const response = await this.callFleetOps('PATCH', '/orders/cancel', { order: orderUuid });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Cancel order failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Assign a driver to an order
    */
   async assignDriverToOrder(orderId: string, driverUuid: string) {
