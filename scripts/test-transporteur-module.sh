@@ -117,21 +117,37 @@ if [ "$N_ADHOC" -gt 0 ]; then
   echo "$RESP" | jq -e '.adhoc[0].redacted == true' >/dev/null 2>&1 \
     || fail "adhoc non expurgée : le drapeau redacted manque" "$(echo "$RESP" | jq -c '.adhoc[0]')"
 
+  # Deux niveaux d'exigence, parce que les deux points n'ont pas le même
+  # statut (décision produit 28/07/2026) : l'enlèvement est un commerce et
+  # garde son adresse, la livraison est chez un particulier et se réduit à sa
+  # commune. Les téléphones sont masqués des deux côtés.
   LEAK=$(echo "$RESP" | jq -c '[.adhoc[0] | .. | objects
-        | with_entries(select(.key | test("phone|contact_name|email|street|latitude|longitude")))
+        | with_entries(select(.key | test("phone|email")))
         | select(length > 0)]')
   [ "$LEAK" = "[]" ] \
-    || fail "FUITE : coordonnées présentes sur une adhoc non réclamée" "$LEAK"
-  pass "adhoc — coordonnées personnelles expurgées dans la liste"
+    || fail "FUITE : téléphone ou email sur une adhoc non réclamée" "$LEAK"
+
+  LEAK=$(echo "$RESP" | jq -c '[.adhoc[0].payload.dropoff // {} | .. | objects
+        | with_entries(select(.key | test("street|latitude|longitude|contact_name")))
+        | select(length > 0)]')
+  [ "$LEAK" = "[]" ] \
+    || fail "FUITE : adresse ou coordonnées du destinataire sur une adhoc" "$LEAK"
+  pass "adhoc — client réduit à sa commune, téléphones masqués (liste)"
 
   # Et le détail ne doit pas être une porte dérobée sur les mêmes données.
   ADHOC_ID=$(echo "$RESP" | jq -r '.adhoc[0].public_id // .adhoc[0].uuid')
   DETAIL=$(api GET "/transporteur/commandes/$ADHOC_ID")
   LEAK=$(echo "$DETAIL" | jq -c '[.. | objects
-        | with_entries(select(.key | test("phone|contact_name|email|street|latitude|longitude")))
+        | with_entries(select(.key | test("phone|email")))
         | select(length > 0)]')
   [ "$LEAK" = "[]" ] \
-    || fail "FUITE : le détail d'une adhoc non réclamée expose les coordonnées" "$LEAK"
+    || fail "FUITE : le détail d'une adhoc expose un téléphone" "$LEAK"
+
+  LEAK=$(echo "$DETAIL" | jq -c '[.payload.dropoff // {} | .. | objects
+        | with_entries(select(.key | test("street|latitude|longitude|contact_name")))
+        | select(length > 0)]')
+  [ "$LEAK" = "[]" ] \
+    || fail "FUITE : le détail expose l'adresse exacte du destinataire" "$LEAK"
   pass "adhoc — détail expurgé lui aussi (pas de contournement par la fiche)"
 else
   warn "expurgation des adhoc non testée — aucune opportunité adhoc en base."

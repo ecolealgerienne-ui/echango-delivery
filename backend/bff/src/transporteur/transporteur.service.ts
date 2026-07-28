@@ -427,7 +427,23 @@ export class TransporteurService {
    * de proximité. Le rayon relève d'une décision produit encore ouverte.
    */
   private redactUnclaimedOrder(order: any) {
-    const place = (p: any, keepName: boolean) => {
+    // Le point d'ENLÈVEMENT est un commerce : nom, adresse et coordonnées
+    // restent visibles (décision produit, 28/07/2026). Le transporteur en a
+    // besoin pour juger si la course vaut le déplacement, et l'adresse d'un
+    // commerce est une information d'affaires, le plus souvent publique.
+    //
+    // Le téléphone reste masqué : personne n'a de raison d'appeler une course
+    // qu'il n'a pas prise, et un numéro diffusé à tout le réseau est un
+    // vecteur de nuisance.
+    const pickup = (p: any) => {
+      if (!p) return p;
+      const { phone, contact_phone, email, owner, customer, ...rest } = p;
+      return rest;
+    };
+
+    // Le point de LIVRAISON est chez un particulier. Ne subsiste que la
+    // commune — ni rue, ni nom, ni coordonnées.
+    const dropoff = (p: any) => {
       if (!p) return p;
       const {
         phone,
@@ -440,23 +456,17 @@ export class TransporteurService {
         street2,
         address,
         name,
-        // Les coordonnées sont retirées elles aussi. Les garder tout en
-        // masquant le libellé serait le même défaut dans un autre champ : un
-        // point GPS mène à la porte aussi sûrement qu'une adresse écrite, et
-        // le bouton « Itinéraire » de l'app s'en sert directement.
+        // Les coordonnées partent avec l'adresse. Les garder tout en masquant
+        // le libellé serait le même défaut dans un autre champ : un point GPS
+        // mène à la porte aussi sûrement qu'une adresse écrite, et le bouton
+        // « Itinéraire » de l'app s'en sert directement.
         location,
         latitude,
         longitude,
         ...rest
       } = p;
 
-      return {
-        ...rest,
-        // Le nom du point d'enlèvement est celui d'un commerce, information
-        // d'affaires ; celui de la livraison est celui d'un particulier.
-        name: keepName ? name : 'Destinataire',
-        address: this.coarseLocality(p),
-      };
+      return { ...rest, name: 'Destinataire', address: this.coarseLocality(p) };
     };
 
     const {
@@ -475,8 +485,8 @@ export class TransporteurService {
       // n'a pas à circuler avant acceptation.
       payload: payload
         ? {
-            pickup: place(payload.pickup, true),
-            dropoff: place(payload.dropoff, false),
+            pickup: pickup(payload.pickup),
+            dropoff: dropoff(payload.dropoff),
           }
         : undefined,
       redacted: true,

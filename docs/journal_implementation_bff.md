@@ -1095,7 +1095,14 @@ Remarque de l'utilisateur, écran à l'appui : le bandeau annonçait « les cont
 
 Deux corrections possibles — rendre le texte honnête, ou rendre l'expurgation conforme. La seconde est celle que visait la revue M9 : diffuser l'adresse exacte de chaque livraison en attente à tous les transporteurs de l'organisation revient à leur distribuer le carnet d'adresses des clients de chaque commerçant.
 
-Ce qui est retiré désormais, sur une course non réclamée : rue, adresse formatée, **coordonnées GPS**, et le nom du destinataire — celui du point d'enlèvement est conservé, c'est un commerce. Ne reste que la commune, reconstruite depuis les champs structurés quand ils existent, sinon en retirant le premier segment de l'adresse formatée (heuristique fragile, qui renvoie **rien** plutôt qu'un fragment identifiant en cas de doute).
+**Décision produit (28/07/2026), après discussion** : les deux points n'ont pas le même statut.
+
+| | Avant acceptation | Justification |
+|---|---|---|
+| Enlèvement | nom, adresse et coordonnées visibles ; téléphone masqué | c'est un commerce — adresse le plus souvent publique, et le transporteur en a besoin pour juger si la course vaut le déplacement |
+| Livraison | commune seule — ni nom, ni rue, ni coordonnées, ni téléphone | c'est un particulier |
+
+La commune est reconstruite depuis les champs structurés quand ils existent, sinon en retirant le premier segment de l'adresse formatée (heuristique fragile, qui renvoie **rien** plutôt qu'un fragment identifiant en cas de doute).
 
 **Le point le plus facile à manquer** : les coordonnées. Masquer le libellé tout en transmettant le point GPS aurait été le même défaut dans un autre champ — le bouton « Itinéraire » de l'app s'en sert directement, et un point mène à la porte aussi sûrement qu'une adresse écrite. Il est masqué avec elles.
 

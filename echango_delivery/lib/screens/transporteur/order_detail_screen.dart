@@ -95,10 +95,11 @@ class OrderDetailScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // L'enlèvement est un commerce : rien n'y est
+                          // masqué, hors son téléphone.
                           _PlaceBlock(
                             label: 'Enlèvement',
                             place: order.pickupPlace,
-                            obscured: order.redacted,
                           ),
                           const SizedBox(height: 16),
                           _PlaceBlock(
@@ -122,9 +123,9 @@ class OrderDetailScreen extends StatelessWidget {
                         leading: Icon(Icons.lock_outline),
                         title: Text('Course non réclamée'),
                         subtitle: Text(
-                          'Seules les communes sont affichées. L\'adresse '
-                          'exacte, le nom du destinataire et les téléphones '
-                          'apparaissent dès que vous acceptez la course.',
+                          'Seule la commune de livraison est affichée. '
+                          'L\'adresse exacte, le nom du destinataire et les '
+                          'téléphones apparaissent dès que vous acceptez.',
                         ),
                       ),
                     ),
