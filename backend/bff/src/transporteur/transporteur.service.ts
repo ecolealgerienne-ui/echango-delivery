@@ -427,10 +427,36 @@ export class TransporteurService {
    * de proximité. Le rayon relève d'une décision produit encore ouverte.
    */
   private redactUnclaimedOrder(order: any) {
-    const place = (p: any) => {
+    const place = (p: any, keepName: boolean) => {
       if (!p) return p;
-      const { phone, contact_name, contact_phone, email, owner, customer, ...rest } = p;
-      return rest;
+      const {
+        phone,
+        contact_name,
+        contact_phone,
+        email,
+        owner,
+        customer,
+        street1,
+        street2,
+        address,
+        name,
+        // Les coordonnées sont retirées elles aussi. Les garder tout en
+        // masquant le libellé serait le même défaut dans un autre champ : un
+        // point GPS mène à la porte aussi sûrement qu'une adresse écrite, et
+        // le bouton « Itinéraire » de l'app s'en sert directement.
+        location,
+        latitude,
+        longitude,
+        ...rest
+      } = p;
+
+      return {
+        ...rest,
+        // Le nom du point d'enlèvement est celui d'un commerce, information
+        // d'affaires ; celui de la livraison est celui d'un particulier.
+        name: keepName ? name : 'Destinataire',
+        address: this.coarseLocality(p),
+      };
     };
 
     const {
@@ -449,12 +475,41 @@ export class TransporteurService {
       // n'a pas à circuler avant acceptation.
       payload: payload
         ? {
-            pickup: place(payload.pickup),
-            dropoff: place(payload.dropoff),
+            pickup: place(payload.pickup, true),
+            dropoff: place(payload.dropoff, false),
           }
         : undefined,
       redacted: true,
     };
+  }
+
+  /**
+   * Réduit une adresse à sa commune, pour une course pas encore réclamée.
+   *
+   * Ce qu'un transporteur a besoin de savoir pour décider, c'est d'où à où —
+   * pas le numéro dans la rue. Diffuser l'adresse exacte de chaque livraison
+   * en attente à tous les transporteurs de l'organisation reviendrait à leur
+   * distribuer le carnet d'adresses des clients de chaque commerçant.
+   *
+   * Les champs structurés sont préférés. À défaut, on retombe sur l'adresse
+   * formatée en retirant son premier segment, qui porte le nom et la rue
+   * (`MAGASIN1 - 3 AVENUE PAUL LANGEVIN, SCEAUX, 92330` → `SCEAUX, 92330`).
+   * Cette heuristique dépend du format d'adresse et peut échouer sur une
+   * saisie libre : en cas de doute, on ne renvoie **rien** plutôt qu'un
+   * fragment qui pourrait encore identifier une porte.
+   */
+  private coarseLocality(place: any): string {
+    const structured = [place?.city, place?.postal_code, place?.province, place?.country]
+      .filter((v) => typeof v === 'string' && v.trim().length > 0);
+
+    if (structured.length) {
+      return structured.join(', ');
+    }
+
+    const formatted = typeof place?.address === 'string' ? place.address : '';
+    const segments = formatted.split(',').map((s: string) => s.trim()).filter(Boolean);
+
+    return segments.length > 1 ? segments.slice(1).join(', ') : '';
   }
 
   /**

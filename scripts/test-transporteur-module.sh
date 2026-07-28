@@ -118,7 +118,7 @@ if [ "$N_ADHOC" -gt 0 ]; then
     || fail "adhoc non expurgée : le drapeau redacted manque" "$(echo "$RESP" | jq -c '.adhoc[0]')"
 
   LEAK=$(echo "$RESP" | jq -c '[.adhoc[0] | .. | objects
-        | with_entries(select(.key | test("phone|contact_name|email")))
+        | with_entries(select(.key | test("phone|contact_name|email|street|latitude|longitude")))
         | select(length > 0)]')
   [ "$LEAK" = "[]" ] \
     || fail "FUITE : coordonnées présentes sur une adhoc non réclamée" "$LEAK"
@@ -128,7 +128,7 @@ if [ "$N_ADHOC" -gt 0 ]; then
   ADHOC_ID=$(echo "$RESP" | jq -r '.adhoc[0].public_id // .adhoc[0].uuid')
   DETAIL=$(api GET "/transporteur/commandes/$ADHOC_ID")
   LEAK=$(echo "$DETAIL" | jq -c '[.. | objects
-        | with_entries(select(.key | test("phone|contact_name|email")))
+        | with_entries(select(.key | test("phone|contact_name|email|street|latitude|longitude")))
         | select(length > 0)]')
   [ "$LEAK" = "[]" ] \
     || fail "FUITE : le détail d'une adhoc non réclamée expose les coordonnées" "$LEAK"

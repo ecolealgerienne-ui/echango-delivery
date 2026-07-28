@@ -1086,3 +1086,19 @@ Le passage à S3 ne changera que deux variables d'environnement — `FLEETBASE_P
 Bénéfice du relais qui n'apparaît qu'en production : le bucket S3 peut rester **privé**. Sans relais il faudrait le rendre public pour que l'app y accède, c'est-à-dire publier les preuves de livraison à qui devine l'adresse.
 
 **Les preuves antérieures au correctif restent inaccessibles** : leur URL est en base, leur fichier sur le disque `local`, et aucune route ne les relie. Sans conséquence — ce sont des essais.
+
+### 11.11 L'expurgation ne tenait pas sa promesse
+
+Remarque de l'utilisateur, écran à l'appui : le bandeau annonçait « les contacts et l'adresse précise s'affichent dès que vous acceptez », alors que l'adresse complète était affichée — `MAGASIN1 - 3 AVENUE PAUL LANGEVIN, SCEAUX, 92330`.
+
+`redactUnclaimedOrder` ne retirait en effet que les **contacts** : nom de contact, téléphone, email. Le nom du lieu et l'adresse formatée passaient intacts. Le texte de l'interface décrivait donc l'intention du commentaire de code, pas ce que le code faisait.
+
+Deux corrections possibles — rendre le texte honnête, ou rendre l'expurgation conforme. La seconde est celle que visait la revue M9 : diffuser l'adresse exacte de chaque livraison en attente à tous les transporteurs de l'organisation revient à leur distribuer le carnet d'adresses des clients de chaque commerçant.
+
+Ce qui est retiré désormais, sur une course non réclamée : rue, adresse formatée, **coordonnées GPS**, et le nom du destinataire — celui du point d'enlèvement est conservé, c'est un commerce. Ne reste que la commune, reconstruite depuis les champs structurés quand ils existent, sinon en retirant le premier segment de l'adresse formatée (heuristique fragile, qui renvoie **rien** plutôt qu'un fragment identifiant en cas de doute).
+
+**Le point le plus facile à manquer** : les coordonnées. Masquer le libellé tout en transmettant le point GPS aurait été le même défaut dans un autre champ — le bouton « Itinéraire » de l'app s'en sert directement, et un point mène à la porte aussi sûrement qu'une adresse écrite. Il est masqué avec elles.
+
+Le détecteur de fuite du script couvre maintenant `street`, `latitude` et `longitude` en plus des contacts.
+
+Repère : **quand une interface annonce une garantie, c'est une assertion testable.** Celle-ci était fausse depuis son écriture et n'aurait été démentie par aucun test — ils vérifiaient l'absence des champs retirés, jamais la présence de ceux qui restaient.

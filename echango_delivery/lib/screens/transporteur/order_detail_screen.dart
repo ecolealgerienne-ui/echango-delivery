@@ -98,11 +98,13 @@ class OrderDetailScreen extends StatelessWidget {
                           _PlaceBlock(
                             label: 'Enlèvement',
                             place: order.pickupPlace,
+                            obscured: order.redacted,
                           ),
                           const SizedBox(height: 16),
                           _PlaceBlock(
                             label: 'Livraison',
                             place: order.dropoffPlace,
+                            obscured: order.redacted,
                           ),
                         ],
                       ),
@@ -118,10 +120,11 @@ class OrderDetailScreen extends StatelessWidget {
                       color: Theme.of(context).colorScheme.secondaryContainer,
                       child: const ListTile(
                         leading: Icon(Icons.lock_outline),
-                        title: Text('Coordonnées masquées'),
+                        title: Text('Course non réclamée'),
                         subtitle: Text(
-                          'Les contacts et l\'adresse précise s\'affichent '
-                          'dès que vous acceptez cette course.',
+                          'Seules les communes sont affichées. L\'adresse '
+                          'exacte, le nom du destinataire et les téléphones '
+                          'apparaissent dès que vous acceptez la course.',
                         ),
                       ),
                     ),
@@ -386,7 +389,14 @@ class _PlaceBlock extends StatelessWidget {
   final String label;
   final Place? place;
 
-  const _PlaceBlock({required this.label, required this.place});
+  /// Course pas encore réclamée : le serveur n'a transmis que la commune.
+  final bool obscured;
+
+  const _PlaceBlock({
+    required this.label,
+    required this.place,
+    this.obscured = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -413,17 +423,27 @@ class _PlaceBlock extends StatelessWidget {
           p.name,
           style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
         ),
-        if (p.address.isNotEmpty) Text(p.address),
+        // Une adresse vide sur une course expurgée n'est pas une donnée
+        // manquante : c'est une adresse dont on n'a pas su extraire la
+        // commune. Le dire, sinon le bloc paraît incomplet.
+        if (p.address.isNotEmpty)
+          Text(p.address)
+        else if (obscured)
+          Text('Commune non précisée', style: theme.textTheme.bodySmall),
         if (p.contactName != null) Text('Contact : ${p.contactName}'),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           children: [
-            TextButton.icon(
-              onPressed: () => _navigate(context, p),
-              icon: const Icon(Icons.directions_outlined),
-              label: const Text('Itinéraire'),
-            ),
+            // Pas d'itinéraire sur une course non réclamée : le serveur ne
+            // transmet pas les coordonnées, et proposer un bouton qui mènerait
+            // au centre de la carte serait pire que ne rien proposer.
+            if (!obscured)
+              TextButton.icon(
+                onPressed: () => _navigate(context, p),
+                icon: const Icon(Icons.directions_outlined),
+                label: const Text('Itinéraire'),
+              ),
             if (p.contactPhone != null)
               TextButton.icon(
                 onPressed: () => _call(context, p.contactPhone!),
