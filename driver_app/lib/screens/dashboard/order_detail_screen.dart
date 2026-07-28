@@ -187,51 +187,68 @@ class OrderDetailScreen extends StatelessWidget {
     );
   }
 
+  /// Construit les actions à partir de ce que le SERVEUR propose, jamais
+  /// d'une machine à états codée ici.
+  ///
+  /// L'ancienne version affichait « Accept / Start / Mark as Delivered » selon
+  /// des prédicats locaux. Résultat : accepter une commande adhoc l'assigne ET
+  /// la démarre côté Fleetbase (§4.2), mais le bouton « Start Delivery »
+  /// restait affiché et rejouait une transition déjà faite — « Failed to start
+  /// this order ». Les transitions réelles varient selon l'OrderConfig ; seul
+  /// `activites-suivantes` les connaît (journal §6.9).
   Widget _buildActionButtons(
     BuildContext context,
     dynamic order,
     OrderState orderState,
   ) {
     final buttons = <Widget>[];
+    final busy = orderState.isLoading;
 
-    if (order.isPending) {
+    // Opportunité adhoc : elle n'a pas encore de transition, il faut d'abord
+    // la réclamer. Un seul appel serveur assigne et démarre.
+    final claimable = order.adhoc == true && order.driverId == null;
+    if (claimable) {
       buttons.add(
         ElevatedButton(
-          onPressed: orderState.isLoading ? null : () => _acceptOrder(context, order.id, orderState),
-          child: const Text('Accept Order'),
+          onPressed: busy ? null : () => _acceptOrder(context, order.id, orderState),
+          child: const Text('Accepter cette course'),
         ),
       );
     }
 
-    if (order.isPending || order.isInProgress) {
+    for (final activity in orderState.nextActivities) {
+      final code = (activity['code'] ?? '') as String;
+      // `_resolved_status` est le libellé déjà interpolé par le serveur ;
+      // `status` peut contenir des gabarits non résolus.
+      final label = (activity['_resolved_status'] ??
+          activity['status'] ??
+          code) as String;
+      final requiresPod = activity['require_pod'] == true;
+
       buttons.add(const SizedBox(height: 12));
       buttons.add(
         ElevatedButton(
-          onPressed: orderState.isLoading ? null : () => _startOrder(context, order.id, orderState),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-          child: const Text('Start Delivery'),
+          onPressed: busy
+              ? null
+              : () => _applyActivity(context, order.id, activity, orderState),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: code == 'completed' ? Colors.green : Colors.orange,
+          ),
+          child: Text(requiresPod ? '$label (preuve requise)' : label),
         ),
       );
     }
 
-    if (order.isInProgress) {
+    // Signalement d'échec : pertinent tant que la commande n'est pas close.
+    if (!order.isFinished && !claimable) {
       buttons.add(const SizedBox(height: 12));
       buttons.add(
         ElevatedButton(
-          onPressed: orderState.isLoading ? null : () => _completeOrder(context, order.id, orderState),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-          child: const Text('Mark as Delivered'),
-        ),
-      );
-    }
-
-    if ((order.isPending || order.isInProgress) && !order.isFailed) {
-      buttons.add(const SizedBox(height: 12));
-      buttons.add(
-        ElevatedButton(
-          onPressed: orderState.isLoading ? null : () => context.push('/dashboard/orders/${order.id}/failure'),
+          onPressed: busy
+              ? null
+              : () => context.push('/dashboard/orders/${order.id}/failure'),
           style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-          child: const Text('Report Failure'),
+          child: const Text('Signaler un échec de livraison'),
         ),
       );
     }
@@ -241,6 +258,35 @@ class OrderDetailScreen extends StatelessWidget {
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons);
+  }
+
+  /// Applique une transition serveur.
+  ///
+  /// ⚠️ `require_pod` n'est pas encore honoré : la capture photo (§5) n'est pas
+  /// branchée, donc l'étape est envoyée sans preuve. Le serveur l'accepte,
+  /// mais la preuve manquera au dossier — à traiter avec l'écran POD.
+  Future<void> _applyActivity(
+    BuildContext context,
+    String orderId,
+    Map<String, dynamic> activity,
+    OrderState orderState,
+  ) async {
+    final success = await orderState.applyActivity(orderId, activity);
+    if (!context.mounted) return;
+
+    if (success) {
+      final label = (activity['_resolved_status'] ?? activity['code'] ?? '') as String;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Étape appliquée : $label')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(orderState.errorMessage ?? 'Échec de la mise à jour'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _acceptOrder(
@@ -257,49 +303,20 @@ class OrderDetailScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _startOrder(
-    BuildContext context,
-    String orderId,
-    OrderState orderState,
-  ) async {
-    final success = await orderState.startOrder(orderId);
-    if (success) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Delivery started')),
-      );
-    }
-  }
-
-  Future<void> _completeOrder(
-    BuildContext context,
-    String orderId,
-    OrderState orderState,
-  ) async {
-    // Sans preuve photo pour l'instant : la capture caméra (§5) n'est pas
-    // encore branchée. Le BFF accepte la clôture sans preuve, donc le flux
-    // fonctionne — passer une image base64 ici quand l'écran POD existera.
-    final success = await orderState.completeOrder(orderId: orderId);
-
-    if (success) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Order completed')),
-      );
-      context.pop();
-    }
-  }
-
+  /// Couleurs alignées sur les statuts Fleetbase réels. L'ancienne version
+  /// testait 'accepted' et 'picked_up', qui n'existent pas : tout tombait
+  /// dans le gris par défaut.
   Color _getStatusColor(String status) {
     switch (status) {
       case 'created':
-      case 'accepted':
+      case 'dispatched':
         return Colors.orange;
-      case 'picked_up':
+      case 'started':
+      case 'enroute':
         return Colors.blue;
       case 'completed':
         return Colors.green;
-      case 'failed':
+      case 'canceled':
         return Colors.red;
       default:
         return Colors.grey;

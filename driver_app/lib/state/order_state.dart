@@ -12,6 +12,7 @@ class OrderState extends ChangeNotifier {
   List<Order> _adhocOrders = [];
   List<Order> _historyOrders = [];
   Order? _selectedOrder;
+  List<Map<String, dynamic>> _nextActivities = [];
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -19,6 +20,14 @@ class OrderState extends ChangeNotifier {
 
   List<Order> get orders => _orders;
   Order? get selectedOrder => _selectedOrder;
+
+  /// Transitions applicables à la commande sélectionnée, telles que résolues
+  /// par le serveur contre l'OrderConfig et l'état courant.
+  ///
+  /// C'est la seule source légitime : le détail de commande ne contient
+  /// aucune donnée d'activité (journal §6.9), et coder la machine à états
+  /// côté client la ferait diverger de la configuration serveur.
+  List<Map<String, dynamic>> get nextActivities => _nextActivities;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -76,6 +85,21 @@ class OrderState extends ChangeNotifier {
 
     try {
       _selectedOrder = await _apiClient.getOrder(orderId);
+
+      // Une commande adhoc non réclamée n'a pas de transition : elle doit
+      // d'abord être acceptée. Interroger le serveur renverrait une erreur.
+      if (_selectedOrder != null &&
+          !(_selectedOrder!.adhoc && _selectedOrder!.driverId == null)) {
+        try {
+          _nextActivities = await _apiClient.getNextActivities(orderId);
+        } catch (_) {
+          // Transitions indisponibles : l'écran affiche le détail sans
+          // action plutôt que d'échouer entièrement.
+          _nextActivities = [];
+        }
+      } else {
+        _nextActivities = [];
+      }
     } on AppException catch (e) {
       _errorMessage = e.message;
     } catch (e) {
@@ -136,6 +160,33 @@ class OrderState extends ChangeNotifier {
       return false;
     } catch (e) {
       _errorMessage = 'Failed to start delivery';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Applique une transition proposée par [nextActivities].
+  ///
+  /// [activity] doit être renvoyé tel quel : le serveur valide l'objet
+  /// complet, pas son seul code.
+  Future<bool> applyActivity(String orderId, Map<String, dynamic> activity) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _apiClient.updateActivity(orderId, activity);
+      // Recharger : la transition change l'état ET les transitions suivantes.
+      await selectOrder(orderId);
+      await loadOrders();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
+    } catch (e) {
+      _errorMessage = 'Impossible d\'appliquer cette étape';
       return false;
     } finally {
       _isLoading = false;

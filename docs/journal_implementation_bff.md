@@ -666,3 +666,23 @@ Trois obstacles identifiés avant même d'essayer, aucun lié au code métier :
 3. **HTTP en clair bloqué par Android** depuis l'API 28 — un BFF local en `http://` échouera en `CLEARTEXT communication not permitted` tant que `usesCleartextTraffic` n'est pas posé. À retirer avant distribution, le BFF devant passer en HTTPS.
 
 Le point 2 illustre un principe utile pour la suite : **une dépendance de confort ne doit pas conditionner le démarrage.** Une intégration tierce non configurée doit dégrader une fonctionnalité, pas rendre l'application inutilisable.
+
+### 7.5 L'écran détail rejouait des transitions déjà faites
+
+Premier test réel de l'app (28/07/2026) : accepter une commande adhoc fonctionne, puis « Start Delivery » échoue en `Failed to start this order`.
+
+**Le message était exact.** Accepter une adhoc l'assigne **et** la démarre en un seul appel Fleetbase (§4.2 de la spec — `startOrder` avec `assign`). La commande était donc déjà `started`, et le bouton redemandait une transition accomplie.
+
+Cause réelle : l'écran construisait ses actions à partir de prédicats **locaux** (`isPending`, `isInProgress`) — une machine à états codée en dur côté client, doublant celle du serveur. Or les transitions réelles dépendent de l'`OrderConfig` et varient d'une commande à l'autre ; seul `activites-suivantes` les connaît (§6.9).
+
+**Correction** : les boutons sont désormais générés à partir de ce que le serveur propose, un par activité disponible, avec le libellé `_resolved_status` (déjà interpolé côté serveur, contrairement à `status` qui peut contenir des gabarits). « Accepter » reste un bouton distinct, parce qu'une adhoc non réclamée n'a par définition aucune transition tant qu'elle n'est assignée à personne. `_startOrder`/`_completeOrder` supprimés plutôt que laissés en place : du code mort suggérant un flux qui n'existe plus.
+
+**Reste ouvert** : le drapeau `require_pod` est affiché sur le bouton mais **pas honoré** — la capture photo (§5) n'est pas branchée, donc l'étape part sans preuve. Le serveur l'accepte ; c'est la preuve qui manquera au dossier.
+
+**Leçon** : dupliquer côté client une machine à états qui vit côté serveur produit une divergence silencieuse. Ici elle s'est vue tout de suite ; sur un flux moins fréquenté, elle serait passée en production.
+
+### 7.6 Autres écarts corrigés au même passage
+
+- **Liste vide en permanence** : l'app ne demandait que `type=assigned`. Une commande adhoc n'étant assignée à personne, elle ne pouvait jamais apparaître — l'onglet destiné aux opportunités était structurellement vide. Bascule sur les trois catégories renvoyées ensemble par le BFF.
+- **Erreur de chargement invisible** : une liste vide et un échec de requête produisaient exactement le même écran. Le message d'erreur est maintenant affiché — c'est ce qui rendait le premier lancement impossible à diagnostiquer.
+- **Couleurs de statut inertes** : `_getStatusColor` testait `accepted` et `picked_up`, absents de Fleetbase ; tout tombait dans le gris par défaut.

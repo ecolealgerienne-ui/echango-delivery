@@ -272,16 +272,20 @@ class _OrdersListScreenState extends State<OrdersListScreen>
     );
   }
 
+  /// Couleurs alignées sur les statuts Fleetbase réels. L'ancienne version
+  /// testait 'accepted' et 'picked_up', qui n'existent pas : tout tombait
+  /// dans le gris par défaut.
   Color _getStatusColor(String status) {
     switch (status) {
       case 'created':
-      case 'accepted':
+      case 'dispatched':
         return Colors.orange;
-      case 'picked_up':
+      case 'started':
+      case 'enroute':
         return Colors.blue;
       case 'completed':
         return Colors.green;
-      case 'failed':
+      case 'canceled':
         return Colors.red;
       default:
         return Colors.grey;
