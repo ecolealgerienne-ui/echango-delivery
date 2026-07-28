@@ -210,8 +210,13 @@ model DeliveryFailure {
   reason            String   // see DeliveryFailureReason in the DTO
   notes             String?
 
-  // Uuid of the Proof record created in Fleetbase when a photo was attached.
-  // Null when the driver reported without one, or when the upload failed.
+  // Référence de la Proof créée dans Fleetbase quand une photo est jointe.
+  // Null si le signalement était sans photo, ou si l'upload a échoué.
+  //
+  // ⚠️ Malgré son nom, ce n'est PAS toujours un uuid : la ressource Proof
+  // masque `uuid` hors requête interne, et l'upload passe par l'API publique
+  // `v1`, qui n'expose que `id` — le public_id. Référence opaque, jamais
+  // utilisée pour adresser une route.
   fleetbaseProofUuid String?
 
   // URL du fichier, telle que Fleetbase la renvoie à la capture (`url` sur la

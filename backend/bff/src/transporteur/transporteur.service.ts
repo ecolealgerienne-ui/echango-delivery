@@ -171,6 +171,33 @@ export class TransporteurService {
     });
   }
 
+  /**
+   * Extrait la ressource Proof de la réponse de `capture-photo`.
+   *
+   * Deux pièges, tous deux constatés en réel (28/07/2026) sur un upload qui
+   * réussissait pourtant sans erreur :
+   *
+   * 1. **`uuid` n'existe pas sur l'API publique.** `Http/Resources/v1/Proof`
+   *    place `uuid` et `public_id` derrière `Http::isInternalRequest()` ; sur
+   *    `v1`, seul `id` est présent, et il porte le public_id. Lire `uuid`
+   *    renvoyait donc toujours `null`, et l'app en concluait — logiquement —
+   *    que la photo n'avait pas été jointe.
+   *
+   * 2. **La ressource expose elle-même un champ `data`.** Déballer
+   *    aveuglément le premier `data` rencontré, pour traverser l'enveloppe
+   *    Laravel, renvoie donc la charge utile de la preuve au lieu de la
+   *    preuve. D'où la discrimination sur `url`/`id` plutôt que sur la seule
+   *    présence de `data`.
+   */
+  private extractProof(response: any) {
+    for (const candidate of [response?.data, response]) {
+      if (candidate && (candidate.url !== undefined || candidate.id !== undefined)) {
+        return candidate;
+      }
+    }
+    return response;
+  }
+
   private isAssignedTo(order: any, driverUuid: string) {
     return (
       order?.driver_assigned_uuid === driverUuid ||
@@ -604,11 +631,26 @@ export class TransporteurService {
           remarks.slice(0, 255),
           dto.waypointUuid,
         );
-        const record = proof?.data ?? proof?.proof ?? proof;
-        fleetbaseProofUuid = record?.uuid || null;
-        // La ressource Proof expose `url` (alias de `file_url`) : on la garde
-        // ici, à la seule occasion où Fleetbase nous la donne.
+        const record = this.extractProof(proof);
+        // `uuid` n'est PAS exposé sur l'API publique (voir extractProof) :
+        // `id` y porte le public_id, seul identifiant disponible. On garde le
+        // premier des deux qui existe — cette référence n'est qu'opaque.
+        fleetbaseProofUuid = record?.uuid || record?.id || null;
         proofUrl = record?.url || null;
+
+        // Tracer ce qu'on a réellement su extraire : c'est cette information
+        // qui manquait pour comprendre pourquoi un upload réussi ressortait
+        // comme « photo non jointe ». Les clés brutes en dernier recours,
+        // quand rien n'a été trouvé — la forme de la réponse est alors la
+        // seule chose à regarder.
+        if (proofUrl || fleetbaseProofUuid) {
+          this.logger.log(`Preuve enregistrée : url=${proofUrl ?? '—'} ref=${fleetbaseProofUuid ?? '—'}`);
+        } else {
+          this.logger.warn(
+            `Preuve acceptée par Fleetbase mais illisible dans la réponse. ` +
+              `Clés reçues : ${Object.keys(record ?? {}).join(', ') || '(aucune)'}`,
+          );
+        }
       } catch (error) {
         // `error` d'axios porte le détail utile dans response.data ; le
         // `message` seul dit « Request failed with status code 500 », ce qui
@@ -639,7 +681,11 @@ export class TransporteurService {
     return {
       id: failure.id,
       reason: failure.reason,
-      photoUploaded: Boolean(fleetbaseProofUuid),
+      // Ce qui compte pour l'appelant est que Fleetbase ait bien stocké la
+      // photo, pas qu'on ait su en relire tel identifiant : l'URL est le
+      // signal fiable, l'identifiant dépend de l'API empruntée.
+      photoUploaded: Boolean(proofUrl || fleetbaseProofUuid),
+      photoUrl: proofUrl,
       reportedAt: failure.reportedAt,
     };
   }

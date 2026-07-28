@@ -1004,3 +1004,19 @@ Ce qui rend le cas instructif, c'est pourquoi il n'apparaissait pas plus tôt. A
 Repère : **une route d'attente n'est ni publique ni protégée**, c'est une troisième catégorie. La traiter comme l'une des deux donne un comportement correct dans un cas et un blocage dans l'autre.
 
 Deuxième piège du même ordre, corrigé avant qu'il ne morde : `AuthState.homePath` renvoie `/flotte` pour le persona flotte, route qui n'existait pas. Un compte flotte — il s'en crée un à chaque exécution des scripts de test — tombait sur l'écran d'erreur de `go_router`. Il obtient maintenant un écran qui explique que l'espace n'est pas construit et propose de changer de compte.
+
+### 11.6 Un upload réussi rapporté comme échoué — deux pièges de la ressource Proof
+
+Le signalement partait avec sa photo (`photo présente (34 ko base64)` dans les logs), Fleetbase l'acceptait sans erreur, et l'app annonçait pourtant « la photo n'a pas pu être jointe ». Deux causes cumulées, toutes deux dans la lecture de la réponse :
+
+**1. `uuid` n'existe pas sur l'API publique.** `Http/Resources/v1/Proof` place `uuid` et `public_id` derrière `Http::isInternalRequest()`. L'upload passe par `v1`, donc seul `id` est présent — et il porte le public_id. Lire `uuid` renvoyait invariablement `null`, et `photoUploaded: Boolean(fleetbaseProofUuid)` en concluait, logiquement, que rien n'avait été joint.
+
+C'est une variante du repère de §6.7/§6.14 : la résolution d'identifiant n'est pas uniforme entre `v1` et `int/v1`. Ici ce n'est pas la route qui change de clé mais **la réponse qui en masque une** selon l'API empruntée.
+
+**2. La ressource Proof expose elle-même un champ `data`.** Le déballage `proof?.data ?? proof`, destiné à traverser l'enveloppe Laravel, tombait donc sur la charge utile de la preuve au lieu de la preuve. Deux significations du même nom à un niveau d'imbrication d'écart.
+
+`extractProof()` discrimine désormais sur la présence de `url`/`id` plutôt que sur celle de `data`, et `photoUploaded` s'appuie sur l'**URL** — le seul signal qui ne dépende pas de l'API empruntée.
+
+Repère : **déballer une enveloppe par le nom de sa clé est fragile dès que la charge utile peut porter ce même nom.** Discriminer sur le contenu attendu, pas sur la structure supposée.
+
+Ce qui a permis de trancher : la ligne de log ajoutée en §11.5, qui distingue « photo absente » de « photo présente ». Sans elle, trois causes très différentes produisaient le même écran vide. Le service journalise maintenant aussi ce qu'il a su extraire, et les clés reçues quand il n'a rien trouvé.
