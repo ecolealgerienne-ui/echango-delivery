@@ -1,0 +1,191 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Echango Merchant Account (not a Fleetbase User)
+model MerchantAccount {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  password          String   // bcrypted
+  firstName         String?
+  lastName          String?
+  phone             String?
+  emailVerified     Boolean  @default(false)
+  emailVerifiedAt   DateTime?
+
+  // Link to Fleetbase
+  fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
+  fleetbaseCustomerUuid String? // Customer UUID in Fleetbase (for customer-portal)
+  fleetbaseSanctumToken String? @db.Text // Sanctum token for customer-portal-api (encrypted at rest)
+
+  // Business
+  businessName      String
+  businessPhone     String?
+
+  // Status
+  active            Boolean  @default(true)
+
+  // Relations
+  deviceTokens      DeviceToken[]
+  orders            Order[]
+  commissions       Commission[]
+
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastLoginAt       DateTime?
+
+  @@index([fleetbaseVendorUuid])
+  @@index([emailVerified])
+}
+
+// Fleet Manager Account (not a Fleetbase User either)
+model FleetAccount {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  password          String   // bcrypted
+  firstName         String?
+  lastName          String?
+  phone             String?
+
+  // Link to Fleetbase
+  fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
+
+  // Business
+  businessName      String
+  businessPhone     String?
+
+  // Status
+  active            Boolean  @default(true)
+
+  // Timestamps
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastLoginAt       DateTime?
+
+  @@index([fleetbaseVendorUuid])
+  @@index([active])
+}
+
+// Device Token for Push Notifications
+model DeviceToken {
+  id                String   @id @default(cuid())
+  merchantId        String
+  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  token             String   @unique
+  platform          String   // 'ios' or 'android'
+  appVersion        String?
+
+  active            Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastUsedAt        DateTime?
+
+  @@index([merchantId])
+  @@index([active])
+}
+
+// Order Representation (cached from Fleetbase, for quick access)
+model Order {
+  id                String   @id @default(cuid())
+  merchantId        String
+  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  // Reference to Fleetbase
+  fleetbaseOrderId  String   @unique
+
+  // Order details
+  status            String   // 'pending', 'active', 'completed', 'failed', 'cancelled'
+  trackingNumber    String?
+
+  // Failure details
+  failureReason     String?
+  failureNotes      String?
+
+  // Commission tracking
+  totalAmount       Float?   // In currency units
+  commission        Float?   // Calculated by BFF
+
+  // Timestamps (synced from Fleetbase)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  fleetbaseCreatedAt DateTime?
+  fleetbaseUpdatedAt DateTime?
+
+  // Relations
+  commissions       Commission[]
+
+  @@index([merchantId])
+  @@index([fleetbaseOrderId])
+  @@index([status])
+}
+
+// Commission Ledger (for analytics + future payouts)
+model Commission {
+  id                String   @id @default(cuid())
+  merchantId        String
+  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  orderId           String
+  order             Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Commission calculation
+  orderAmount       Float
+  commissionType    String   // 'percentage', 'fixed', 'distance', 'hybrid'
+  commissionAmount  Float
+
+  // Details for audit
+  calculatedAt      DateTime @default(now())
+  calculatedBy      String   // 'system', 'manual', etc.
+
+  // Payment status (if integrated with payouts)
+  paidAt            DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([merchantId])
+  @@index([orderId])
+  @@index([paidAt])
+}
+
+// Audit Log (for security, traceability)
+model AuditLog {
+  id                String   @id @default(cuid())
+
+  // Who (if any)
+  merchantId        String?
+  fleetId           String?
+
+  // What
+  action            String   // 'order.created', 'order.assigned', etc.
+  resourceType      String   // 'Order', 'Driver', etc.
+  resourceId        String?
+
+  // Details
+  details           String?  @db.Text // JSON stringified
+  ipAddress         String?
+  userAgent         String?
+
+  // Status
+  status            String   // 'success', 'failure'
+  errorMessage      String?
+
+  createdAt         DateTime @default(now())
+
+  @@index([merchantId])
+  @@index([fleetId])
+  @@index([action])
+  @@index([createdAt])
+}

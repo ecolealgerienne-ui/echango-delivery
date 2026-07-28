@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: echango_bff_postgres
+    environment:
+      POSTGRES_USER: bff_user
+      POSTGRES_PASSWORD: bff_password
+      POSTGRES_DB: echango_bff
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bff_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: echango_bff_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bff:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: echango_bff_app
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://bff_user:bff_password@postgres:5432/echango_bff
+      FLEETBASE_API_URL: http://host.docker.internal:8000
+      FLEETBASE_API_KEY: ${FLEETBASE_API_KEY:-dev-key}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run start:dev
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: echango_network

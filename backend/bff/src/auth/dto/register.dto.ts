@@ -1,0 +1,73 @@
+import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+
+export class MerchantRegisterDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(8)
+  password: string;
+
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  @IsString()
+  businessName: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  businessPhone?: string;
+}
+
+export class MerchantLoginDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  password: string;
+}
+
+export class FleetRegisterDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @MinLength(8)
+  password: string;
+
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  @IsString()
+  businessName: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  businessPhone?: string;
+}
+
+export class FleetLoginDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  password: string;
+}
