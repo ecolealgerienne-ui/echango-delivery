@@ -115,6 +115,65 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Create a Place (pickup/dropoff location) in Fleetbase.
+   * Response shape: { place: { uuid, ... } }
+   */
+  async createPlace(name: string, latitude: number, longitude: number) {
+    try {
+      const response = await this.callFleetOps('POST', '/places', {
+        name,
+        location: {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        },
+      });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Place creation failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Resolve the default 'transport' OrderConfig UUID, required by order creation.
+   */
+  async getDefaultOrderConfigUuid(): Promise<string> {
+    try {
+      const response = await this.callFleetOps('GET', '/order-configs');
+      const configs = response.data?.order_configs || [];
+      const transportConfig = configs.find((c: any) => c.key === 'transport') || configs[0];
+      if (!transportConfig) {
+        throw new Error('No OrderConfig found in Fleetbase');
+      }
+      return transportConfig.uuid;
+    } catch (error) {
+      this.logger.error(`Get order configs failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a delivery Order. Fleetbase requires the entire payload nested
+   * under a top-level 'order' key, with payload.pickup_uuid/dropoff_uuid
+   * referencing pre-created Place records (or a payload.waypoints array).
+   */
+  async createOrder(order: {
+    order_config_uuid: string;
+    customer: string;
+    type?: string;
+    payload: { pickup_uuid: string; dropoff_uuid: string };
+    meta?: Record<string, any>;
+  }) {
+    try {
+      const response = await this.callFleetOps('POST', '/orders', { order });
+      return response.data;
+    } catch (error) {
+      this.logger.error(`Order creation failed: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Get merchant's orders via customer-portal-api
    */
   async getMerchantOrders(token: string, page = 1, limit = 25) {

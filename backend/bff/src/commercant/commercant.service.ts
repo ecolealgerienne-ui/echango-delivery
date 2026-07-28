@@ -5,6 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
@@ -17,6 +18,7 @@ export class CommerçantService {
   constructor(
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -101,36 +103,27 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
     try {
-      // Build Fleetbase order payload
-      const fleetbaseOrder = {
-        customer_uuid: merchant.fleetbaseCustomerUuid,
-        vendor_uuid: merchant.fleetbaseVendorUuid,
+      // Fleetbase orders require pre-created Place records for pickup/dropoff,
+      // referenced by UUID, plus a resolved order_config_uuid.
+      const [pickupPlace, dropoffPlace, orderConfigUuid] = await Promise.all([
+        this.fleetbaseClient.createPlace(dto.pickupLocationName, dto.pickupLatitude, dto.pickupLongitude),
+        this.fleetbaseClient.createPlace(dto.dropoffLocationName, dto.dropoffLatitude, dto.dropoffLongitude),
+        this.fleetbaseClient.getDefaultOrderConfigUuid(),
+      ]);
+
+      const response = await this.fleetbaseClient.createOrder({
+        order_config_uuid: orderConfigUuid,
+        customer: merchant.fleetbaseVendorUuid,
+        type: 'transport',
         payload: {
-          pickup: {
-            name: dto.pickupLocationName,
-            latitude: dto.pickupLatitude,
-            longitude: dto.pickupLongitude,
-            contact_name: dto.pickupContactName,
-            contact_phone: dto.pickupContactPhone,
-            notes: dto.pickupNotes,
-          },
-          dropoff: {
-            name: dto.dropoffLocationName,
-            latitude: dto.dropoffLatitude,
-            longitude: dto.dropoffLongitude,
-            contact_name: dto.dropoffContactName,
-            contact_phone: dto.dropoffContactPhone,
-            notes: dto.dropoffNotes,
-          },
-          items: dto.items || [],
+          pickup_uuid: pickupPlace.place.uuid,
+          dropoff_uuid: dropoffPlace.place.uuid,
         },
-        instructions: dto.deliveryInstructions,
-      };
+        meta: dto.deliveryInstructions ? { instructions: dto.deliveryInstructions } : undefined,
+      });
 
-      // Create order in Fleetbase
-      const response = await this.fleetbaseClient.callFleetOps('POST', '/orders', fleetbaseOrder);
-
-      const fleetbaseOrderId = response.data?.uuid || response.data?.id;
+      const fleetbaseOrder = response.order;
+      const fleetbaseOrderId = fleetbaseOrder?.uuid || fleetbaseOrder?.id;
 
       // Cache order in BFF database
       const order = await this.prisma.order.create({
@@ -138,7 +131,7 @@ export class CommerçantService {
           merchantId,
           fleetbaseOrderId,
           status: 'pending',
-          trackingNumber: response.data?.tracking_number,
+          trackingNumber: fleetbaseOrder?.tracking_number,
         },
       });
 
@@ -146,8 +139,13 @@ export class CommerçantService {
 
       return order;
     } catch (error) {
-      this.logger.error(`Failed to create order: ${error.message}`);
-      throw new BadRequestException('Failed to create order');
+      this.logger.error(`Failed to create order: ${error.message}`, error);
+      const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+      throw new BadRequestException(
+        this.configService.get('NODE_ENV') === 'development'
+          ? `Failed to create order: ${detail}`
+          : 'Failed to create order',
+      );
     }
   }
 
