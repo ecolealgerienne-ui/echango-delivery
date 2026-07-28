@@ -985,3 +985,22 @@ Deux choix de comportement valent d'être notés. `autoRunOnBoot: false` : être
 Défaut introduit puis corrigé en cours d'écriture : l'avertissement « sans notification, le suivi s'arrêtera » était posé sur `_errorMessage` juste avant la remise à zéro de ce même champ, deux lignes plus bas. Il n'aurait jamais été affiché.
 
 **Navigation externe** : `url_launcher` avec un intent `geo:` d'abord (Android laisse alors le choix entre Maps, Waze, OsmAnd) puis un repli HTTPS universel. On délègue plutôt que d'embarquer un guidage : refaire un GPS routier correct n'a aucun rapport avec ce que ce produit apporte. Les deux blocs d'adresse, jusque-là recopiés avec des libellés anglais et aucune action, deviennent un composant unique portant itinéraire et appel.
+
+### 11.5 L'app restait bloquée sur l'écran de démarrage
+
+Symptôme : écran de démarrage figé, alors que les logs du BFF montraient l'application bien vivante — `GET /transporteur/profil` appelé régulièrement par la présence transporteur, qui démarrait donc correctement.
+
+Le `redirect` du routeur traitait `/splash` comme une route protégée ordinaire :
+
+```dart
+if (!authState.isAuthenticated) return isPublic ? null : '/login';
+if (isPublic) return authState.homePath;
+```
+
+Non authentifié, `/splash` n'est pas public, donc redirection vers `/login` — correct. **Authentifié**, `/splash` n'est pas public non plus, donc aucune redirection : on y restait indéfiniment.
+
+Ce qui rend le cas instructif, c'est pourquoi il n'apparaissait pas plus tôt. Après une connexion, la redirection part de `/login`, qui est public, donc `homePath` s'applique et tout fonctionne. Le défaut ne se manifeste qu'au **démarrage avec une session restaurée** — un chemin qui n'existait pas tant que l'émulateur était réinstallé à chaque essai, ce qui effaçait le jeton. Il est apparu le jour où la session a commencé à survivre.
+
+Repère : **une route d'attente n'est ni publique ni protégée**, c'est une troisième catégorie. La traiter comme l'une des deux donne un comportement correct dans un cas et un blocage dans l'autre.
+
+Deuxième piège du même ordre, corrigé avant qu'il ne morde : `AuthState.homePath` renvoie `/flotte` pour le persona flotte, route qui n'existait pas. Un compte flotte — il s'en crée un à chaque exécution des scripts de test — tombait sur l'écran d'erreur de `go_router`. Il obtient maintenant un écran qui explique que l'espace n'est pas construit et propose de changer de compte.

@@ -6,6 +6,7 @@ import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/orders_screen.dart';
+import '../screens/flotte/flotte_placeholder_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
@@ -30,13 +31,21 @@ GoRouter buildAppRouter(AuthState authState) {
 
       if (authState.isSessionExpired) return '/login';
       if (!authState.isAuthenticated) return isPublic ? null : '/login';
-      if (isPublic) return authState.homePath;
+
+      // `/splash` n'est qu'une attente : une fois la session connue, il n'a
+      // plus rien à montrer. Sans cette ligne il se comportait comme une route
+      // protégée ordinaire — renvoyé vers `/login` quand on n'est pas connecté,
+      // mais laissé en place quand on l'est, donc affiché indéfiniment. Le
+      // défaut ne se voyait qu'au démarrage avec une session restaurée : après
+      // une connexion, la redirection depuis `/login` masquait le problème.
+      if (location == '/splash' || isPublic) return authState.homePath;
 
       // Espace d'un autre profil : renvoyer chez soi plutôt que d'afficher un
       // écran qui appellera des endpoints refusés par le BFF.
       final home = authState.homePath;
       if (location.startsWith('/transporteur') && home != '/transporteur') return home;
       if (location.startsWith('/commercant') && home != '/commercant') return home;
+      if (location.startsWith('/flotte') && home != '/flotte') return home;
 
       return null;
     },
@@ -84,6 +93,14 @@ GoRouter buildAppRouter(AuthState authState) {
                 commercant.OrderDetailScreen(orderId: s.pathParameters['id']!),
           ),
         ],
+      ),
+
+      // Le rôle existe côté serveur et son espace n'est pas construit : lui
+      // donner un écran qui l'explique, plutôt que l'écran d'erreur de
+      // go_router sur une route absente.
+      GoRoute(
+        path: '/flotte',
+        builder: (_, __) => const FlottePlaceholderScreen(),
       ),
     ],
   );
