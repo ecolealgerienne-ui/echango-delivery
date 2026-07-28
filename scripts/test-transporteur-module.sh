@@ -54,15 +54,47 @@ REG=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
         '{fleetbaseDriverUuid:$u, email:$e, password:$p, firstName:"Test", lastName:"Transporteur"}')")
 
 TOKEN=$(echo "$REG" | jq -r '.token // empty')
+
 if [ -z "$TOKEN" ]; then
-  # Compte déjà existant pour ce driver : se rabattre sur un login.
-  TOKEN=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
-    -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
-    | jq -r '.token // empty')
+  # Le driver est déjà lié à un compte (cas normal dès la 2e exécution, ou
+  # après test-driver-auth.sh). On ne peut pas deviner l'email de ce compte —
+  # il faut le relire dans la base du BFF, puis se connecter avec.
+  if echo "$REG" | grep -q 'already linked'; then
+    EXISTING=$(docker exec echango_bff_postgres \
+      psql -U bff_user -d echango_bff -tAc \
+      "SELECT email FROM \"DriverAccount\" WHERE \"fleetbaseDriverUuid\"='$DRIVER_UUID';" \
+      2>/dev/null | tr -d '[:space:]' || true)
+
+    if [ -n "$EXISTING" ]; then
+      TOKEN=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
+        -H 'Content-Type: application/json' \
+        -d "$(jq -n --arg e "$EXISTING" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
+        | jq -r '.token // empty')
+
+      if [ -n "$TOKEN" ]; then
+        pass "auth — compte existant réutilisé ($EXISTING)"
+      else
+        echo "❌ Compte existant trouvé ($EXISTING) mais mot de passe différent."
+        echo "   Relancer en le fournissant :"
+        echo "     EMAIL='$EXISTING' PASSWORD='<le bon>' $0 $DRIVER_UUID"
+        echo "   Ou repartir de zéro pour ce driver :"
+        echo "     docker exec echango_bff_postgres psql -U bff_user -d echango_bff \\"
+        echo "       -c \"DELETE FROM \\\"DriverAccount\\\" WHERE \\\"fleetbaseDriverUuid\\\"='$DRIVER_UUID';\""
+        exit 1
+      fi
+    fi
+  else
+    # Register a échoué pour une autre raison : tenter quand même un login,
+    # au cas où EMAIL/PASSWORD auraient été fournis explicitement.
+    TOKEN=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
+      | jq -r '.token // empty')
+  fi
 fi
+
 [ -n "$TOKEN" ] || fail "impossible d'obtenir un JWT driver" "$REG"
-pass "auth — JWT driver obtenu"
+[ -n "${EXISTING:-}" ] || pass "auth — JWT driver obtenu"
 
 # --- 1. Profil ------------------------------------------------------------
 RESP=$(api GET /transporteur/profil)
