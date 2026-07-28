@@ -38,15 +38,26 @@ flutter create . --platforms=android --org com.echango
 flutter pub get
 ```
 
-**2. Pointer le BFF sur une adresse joignable depuis l'appareil**
-(`lib/config/api_config.dart`). `localhost` désigne le téléphone lui-même, pas
-la machine de développement :
+**2. Vérifier l'adresse du BFF.** `localhost` désigne l'appareil qui exécute
+l'app, pas la machine de développement — sur émulateur il ne pointe sur rien,
+d'où un « Network error » au premier lancement. La valeur par défaut vise
+l'émulateur Android ; pour un autre support, surcharger au lancement plutôt
+que d'éditer `lib/config/api_config.dart` :
 
-| Cible | Valeur de `bffBaseUrl` |
+| Cible | Valeur |
 |---|---|
-| Émulateur Android | `http://10.0.2.2:3001` |
-| Appareil physique | `http://<IP-LAN-de-la-machine>:3001` |
+| Émulateur Android | `http://10.0.2.2:3001` *(défaut)* |
+| Appareil physique | `http://<IP-LAN-du-PC>:3001` |
 | Windows/desktop | `http://localhost:3001` |
+
+```bash
+flutter run --dart-define=BFF_BASE_URL=http://192.168.1.20:3001
+```
+
+Sur **appareil physique avec un BFF sous WSL2**, l'IP LAN du PC ne suffit pas :
+WSL2 a sa propre pile réseau. Il faut une redirection de port
+(`netsh interface portproxy`) et une règle de pare-feu. L'émulateur n'a pas ce
+problème — `10.0.2.2` passe par le loopback de Windows.
 
 **3. Autoriser le HTTP en clair** — Android bloque le trafic non-TLS depuis
 l'API 28. Sans ça, chaque appel échoue en `CLEARTEXT communication not

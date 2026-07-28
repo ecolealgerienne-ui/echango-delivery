@@ -4,10 +4,24 @@ class ApiConfig {
   // Le BFF écoute sur 3001 (backend/bff/src/main.ts) et n'a AUCUN préfixe
   // global : les routes sont à la racine (/auth/..., /commercant/...).
   //
-  // ⚠️ Sur un appareil physique, `localhost` désigne le téléphone lui-même.
-  // Utiliser l'IP de la machine hôte (ex. http://192.168.1.20:3001), ou
-  // http://10.0.2.2:3001 sur un émulateur Android.
-  static const String bffBaseUrl = 'http://localhost:3001';
+  // ⚠️ `localhost` désigne l'APPAREIL qui exécute l'app, pas la machine de
+  // développement. Sur téléphone ou émulateur, il ne pointe donc sur rien —
+  // c'est la cause n°1 des « Network error » au premier lancement.
+  //
+  //   Émulateur Android  : http://10.0.2.2:3001  (alias du loopback hôte)
+  //   Téléphone physique : http://<IP-LAN-du-PC>:3001
+  //   Desktop / web      : http://localhost:3001
+  //
+  // Surchargeable au lancement, pour ne pas éditer ce fichier à chaque
+  // changement de support :
+  //   flutter run --dart-define=BFF_BASE_URL=http://10.0.2.2:3001
+  //
+  // La valeur par défaut vise l'émulateur Android : c'est le support de test
+  // le plus courant, et sur desktop l'oubli se voit tout de suite.
+  static const String bffBaseUrl = String.fromEnvironment(
+    'BFF_BASE_URL',
+    defaultValue: 'http://10.0.2.2:3001',
+  );
 
   // L'app n'appelle JAMAIS Fleetbase directement — tout passe par le BFF
   // (decision specs_app_transporteur.md §2.1 : aucun credential Fleetbase
