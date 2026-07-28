@@ -91,9 +91,21 @@ REGISTER_BODY=$(jq -n \
 REGISTER_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
   -H 'Content-Type: application/json' -d "$REGISTER_BODY")
 
-echo "$REGISTER_RESP" | jq -e '.token' >/dev/null 2>&1 \
-  || fail "register a échoué" "$REGISTER_RESP"
-pass "register — compte créé et lié au Driver Fleetbase"
+if echo "$REGISTER_RESP" | jq -e '.token' >/dev/null 2>&1; then
+  pass "register — compte créé et lié au Driver Fleetbase"
+else
+  # Driver déjà lié : cas normal dès la 2e exécution. On récupère l'email du
+  # compte existant pour pouvoir continuer, plutôt que d'échouer sur un
+  # conflit qui n'en est pas un.
+  echo "$REGISTER_RESP" | grep -q 'already linked' \
+    || fail "register a échoué" "$REGISTER_RESP"
+
+  EMAIL=$(docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
+    "SELECT email FROM \"DriverAccount\" WHERE \"fleetbaseDriverUuid\"='$DRIVER_UUID';" \
+    2>/dev/null | tr -d '[:space:]' || true)
+  [ -n "$EMAIL" ] || fail "driver déjà lié, mais compte introuvable en base" "$REGISTER_RESP"
+  pass "register — driver déjà lié, compte existant réutilisé ($EMAIL)"
+fi
 
 # --- 2. Login -------------------------------------------------------------
 LOGIN_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
@@ -101,7 +113,12 @@ LOGIN_RESP=$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
   -d "$(jq -n --arg email "$EMAIL" --arg pw "$PASSWORD" '{email:$email, password:$pw}')")
 
 TOKEN=$(echo "$LOGIN_RESP" | jq -r '.token // empty')
-[ -n "$TOKEN" ] || fail "login a échoué" "$LOGIN_RESP"
+if [ -z "$TOKEN" ]; then
+  echo "❌ login a échoué pour $EMAIL"
+  echo "   Si ce compte a un autre mot de passe : PASSWORD='<le bon>' $0 $DRIVER_UUID"
+  echo "   Réponse : $LOGIN_RESP"
+  exit 1
+fi
 pass "login — JWT obtenu"
 
 # --- 3. Device token ------------------------------------------------------

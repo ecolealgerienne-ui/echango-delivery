@@ -367,7 +367,16 @@ export class TransporteurService {
       );
     } catch (error) {
       this.logger.error(`Proof capture failed (${orderId}): ${error.message}`);
-      throw new BadRequestException('Failed to upload proof');
+      // Surface Fleetbase's own message: a proof upload can fail for reasons
+      // the driver can act on (image rejected) or not at all (storage disk
+      // misconfigured), and a flat "failed" hides which.
+      const detail =
+        error.response?.data?.errors?.[0] ||
+        error.response?.data?.error ||
+        error.response?.data?.message;
+      throw new BadRequestException(
+        detail ? `Failed to upload proof: ${detail}` : 'Failed to upload proof',
+      );
     }
   }
 
