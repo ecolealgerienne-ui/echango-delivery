@@ -152,3 +152,15 @@ export class ListDriverOrdersQueryDto {
   @IsIn(['assigned', 'adhoc', 'history'])
   type?: string;
 }
+
+/**
+ * Catégorie de véhicule déclarée par le transporteur.
+ *
+ * Retirer la déclaration (valeur absente) le rend à nouveau éligible à toutes
+ * les courses, plutôt que de le coincer dans une catégorie définitive.
+ */
+export class UpdateVehicleTypeDto {
+  @IsOptional()
+  @IsIn(['moto', 'voiture', 'utilitaire'])
+  vehicleType?: string;
+}

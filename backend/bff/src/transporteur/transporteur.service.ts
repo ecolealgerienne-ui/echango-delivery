@@ -310,8 +310,25 @@ export class TransporteurService {
       lastName: driver.lastName,
       phone: driver.phone,
       fleetbaseDriverUuid: driver.fleetbaseDriverUuid,
+      vehicleType: driver.vehicleType,
       online,
     };
+  }
+
+  /**
+   * Déclare la catégorie de véhicule du transporteur.
+   *
+   * Elle filtre les opportunités qu'il voit : une course exigeant un
+   * utilitaire ne lui est pas proposée s'il roule en moto. Ne rien déclarer
+   * reste le comportement le plus ouvert — il voit tout.
+   */
+  async updateVehicleType(driverId: string, vehicleType?: string) {
+    const driver = await this.getDriverOrFail(driverId);
+    await this.prisma.driverAccount.update({
+      where: { id: driver.id },
+      data: { vehicleType: vehicleType ?? null },
+    });
+    return { vehicleType: vehicleType ?? null };
   }
 
   // Note on identifiers below: every /v1 call takes the driver's public_id,
@@ -408,8 +425,24 @@ export class TransporteurService {
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
     // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);
     // the BFF only avoids showing orders already taken.
+    // Une exigence de véhicule est un MINIMUM, pas une égalité : une course
+    // demandant une voiture reste faisable en utilitaire. Et un transporteur
+    // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
+    // champ non rempli serait le pire des défauts silencieux.
+    const ladder = ['moto', 'voiture', 'utilitaire'];
+    const mine = ladder.indexOf(driver.vehicleType ?? '');
+    const suits = (order: any) => {
+      if (mine < 0) return true;
+      const required = ladder.indexOf(order?.meta?.vehicle_type ?? '');
+      return required < 0 || required <= mine;
+    };
+
     const adhoc = orders.filter(
-      (o) => o?.adhoc === true && !o?.driver_assigned_uuid && o?.status !== 'canceled',
+      (o) =>
+        o?.adhoc === true &&
+        !o?.driver_assigned_uuid &&
+        o?.status !== 'canceled' &&
+        suits(o),
     );
 
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);

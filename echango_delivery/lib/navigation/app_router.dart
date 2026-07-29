@@ -5,6 +5,7 @@ import '../screens/auth/register_screen.dart';
 import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
+import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/orders_screen.dart';
 import '../screens/flotte/flotte_placeholder_screen.dart';
 import '../screens/splash_screen.dart';
@@ -86,6 +87,10 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'adresses',
             builder: (_, __) => const AddressesScreen(),
+          ),
+          GoRoute(
+            path: 'transporteurs',
+            builder: (_, __) => const FavouriteDriversScreen(),
           ),
           GoRoute(
             path: 'commandes/:id',

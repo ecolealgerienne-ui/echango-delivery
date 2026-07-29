@@ -47,6 +47,7 @@ class DriverPresenceState extends ChangeNotifier {
   /// Afficher « hors ligne » par défaut mentirait dans le sens dangereux :
   /// le driver ne réagirait pas à une course qu'il reçoit pourtant.
   bool? _online;
+  String? _vehicleType;
   bool _isBusy = false;
   bool _sessionActive = false;
   bool _foreground = true;
@@ -54,6 +55,10 @@ class DriverPresenceState extends ChangeNotifier {
   Timer? _pollTimer;
 
   bool? get online => _online;
+
+  /// Catégorie de véhicule déclarée. `null` = non déclarée, le transporteur
+  /// voit alors toutes les courses.
+  String? get vehicleType => _vehicleType;
   bool get isBusy => _isBusy;
   bool get isTracking => _location.isTracking;
   String? get errorMessage => _errorMessage;
@@ -122,6 +127,11 @@ class DriverPresenceState extends ChangeNotifier {
     await _notifications.release();
 
     _online = null;
+    // Sans cette remise à zéro, le transporteur suivant à se connecter sur le
+    // même appareil héritait de la catégorie de véhicule du précédent, et
+    // voyait donc une liste de courses filtrée sur un critère qui n'est pas le
+    // sien.
+    _vehicleType = null;
     _errorMessage = null;
     notifyListeners();
   }
@@ -133,6 +143,7 @@ class DriverPresenceState extends ChangeNotifier {
       final profile = await _apiClient.getDriver();
       final value = profile['online'];
       _online = value is bool ? value : null;
+      _vehicleType = profile['vehicleType'] as String?;
       // Sans ça, une erreur passagère resterait affichée en bandeau bien après
       // que la lecture a recommencé à fonctionner.
       _errorMessage = null;
@@ -211,6 +222,24 @@ class DriverPresenceState extends ChangeNotifier {
     } finally {
       _isBusy = false;
       notifyListeners();
+    }
+  }
+
+  /// Déclare la catégorie de véhicule. Filtre les courses proposées : une
+  /// livraison exigeant un utilitaire n'est pas montrée à une moto.
+  Future<bool> setVehicleType(String? value) async {
+    try {
+      await _apiClient.setVehicleType(value);
+      _vehicleType = value;
+      notifyListeners();
+      // Les opportunités visibles changent avec la déclaration : recharger,
+      // sinon l'écran garde une liste qui ne correspond plus au filtre.
+      await _orderState.loadOrders();
+      return true;
+    } catch (e) {
+      _errorMessage = 'Déclaration du véhicule impossible';
+      notifyListeners();
+      return false;
     }
   }
 

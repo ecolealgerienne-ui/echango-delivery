@@ -9,6 +9,7 @@ import {
   ReportDeliveryFailureDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
+  UpdateVehicleTypeDto,
 } from './dto/transporteur.dto';
 import { Persona } from '../common/decorators/persona.decorator';
 
@@ -34,6 +35,11 @@ export class TransporteurController {
   @Get('profil')
   async getProfile(@Request() req: any) {
     return this.transporteurService.getProfile(this.driverId(req));
+  }
+
+  @Post('vehicule')
+  async updateVehicleType(@Request() req: any, @Body() dto: UpdateVehicleTypeDto) {
+    return this.transporteurService.updateVehicleType(this.driverId(req), dto.vehicleType);
   }
 
   @Post('position')

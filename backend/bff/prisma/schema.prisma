@@ -45,6 +45,7 @@ model MerchantAccount {
   deviceTokens      DeviceToken[]
   orders            Order[]
   commissions       Commission[]
+  favouriteDrivers  DriverFavourite[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -133,6 +134,18 @@ model DriverAccount {
   lastLatitude          Float?
   lastLongitude         Float?
   lastPositionAt        DateTime?
+
+  /// Catégorie de véhicule déclarée par le transporteur.
+  ///
+  /// Sert à ne pas proposer une course inadaptée : un gâteau de mariage ne
+  /// part pas en moto. Fleetbase n'a pas de filtre natif par *catégorie* —
+  /// `vehicle_assigned_uuid` désigne un véhicule précis, pas un type — et sa
+  /// notion de `Fleet` serait le bon foyer à terme, mais elle suppose de
+  /// provisionner des flottes que nous n'avons pas encore.
+  ///
+  /// `null` = non déclaré : le transporteur voit alors toutes les courses,
+  /// plutôt que d'être exclu du réseau par un champ qu'il n'a pas rempli.
+  vehicleType           String?
 
   // Relations
   deviceTokens          DriverDeviceToken[]
@@ -373,4 +386,39 @@ model AuditLog {
   @@index([actorType, actorId])
   @@index([action])
   @@index([createdAt])
+}
+
+
+/// Transporteur mis en favori par un commerçant.
+///
+/// ── Pourquoi des favoris et non une assignation directe ─────────────────────
+///
+/// La thèse du produit est l'effet réseau : un pool **mutualisé** de
+/// transporteurs (CLAUDE.md § Positionnement). Laisser un commerçant désigner
+/// nommément son transporteur ferait glisser la place de marché vers des
+/// relations bilatérales — et les nouveaux entrants ne démarreraient jamais,
+/// faute d'être choisis par quiconque.
+///
+/// Les favoris préservent la préférence sans casser le réseau : ils sont
+/// sollicités en premier, et la course retombe dans le pool commun si aucun
+/// n'est disponible. Le commerçant garde son habitude, le réseau garde sa
+/// liquidité.
+model DriverFavourite {
+  id                  String   @id @default(cuid())
+
+  merchantId          String
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  /// Driver Fleetbase, pas un compte Echango : un transporteur peut exister
+  /// dans Fleetbase sans avoir encore créé son compte applicatif.
+  fleetbaseDriverUuid String
+
+  /// Nom au moment de la mise en favori, pour l'afficher sans dépendre d'un
+  /// appel Fleetbase à chaque ouverture de l'écran.
+  driverName          String?
+
+  createdAt           DateTime @default(now())
+
+  @@unique([merchantId, fleetbaseDriverUuid])
+  @@index([merchantId])
 }

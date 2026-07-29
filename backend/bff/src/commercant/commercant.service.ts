@@ -111,6 +111,219 @@ export class CommerçantService {
   }
 
   /**
+   * Rayon de diffusion d'une course adhoc, en mètres.
+   *
+   * Fleetbase porte nativement `adhoc_distance` : inutile de reconstruire un
+   * filtre de proximité côté BFF, c'est son dispatch géospatial qui l'applique.
+   *
+   * ⚠️ La valeur par défaut est un **repli, pas une décision produit** : 15 km
+   * couvre une agglomération sans noyer les transporteurs de courses hors de
+   * portée. À régler au pilote, avec de vraies distances.
+   */
+  private adhocRadiusMetres(): number {
+    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
+    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+  }
+
+  /**
+   * Métadonnées transmises à Fleetbase.
+   *
+   * `vehicle_type` y vit plutôt que dans une colonne native : Fleetbase n'a pas
+   * de notion de *catégorie* de véhicule — `vehicle_assigned_uuid` désigne un
+   * véhicule précis. Le filtrage est donc appliqué par le BFF au moment de
+   * lister les opportunités d'un transporteur.
+   */
+  private buildOrderMeta(dto: CreateOrderDto): Record<string, any> | undefined {
+    const meta: Record<string, any> = {};
+    if (dto.deliveryInstructions) meta.instructions = dto.deliveryInstructions;
+    if (dto.vehicleType) meta.vehicle_type = dto.vehicleType;
+    if (dto.items?.length) meta.items = dto.items;
+    if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
+    if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
+    return Object.keys(meta).length ? meta : undefined;
+  }
+
+  /**
+   * Premier transporteur favori actuellement en ligne, ou `null`.
+   *
+   * ── Ce que fait ce repli, et ce qu'il ne fait pas ──────────────────────────
+   *
+   * Il choisit **au moment de la création** : si aucun favori n'est en ligne,
+   * la course part immédiatement au pool commun. C'est ce qui préserve l'effet
+   * réseau (voir DriverFavourite dans le schéma).
+   *
+   * Ce qu'il ne fait PAS : reprendre la course si le favori ne l'accepte
+   * jamais. Ce second repli, différé dans le temps, demande une tâche de fond
+   * surveillant les courses assignées et non démarrées — à construire, avec le
+   * délai comme décision produit. En attendant, une course confiée à un favori
+   * qui l'ignore reste bloquée : c'est la limite à connaître avant d'activer
+   * l'option en production.
+   */
+  private async pickAvailableFavourite(merchantId: string, vehicleType?: string) {
+    const favourites = await this.prisma.driverFavourite.findMany({
+      where: { merchantId },
+    });
+    if (!favourites.length) return null;
+
+    const uuids = favourites.map((f: any) => f.fleetbaseDriverUuid);
+
+    // Le compte Echango porte la catégorie de véhicule et sert de garde : un
+    // favori sans compte applicatif ne peut de toute façon pas recevoir la
+    // course, faute de jeton push et d'application.
+    const accounts = await this.prisma.driverAccount.findMany({
+      where: {
+        fleetbaseDriverUuid: { in: uuids },
+        active: true,
+        // Non déclaré = compatible : un transporteur ne doit pas être écarté
+        // du réseau par un champ qu'il n'a pas rempli.
+        ...(vehicleType
+          ? {
+              OR: [
+                { vehicleType: null },
+                { vehicleType: this.compatibleVehicleTypes(vehicleType) },
+              ],
+            }
+          : {}),
+      },
+    });
+    if (!accounts.length) return null;
+
+    // La disponibilité fait foi côté Fleetbase, pas côté BFF : c'est lui qui
+    // décide à qui le dispatch parle.
+    let drivers: any[] = [];
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers();
+      drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+    } catch (error) {
+      this.logger.warn(`Favoris non résolus, repli sur le pool : ${error.message}`);
+      return null;
+    }
+
+    const online = new Set(
+      drivers.filter((d: any) => d?.online === true).map((d: any) => d.uuid),
+    );
+
+    return accounts.find((a: any) => online.has(a.fleetbaseDriverUuid)) ?? null;
+  }
+
+  /**
+   * Catégories acceptables pour une exigence donnée.
+   *
+   * Une exigence est un **minimum**, pas une égalité : demander une voiture
+   * n'exclut pas un utilitaire. Traiter le champ comme une égalité stricte
+   * écarterait des transporteurs parfaitement capables.
+   */
+  private compatibleVehicleTypes(required: string): { in: string[] } {
+    const ladder = ['moto', 'voiture', 'utilitaire'];
+    const index = ladder.indexOf(required);
+    return { in: index < 0 ? ladder : ladder.slice(index) };
+  }
+
+  // ── Transporteurs favoris ─────────────────────────────────────────────────
+
+  async listFavourites(merchantId: string) {
+    await this.getMerchantWithValidation(merchantId);
+    const favourites = await this.prisma.driverFavourite.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
+      data: favourites.map((f: any) => ({
+        id: f.id,
+        driver_uuid: f.fleetbaseDriverUuid,
+        name: f.driverName,
+      })),
+    };
+  }
+
+  /**
+   * Transporteurs proposables en favori : ceux qui ont déjà livré pour ce
+   * commerçant.
+   *
+   * Volontairement restreint à l'historique plutôt qu'à l'annuaire complet de
+   * l'organisation. Exposer tous les transporteurs à tous les commerçants
+   * livrerait la composition du réseau à quiconque crée un compte, et n'a
+   * aucune utilité : on ne met en favori que quelqu'un qu'on a vu travailler.
+   */
+  async listKnownDrivers(merchantId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const cached = await this.prisma.order.findMany({
+      where: { merchantId },
+      select: { fleetbaseOrderId: true },
+    });
+    const owned = new Set(cached.map((c: any) => c.fleetbaseOrderId));
+    if (!owned.size) return { data: [] };
+
+    let orders: any[] = [];
+    try {
+      orders = await this.fleetbaseClient.fetchEveryOrder();
+    } catch (error) {
+      this.logger.warn(`Historique transporteurs indisponible : ${error.message}`);
+      return { data: [] };
+    }
+
+    const seen = new Map<string, string | null>();
+    for (const order of orders) {
+      if (!owned.has(order?.uuid)) continue;
+      const uuid = order?.driver_assigned_uuid ?? order?.driver_assigned?.uuid;
+      if (uuid && !seen.has(uuid)) {
+        seen.set(uuid, order?.driver_assigned?.name ?? null);
+      }
+    }
+
+    return {
+      data: Array.from(seen.entries()).map(([uuid, name]) => ({
+        driver_uuid: uuid,
+        name,
+      })),
+    };
+  }
+
+  async addFavourite(merchantId: string, fleetbaseDriverUuid: string, driverName?: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    // Un commerçant ne met en favori qu'un transporteur qui a déjà travaillé
+    // pour lui : sans ce contrôle, l'endpoint permettrait de sonder l'existence
+    // d'un uuid arbitraire.
+    const known = await this.listKnownDrivers(merchantId);
+    if (!known.data.some((d: any) => d.driver_uuid === fleetbaseDriverUuid)) {
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'favourite.add',
+        resourceType: 'Driver',
+        resourceId: fleetbaseDriverUuid,
+        reason: "Transporteur n'ayant jamais livré pour ce commerçant",
+      });
+      throw new BadRequestException(
+        "Vous ne pouvez mettre en favori qu'un transporteur ayant déjà effectué une de vos livraisons",
+      );
+    }
+
+    return this.prisma.driverFavourite.upsert({
+      where: { merchantId_fleetbaseDriverUuid: { merchantId, fleetbaseDriverUuid } },
+      create: { merchantId, fleetbaseDriverUuid, driverName },
+      update: { driverName },
+    });
+  }
+
+  async removeFavourite(merchantId: string, favouriteId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    // `deleteMany` avec le merchantId dans le filtre : un `delete` par id seul
+    // permettrait de supprimer le favori d'un autre commerçant.
+    const { count } = await this.prisma.driverFavourite.deleteMany({
+      where: { id: favouriteId, merchantId },
+    });
+
+    if (count === 0) {
+      throw new NotFoundException('Favori introuvable');
+    }
+    return { removed: true };
+  }
+
+  /**
    * Résout une commande du commerçant par l'un OU l'autre de ses identifiants,
    * et vérifie l'appartenance.
    *
@@ -183,6 +396,11 @@ export class CommerçantService {
         this.fleetbaseClient.getDefaultOrderConfigUuid(),
       ]);
 
+      // Favori disponible ? On le sollicite ; sinon la course part au pool.
+      const favourite = dto.preferFavourites
+        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType)
+        : null;
+
       const response = await this.fleetbaseClient.createOrder({
         order_config_uuid: orderConfigUuid,
         customer_uuid: merchant.fleetbaseVendorUuid,
@@ -192,7 +410,13 @@ export class CommerçantService {
           pickup_uuid: pickupPlace.place.uuid,
           dropoff_uuid: dropoffPlace.place.uuid,
         },
-        meta: dto.deliveryInstructions ? { instructions: dto.deliveryInstructions } : undefined,
+        meta: this.buildOrderMeta(dto),
+        scheduled_at: dto.scheduledAt,
+        ...(favourite
+          ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
+          : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
+        pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
+        pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
       });
 
       const fleetbaseOrder = response.order;
@@ -207,6 +431,12 @@ export class CommerçantService {
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
       });
+
+      if (favourite) {
+        this.logger.log(
+          `Commande ${order.id} confiée au favori ${favourite.fleetbaseDriverUuid}`,
+        );
+      }
 
       this.logger.log(`Order created: ${order.id}`);
 

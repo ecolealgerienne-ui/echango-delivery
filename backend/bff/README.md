@@ -122,10 +122,17 @@ de nom et **ne joue jamais la migration**, sans le dire clairement. Passer
 - `POST /auth/verify` - Verify current token
 
 ### Auth (Requires Auth)
+- `POST /auth/revoquer-sessions` - Invalidate every token issued for this account (tokenVersion)
 - `POST /auth/device-token` - Register push token (merchant)
 - `POST /auth/transporteur/device-token` - Register push token (driver) - mirrored to a Fleetbase `UserDevice` record so native FCM/APN dispatch can reach it, see `docs/journal_implementation_bff.md`
 
 ### Merchant (`/commercant/*`, Requires Auth)
+- `GET /commercant/geocodage?q=` - Address search (relayed to Nominatim, never called from the app)
+- `GET /commercant/geocodage/inverse?lat=&lon=` - Address for a point picked on the map
+- `GET /commercant/transporteurs` - Drivers who already delivered for this merchant
+- `GET /commercant/transporteurs/favoris` - Favourite drivers
+- `POST /commercant/transporteurs/favoris` - Add a favourite
+- `DELETE /commercant/transporteurs/favoris/:id` - Remove a favourite
 - `POST /commercant/commandes` - Create order
 - `GET /commercant/commandes` - List orders
 - `GET /commercant/commandes/:id` - Get order detail

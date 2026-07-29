@@ -470,6 +470,8 @@ class ProfileScreen extends StatelessWidget {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          const _VehicleTypeCard(),
           const SizedBox(height: 32),
           Consumer<AuthState>(
             builder: (context, authState, _) {
@@ -536,5 +538,60 @@ class ProfileScreen extends StatelessWidget {
         context.go('/login');
       }
     }
+  }
+}
+
+
+/// Déclaration de la catégorie de véhicule.
+///
+/// Ne rien déclarer est le comportement le plus ouvert : le transporteur voit
+/// toutes les courses. Le dire explicitement à l'écran évite qu'il croie devoir
+/// remplir le champ pour recevoir du travail — l'inverse serait vrai.
+class _VehicleTypeCard extends StatelessWidget {
+  const _VehicleTypeCard();
+
+  static const _options = {
+    null: 'Non déclaré — je vois toutes les courses',
+    'moto': 'Moto',
+    'voiture': 'Voiture',
+    'utilitaire': 'Utilitaire',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<DriverPresenceState>(
+      builder: (context, presence, _) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String?>(
+                value: presence.vehicleType,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: _options.entries
+                    .map((e) =>
+                        DropdownMenuItem<String?>(value: e.key, child: Text(e.value)))
+                    .toList(),
+                onChanged: presence.isBusy
+                    ? null
+                    : (v) => presence.setVehicleType(v),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Une course exigeant un véhicule plus grand ne vous sera pas '
+                'proposée.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

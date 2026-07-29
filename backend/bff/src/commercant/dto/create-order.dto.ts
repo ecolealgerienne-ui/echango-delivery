@@ -1,5 +1,35 @@
-import { IsString, IsNumber, IsOptional, IsArray, IsInt } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsArray,
+  IsInt,
+  IsISO8601,
+  IsIn,
+  IsBoolean,
+  ValidateNested,
+  ArrayMaxSize,
+  MaxLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+
+/**
+ * Catégories de véhicule.
+ *
+ * Liste fermée et volontairement courte : elle sert à écarter l'inadapté, pas
+ * à décrire un parc. Trois entrées suffisent à trancher « ça tient sur une
+ * moto » de « il faut un coffre » et de « il faut un hayon ».
+ */
+export const VEHICLE_TYPES = ['moto', 'voiture', 'utilitaire'] as const;
+
+/**
+ * Niveau de preuve exigé à la livraison.
+ *
+ * `photo` est le seul validé de bout en bout côté transporteur (journal §11.1).
+ * `signature` reste à construire — déclaré ici pour que le contrat n'ait pas à
+ * changer quand il arrivera, mais l'app ne le propose pas encore.
+ */
+export const POD_METHODS = ['aucune', 'photo', 'signature'] as const;
 
 export class CreateOrderDto {
   @IsString()
@@ -40,25 +70,70 @@ export class CreateOrderDto {
   @IsString()
   dropoffNotes?: string;
 
+  /**
+   * Contenu du colis. Ce qui permet au transporteur de refuser en connaissance
+   * de cause — et ce qui tranche un litige.
+   */
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
   items?: OrderItemDto[];
 
   @IsOptional()
   @IsString()
   deliveryInstructions?: string;
+
+  /**
+   * Livraison programmée, au format ISO 8601.
+   *
+   * Une boulangerie sait la veille qu'elle livre à 8 h. C'est ce qui distingue
+   * un outil professionnel d'un service à la demande, et ça lisse la charge du
+   * réseau au lieu de la concentrer sur les pics.
+   */
+  @IsOptional()
+  @IsISO8601()
+  scheduledAt?: string;
+
+  /** Catégorie minimale de véhicule requise. */
+  @IsOptional()
+  @IsIn(VEHICLE_TYPES as unknown as string[])
+  vehicleType?: string;
+
+  /** Niveau de preuve exigé à la livraison. */
+  @IsOptional()
+  @IsIn(POD_METHODS as unknown as string[])
+  podMethod?: string;
+
+  /**
+   * Solliciter d'abord les transporteurs favoris du commerçant.
+   *
+   * Le repli sur le pool commun est automatique si aucun favori n'est
+   * disponible : c'est ce qui préserve l'effet réseau (voir DriverFavourite).
+   */
+  @IsOptional()
+  @IsBoolean()
+  preferFavourites?: boolean;
 }
 
 export class OrderItemDto {
   @IsString()
+  @MaxLength(200)
   description: string;
 
   @IsNumber()
   quantity: number;
 
+  /** Poids en kilogrammes. */
   @IsOptional()
   @IsNumber()
   weight?: number;
+
+  /** Signale un contenu qui impose des précautions de transport. */
+  @IsOptional()
+  @IsBoolean()
+  fragile?: boolean;
 }
 
 export class ListOrdersQueryDto {

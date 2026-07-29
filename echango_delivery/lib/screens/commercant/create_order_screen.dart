@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
+import 'map_picker_screen.dart';
 
 /// Formulaire de demande de livraison.
 ///
-/// Saisie en texte, avec réutilisation du carnet d'adresses (décision produit
-/// du 28/07 : la sélection sur carte viendra plus tard). Les coordonnées ne
-/// sont donc pas issues d'un géocodage : elles proviennent soit d'une adresse
-/// enregistrée, soit d'une valeur par défaut, ce qui suffit à un dispatch
-/// géospatial approximatif mais devra être repris avec la carte.
+/// Chaque point se définit de trois façons, par ordre de précision : une
+/// adresse du carnet, une recherche d'adresse, ou un point placé sur la carte.
+///
+/// ⚠️ **Les coordonnées ne sont plus devinées.** La version précédente
+/// retombait sur le centre d'Alger dès qu'aucune adresse enregistrée n'était
+/// choisie : le dispatch géospatial de Fleetbase travaillait donc sur un point
+/// faux, et deux livraisons opposées dans la ville avaient la même position.
+/// Le formulaire exige désormais un point réel — c'est la seule donnée du
+/// formulaire dont dépend le choix du transporteur.
 class CreateOrderScreen extends StatefulWidget {
   const CreateOrderScreen({super.key});
 
@@ -20,10 +26,6 @@ class CreateOrderScreen extends StatefulWidget {
 }
 
 class _CreateOrderScreenState extends State<CreateOrderScreen> {
-  // Centre d'Alger — repli tant qu'aucune coordonnée précise n'est disponible.
-  static const _defaultLat = 36.7538;
-  static const _defaultLng = 3.0588;
-
   final _pickupName = TextEditingController();
   final _pickupAddress = TextEditingController();
   final _pickupContact = TextEditingController();
@@ -35,17 +37,35 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _dropoffPhone = TextEditingController();
 
   final _instructions = TextEditingController();
+  final _itemDescription = TextEditingController();
 
-  double _pickupLat = _defaultLat;
-  double _pickupLng = _defaultLng;
-  double _dropoffLat = _defaultLat;
-  double _dropoffLng = _defaultLng;
+  /// Livraison programmée. `null` = dès que possible.
+  DateTime? _scheduledAt;
+
+  /// Catégorie minimale de véhicule. `null` = indifférent.
+  String? _vehicleType;
+
+  /// Niveau de preuve exigé. `photo` par défaut : c'est le seul validé de bout
+  /// en bout côté transporteur, et une livraison sans trace est ce qui rend un
+  /// litige insoluble.
+  String _podMethod = 'photo';
+
+  /// Solliciter d'abord les transporteurs favoris.
+  bool _preferFavourites = true;
+
+  /// Nulles tant que le commerçant n'a pas désigné de point. Le formulaire
+  /// refuse l'envoi dans ce cas plutôt que d'inventer une position.
+  LatLng? _pickupPoint;
+  LatLng? _dropoffPoint;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<MerchantOrderState>().loadAddresses();
+      if (!mounted) return;
+      final state = context.read<MerchantOrderState>();
+      state.loadAddresses();
+      state.loadFavourites();
     });
   }
 
@@ -54,7 +74,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
-      _instructions,
+      _instructions, _itemDescription,
     ]) {
       c.dispose();
     }
@@ -68,15 +88,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _pickupAddress.text = a.address;
         _pickupContact.text = a.contactName ?? '';
         _pickupPhone.text = a.contactPhone ?? '';
-        _pickupLat = a.latitude;
-        _pickupLng = a.longitude;
+        _pickupPoint = LatLng(a.latitude, a.longitude);
       } else {
         _dropoffName.text = a.name;
         _dropoffAddress.text = a.address;
         _dropoffContact.text = a.contactName ?? '';
         _dropoffPhone.text = a.contactPhone ?? '';
-        _dropoffLat = a.latitude;
-        _dropoffLng = a.longitude;
+        _dropoffPoint = LatLng(a.latitude, a.longitude);
       }
     });
   }
@@ -87,6 +105,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (_pickupPhone.text.trim().isEmpty) 'le téléphone de retrait',
       if (_dropoffName.text.trim().isEmpty) 'le nom du destinataire',
       if (_dropoffPhone.text.trim().isEmpty) 'le téléphone du destinataire',
+      if (_pickupPoint == null) 'le point de retrait sur la carte',
+      if (_dropoffPoint == null) 'le point de livraison sur la carte',
     ];
     if (missing.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -100,16 +120,16 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
     final success = await orderState.createOrder({
       'pickupLocationName': _pickupName.text.trim(),
-      'pickupLatitude': _pickupLat,
-      'pickupLongitude': _pickupLng,
+      'pickupLatitude': _pickupPoint!.latitude,
+      'pickupLongitude': _pickupPoint!.longitude,
       'pickupContactName':
           _pickupContact.text.trim().isEmpty ? 'Commerce' : _pickupContact.text.trim(),
       'pickupContactPhone': _pickupPhone.text.trim(),
       if (_pickupAddress.text.trim().isNotEmpty)
         'pickupNotes': _pickupAddress.text.trim(),
       'dropoffLocationName': _dropoffName.text.trim(),
-      'dropoffLatitude': _dropoffLat,
-      'dropoffLongitude': _dropoffLng,
+      'dropoffLatitude': _dropoffPoint!.latitude,
+      'dropoffLongitude': _dropoffPoint!.longitude,
       'dropoffContactName':
           _dropoffContact.text.trim().isEmpty ? _dropoffName.text.trim() : _dropoffContact.text.trim(),
       'dropoffContactPhone': _dropoffPhone.text.trim(),
@@ -117,6 +137,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         'dropoffNotes': _dropoffAddress.text.trim(),
       if (_instructions.text.trim().isNotEmpty)
         'deliveryInstructions': _instructions.text.trim(),
+      if (_scheduledAt != null) 'scheduledAt': _scheduledAt!.toUtc().toIso8601String(),
+      if (_vehicleType != null) 'vehicleType': _vehicleType,
+      'podMethod': _podMethod,
+      'preferFavourites': _preferFavourites,
+      if (_itemDescription.text.trim().isNotEmpty)
+        'items': [
+          {'description': _itemDescription.text.trim(), 'quantity': 1},
+        ],
     });
 
     if (!mounted) return;
@@ -150,7 +178,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _section('Retrait'),
-                _addressShortcuts(orderState, toPickup: true),
+                _locationRow(orderState, toPickup: true),
                 _field(_pickupName, 'Lieu de retrait *', Icons.storefront_outlined),
                 _field(_pickupAddress, 'Adresse', Icons.place_outlined),
                 _field(_pickupContact, 'Contact sur place', Icons.person_outline),
@@ -158,13 +186,23 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     keyboard: TextInputType.phone),
                 const SizedBox(height: 24),
                 _section('Livraison'),
-                _addressShortcuts(orderState, toPickup: false),
+                _locationRow(orderState, toPickup: false),
                 _field(_dropoffName, 'Destinataire *', Icons.person_outline),
                 _field(_dropoffAddress, 'Adresse', Icons.place_outlined),
                 _field(_dropoffContact, 'Contact (si différent)', Icons.person_outline),
                 _field(_dropoffPhone, 'Téléphone *', Icons.phone_outlined,
                     keyboard: TextInputType.phone),
                 const SizedBox(height: 24),
+                _section('Colis'),
+                _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
+                    Icons.inventory_2_outlined),
+                _vehicleSelector(),
+                const SizedBox(height: 16),
+                _section('Options'),
+                _scheduleTile(),
+                _podSelector(),
+                _favouritesTile(orderState),
+                const SizedBox(height: 16),
                 _field(_instructions, 'Instructions pour le transporteur',
                     Icons.notes_outlined, maxLines: 3),
                 const SizedBox(height: 16),
@@ -232,24 +270,311 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         ),
       );
 
-  /// Remplissage en un tap depuis le carnet. C'est ce qui rend la saisie
-  /// texte acceptable en attendant la carte : les coordonnées enregistrées
-  /// sont réutilisées telles quelles.
-  Widget _addressShortcuts(MerchantOrderState orderState, {required bool toPickup}) {
-    if (orderState.addresses.isEmpty) return const SizedBox.shrink();
+  /// Sélecteur d'adresse et point sur la carte.
+  ///
+  /// Les puces d'origine listaient tout le carnet à l'écran : lisible avec
+  /// deux clients, inutilisable avec trente. Un sélecteur avec recherche tient
+  /// à l'échelle, et le bouton carte reste toujours accessible — c'est le seul
+  /// moyen de désigner une adresse qui n'est pas encore au carnet.
+  Widget _locationRow(MerchantOrderState orderState, {required bool toPickup}) {
+    final point = toPickup ? _pickupPoint : _dropoffPoint;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        children: orderState.addresses
-            .map((a) => ActionChip(
-                  avatar: const Icon(Icons.bookmark_outline, size: 16),
-                  label: Text(a.name),
-                  onPressed: () => _applyAddress(a, toPickup: toPickup),
-                ))
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              if (orderState.addresses.isNotEmpty) ...[
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _pickFromAddressBook(orderState, toPickup: toPickup),
+                    icon: const Icon(Icons.bookmark_outline, size: 18),
+                    label: const Text('Carnet'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _pickOnMap(toPickup: toPickup),
+                  icon: const Icon(Icons.map_outlined, size: 18),
+                  label: Text(point == null ? 'Placer sur la carte' : 'Modifier le point'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Rendre la position visible : sans ce retour, le commerçant ne sait
+          // pas si son point est défini, et c'est pourtant la seule donnée du
+          // formulaire dont dépend le choix du transporteur.
+          Row(
+            children: [
+              Icon(
+                point == null ? Icons.error_outline : Icons.check_circle_outline,
+                size: 16,
+                color: point == null
+                    ? Theme.of(context).colorScheme.error
+                    : Colors.green.shade700,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  point == null
+                      ? 'Position non définie'
+                      : 'Position définie (${point.latitude.toStringAsFixed(5)}, '
+                          '${point.longitude.toStringAsFixed(5)})',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Catégorie de véhicule exigée.
+  ///
+  /// Formulée comme un minimum et non comme un choix exclusif : demander une
+  /// voiture n'écarte pas un utilitaire. Traiter ce champ comme une égalité
+  /// stricte priverait la course de transporteurs parfaitement capables.
+  Widget _vehicleSelector() {
+    const options = {
+      null: 'Indifférent',
+      'moto': 'Moto minimum',
+      'voiture': 'Voiture minimum',
+      'utilitaire': 'Utilitaire requis',
+    };
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<String?>(
+        value: _vehicleType,
+        decoration: const InputDecoration(
+          labelText: 'Véhicule nécessaire',
+          border: OutlineInputBorder(),
+          prefixIcon: Icon(Icons.two_wheeler_outlined),
+          isDense: true,
+        ),
+        items: options.entries
+            .map((e) => DropdownMenuItem<String?>(value: e.key, child: Text(e.value)))
             .toList(),
+        onChanged: (v) => setState(() => _vehicleType = v),
+      ),
+    );
+  }
+
+  Widget _scheduleTile() {
+    final label = _scheduledAt == null
+        ? 'Dès que possible'
+        : '${_scheduledAt!.day}/${_scheduledAt!.month} à '
+            '${_scheduledAt!.hour.toString().padLeft(2, '0')}h'
+            '${_scheduledAt!.minute.toString().padLeft(2, '0')}';
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.schedule_outlined),
+      title: const Text('Enlèvement'),
+      subtitle: Text(label),
+      trailing: _scheduledAt == null
+          ? const Icon(Icons.chevron_right)
+          : IconButton(
+              icon: const Icon(Icons.clear),
+              tooltip: 'Revenir à « dès que possible »',
+              onPressed: () => setState(() => _scheduledAt = null),
+            ),
+      onTap: _pickSchedule,
+    );
+  }
+
+  Future<void> _pickSchedule() async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _scheduledAt ?? now,
+      firstDate: now,
+      // Deux semaines : au-delà, une livraison programmée relève de la
+      // planification, pas de ce formulaire.
+      lastDate: now.add(const Duration(days: 14)),
+    );
+    if (date == null || !mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_scheduledAt ?? now),
+    );
+    if (time == null || !mounted) return;
+
+    setState(() {
+      _scheduledAt =
+          DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    });
+  }
+
+  /// Niveau de preuve exigé à la livraison.
+  ///
+  /// `signature` n'est pas proposé : le contrat serveur l'accepte, mais rien
+  /// ne le recueille côté transporteur. L'offrir promettrait une trace qui
+  /// n'existerait pas — pire qu'une option absente.
+  Widget _podSelector() {
+    const options = {
+      'photo': 'Photo à la livraison',
+      'aucune': 'Aucune preuve',
+    };
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: DropdownButtonFormField<String>(
+        value: _podMethod,
+        decoration: const InputDecoration(
+          labelText: 'Preuve de livraison',
+          border: OutlineInputBorder(),
+          prefixIcon: Icon(Icons.verified_outlined),
+          isDense: true,
+        ),
+        items: options.entries
+            .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+            .toList(),
+        onChanged: (v) => setState(() => _podMethod = v ?? 'photo'),
+      ),
+    );
+  }
+
+  /// Préférence pour les transporteurs favoris.
+  ///
+  /// Le libellé dit explicitement le repli : sans lui, le commerçant croirait
+  /// que cocher la case bloque sa course quand ses favoris sont occupés.
+  Widget _favouritesTile(MerchantOrderState orderState) {
+    if (orderState.favourites.isEmpty) return const SizedBox.shrink();
+
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      value: _preferFavourites,
+      onChanged: (v) => setState(() => _preferFavourites = v),
+      title: const Text('Proposer d\'abord à mes transporteurs habituels'),
+      subtitle: Text(
+        '${orderState.favourites.length} favori(s). Si aucun n\'est disponible, '
+        'la course est proposée à l\'ensemble du réseau.',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    );
+  }
+
+  Future<void> _pickFromAddressBook(
+    MerchantOrderState orderState, {
+    required bool toPickup,
+  }) async {
+    final chosen = await showModalBottomSheet<SavedAddress>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _AddressBookSheet(addresses: orderState.addresses),
+    );
+    if (chosen != null) _applyAddress(chosen, toPickup: toPickup);
+  }
+
+  Future<void> _pickOnMap({required bool toPickup}) async {
+    final result = await Navigator.of(context).push<PickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(
+          title: toPickup ? 'Point de retrait' : 'Point de livraison',
+          initial: toPickup ? _pickupPoint : _dropoffPoint,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() {
+      if (toPickup) {
+        _pickupPoint = result.point;
+        if (_pickupAddress.text.trim().isEmpty) _pickupAddress.text = result.label;
+      } else {
+        _dropoffPoint = result.point;
+        if (_dropoffAddress.text.trim().isEmpty) _dropoffAddress.text = result.label;
+      }
+    });
+  }
+}
+
+/// Carnet d'adresses avec recherche.
+///
+/// Une feuille plutôt qu'un `DropdownButton` : au-delà d'une dizaine d'entrées
+/// un menu déroulant devient pénible sur mobile, et il n'accueille pas de champ
+/// de recherche.
+class _AddressBookSheet extends StatefulWidget {
+  final List<SavedAddress> addresses;
+
+  const _AddressBookSheet({required this.addresses});
+
+  @override
+  State<_AddressBookSheet> createState() => _AddressBookSheetState();
+}
+
+class _AddressBookSheetState extends State<_AddressBookSheet> {
+  String _filter = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final needle = _filter.trim().toLowerCase();
+    final visible = needle.isEmpty
+        ? widget.addresses
+        : widget.addresses
+            .where((a) =>
+                a.name.toLowerCase().contains(needle) ||
+                a.address.toLowerCase().contains(needle))
+            .toList();
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            autofocus: true,
+            onChanged: (v) => setState(() => _filter = v),
+            decoration: const InputDecoration(
+              hintText: 'Rechercher dans le carnet…',
+              prefixIcon: Icon(Icons.search),
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.5,
+            ),
+            child: visible.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: Text('Aucune adresse ne correspond'),
+                  )
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: visible.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final a = visible[i];
+                      return ListTile(
+                        leading: const Icon(Icons.bookmark_outline),
+                        title: Text(a.name),
+                        subtitle: Text(
+                          a.address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => Navigator.pop(context, a),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

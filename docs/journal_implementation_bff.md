@@ -1167,3 +1167,64 @@ Un défaut trouvé en fusionnant : `Place.latitude/longitude` valaient `0` quand
 BFF : compile. **Non exécuté** — pas d'instance ici. App : `flutter analyze` à passer.
 
 **Prérequis** : `npm run prisma:migrate` puis `prisma generate` (trois colonnes `tokenVersion`, refonte d'`AuditLog`, quatre colonnes supprimées).
+
+---
+
+## 13. Interface commerçant — carte, favoris, options de course (28/07/2026)
+
+Série de demandes utilisateur sur l'écran de création, plus ce que la lecture du modèle Fleetbase a révélé de disponible et d'inexploité.
+
+### 13.1 Ce que Fleetbase portait déjà et qu'on n'utilisait pas
+
+La lecture du `$fillable` du modèle `Order` (28/07/2026) a montré cinq colonnes natives ignorées : `scheduled_at`, `driver_assigned_uuid`, `pod_required`/`pod_method`, et surtout **`adhoc_distance`**.
+
+Cette dernière répond à une question produit qu'on avait laissée ouverte — le rayon de diffusion des courses adhoc — et à laquelle on s'apprêtait à répondre par du code côté BFF. Elle est native : c'est le dispatch géospatial de Fleetbase qui l'applique. Repère : **avant de construire un filtre sur un système tiers, chercher la colonne qui le porte déjà.**
+
+### 13.2 La carte règle un défaut, pas seulement un confort
+
+Toute adresse saisie librement tombait au **centre d'Alger** : le dispatch choisissait donc le transporteur le plus proche d'un point faux, et deux livraisons opposées dans la ville avaient exactement les mêmes coordonnées. Un formulaire texte ne peut pas produire une position.
+
+Le formulaire **refuse désormais l'envoi** sans point désigné, plutôt que d'en inventer un. C'est le changement qui compte : une valeur par défaut plausible est plus nuisible qu'une absence, parce qu'elle ne se signale jamais.
+
+OpenStreetMap plutôt que Google Maps (décision utilisateur) : pas de clé API, pas de facturation au chargement, cohérent avec l'auto-hébergement. Le repère reste au centre et c'est la carte qui bouge — le doigt ne masque jamais le point visé, ce qu'un marqueur déplaçable au toucher fait systématiquement.
+
+**Le géocodage passe par le BFF**, jamais par l'app. Nominatim exige un `User-Agent` identifiant et plafonne à une requête par seconde : depuis des milliers d'appareils, chacun s'annoncerait comme Dart et le débit cumulé ferait bloquer notre plage d'adresses. Un seul appelant, identifié, dont on maîtrise le rythme — et le jour où l'on hébergera notre propre instance, une seule classe changera.
+
+### 13.3 Favoris plutôt qu'assignation directe (décision produit)
+
+La demande initiale était de choisir nommément un transporteur. Techniquement gratuit — `driver_assigned_uuid` est accepté à la création — mais en tension avec la thèse du produit : l'effet réseau suppose un pool **mutualisé**, et des désignations nominatives feraient glisser la place de marché vers des relations bilatérales où les nouveaux entrants ne démarrent jamais.
+
+Retenu après discussion : des **favoris avec repli**. Sollicités en premier, la course retombe dans le pool commun si aucun n'est disponible. La préférence est respectée, la liquidité du réseau préservée.
+
+**Ce que le repli fait, et ne fait pas** : il choisit *au moment de la création*. Il ne reprend pas la course si le favori l'ignore ensuite — ce second repli, différé, demande une tâche de fond surveillant les courses assignées et non démarrées. En attendant, une course confiée à un favori inactif reste bloquée : limite à connaître avant d'activer l'option en production.
+
+La liste proposée se limite aux transporteurs **ayant déjà livré pour ce commerçant**. Exposer l'annuaire complet livrerait la composition du réseau à quiconque crée un compte, et n'a aucune utilité : on ne met en favori que quelqu'un qu'on a vu travailler. L'endpoint d'ajout applique le même contrôle — sans lui, il permettrait de sonder l'existence d'un uuid arbitraire.
+
+### 13.4 Catégorie de véhicule
+
+Fleetbase n'a pas de filtre natif par *catégorie* : `vehicle_assigned_uuid` désigne un véhicule précis. Sa notion de `Fleet` serait le bon foyer à terme, mais suppose de provisionner des flottes qui n'existent pas. En attendant : le type vit dans `meta`, le transporteur déclare le sien, et le BFF filtre les opportunités.
+
+Deux règles qui évitent d'exclure à tort. Une exigence est un **minimum, pas une égalité** — demander une voiture n'écarte pas un utilitaire. Et un transporteur qui n'a **rien déclaré voit tout** : être écarté du réseau par un champ non rempli serait le pire des défauts silencieux.
+
+### 13.5 Défauts trouvés en relisant
+
+Quatre, tous dans du code écrit dans la même session :
+
+1. `_resolveLabel()` appelait `setState` depuis `initState` — interdit avant le premier rendu.
+2. `DropdownButtonFormField.initialValue` n'existe que depuis Flutter 3.35 ; `value` fonctionne sur toutes les versions. Le premier aurait été une **erreur de compilation** chez l'utilisateur, pas un avertissement.
+3. `context` lu après un `await` dans le chargement des favoris, sans garde `mounted`.
+4. `_vehicleType` survivait à la déconnexion : le transporteur suivant sur le même appareil héritait de la catégorie du précédent, et voyait une liste filtrée sur un critère qui n'était pas le sien. Même famille que le défaut de `stopTracking()` en §10.4 — **un état de session qui n'est pas remis à zéro à la déconnexion**.
+
+### 13.6 Non fait, et pourquoi
+
+**Le prix affiché.** C'est le manque le plus important côté commerçant — il valide sans savoir ce qu'il paie — mais la tarification est une décision produit non tranchée (Priorité 3). Inventer un barème serait pire que ne rien afficher.
+
+**La signature comme preuve.** Le contrat serveur l'accepte, rien ne la recueille côté transporteur. L'app ne la propose donc pas : offrir une option qui promettrait une trace inexistante est pire qu'une option absente.
+
+**La duplication d'une commande**, le suivi cartographique temps réel, les arrêts multiples : reportés, aucun n'est bloquant.
+
+### 13.7 État
+
+BFF : compile. **Non exécuté**. App : `flutter analyze` à passer — et cette fois il compte plus que d'habitude, la carte introduisant deux dépendances dont je n'ai pu vérifier aucune signature d'API.
+
+**Prérequis** : `flutter pub get`, puis `npm run prisma:migrate` et `prisma generate` (modèle `DriverFavourite`, colonne `vehicleType`).

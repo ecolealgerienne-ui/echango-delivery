@@ -111,9 +111,27 @@ const ORDER_FIELDS = [
   'distance',
   'estimated_duration',
   'proof_url',
+  'scheduled_at',
+  'pod_required',
+  'pod_method',
   'created_at',
   'updated_at',
 ];
+
+/**
+ * Champs de `meta` exposés aux clients.
+ *
+ * `meta` est un fourre-tout JSON : le relayer entier ferait sortir tout ce
+ * qu'un intégrateur y déposerait un jour, sans que personne ne le décide —
+ * exactement le défaut que cette projection corrige au niveau de la commande.
+ */
+const META_FIELDS = ['instructions', 'vehicle_type', 'items', 'pickup_notes', 'dropoff_notes'];
+
+function projectMeta(meta: any): Record<string, any> | undefined {
+  if (!meta || typeof meta !== 'object') return undefined;
+  const projected = pick(meta, META_FIELDS);
+  return Object.keys(projected).length ? projected : undefined;
+}
 
 /**
  * Identifiants de rattachement. Séparés parce qu'ils ne se donnent pas au même
@@ -150,6 +168,7 @@ export function projectOrderForDriver(order: any, options: OrderProjectionOption
   return {
     ...pick(order, ORDER_FIELDS),
     ...(links ? pick(order, ORDER_LINK_FIELDS) : {}),
+    meta: projectMeta(order.meta),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
@@ -174,6 +193,7 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
 
   return {
     ...pick(order, ORDER_FIELDS),
+    meta: projectMeta(order.meta),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
@@ -199,6 +219,7 @@ export function projectOrderForFleet(order: any, extra: Record<string, any> = {}
   return {
     ...pick(order, ORDER_FIELDS),
     ...pick(order, ORDER_LINK_FIELDS),
+    meta: projectMeta(order.meta),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),

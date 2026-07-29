@@ -9,6 +9,7 @@ class MerchantOrderState extends ChangeNotifier {
 
   List<MerchantOrder> _orders = [];
   List<SavedAddress> _addresses = [];
+  List<KnownDriver> _favourites = [];
   MerchantOrder? _selected;
   Map<String, dynamic>? _tracking;
   bool _isLoading = false;
@@ -22,6 +23,10 @@ class MerchantOrderState extends ChangeNotifier {
   List<MerchantOrder> get pastOrders =>
       _orders.where((o) => o.isFinished).toList();
   List<SavedAddress> get addresses => _addresses;
+
+  /// Transporteurs favoris. Sollicités en premier à la création d'une course,
+  /// avec repli automatique sur le pool commun si aucun n'est disponible.
+  List<KnownDriver> get favourites => _favourites;
   MerchantOrder? get selected => _selected;
   Map<String, dynamic>? get tracking => _tracking;
   bool get isLoading => _isLoading;
@@ -40,6 +45,40 @@ class MerchantOrderState extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> loadFavourites() async {
+    try {
+      _favourites = await _apiClient.getFavouriteDrivers();
+    } catch (_) {
+      // Les favoris sont un confort : leur absence ne doit pas empêcher de
+      // créer une course. On garde la liste précédente.
+    }
+    notifyListeners();
+  }
+
+  Future<bool> addFavourite(KnownDriver driver) async {
+    try {
+      await _apiClient.addFavouriteDriver(driver.driverUuid, name: driver.name);
+      await loadFavourites();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> removeFavourite(String favouriteId) async {
+    try {
+      await _apiClient.removeFavouriteDriver(favouriteId);
+      await loadFavourites();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      notifyListeners();
+      return false;
     }
   }
 

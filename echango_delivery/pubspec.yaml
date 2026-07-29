@@ -45,6 +45,11 @@ dependencies:
   # Ouverture d'une application de navigation externe
   url_launcher: ^6.3.1
 
+  # Carte — OpenStreetMap plutôt que Google Maps : pas de clé API, pas de
+  # facturation au chargement, cohérent avec le choix d'auto-héberger le reste.
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
   # UI
   cupertino_icons: ^1.0.8
 

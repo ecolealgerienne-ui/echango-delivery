@@ -292,6 +292,17 @@ export class FleetbaseApiClient {
     type?: string;
     payload: { pickup_uuid: string; dropoff_uuid: string };
     meta?: Record<string, any>;
+    /** Livraison programmée (ISO 8601). Colonne native `scheduled_at`. */
+    scheduled_at?: string;
+    /** Assignation directe — utilisée pour un transporteur favori disponible. */
+    driver_assigned_uuid?: string;
+    /** Diffusion géospatiale aux transporteurs à proximité. */
+    adhoc?: boolean;
+    /** Rayon de diffusion en mètres. Colonne native `adhoc_distance`. */
+    adhoc_distance?: number;
+    /** Preuve exigée à la livraison. Colonnes natives. */
+    pod_required?: boolean;
+    pod_method?: string;
   }) {
     try {
       const response = await this.callFleetOps('POST', '/orders', { order });

@@ -122,3 +122,71 @@ class SavedAddress extends Equatable {
   @override
   List<Object?> get props => [id, name, address, latitude, longitude];
 }
+
+/// Résultat de géocodage renvoyé par le BFF.
+///
+/// [label] peut être vide : Nominatim ne connaît pas tous les points — mer,
+/// zone non cartographiée. La position reste utilisable par le dispatch, c'est
+/// le libellé qui manque. L'écran doit donc accepter un point sans nom plutôt
+/// que de refuser la sélection.
+class GeocodedPlace extends Equatable {
+  final String label;
+  final double latitude;
+  final double longitude;
+  final String? city;
+  final String? postalCode;
+
+  const GeocodedPlace({
+    required this.label,
+    required this.latitude,
+    required this.longitude,
+    this.city,
+    this.postalCode,
+  });
+
+  factory GeocodedPlace.fromJson(Map<String, dynamic> json) => GeocodedPlace(
+        label: (json['label'] ?? '') as String,
+        latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
+        longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+        city: json['city'] as String?,
+        postalCode: json['postalCode'] as String?,
+      );
+
+  /// Libellé court pour l'écran : la commune suffit à situer, alors que le
+  /// `display_name` de Nominatim tient sur trois lignes.
+  String get shortLabel {
+    if (city != null && city!.isNotEmpty) {
+      return postalCode != null ? '$city ($postalCode)' : city!;
+    }
+    return label.split(',').take(2).join(',').trim();
+  }
+
+  @override
+  List<Object?> get props => [label, latitude, longitude, city, postalCode];
+}
+
+/// Transporteur connu du commerçant — déjà vu sur une de ses livraisons.
+///
+/// [favouriteId] n'est renseigné que sur la liste des favoris : c'est
+/// l'identifiant de la mise en favori, pas celui du transporteur, et c'est lui
+/// qu'attend la suppression.
+class KnownDriver extends Equatable {
+  final String driverUuid;
+  final String? name;
+  final String? favouriteId;
+
+  const KnownDriver({required this.driverUuid, this.name, this.favouriteId});
+
+  factory KnownDriver.fromJson(Map<String, dynamic> json) => KnownDriver(
+        driverUuid: (json['driver_uuid'] ?? '') as String,
+        name: json['name'] as String?,
+        favouriteId: json['id'] as String?,
+      );
+
+  String get displayName => (name != null && name!.isNotEmpty)
+      ? name!
+      : 'Transporteur ${driverUuid.substring(0, driverUuid.length.clamp(0, 8))}';
+
+  @override
+  List<Object?> get props => [driverUuid, name, favouriteId];
+}

@@ -735,6 +735,79 @@ class BffApiClient {
     _parseResponse(response);
   }
 
+  // ── Transporteurs favoris (commerçant) ─────────────────────────────────
+
+  /// Transporteurs ayant déjà livré pour ce commerçant.
+  Future<List<KnownDriver>> getKnownDrivers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/transporteurs'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', KnownDriver.fromJson);
+  }
+
+  Future<List<KnownDriver>> getFavouriteDrivers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/transporteurs/favoris'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', KnownDriver.fromJson);
+  }
+
+  Future<void> addFavouriteDriver(String driverUuid, {String? name}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/transporteurs/favoris'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'fleetbaseDriverUuid': driverUuid,
+        if (name != null) 'driverName': name,
+      }),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> removeFavouriteDriver(String favouriteId) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/commercant/transporteurs/favoris/$favouriteId'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  /// Déclare la catégorie de véhicule du transporteur connecté.
+  Future<void> setVehicleType(String? vehicleType) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/vehicule'),
+      headers: _buildHeaders(),
+      body: jsonEncode({if (vehicleType != null) 'vehicleType': vehicleType}),
+    );
+    _parseResponse(response);
+  }
+
+  /// Recherche d'adresse, relayée par le BFF.
+  ///
+  /// L'app n'appelle jamais Nominatim directement : sa politique d'usage exige
+  /// un User-Agent identifiant et plafonne le débit, deux choses intenables
+  /// depuis des milliers d'appareils.
+  Future<List<GeocodedPlace>> searchAddress(String query) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/geocodage?q=${Uri.encodeQueryComponent(query)}'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return _listOf(data, 'data', GeocodedPlace.fromJson);
+  }
+
+  /// Adresse correspondant à un point choisi sur la carte.
+  Future<GeocodedPlace> reverseGeocode(double latitude, double longitude) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/geocodage/inverse?lat=$latitude&lon=$longitude'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return GeocodedPlace.fromJson(data as Map<String, dynamic>);
+  }
+
   Future<List<SavedAddress>> getMerchantAddresses() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/adresses'),
