@@ -6,6 +6,7 @@ import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { GeocodeQueryDto, ReverseGeocodeQueryDto } from './dto/geocode.dto';
 import { AddFavouriteDto } from './dto/favourite.dto';
+import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
@@ -23,6 +24,18 @@ export class CommerçantController {
    * Nominatim exige un User-Agent identifiant et plafonne le débit, deux
    * choses intenables depuis des milliers d'appareils (voir GeocodingService).
    */
+  /**
+   * Devis d'une course. Appelé par l'app avant validation.
+   *
+   * Renvoie `amount: null` tant que le barème n'est pas implémenté — l'app
+   * conserve alors sa saisie manuelle. L'appel est en place pour que le jour où
+   * la formule arrive, rien n'ait à changer côté client.
+   */
+  @Post('devis')
+  async quote(@Request() req: any, @Body() dto: QuoteRequestDto) {
+    return this.commercantService.quoteOrder(req.user.id, dto);
+  }
+
   // ── Transporteurs favoris ────────────────────────────────────────────────
 
   @Get('transporteurs/favoris')

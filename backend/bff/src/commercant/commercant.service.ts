@@ -11,6 +11,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
+import { QuoteRequestDto } from './dto/quote.dto';
 import { projectOrderForMerchant } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
 
@@ -250,6 +251,44 @@ export class CommerçantService {
     const ladder = ['moto', 'voiture', 'utilitaire'];
     const index = ladder.indexOf(required);
     return { in: index < 0 ? ladder : ladder.slice(index) };
+  }
+
+  /**
+   * Devis d'une course, avant sa création.
+   *
+   * ── Pourquoi cet endpoint existe alors qu'aucune formule n'est écrite ───────
+   *
+   * Pour que l'appel soit **déjà en place** le jour où le barème sera tranché :
+   * l'app interroge, affiche ce qu'on lui répond, et n'aura pas à changer.
+   * Aujourd'hui `amount` vaut `null` et l'app garde sa saisie manuelle ; demain
+   * il portera un montant calculé et la saisie s'effacera d'elle-même.
+   *
+   * Poser la couture avant la formule évite le scénario habituel : un barème
+   * décidé, puis trois semaines à recâbler les écrans pour l'afficher.
+   *
+   * Les entrées retenues sont renvoyées avec le devis — distance, horaire — pour
+   * que le commerçant voie sur quoi le montant repose, et pas seulement le
+   * montant.
+   */
+  async quoteOrder(merchantId: string, dto: QuoteRequestDto) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const quote = this.pricing.quote({
+      pickupLatitude: dto.pickupLatitude,
+      pickupLongitude: dto.pickupLongitude,
+      dropoffLatitude: dto.dropoffLatitude,
+      dropoffLongitude: dto.dropoffLongitude,
+      scheduledAt: dto.scheduledAt,
+      vehicleType: dto.vehicleType,
+    });
+
+    return {
+      amount: quote.amount,
+      currency: quote.currency,
+      source: quote.source,
+      distanceMetres: quote.inputs.distance_metres,
+      distanceMethod: quote.inputs.distance_method,
+    };
   }
 
   // ── Transporteurs favoris ─────────────────────────────────────────────────

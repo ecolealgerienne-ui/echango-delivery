@@ -1243,4 +1243,10 @@ Le barème — au kilomètre, à la durée, avec majorations d'horaire — viend
 
 `pricing_inputs` n'est **pas** projeté vers les clients : c'est de la donnée de calibration, sans usage dans les applications. Le prix et son origine, eux, atteignent le transporteur — un prix proposé et un tarif de plateforme ne se négocient pas de la même façon.
 
-Quand le barème sera tranché : implémenter `computeQuote()` et basculer `PRICING_MODE=computed`. Aucun appelant ne change. Et le barème pourra être éprouvé rétroactivement sur les vraies courses du pilote avant d'être activé.
+**L'appel est posé de bout en bout, la formule seule manque.** `POST /commercant/devis` existe, l'écran de création l'interroge dès que les deux points sont connus puis à chaque changement de paramètre tarifaire, et affiche ce qu'on lui répond. Aujourd'hui `amount` vaut `null` et la saisie manuelle reste ; le jour où la formule existera, l'écran basculera seul sur le tarif affiché.
+
+Poser la couture avant la formule évite le scénario habituel : un barème décidé, puis trois semaines à recâbler les écrans pour l'afficher.
+
+**Le calcul est centralisé côté serveur, sans exception.** L'app ne connaît aucun barème et n'en appliquera jamais : un calcul dupliqué côté client dériverait au premier changement de tarif, et corriger un prix demanderait alors une mise à jour d'application — sur des téléphones qu'on ne contrôle pas. Deux entrées mènent au même `PricingService` : la création de commande et le devis.
+
+Quand le barème sera tranché : implémenter `computeQuote()` et basculer `PRICING_MODE=computed`. Aucun appelant ne change, ni serveur ni client. Et le barème pourra être éprouvé rétroactivement sur les vraies courses du pilote avant d'être activé.

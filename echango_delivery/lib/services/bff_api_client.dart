@@ -735,6 +735,35 @@ class BffApiClient {
     _parseResponse(response);
   }
 
+  /// Devis d'une course, calculé **par le serveur**.
+  ///
+  /// L'app n'applique aucun barème : la tarification est centralisée dans le
+  /// BFF, seul endroit où la formule vivra. Un calcul dupliqué côté client
+  /// dériverait au premier changement de tarif, et il faudrait une mise à jour
+  /// d'application pour corriger un prix.
+  Future<OrderQuote> quoteOrder({
+    required double pickupLatitude,
+    required double pickupLongitude,
+    required double dropoffLatitude,
+    required double dropoffLongitude,
+    String? scheduledAt,
+    String? vehicleType,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/devis'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'pickupLatitude': pickupLatitude,
+        'pickupLongitude': pickupLongitude,
+        'dropoffLatitude': dropoffLatitude,
+        'dropoffLongitude': dropoffLongitude,
+        if (scheduledAt != null) 'scheduledAt': scheduledAt,
+        if (vehicleType != null) 'vehicleType': vehicleType,
+      }),
+    );
+    return OrderQuote.fromJson(_parseResponse(response) as Map<String, dynamic>);
+  }
+
   // ── Transporteurs favoris (commerçant) ─────────────────────────────────
 
   /// Transporteurs ayant déjà livré pour ce commerçant.

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
 import '../../models/vehicle_type.dart';
+import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 
@@ -40,6 +41,15 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _instructions = TextEditingController();
   final _itemDescription = TextEditingController();
   final _price = TextEditingController();
+
+  /// Dernier devis renvoyé par le serveur.
+  ///
+  /// Toute la tarification est **centralisée dans le BFF** : l'app ne calcule
+  /// rien, elle affiche. Le jour où le barème existera, `isComputed` deviendra
+  /// vrai et l'écran basculera de la saisie manuelle au montant affiché, sans
+  /// modification de code ici.
+  OrderQuote? _quote;
+  bool _quoting = false;
 
   /// Livraison programmée. `null` = dès que possible.
   DateTime? _scheduledAt;
@@ -201,14 +211,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
                     Icons.inventory_2_outlined),
                 _vehicleSelector(),
-                _field(_price, 'Rémunération proposée (DZD)',
-                    Icons.payments_outlined,
-                    keyboard: TextInputType.number),
-                Text(
-                  'Ce montant est affiché aux transporteurs : c\'est sur lui '
-                  'qu\'ils décident de prendre la course.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                _pricingSection(),
                 const SizedBox(height: 16),
                 _section('Options'),
                 _scheduleTile(),
@@ -376,8 +379,70 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         items: options.entries
             .map((e) => DropdownMenuItem<String?>(value: e.key, child: Text(e.value)))
             .toList(),
-        onChanged: (v) => setState(() => _vehicleType = v),
+        onChanged: (v) {
+          setState(() => _vehicleType = v);
+          _refreshQuote();
+        },
       ),
+    );
+  }
+
+  /// Bloc tarification.
+  ///
+  /// Deux présentations selon ce que renvoie le serveur, et **c'est lui qui
+  /// décide** : tant qu'aucun barème n'est implémenté, le commerçant propose
+  /// son montant ; dès que la formule existe, le tarif s'affiche et la saisie
+  /// disparaît. L'écran n'a pas à connaître la règle, seulement à obéir au
+  /// devis.
+  Widget _pricingSection() {
+    final quote = _quote;
+    final theme = Theme.of(context);
+
+    if (quote != null && quote.isComputed) {
+      return Card(
+        color: theme.colorScheme.secondaryContainer,
+        child: ListTile(
+          leading: const Icon(Icons.payments_outlined),
+          title: Text(quote.formattedAmount!,
+              style: theme.textTheme.titleLarge),
+          subtitle: Text(
+            quote.approximateDistance == null
+                ? 'Tarif Echango pour cette course'
+                : 'Tarif Echango — ${quote.approximateDistance}',
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _field(_price, 'Rémunération proposée (DZD)', Icons.payments_outlined,
+            keyboard: TextInputType.number),
+        Row(
+          children: [
+            if (_quoting)
+              const Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: SizedBox(
+                  height: 12,
+                  width: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            Expanded(
+              child: Text(
+                quote?.approximateDistance == null
+                    ? 'Ce montant est affiché aux transporteurs : c\'est sur lui '
+                        'qu\'ils décident de prendre la course.'
+                    : 'Distance estimée : ${quote!.approximateDistance}. '
+                        'Ce montant est affiché aux transporteurs.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -426,6 +491,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _scheduledAt =
           DateTime(date.year, date.month, date.day, time.hour, time.minute);
     });
+    _refreshQuote();
   }
 
   /// Niveau de preuve exigé à la livraison.
@@ -509,6 +575,38 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         if (_dropoffAddress.text.trim().isEmpty) _dropoffAddress.text = result.label;
       }
     });
+    _refreshQuote();
+  }
+
+  /// Demande un devis au serveur.
+  ///
+  /// Appelé dès que les deux points sont connus, puis à chaque changement d'un
+  /// paramètre tarifaire — horaire, véhicule. Sans les deux points, il n'y a
+  /// pas de distance, donc rien à calculer.
+  Future<void> _refreshQuote() async {
+    final pickup = _pickupPoint;
+    final dropoff = _dropoffPoint;
+    if (pickup == null || dropoff == null) return;
+
+    final api = context.read<BffApiClient>();
+    setState(() => _quoting = true);
+    try {
+      final quote = await api.quoteOrder(
+        pickupLatitude: pickup.latitude,
+        pickupLongitude: pickup.longitude,
+        dropoffLatitude: dropoff.latitude,
+        dropoffLongitude: dropoff.longitude,
+        scheduledAt: _scheduledAt?.toUtc().toIso8601String(),
+        vehicleType: _vehicleType,
+      );
+      if (mounted) setState(() => _quote = quote);
+    } catch (_) {
+      // Un devis indisponible ne doit pas empêcher de commander : la saisie
+      // manuelle reste le mode nominal tant qu'aucun barème n'existe.
+      if (mounted) setState(() => _quote = null);
+    } finally {
+      if (mounted) setState(() => _quoting = false);
+    }
   }
 }
 

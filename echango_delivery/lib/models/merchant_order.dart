@@ -222,3 +222,54 @@ class KnownDriver extends Equatable {
   @override
   List<Object?> get props => [driverUuid, name, favouriteId];
 }
+
+/// Devis renvoyé par le serveur.
+///
+/// [amount] est `null` tant que le barème n'est pas implémenté : l'écran
+/// conserve alors la saisie manuelle du commerçant. Le jour où la formule
+/// existe, il portera un montant et la saisie s'effacera — **sans changement
+/// côté application**, c'est tout l'intérêt d'avoir posé l'appel avant la
+/// formule.
+class OrderQuote extends Equatable {
+  final num? amount;
+  final String currency;
+
+  /// `merchant` = montant à saisir par le commerçant ; `computed` = tarif de la
+  /// plateforme. Les deux ne se présentent pas de la même façon à l'écran.
+  final String source;
+
+  final int? distanceMetres;
+
+  /// `haversine` = distance à vol d'oiseau, qui sous-estime la distance
+  /// routière. À dire quand on l'affiche, plutôt que de laisser croire à une
+  /// précision qu'elle n'a pas.
+  final String? distanceMethod;
+
+  const OrderQuote({
+    this.amount,
+    required this.currency,
+    required this.source,
+    this.distanceMetres,
+    this.distanceMethod,
+  });
+
+  factory OrderQuote.fromJson(Map<String, dynamic> json) => OrderQuote(
+        amount: json['amount'] as num?,
+        currency: (json['currency'] ?? '') as String,
+        source: (json['source'] ?? 'merchant') as String,
+        distanceMetres: (json['distanceMetres'] as num?)?.round(),
+        distanceMethod: json['distanceMethod'] as String?,
+      );
+
+  bool get isComputed => source == 'computed' && amount != null;
+
+  String? get formattedAmount =>
+      amount == null ? null : '${amount!.toStringAsFixed(0)} $currency'.trim();
+
+  String? get approximateDistance => distanceMetres == null
+      ? null
+      : '${(distanceMetres! / 1000).toStringAsFixed(1)} km à vol d\'oiseau';
+
+  @override
+  List<Object?> get props => [amount, currency, source, distanceMetres];
+}
