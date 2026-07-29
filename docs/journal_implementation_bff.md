@@ -2121,3 +2121,84 @@ celui qu'on vient de corriger.
 
 À tester avec le reste : `GET /int/v1/drivers/{uuid}` renvoie-t-il un objet
 unique, ou la liste ?
+
+---
+
+## 23. Lot 3 — les colonnes miroir, et un contrôle qui ne prouvait rien (29/07/2026)
+
+### 23.1 V6b : l'invalidation du cache est correcte
+
+Assignation d'une commande à un conducteur depuis la console, puis relecture :
+le compteur de version passe de **v357 à v360**. Trois crans, parce que
+l'assignation écrit plusieurs fois (la commande, l'activité, le statut de
+suivi).
+
+Ce qui compte est qu'il **bouge** : une lecture juste après une écriture ne peut
+pas resservir l'état d'avant. La seule objection sérieuse à supprimer les
+colonnes miroir tombe.
+
+### 23.2 Mon contrôle V9 était faux
+
+Le script demandait `GET /drivers/{uuid}` en passant l'uuid du **premier**
+conducteur de la liste. Si l'endpoint ignorait son paramètre de chemin — le
+défaut exact de `/vendors/{uuid}` (§2.13) — il aurait renvoyé la collection, et
+le premier élément aurait été *précisément celui demandé*.
+
+**Le contrôle serait passé au vert sur le comportement qu'il devait détecter.**
+Le garde-fou sur le nombre d'enregistrements l'a probablement sauvé, mais c'est
+un rattrapage, pas une démonstration.
+
+Corrigé : on demande désormais le **dernier** conducteur, et un endpoint qui
+ignore le chemin se trahit en renvoyant le premier. Le contrôle a de nouveau un
+témoin — exactement la discipline que ce script existe pour appliquer, et que je
+n'avais pas appliquée à lui-même.
+
+Conséquence : **le résultat V9 « lecture unitaire fiable » ne vaut rien tant que
+le contrôle durci n'est pas rejoué.** `fetchEveryDriver()` reste en place.
+
+### 23.3 Quatre colonnes de moins, trois d'entre elles mortes
+
+| Colonne | Sort |
+|---|---|
+| `driverName` | **écrite par le réconciliateur, lue nulle part** |
+| `fleetbaseCreatedAt` / `fleetbaseUpdatedAt` | jamais écrites, jamais lues |
+| `trackingNumber` | deux vrais lecteurs, désormais servis en direct |
+
+`driverName` méritait un regard : le message de notification qui semblait s'en
+servir lisait en réalité **la variable locale issue de Fleetbase**, pas la
+colonne. Troisième champ mort trouvé en deux jours, tous par la même méthode —
+chercher les lecteurs avant d'accepter la justification écrite au-dessus du
+champ.
+
+Le commentaire des deux horodatages disait « synced from Fleetbase ». Aucune
+synchronisation n'a jamais existé.
+
+### 23.4 Le piège du type, évité de justesse
+
+En servant `trackingNumber` depuis Fleetbase, la première version écrivait
+`live.tracking_number` tel quel. Or **Fleetbase sert ce champ tantôt en chaîne,
+tantôt en objet** — le client Dart applique déjà cette tolérance
+(`readTrackingNumber`), ce qui prouve que les deux formes se rencontrent en vrai.
+
+La réponse de `/suivi` serait donc passée d'une chaîne à un objet. Aucune
+erreur, aucun test rouge : juste un champ dont le type change dans une réponse
+déjà en production. C'est très précisément la rupture de contrat que le plan
+interdit, et elle a failli passer parce que le champ *portait le bon nom*.
+
+`trackingNumberOf()` déplie explicitement les deux formes.
+
+### 23.5 La chaîne de notification validée en réel
+
+Constaté par l'utilisateur pendant ce lot : une commande assignée à un
+conducteur depuis la console **remonte jusqu'à l'application commerçant**.
+
+C'est la première validation de bout en bout de `OrderReconcilerService` — le
+chemin le plus indirect du projet : écriture en console, hors de toutes nos
+routes → sondage périodique → comparaison au cache → notification. Il n'avait
+jamais été observé autrement qu'en lisant le code.
+
+### 23.6 Vérification
+
+`tsc`, `npm run build`, chargement réel du module racine. Le schéma Prisma est
+modifié : **`npm run prisma:migrate` puis `prisma generate` sont nécessaires**,
+et le client n'a pas pu être régénéré ici (proxy).

@@ -162,6 +162,19 @@ export class CommerçantService {
     return orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
   }
 
+  /**
+   * Numéro de suivi, quelle que soit la forme sous laquelle Fleetbase le sert.
+   *
+   * `tracking_number` est tantôt une chaîne, tantôt l'objet complet — le client
+   * Dart applique déjà la même tolérance (`readTrackingNumber`), preuve que les
+   * deux formes se rencontrent en vrai.
+   */
+  private trackingNumberOf(order: any): string | null {
+    const raw = order?.tracking_number;
+    if (typeof raw === 'string') return raw;
+    return raw?.tracking_number ?? null;
+  }
+
   async getOrders(merchantId: string, query: ListOrdersQueryDto) {
     this.logger.log(`Fetching orders for merchant ${merchantId}`);
 
@@ -1099,7 +1112,6 @@ export class CommerçantService {
           // `meta.cod_amount` chez Fleetbase, où tous ses lecteurs allaient déjà
           // le chercher, et il est figé dans `CashCollection` au moment où il
           // devient un fait comptable.
-          trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
         fleetbaseOrderId,
       );
@@ -1243,7 +1255,15 @@ export class CommerçantService {
         id: order.id,
         // Statut issu de Fleetbase, pas du cache : c'est tout l'objet du suivi.
         status: (live as any)?.status ?? null,
-        trackingNumber: order.trackingNumber,
+        // Servi depuis Fleetbase : la colonne de cache portait le numéro tel
+        // qu'il était à la création, et le suivi est précisément l'écran où
+        // servir une valeur figée n'a aucun sens.
+        //
+        // ⚠️ Déplié explicitement. Fleetbase expose `tracking_number` tantôt en
+        // chaîne, tantôt en objet — relayer la valeur brute aurait changé le
+        // **type** d'un champ de la réponse, c'est-à-dire cassé le contrat sans
+        // qu'aucune erreur ne le dise.
+        trackingNumber: this.trackingNumberOf(live),
         fleetbaseData: live,
       };
     } catch (error) {

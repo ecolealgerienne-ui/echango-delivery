@@ -316,7 +316,11 @@ model Order {
   /// l'instant, pas sur cette colonne, qui peut avoir jusqu'à un cycle de
   /// réconciliation de retard.
   status            String
-  trackingNumber    String?
+
+  // `trackingNumber` supprimé le 29/07/2026 (Lot 3) : c'est une donnée
+  // Fleetbase recopiée, et l'invalidation de son cache est vérifiée (le
+  // compteur de version passe de v357 à v360 sur une écriture), donc la lire en
+  // direct ne risque plus de servir un état périmé.
 
   /// Transporteur assigné au dernier passage du réconciliateur.
   ///
@@ -324,7 +328,12 @@ model Order {
   /// intéressent le commerçant et qu'aucun changement de `status` ne signale :
   /// la prise en charge (null → uuid) et le désistement (uuid → null).
   driverAssignedUuid String?
-  driverName         String?
+
+  // `driverName` supprimé le 29/07/2026 (Lot 3) : **écrit par le
+  // réconciliateur, lu nulle part**. Le message de notification qui semblait
+  // s'en servir lisait en réalité la variable locale issue de Fleetbase, pas la
+  // colonne. Troisième champ mort trouvé en deux jours, tous par la même
+  // méthode — chercher les lecteurs avant de justifier un miroir.
 
   /// Dernier passage du réconciliateur, qu'il ait constaté un changement ou
   /// non. Distingue « rien n'a bougé » de « personne ne regarde » — sans quoi
@@ -354,11 +363,11 @@ model Order {
   // la facturation existait quelque part. `DriverEarning` porte désormais le
   // calcul, sur la course et non sur le cache de commande.
 
-  // Timestamps (synced from Fleetbase)
+  // `fleetbaseCreatedAt`/`fleetbaseUpdatedAt` supprimés le 29/07/2026 (Lot 3) :
+  // jamais écrits, jamais lus, et leur commentaire « synced from Fleetbase »
+  // décrivait une synchronisation qui n'a jamais existé.
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-  fleetbaseCreatedAt DateTime?
-  fleetbaseUpdatedAt DateTime?
 
 
   @@index([merchantId])

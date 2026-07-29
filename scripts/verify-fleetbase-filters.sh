@@ -264,24 +264,47 @@ echo "── V9 : GET /drivers/{uuid} renvoie-t-il UN objet, ou la liste ? ─�
 # compte au mauvais transporteur, sans la moindre erreur. C'est pour ça que le
 # BFF parcourt encore la liste (journal §22).
 
-DRIVER_UUID=$(body "$DRIVERS" | jq -r '((.drivers // .data // .) | .[0].uuid // empty)')
-if [ -n "$DRIVER_UUID" ]; then
-  ONE=$(call "/int/v1/drivers/$DRIVER_UUID")
+# ⚠️ On demande DÉLIBÉRÉMENT le DERNIER conducteur, jamais le premier.
+#
+# La première version de ce contrôle passait l'uuid du premier de la liste. Si
+# l'endpoint ignorait son paramètre de chemin et renvoyait la collection, le
+# premier élément renvoyé aurait été *exactement celui demandé* : le test serait
+# passé au vert sur le comportement qu'il est censé détecter. Un contrôle qui ne
+# distingue pas le succès de la coïncidence ne prouve rien — c'est la leçon de
+# tout ce script.
+#
+# Avec le dernier, un endpoint qui ignore le chemin renvoie le premier, et
+# l'uuid ne correspond pas. Le contrôle a de nouveau un témoin.
+DRIVER_COUNT=$(body "$DRIVERS" | jq -r '((.drivers // .data // .) | length)')
+LAST_UUID=$(body "$DRIVERS" | jq -r '((.drivers // .data // .) | last.uuid // empty)')
+FIRST_UUID=$(body "$DRIVERS" | jq -r '((.drivers // .data // .) | .[0].uuid // empty)')
+
+if [ -z "$LAST_UUID" ]; then
+  echo "⏭️  V9 — aucun conducteur dans cette instance."
+  SKIP=$((SKIP + 1))
+elif [ "$DRIVER_COUNT" -lt 2 ]; then
+  echo "⏭️  V9 — un seul conducteur : impossible de distinguer une lecture"
+  echo "     unitaire d'un endpoint qui renvoie la liste. Contrôle non concluant."
+  SKIP=$((SKIP + 1))
+else
+  ONE=$(call "/int/v1/drivers/$LAST_UUID")
   N_ONE=$(count_of "$ONE" drivers)
   RETURNED=$(body "$ONE" | jq -r '(.driver.uuid // .uuid // ((.drivers // .data // [])[0].uuid) // "?")')
 
-  if [ "$RETURNED" = "$DRIVER_UUID" ] && { [ "$N_ONE" = "1" ] || [ "$N_ONE" = "0" ]; }; then
-    echo "✅ V9 — lecture unitaire fiable (uuid demandé = uuid renvoyé)"
-    echo "     → le parcours paginé de fetchEveryDriver() peut être remplacé."
+  if [ "$RETURNED" = "$LAST_UUID" ] && { [ "$N_ONE" = "1" ] || [ "$N_ONE" = "0" ]; }; then
+    echo "✅ V9 — lecture unitaire fiable ($DRIVER_COUNT conducteurs, le dernier demandé"
+    echo "     et renvoyé) → fetchEveryDriver() peut céder la place à un appel direct."
     PASS=$((PASS + 1))
+  elif [ "$RETURNED" = "$FIRST_UUID" ]; then
+    echo "❌ V9 — le paramètre de chemin est IGNORÉ : on a demandé le dernier"
+    echo "     conducteur, le premier est revenu. Même défaut que /vendors/{uuid}"
+    echo "     (journal §2.13). NE PAS passer en lecture unitaire : elle"
+    echo "     rattacherait un compte au mauvais transporteur."
+    FAIL=$((FAIL + 1))
   else
-    echo "⚠️  V9 — réponse suspecte : $N_ONE enregistrement(s), premier uuid $RETURNED"
-    echo "     → même défaut que /vendors/{uuid} : NE PAS passer en lecture unitaire."
+    echo "⚠️  V9 — réponse inattendue : $N_ONE enregistrement(s), uuid renvoyé $RETURNED"
     SKIP=$((SKIP + 1))
   fi
-else
-  echo "⏭️  V9 — aucun conducteur dans cette instance."
-  SKIP=$((SKIP + 1))
 fi
 
 echo

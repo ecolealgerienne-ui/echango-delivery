@@ -681,7 +681,7 @@ export class TransporteurService {
       await this.prisma.order
         .updateMany({
           where: { fleetbaseOrderId: order.uuid },
-          data: { driverAssignedUuid: null, driverName: null },
+          data: { driverAssignedUuid: null },
         })
         .catch((error: any) =>
           this.logger.warn(`Cache non aligné après refus (${orderId}) : ${error.message}`),

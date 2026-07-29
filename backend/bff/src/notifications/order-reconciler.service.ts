@@ -151,6 +151,13 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
     const driverUuid: string | null =
       order?.driver_assigned_uuid ?? order?.driver_assigned?.uuid ?? null;
     const driverName: string | null = order?.driver_assigned?.name ?? null;
+    // Lu sur l'objet vivant, plus sur le cache : la colonne `trackingNumber` a
+    // disparu au Lot 3 et cette valeur était de toute façon celle de la
+    // création, jamais resynchronisée.
+    // Deux formes possibles, comme partout ailleurs pour ce champ.
+    const rawTracking = order?.tracking_number;
+    const trackingNumber: string | null =
+      typeof rawTracking === 'string' ? rawTracking : rawTracking?.tracking_number ?? null;
 
     const statusChanged = status !== row.status;
     const driverChanged = driverUuid !== row.driverAssignedUuid;
@@ -176,7 +183,7 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
           'order.assigned',
           'Livraison prise en charge',
           driverName
-            ? `${driverName} a pris votre livraison ${row.trackingNumber ?? ''}`.trim()
+            ? `${driverName} a pris votre livraison ${trackingNumber ?? ''}`.trim()
             : 'Un transporteur a pris votre livraison',
         );
       } else if (!TERMINAL.includes(status)) {
@@ -203,7 +210,6 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
       data: {
         status,
         driverAssignedUuid: driverUuid,
-        driverName,
         lastSyncedAt: new Date(),
       },
     });
