@@ -407,43 +407,70 @@ export class CommerçantService {
   async searchDrivers(merchantId: string, query: string) {
     await this.getMerchantWithValidation(merchantId);
 
-    const q = query.trim();
+    const q = query.trim().toLowerCase();
     // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
     // espaces ou un indicatif que l'enregistrement n'a pas.
     const digits = q.replace(/\D/g, '');
 
-    const where: any = {
-      active: true,
-      OR: [
-        { firstName: { contains: q, mode: 'insensitive' } },
-        { lastName: { contains: q, mode: 'insensitive' } },
-        ...(digits.length >= 4 ? [{ phone: { contains: digits } }] : []),
-      ],
-    };
+    // ⚠️ La recherche porte sur l'annuaire FLEETBASE, pas sur les comptes
+    // applicatifs.
+    //
+    // La première version interrogeait `DriverAccount`, et ne trouvait presque
+    // rien : cette table ne contient que les transporteurs **ayant déjà créé
+    // leur compte dans l'application**, avec un nom qu'ils ont saisi eux-mêmes
+    // à l'inscription — souvent vide, et sans rapport garanti avec celui que
+    // l'opérateur voit dans la console. Deux critères cachés, donc, dont aucun
+    // n'était visible du commerçant.
+    //
+    // L'annuaire qui fait autorité est celui de Fleetbase : c'est là que
+    // l'opérateur crée les transporteurs, c'est ce nom qu'il communique, et
+    // c'est l'uuid Fleetbase que `DriverFavourite` référence de toute façon.
+    let drivers: any[] = [];
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers();
+      drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+    } catch (error) {
+      this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
+      throw new BadRequestException('Recherche indisponible pour le moment');
+    }
 
-    const total = await this.prisma.driverAccount.count({ where });
+    const matches = drivers.filter((d: any) => {
+      const name = String(d?.name ?? '').toLowerCase();
+      const phone = String(d?.phone ?? '').replace(/\D/g, '');
+      return (
+        (name.length > 0 && name.includes(q)) ||
+        (digits.length >= 4 && phone.length > 0 && phone.includes(digits))
+      );
+    });
 
-    if (total > 10) {
+    if (matches.length > 10) {
       return { data: [], too_many: true };
     }
 
-    const drivers = await this.prisma.driverAccount.findMany({
-      where,
-      select: {
-        fleetbaseDriverUuid: true,
-        firstName: true,
-        lastName: true,
-        vehicleType: true,
-      },
-      take: 10,
+    // Le compte applicatif, quand il existe, apporte la catégorie de véhicule
+    // — et surtout son absence est une information : un transporteur sans
+    // compte ne recevra aucune course, et le taire ferait d'une mise en favori
+    // un geste sans effet.
+    const accounts = await this.prisma.driverAccount.findMany({
+      where: { fleetbaseDriverUuid: { in: matches.map((d: any) => d.uuid) } },
+      select: { fleetbaseDriverUuid: true, vehicleType: true, active: true },
     });
+    const byUuid = new Map<string, any>(
+      accounts.map((a: any) => [a.fleetbaseDriverUuid, a]),
+    );
 
     return {
-      data: drivers.map((d: any) => ({
-        driver_uuid: d.fleetbaseDriverUuid,
-        name: [d.firstName, d.lastName].filter(Boolean).join(' ') || null,
-        vehicle_type: d.vehicleType,
-      })),
+      data: matches.map((d: any) => {
+        const account = byUuid.get(d.uuid);
+        return {
+          driver_uuid: d.uuid,
+          name: d.name ?? null,
+          vehicle_type: account?.vehicleType ?? null,
+          // Le téléphone n'est jamais renvoyé : celui qui cherche le connaît
+          // déjà, c'est par là qu'il cherche.
+          has_account: Boolean(account?.active),
+        };
+      }),
       too_many: false,
     };
   }
@@ -462,10 +489,20 @@ export class CommerçantService {
     // Ce contrôle-ci demeure, sous une autre forme : il empêche de sonder
     // l'existence d'un uuid arbitraire, et de mettre en favori quelqu'un qui a
     // quitté le réseau.
-    const driver = await this.prisma.driverAccount.findFirst({
-      where: { fleetbaseDriverUuid, active: true },
-      select: { firstName: true, lastName: true },
-    });
+    // Contrôlé contre l'annuaire Fleetbase, comme la recherche : viser
+    // `DriverAccount` ici aurait refusé tout transporteur qui n'a pas encore
+    // installé l'application — c'est-à-dire précisément ceux que la recherche
+    // vient de proposer.
+    let driver: any = null;
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers();
+      driver = this.fleetbaseClient
+        .extractCollection(response, 'drivers')
+        .find((d: any) => d?.uuid === fleetbaseDriverUuid);
+    } catch (error) {
+      this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
+      throw new BadRequestException('Ajout impossible pour le moment');
+    }
 
     if (!driver) {
       this.audit.denied({
@@ -482,8 +519,7 @@ export class CommerçantService {
     // Le nom vient du serveur, jamais de la requête : sinon un commerçant
     // pourrait enregistrer n'importe quelle étiquette sur n'importe qui, et sa
     // liste de favoris cesserait de décrire des personnes réelles.
-    const resolvedName =
-      [driver.firstName, driver.lastName].filter(Boolean).join(' ') || driverName;
+    const resolvedName = driver.name ?? driverName;
 
     return this.prisma.driverFavourite.upsert({
       where: { merchantId_fleetbaseDriverUuid: { merchantId, fleetbaseDriverUuid } },

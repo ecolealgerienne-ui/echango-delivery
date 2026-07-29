@@ -176,8 +176,8 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Cherchez quelqu\'un que vous connaissez déjà — un coursier '
-                    'croisé, ou recommandé. Trois caractères minimum.',
+                    'Cherchez par le nom ou le téléphone communiqué par '
+                    'Echango. Trois caractères minimum.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (_tooMany)
@@ -202,6 +202,18 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         child: ListTile(
                           leading: const Icon(Icons.person_search_outlined),
                           title: Text(d.displayName),
+                          // Un transporteur de l'annuaire qui n'a pas encore
+                          // l'application ne recevra aucune course : le mettre
+                          // en favori serait un geste sans effet, et le taire
+                          // ferait croire la préférence enregistrée.
+                          subtitle: d.hasAccount
+                              ? null
+                              : Text(
+                                  'N\'a pas encore installé l\'application — '
+                                  'aucune course ne lui sera proposée pour '
+                                  'l\'instant.',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
                             tooltip: 'Ajouter aux favoris',

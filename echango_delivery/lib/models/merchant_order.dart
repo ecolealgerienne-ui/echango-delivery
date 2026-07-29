@@ -412,12 +412,30 @@ class KnownDriver extends Equatable {
   final String? name;
   final String? favouriteId;
 
-  const KnownDriver({required this.driverUuid, this.name, this.favouriteId});
+  /// Ce transporteur a-t-il installé l'application ?
+  ///
+  /// La recherche porte sur l'annuaire Fleetbase — celui que l'opérateur
+  /// alimente — et un transporteur peut y figurer sans avoir encore créé son
+  /// compte. Sans ce drapeau, le mettre en favori serait un geste **sans
+  /// effet** : `pickAvailableFavourite` ne retient que ceux qui ont un compte,
+  /// et le commerçant croirait sa préférence enregistrée.
+  ///
+  /// `true` par défaut : les listes qui ne renseignent pas ce champ — favoris,
+  /// historique — ne décrivent que des transporteurs déjà actifs.
+  final bool hasAccount;
+
+  const KnownDriver({
+    required this.driverUuid,
+    this.name,
+    this.favouriteId,
+    this.hasAccount = true,
+  });
 
   factory KnownDriver.fromJson(Map<String, dynamic> json) => KnownDriver(
         driverUuid: (json['driver_uuid'] ?? '') as String,
         name: json['name'] as String?,
         favouriteId: json['id'] as String?,
+        hasAccount: json['has_account'] == null || json['has_account'] == true,
       );
 
   String get displayName => (name != null && name!.isNotEmpty)

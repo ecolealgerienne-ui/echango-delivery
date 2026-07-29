@@ -1800,3 +1800,35 @@ en exige une, et le découvrir au moment de commander est trop tard.
 Une suppression ne demande qu'une confirmation légère, et l'explique : chaque
 livraison a créé son propre lieu à la commande, distinct de l'entrée du carnet.
 Supprimer n'efface donc aucun historique.
+
+### 19.3 La recherche cherchait dans la mauvaise table
+
+Constaté immédiatement après : une recherche sur un nom bien visible dans la
+console Fleetbase ne renvoyait rien.
+
+La requête portait sur `DriverAccount`, la table locale des **comptes
+applicatifs**. Deux critères cachés en découlaient, dont aucun n'était visible
+du commerçant :
+
+1. **Le transporteur devait avoir créé son compte dans l'application.** Un
+   transporteur provisionné par l'opérateur n'y figure pas tant qu'il n'a pas
+   utilisé son invitation. C'était le cas de la plupart.
+2. **Le nom devait avoir été saisi à l'inscription.** `firstName`/`lastName`
+   sont facultatifs et remplis par le transporteur lui-même — souvent vides, et
+   sans rapport garanti avec le nom que l'opérateur voit dans la console, qui
+   est `Driver.name` côté Fleetbase.
+
+L'annuaire qui fait autorité est celui de **Fleetbase** : c'est là que
+l'opérateur crée les transporteurs, c'est ce nom qu'il communique, et c'est
+l'uuid Fleetbase que `DriverFavourite` référence de toute façon. La recherche y
+porte désormais, ainsi que le garde d'`addFavourite` — viser `DriverAccount`
+là aurait refusé précisément ceux que la recherche venait de proposer.
+
+**Un transporteur trouvé peut ne pas avoir l'application**, et c'est dit :
+`pickAvailableFavourite` ne retient que ceux qui ont un compte, donc le mettre
+en favori serait sinon un geste **sans effet** — et le commerçant croirait sa
+préférence enregistrée.
+
+Le motif est celui de la journée, une fois de plus : **une donnée cherchée là où
+elle n'est pas encore**. Le cache local ne décrit qu'une partie du réel, et le
+prendre pour l'ensemble produit un vide qui ressemble à une absence.
