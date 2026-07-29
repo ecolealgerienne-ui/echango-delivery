@@ -569,7 +569,7 @@ class _VehicleTypeCard extends StatelessWidget {
               Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 12),
               DropdownButtonFormField<String?>(
-                value: presence.vehicleType,
+                initialValue: presence.vehicleType,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
                   isDense: true,

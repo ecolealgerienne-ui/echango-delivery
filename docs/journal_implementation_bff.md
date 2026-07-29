@@ -1211,7 +1211,7 @@ Deux règles qui évitent d'exclure à tort. Une exigence est un **minimum, pas 
 Quatre, tous dans du code écrit dans la même session :
 
 1. `_resolveLabel()` appelait `setState` depuis `initState` — interdit avant le premier rendu.
-2. `DropdownButtonFormField.initialValue` n'existe que depuis Flutter 3.35 ; `value` fonctionne sur toutes les versions. Le premier aurait été une **erreur de compilation** chez l'utilisateur, pas un avertissement.
+2. ~~`DropdownButtonFormField.initialValue` n'existe que depuis Flutter 3.35~~ — **correction : j'ai eu tort.** J'ai remplacé `initialValue` par `value` par prudence, sans pouvoir vérifier la version de Flutter de l'utilisateur. Sa toolchain est postérieure à 3.33, donc `initialValue` existe et c'est `value` qui est déprécié : mon correctif a introduit les trois avertissements qu'il prétendait éviter. Leçon : **une précaution prise sans vérifier le fait qu'elle suppose est un pari, pas une précaution** — la version de Flutter était consultable en une commande.
 3. `context` lu après un `await` dans le chargement des favoris, sans garde `mounted`.
 4. `_vehicleType` survivait à la déconnexion : le transporteur suivant sur le même appareil héritait de la catégorie du précédent, et voyait une liste filtrée sur un critère qui n'était pas le sien. Même famille que le défaut de `stopTracking()` en §10.4 — **un état de session qui n'est pas remis à zéro à la déconnexion**.
 

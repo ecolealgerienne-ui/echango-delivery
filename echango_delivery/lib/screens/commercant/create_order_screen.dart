@@ -351,7 +351,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String?>(
-        value: _vehicleType,
+        initialValue: _vehicleType,
         decoration: const InputDecoration(
           labelText: 'Véhicule nécessaire',
           border: OutlineInputBorder(),
@@ -427,7 +427,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: DropdownButtonFormField<String>(
-        value: _podMethod,
+        initialValue: _podMethod,
         decoration: const InputDecoration(
           labelText: 'Preuve de livraison',
           border: OutlineInputBorder(),
