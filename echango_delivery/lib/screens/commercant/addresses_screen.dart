@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'package:latlong2/latlong.dart';
 
+import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 
