@@ -989,11 +989,10 @@ export class CommerçantService {
           // notifierait une transition qui n'a jamais eu lieu.
           status: fleetbaseOrder?.status ?? 'created',
           driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
-          // Miroité localement : le registre de caisse et le contrôle de
-          // plafond le lisent à chaque encaissement, et la vérification d'un
-          // plafond ne doit pas dépendre de la disponibilité de Fleetbase.
-          codAmount: dto.codAmount ?? null,
-          codIncludesDelivery: dto.codIncludesDelivery === true,
+          // Le montant à encaisser n'est plus recopié ici (Lot 2) : il vit dans
+          // `meta.cod_amount` chez Fleetbase, où tous ses lecteurs allaient déjà
+          // le chercher, et il est figé dans `CashCollection` au moment où il
+          // devient un fait comptable.
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
         fleetbaseOrderId,

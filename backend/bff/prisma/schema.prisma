@@ -331,32 +331,19 @@ model Order {
   /// un réconciliateur arrêté est indiscernable d'une commande stable.
   lastSyncedAt       DateTime?
 
-  /// Somme que le destinataire doit remettre au transporteur à la livraison.
-  ///
-  /// ⚠️ **N'a rien à voir avec `meta.price`**, la rémunération du transporteur.
-  /// Les confondre serait l'erreur fondatrice de tout ce mécanisme : l'un est
-  /// ce que le destinataire doit au commerçant, l'autre ce que le commerçant
-  /// doit au transporteur. **Ils circulent en sens inverse.**
-  ///
-  /// Miroité ici en plus des métadonnées Fleetbase parce que le registre de
-  /// caisse et le contrôle de plafond s'en servent à chaque création de
-  /// commande : les lire chez Fleetbase imposerait un appel réseau sur un
-  /// chemin qui doit rester court, et surtout la vérification d'un plafond ne
-  /// doit pas dépendre de la disponibilité d'un service tiers.
-  ///
-  /// `null` = livraison sans encaissement, le cas ordinaire.
-  codAmount          Float?
-
-  /// Le montant à encaisser couvre-t-il aussi les frais de livraison ?
-  ///
-  /// C'est une décision du commerçant, et elle ne concerne QUE ce qu'il demande
-  /// à son propre client. **Elle ne change pas le règlement entre lui et le
-  /// transporteur** : celui-ci déduit sa rémunération de l'encaissement dans
-  /// les deux cas, et la dette vaut toujours `perçu − rémunération`. Ce champ
-  /// existe pour que le commerçant sache reconstituer son chiffre d'affaires
-  /// (marchandise = encaissé − livraison, ou encaissé tout court), pas pour
-  /// piloter un calcul.
-  codIncludesDelivery Boolean @default(false)
+  // `codAmount` et `codIncludesDelivery` supprimés le 29/07/2026 (Lot 2 de
+  // `docs/plan_migration_fleetbase.md`) : **écrits à la création, lus nulle
+  // part**. Le motif inscrit ici — « éviter un appel réseau, ne pas dépendre de
+  // la disponibilité de Fleetbase » — ne tenait pas : `assertCashCeiling()` est
+  // appelé depuis `acceptOrder()`, qui interroge Fleetbase de toute façon. Tous
+  // les consommateurs réels (`assertCashCeiling`, `settleCashIfDue`,
+  // `pickAvailableFavourite`, `getOrderTemplate`) lisaient déjà
+  // `meta.cod_amount` en direct.
+  //
+  // Le montant qui compte pour la comptabilité est figé ailleurs, et il le
+  // reste : `CashCollection.expectedAmount` conserve la valeur **au moment de
+  // l'encaissement**, pour qu'une correction ultérieure côté Fleetbase ne
+  // modifie pas rétroactivement une dette.
 
   // Failure details
   failureReason     String?
