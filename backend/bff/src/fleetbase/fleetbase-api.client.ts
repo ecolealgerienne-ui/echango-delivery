@@ -1,6 +1,58 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 
+/**
+ * ── Filtres de requête Fleetbase — liste fermée, et volontairement fermée ────
+ *
+ * Fleetbase résout un filtre en cherchant une **méthode du même nom** sur sa
+ * classe de filtre, sous le nom brut puis en camelCase. **Il n'y a aucun
+ * repli** : un paramètre sans méthode correspondante est abandonné en silence,
+ * sans erreur ni code 400 (`core-api/src/Http/Filter/Filter.php`).
+ *
+ * Conséquence, et c'est toute la raison d'être de ces types : **une faute de
+ * frappe ne se voit pas**. Elle ne casse rien, elle élargit — la requête
+ * renvoie toute la compagnie au lieu de la portée demandée, et le code qui suit
+ * a l'air de fonctionner. C'est exactement ce qui s'est produit avec
+ * `facilitator_uuid` (le vrai nom est `facilitator`), erreur restée en place
+ * plusieurs jours et sur laquelle trois mécanismes de filtrage applicatif ont
+ * été construits.
+ *
+ * Le compilateur remplace donc le 400 que Fleetbase ne renvoie pas.
+ *
+ * **N'ajouter un nom ici qu'après l'avoir vérifié par appel réel**, avec la
+ * comparaison valide/inexistant de `scripts/verify-fleetbase-filters.sh` : un
+ * filtre ignoré renvoie un sur-ensemble, donc il « a l'air » de marcher.
+ *
+ * Vérifiés le 29/07/2026 (`docs/architecture_bff_fleetbase.md` §4.2).
+ */
+export interface OrderFilters {
+  /** uuid du Vendor client — le commerçant. */
+  customer?: string;
+  /** uuid du Vendor facilitateur — la petite flotte. */
+  facilitator?: string;
+  /** uuid du Driver assigné. Accepte aussi un public_id. */
+  driver?: string;
+  /** Non assignées **et** non terminées : `whereDoesntHave` + exclusion de completed/canceled/expired. */
+  without_driver?: boolean;
+  status?: string;
+}
+
+/**
+ * ⚠️ `phone` est absent, et ce n'est pas un oubli : `DriverFilter::phone()`
+ * renvoie **500** (`whereHas` sur un attribut calculé, bug amont confirmé par
+ * appel réel). `query` couvre le téléphone par la bonne relation.
+ */
+export interface DriverFilters {
+  /** Recherche libre sur nom, email et téléphone, via la relation `user`. */
+  query?: string;
+  /** uuid du Vendor propriétaire. */
+  vendor?: string;
+  fleet?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
 @Injectable()
 export class FleetbaseApiClient {
   private readonly logger = new Logger(FleetbaseApiClient.name);
@@ -378,23 +430,22 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Toutes les commandes de la compagnie, sans filtre.
+   * Commandes de la compagnie, filtrées côté serveur.
    *
-   * ⚠️ **Correction du 29/07/2026 — l'ancien commentaire de cette méthode était
-   * faux.** Il affirmait, sur la foi de §2.8, que Fleetbase ignore les filtres de
-   * requête. Ce qu'on avait envoyé, c'est `facilitator_uuid` — **un nom de
-   * paramètre qui n'existe pas**. La méthode de `OrderFilter` s'appelle
-   * `facilitator`, et il en va de même pour `customer` et `driver` : le filtrage
-   * serveur fonctionne, la console Fleetbase s'en sert à chaque requête.
-   *
-   * Le rapatriement complet reste en place **tant que les appels réels de
-   * `docs/architecture_bff_fleetbase.md` §9 n'ont pas été passés** — c'est un
-   * défaut de performance, pas de sécurité, et le supprimer sur la seule foi
-   * d'une deuxième lecture de code répéterait l'erreur d'origine.
+   * ⚠️ Ne passer ici que des noms de `OrderFilters` — c'est-à-dire des filtres
+   * **vérifiés par appel réel**. Un nom inventé serait abandonné en silence par
+   * Fleetbase, et cette méthode renverrait toute la compagnie sans que rien ne
+   * le signale : c'est très exactement ce qui s'est produit avec
+   * `facilitator_uuid` et a coûté trois reconstructions
+   * (`docs/architecture_bff_fleetbase.md` §4.3).
    */
-  async getAllOrders(page = 1, limit = 100) {
+  async getAllOrders(page = 1, limit = 100, filters: OrderFilters = {}) {
     try {
-      const response = await this.callFleetOps('GET', '/orders', undefined, { page, limit });
+      const response = await this.callFleetOps('GET', '/orders', undefined, {
+        page,
+        limit,
+        ...filters,
+      });
       return response.data;
     } catch (error) {
       this.logger.error(`Get all orders failed: ${error.message}`);
@@ -431,11 +482,18 @@ export class FleetbaseApiClient {
    * The page cap is a runaway guard, not a limit anyone should hit; crossing
    * it is logged because past that point the results are wrong again.
    */
-  async fetchEveryOrder(pageSize = 100, maxPages = 50): Promise<any[]> {
+  async fetchEveryOrder(
+    pageSize = 100,
+    maxPages = 50,
+    filters: OrderFilters = {},
+  ): Promise<any[]> {
     const all: any[] = [];
 
     for (let page = 1; page <= maxPages; page++) {
-      const orders = this.extractCollection(await this.getAllOrders(page, pageSize), 'orders');
+      const orders = this.extractCollection(
+        await this.getAllOrders(page, pageSize, filters),
+        'orders',
+      );
 
       if (orders.length === 0) {
         break;
@@ -534,23 +592,25 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Tous les conducteurs de la compagnie, sans filtre.
+   * Conducteurs de la compagnie, filtrés côté serveur.
    *
-   * ⚠️ **Même correction que `getAllOrders()` (29/07/2026)** : le paramètre testé
-   * en §2.8 était `vendor_uuid`, alors que la méthode de `DriverFilter` s'appelle
-   * `vendor`. `DriverFilter` expose aussi `query`, `name`, `fleet` et `status`.
+   * ⚠️ **`phone` est absent de `DriverFilters`, et ce n'est pas un oubli** :
+   * `DriverFilter::phone()` fait un `whereHas('phone', …)` alors que `phone` est
+   * un attribut calculé et non une relation sur `Driver` — Laravel lève, la
+   * réponse est un **500**, confirmé par appel réel le 29/07/2026. `query`
+   * couvre le téléphone en passant par la relation `user`, c'est-à-dire ce que
+   * `phone()` aurait dû faire.
    *
-   * ⚠️ **Ne jamais utiliser `phone`** : `DriverFilter::phone()` fait un
-   * `whereHas('phone', …)` alors que `phone` est un attribut calculé et non une
-   * relation sur `Driver` — Laravel lève, la réponse est un **500**. Bug amont
-   * reproduit depuis la console Fleetbase. `query` couvre le téléphone en passant
-   * par la relation `user`, c'est-à-dire ce que `phone()` aurait dû faire.
+   * ⚠️ **Sans `limit`, cette route pagine au défaut de Fleetbase.** Un appel
+   * sans filtre ne voit donc pas tous les conducteurs — panne silencieuse de la
+   * même famille que le plafond de 100 sur les commandes. Filtrer, ou
+   * paginer explicitement.
    *
    * Détail : `docs/architecture_bff_fleetbase.md` §5.
    */
-  async getAllDrivers() {
+  async getAllDrivers(filters: DriverFilters = {}) {
     try {
-      const response = await this.callFleetOps('GET', '/drivers');
+      const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
       return response.data;
     } catch (error) {
       this.logger.error(`Get all drivers failed: ${error.message}`);

@@ -47,21 +47,24 @@ export class FlotteService {
   /**
    * List orders belonging to this fleet's Vendor.
    *
-   * ⚠️ **Correction du 29/07/2026** : ce commentaire affirmait que Fleetbase
-   * ignore le filtrage serveur. C'est faux — le paramètre testé en §2.8,
-   * `facilitator_uuid`, n'est simplement pas un nom de filtre. La méthode
-   * s'appelle `facilitator`, et `GET /orders?facilitator=<uuid>` fait bien le
-   * `where` attendu.
+   * Le filtrage est demandé à Fleetbase depuis le 29/07/2026 (`?facilitator=`,
+   * vérifié par appel réel — 2 commandes sur 29 renvoyées, 0 pour un uuid
+   * inventé). L'ancienne version rapatriait toute la compagnie pour n'en garder
+   * que celles-ci.
    *
-   * Le rapatriement complet + filtrage mémoire reste en place tant que les
-   * appels réels de `docs/architecture_bff_fleetbase.md` §9 n'ont pas été
-   * passés. Il est correct, juste inutilement coûteux.
+   * ⚠️ **Le contrôle en mémoire qui suit est conservé, et doit l'être.** Il ne
+   * fait pas doublon avec le filtre serveur : le filtre sert à ne pas
+   * télécharger la compagnie, la vérification sert à décider qui a le droit de
+   * voir. Un paramètre d'URL exprime une demande, pas une garantie — et comme
+   * Fleetbase abandonne en silence un filtre qu'il ne reconnaît pas, une
+   * régression de nom rendrait le filtre inopérant **sans aucun signal**. Ici,
+   * elle produirait une liste vide plutôt qu'une fuite.
    */
   async getOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const allOrders = await this.fetchAllOrders();
+      const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
 
       let owned = allOrders.filter(
         (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
@@ -274,23 +277,27 @@ export class FlotteService {
   }
 
   /**
-   * Fetch every order in the company, across pages.
+   * Commandes de cette flotte, paginées jusqu'au bout.
    *
-   * ⚠️ Le motif d'origine — « le filtre `facilitator_uuid` n'est pas fiable » —
-   * était une erreur de nom de paramètre, corrigée le 29/07/2026 (voir
-   * `getOrders` ci-dessus). Cette méthode devient supprimable dès que
-   * `?facilitator=` est vérifié par appel réel.
-   *
-   * The pagination itself now lives in the Fleetbase client: the other two
-   * personas were scanning a single 100-item page for the same reason and had
-   * the same silent truncation bug this method already avoided.
+   * La pagination reste nécessaire malgré le filtre serveur : une flotte active
+   * peut dépasser 100 commandes, et une page unique tronquerait la liste en
+   * silence — le défaut que cette méthode évitait déjà quand elle balayait
+   * toute la compagnie.
    */
-  private fetchAllOrders(): Promise<any[]> {
-    return this.fleetbaseClient.fetchEveryOrder();
+  private fetchAllOrders(vendorUuid: string): Promise<any[]> {
+    return this.fleetbaseClient.fetchEveryOrder(100, 50, { facilitator: vendorUuid });
   }
 
+  /**
+   * Conducteurs de cette flotte.
+   *
+   * `?vendor=` est le nom réel du filtre — `vendor_uuid`, essayé en §2.8,
+   * n'existe pas et était abandonné en silence. La vérification en mémoire est
+   * conservée pour la même raison que dans `getOrders` : c'est elle qui
+   * autorise, le filtre ne fait qu'alléger.
+   */
   private async fetchOwnedDrivers(vendorUuid: string): Promise<any[]> {
-    const response = await this.fleetbaseClient.getAllDrivers();
+    const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
     const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
     return (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
   }

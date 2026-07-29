@@ -54,12 +54,15 @@ export class CommerçantService {
    * ce cache (`docs/architecture_bff_fleetbase.md` §4.4). Rien n'est supprimé
    * avant les vérifications du §9 de ce document.
    */
-  private async mergeWithFleetbase(cached: { id: string; fleetbaseOrderId: string }[]) {
+  private async mergeWithFleetbase(
+    cached: { id: string; fleetbaseOrderId: string }[],
+    vendorUuid?: string,
+  ) {
     if (!cached.length) return [];
 
     let live: any[] = [];
     try {
-      live = await this.fleetbaseClient.fetchEveryOrder();
+      live = await this.fetchLiveOrders(cached, vendorUuid);
     } catch (error) {
       // Degrade rather than fail: without Fleetbase the merchant still sees
       // that the order exists, just not how far along it is.
@@ -88,10 +91,81 @@ export class CommerçantService {
     });
   }
 
+  /**
+   * Va chercher chez Fleetbase l'état des commandes que le cache dit être à ce
+   * commerçant.
+   *
+   * ── Pourquoi un repli, et pourquoi il n'est pas de la prudence gratuite ────
+   *
+   * `?customer=<vendorUuid>` est vérifié et fonctionne. Mais il repose sur
+   * `orders.customer_uuid`, **et cette colonne est restée nulle sur toutes les
+   * commandes créées avant le 28/07/2026** : le BFF envoyait `customer` en
+   * chaîne plate là où `normalizeCustomerType()` n'accepte que
+   * `customer_uuid`/`customer_type` (journal §2.10). Ces commandes existent, le
+   * commerçant les voit aujourd'hui, et le filtre serveur ne les renverra
+   * jamais.
+   *
+   * Passer au filtre sans repli les ferait donc disparaître de son historique —
+   * une régression métier invisible en test sur des données récentes, et
+   * exactement ce que le plan interdit.
+   *
+   * Le repli ne coûte rien dans le cas normal : il ne se déclenche que s'il
+   * manque quelque chose. Et son avertissement est utile en soi, puisqu'il
+   * dénombre les commandes héritées qu'une reprise de données devrait corriger.
+   */
+  private async fetchLiveOrders(
+    cached: { fleetbaseOrderId: string }[],
+    vendorUuid?: string,
+  ): Promise<any[]> {
+    if (!vendorUuid) {
+      return this.fleetbaseClient.fetchEveryOrder();
+    }
+
+    const scoped = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
+      customer: vendorUuid,
+    });
+
+    const found = new Set(scoped.map((o: any) => o?.uuid));
+    const missing = cached.filter((c) => !found.has(c.fleetbaseOrderId));
+    if (!missing.length) return scoped;
+
+    this.logger.warn(
+      `${missing.length} commande(s) absente(s) du filtre customer=${vendorUuid} — ` +
+        'probablement créées avant le correctif customer_uuid (journal §2.10). ' +
+        'Repli sur la lecture complète.',
+    );
+
+    const everything = await this.fleetbaseClient.fetchEveryOrder();
+    const missingIds = new Set(missing.map((c) => c.fleetbaseOrderId));
+    return [...scoped, ...everything.filter((o: any) => missingIds.has(o?.uuid))];
+  }
+
+  /**
+   * État Fleetbase d'**une** commande dont l'appartenance est déjà établie.
+   *
+   * Trois écrans faisaient exactement la même chose : télécharger toute la
+   * compagnie pour y retrouver un seul objet. La lecture est maintenant bornée
+   * au commerçant, avec le même repli hérité que `fetchLiveOrders`.
+   *
+   * La lecture unitaire `GET /orders/{uuid}` serait plus directe encore, et
+   * elle n'est délibérément pas utilisée ici : rien ne garantit qu'elle charge
+   * les mêmes relations que la liste (`queryForInternal` en précharge une
+   * dizaine), et une projection qui perdrait des champs changerait le contrat
+   * avec l'application — ce que le plan interdit. À comparer par test réel
+   * avant de basculer.
+   */
+  private async liveOrderFor(
+    vendorUuid: string,
+    order: { fleetbaseOrderId: string },
+  ): Promise<any> {
+    const orders = await this.fetchLiveOrders([order], vendorUuid);
+    return orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+  }
+
   async getOrders(merchantId: string, query: ListOrdersQueryDto) {
     this.logger.log(`Fetching orders for merchant ${merchantId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     try {
       const page = query.page || 1;
@@ -104,7 +178,7 @@ export class CommerçantService {
         orderBy: { createdAt: 'desc' },
       });
 
-      const orders = await this.mergeWithFleetbase(cached);
+      const orders = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
       const total = await this.prisma.order.count({ where: { merchantId } });
 
       // `status` is filtered here rather than in the query: the cached status
@@ -361,7 +435,7 @@ export class CommerçantService {
    * aucune utilité : on ne met en favori que quelqu'un qu'on a vu travailler.
    */
   async listKnownDrivers(merchantId: string) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const cached = await this.prisma.order.findMany({
       where: { merchantId },
@@ -372,7 +446,7 @@ export class CommerçantService {
 
     let orders: any[] = [];
     try {
-      orders = await this.fleetbaseClient.fetchEveryOrder();
+      orders = await this.fetchLiveOrders(cached, merchant.fleetbaseVendorUuid);
     } catch (error) {
       this.logger.warn(`Historique transporteurs indisponible : ${error.message}`);
       return { data: [] };
@@ -414,7 +488,10 @@ export class CommerçantService {
   async searchDrivers(merchantId: string, query: string) {
     await this.getMerchantWithValidation(merchantId);
 
-    const q = query.trim().toLowerCase();
+    // Envoyé tel quel : c'est Fleetbase qui cherche désormais, et son
+    // `searchWhere` est un LIKE SQL — le forcer en minuscules ne servait que la
+    // comparaison en mémoire, qui n'existe plus.
+    const q = query.trim();
     // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
     // espaces ou un indicatif que l'enregistrement n'a pas.
     const digits = q.replace(/\D/g, '');
@@ -432,23 +509,46 @@ export class CommerçantService {
     // L'annuaire qui fait autorité est celui de Fleetbase : c'est là que
     // l'opérateur crée les transporteurs, c'est ce nom qu'il communique, et
     // c'est l'uuid Fleetbase que `DriverFavourite` référence de toute façon.
-    let drivers: any[] = [];
+    // ── La recherche est déléguée à Fleetbase (Lot 1) ────────────────────────
+    //
+    // `?query=` fait un `searchWhere(['name','email','phone'])` à travers la
+    // relation `user` — le téléphone est donc couvert, sans passer par le
+    // filtre `phone` qui, lui, renvoie 500 (bug amont, §5.1).
+    //
+    // Ce n'est pas qu'une économie. La version précédente appelait
+    // `getAllDrivers()` **sans pagination** : au-delà de la taille de page par
+    // défaut de Fleetbase, des transporteurs devenaient introuvables sans
+    // qu'aucune erreur ne le signale — un commerçant aurait cherché quelqu'un
+    // d'existant et conclu qu'il n'était pas sur le réseau. Même famille que le
+    // plafond de 100 sur les commandes.
+    //
+    // On demande 11 résultats pour une limite de 10 : le onzième ne sert qu'à
+    // savoir qu'il y en a trop, et n'est jamais renvoyé.
+    let matches: any[] = [];
     try {
-      const response = await this.fleetbaseClient.getAllDrivers();
-      drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+      const response = await this.fleetbaseClient.getAllDrivers({ query: q, limit: 11 });
+      matches = this.fleetbaseClient.extractCollection(response, 'drivers');
     } catch (error) {
       this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
       throw new BadRequestException('Recherche indisponible pour le moment');
     }
 
-    const matches = drivers.filter((d: any) => {
-      const name = String(d?.name ?? '').toLowerCase();
-      const phone = String(d?.phone ?? '').replace(/\D/g, '');
-      return (
-        (name.length > 0 && name.includes(q)) ||
-        (digits.length >= 4 && phone.length > 0 && phone.includes(digits))
-      );
-    });
+    // Repli sur les chiffres seuls : une saisie comme « 0555 12 34 » ne trouve
+    // rien côté serveur si l'enregistrement est écrit « +2135551234 ». Le
+    // rapatriement reste borné et ne se déclenche que sur un échec.
+    if (matches.length === 0 && digits.length >= 4) {
+      try {
+        const response = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
+        matches = this.fleetbaseClient
+          .extractCollection(response, 'drivers')
+          .filter((d: any) => {
+            const phone = String(d?.phone ?? '').replace(/\D/g, '');
+            return phone.length > 0 && phone.includes(digits);
+          });
+      } catch {
+        // Le repli est un bonus : son échec ne doit pas casser la recherche.
+      }
+    }
 
     if (matches.length > 10) {
       return { data: [], too_many: true };
@@ -594,10 +694,10 @@ export class CommerçantService {
   async getOrderDetail(merchantId: string, orderId: string) {
     this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
-    const [merged] = await this.mergeWithFleetbase([order]);
+    const [merged] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
     // Aucune donnée de facturation interne ne sort ici : la rémunération du
     // transporteur et la commission Echango vivent dans `DriverEarning`, et
     // n'ont pas d'usage dans l'app commerçant.
@@ -743,14 +843,13 @@ export class CommerçantService {
    * à observer sur une vraie livraison avec `pod_required`.
    */
   async getOrderProof(merchantId: string, orderId: string) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
     let live: any;
     try {
-      const orders = await this.fleetbaseClient.fetchEveryOrder();
-      live = orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, order);
     } catch (error) {
       this.logger.warn(`Preuve de commande indisponible : ${error.message}`);
       throw new NotFoundException('Preuve indisponible');
@@ -788,14 +887,13 @@ export class CommerçantService {
    * l'état normal d'une course en attente, pas un échec.
    */
   async getOrderDriverPosition(merchantId: string, orderId: string) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
     let live: any;
     try {
-      const orders = await this.fleetbaseClient.fetchEveryOrder();
-      live = orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, order);
     } catch (error) {
       this.logger.warn(`Position indisponible (${orderId}) : ${error.message}`);
       return { position: null };
@@ -845,14 +943,13 @@ export class CommerçantService {
    * sur « dès que possible », qui est vrai.
    */
   async getOrderTemplate(merchantId: string, orderId: string) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const cached = await this.resolveOwnedOrder(merchantId, orderId);
 
     let live: any;
     try {
-      const orders = await this.fleetbaseClient.fetchEveryOrder();
-      live = orders.find((o: any) => o?.uuid === cached.fleetbaseOrderId);
+      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, cached);
     } catch (error) {
       this.logger.warn(`Modèle de commande indisponible : ${error.message}`);
       throw new BadRequestException('Impossible de relire cette commande pour l\'instant');
@@ -1073,7 +1170,7 @@ export class CommerçantService {
   async cancelOrder(merchantId: string, orderId: string) {
     this.logger.log(`Cancelling order ${orderId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
@@ -1081,7 +1178,7 @@ export class CommerçantService {
     // `status` du cache — celui-ci est figé à 'pending' depuis la création et
     // n'est jamais resynchronisé (revue archi #15). S'y fier laissait annuler
     // une commande déjà livrée.
-    const [live] = await this.mergeWithFleetbase([order]);
+    const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
     const liveStatus = (live as any)?.status ?? null;
 
     if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
@@ -1127,12 +1224,12 @@ export class CommerçantService {
   async getOrderTracking(merchantId: string, orderId: string) {
     this.logger.log(`Fetching tracking for order ${orderId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
     try {
-      const [live] = await this.mergeWithFleetbase([order]);
+      const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
       return {
         id: order.id,
         // Statut issu de Fleetbase, pas du cache : c'est tout l'objet du suivi.

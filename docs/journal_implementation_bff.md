@@ -1952,3 +1952,131 @@ documentation — elle empêche de reposer la question.
 D'où la règle ajoutée : **avant d'écrire un filtre côté BFF, regarder ce que la
 console envoie pour la même question.** L'onglet réseau donne les noms exacts en
 trente secondes, et la console est l'implémentation de référence.
+
+---
+
+## 21. Lot 1 — le filtrage revient à Fleetbase (29/07/2026)
+
+Vérifications du Lot 0 passées chez l'utilisateur, sur 29 commandes réelles :
+
+```
+V1 orders?customer     — APPLIQUÉ (réel: 10, témoin: 0)
+V2 orders?facilitator  — APPLIQUÉ (réel:  2, témoin: 0)
+V3 orders?driver       — APPLIQUÉ (réel:  2, témoin: 0)
+V4 drivers?query       — APPLIQUÉ (réel:  1, témoin: 0)
+V5 drivers?phone       — 500 confirmé, name → 200
+V6a cache Redis        — HIT au second appel : il sert réellement
+V7 Vendor.status       — `status = active`
+```
+
+Le témoin à 0 est ce qui compte : un uuid inventé ne ramène rien, donc le
+`where` est bien appliqué côté serveur. La correction du §20.2 est confirmée
+par l'observation, plus seulement par la lecture.
+
+### 21.1 Le compilateur remplace le 400 que Fleetbase ne renvoie pas
+
+Deux interfaces, `OrderFilters` et `DriverFilters`, ferment la liste des noms
+acceptés par le client Fleetbase. Ce n'est pas de la décoration : **une faute de
+frappe sur un nom de filtre ne casse rien, elle élargit**. La requête renvoie
+toute la compagnie au lieu de la portée demandée, et le code qui suit a l'air de
+fonctionner. C'est exactement le mécanisme de `facilitator_uuid`, resté en place
+plusieurs jours et sur lequel trois modules ont été bâtis.
+
+`phone` est **absent de `DriverFilters`**, avec le motif en commentaire. Un nom
+manquant qu'on ne peut pas ajouter par inadvertance vaut mieux qu'un
+avertissement qu'on lira peut-être.
+
+### 21.2 Le filtre allège, il n'autorise pas
+
+Les vérifications d'appartenance en mémoire sont **toutes conservées** —
+`facilitator_uuid === vendorUuid` côté flotte, `isAssignedTo()` côté
+transporteur, la table de rattachement côté commerçant.
+
+Ce n'est pas de la ceinture et bretelles. Puisque Fleetbase abandonne en silence
+un filtre qu'il ne reconnaît pas, une régression de nom rendrait la portée
+inopérante **sans aucun signal**. Avec la vérification locale, une telle
+régression produit une liste vide ; sans elle, elle exposerait les commandes des
+autres. Les deux échouent, mais pas du même côté.
+
+### 21.3 Le repli qui évite une régression métier invisible
+
+`?customer=` s'appuie sur `orders.customer_uuid`. Or cette colonne est **restée
+nulle sur toutes les commandes créées avant le 28/07/2026** : le BFF envoyait
+`customer` en chaîne plate là où `normalizeCustomerType()` n'accepte que
+`customer_uuid`/`customer_type` (§2.10).
+
+Basculer sans précaution aurait donc **fait disparaître ces commandes de
+l'historique du commerçant** — invisible en test sur des données récentes, et
+constaté seulement par un commerçant cherchant une livraison d'avant-hier.
+
+`fetchLiveOrders()` compare donc ce que le filtre a rendu à ce que le cache
+attendait, et ne retombe sur la lecture complète que s'il manque quelque chose.
+Coût nul dans le cas normal, et l'avertissement dénombre au passage les
+commandes héritées qu'une reprise de données devrait corriger.
+
+### 21.4 Deux populations, deux requêtes
+
+Côté transporteur, les courses assignées et les opportunités non réclamées n'ont
+aucune commande en commun — une course assignée n'est pas libre. Une requête
+unique ne pouvait donc pas les servir toutes les deux, d'où `?driver=` et
+`?without_driver=true`, lancées en parallèle et **seulement pour l'onglet
+demandé** : ouvrir « mes courses » ne déclenche plus la requête des
+opportunités.
+
+### 21.5 Un plafond invisible corrigé au passage
+
+`searchDrivers()` appelait `getAllDrivers()` **sans pagination**. Au-delà de la
+taille de page par défaut de Fleetbase, des transporteurs devenaient
+introuvables sans qu'aucune erreur ne le signale : le commerçant aurait cherché
+quelqu'un d'existant et conclu qu'il n'était pas sur le réseau. Même famille que
+le plafond de 100 sur les commandes.
+
+La recherche passe désormais par `?query=`, qui interroge nom, email et
+téléphone à travers la relation `user` — c'est-à-dire ce que le filtre `phone`
+aurait dû faire s'il n'était pas cassé. On demande 11 résultats pour une limite
+de 10 : le onzième ne sert qu'à savoir qu'il y en a trop et n'est jamais
+renvoyé.
+
+Un repli sur les chiffres seuls subsiste pour le cas « 0555 12 34 » cherché
+contre un enregistrement écrit « +2135551234 » : le `LIKE` serveur échoue là où
+la comparaison normalisée réussissait, et perdre cette capacité aurait été une
+régression.
+
+### 21.6 Trois écrans qui téléchargeaient la compagnie pour lire un objet
+
+`getOrderProof`, `getOrderDriverPosition` et `getOrderTemplate` faisaient tous
+les trois `fetchEveryOrder()` puis `.find()`. Regroupés dans `liveOrderFor()`,
+borné au commerçant.
+
+La lecture unitaire `GET /orders/{uuid}` serait plus directe, et elle est
+**délibérément écartée pour l'instant** : rien ne garantit qu'elle précharge les
+mêmes relations que la liste (`queryForInternal` en charge une dizaine), et une
+projection qui perdrait des champs changerait le contrat avec l'application. À
+comparer par test réel avant de basculer.
+
+### 21.7 Ce qui reste en balayage complet, et pourquoi
+
+- **`OrderReconcilerService`** : il compare l'état de *tous* les commerçants,
+  aucun filtre unique ne s'y applique. Il disparaît au Lot 5.
+- **`transporteur.resolveOrder()`** : il doit pouvoir trouver une commande que
+  le transporteur n'a **pas** le droit de voir, pour la refuser ensuite en 403.
+  Le scoper transformerait ce 403 en 404 — un changement de comportement, donc
+  hors du périmètre d'un lot à contrat constant. À traiter comme une décision,
+  pas comme une optimisation.
+
+### 21.8 Défaut latent repéré, non corrigé
+
+`auth.service.ts` et `transporteur.service.ts` cherchent un conducteur par uuid
+dans `getAllDrivers()`, sans pagination et sans filtre — `DriverFilter` n'expose
+aucun filtre par uuid. Passé la taille de page par défaut, **la connexion d'un
+transporteur peut échouer parce que son enregistrement est sur la deuxième
+page**. Pré-existant, hors périmètre du Lot 1, mais à traiter avant le pilote.
+
+### 21.9 Vérification
+
+`tsc --noEmit` passe, `npm run build` passe, et le module racine se charge
+réellement (`require('./dist/app.module.js')` avec des variables factices) —
+c'est ce dernier point qui révèle les erreurs d'ordre de déclaration que le
+compilateur ne voit pas (§17.7). **Aucun test d'intégration** : l'instance
+Fleetbase n'est pas accessible d'ici. Les quatre chemins de liste sont à
+rejouer côté utilisateur.

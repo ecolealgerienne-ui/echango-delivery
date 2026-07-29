@@ -426,15 +426,48 @@ export class TransporteurService {
   async listOrders(driverId: string, query: ListDriverOrdersQueryDto) {
     const driver = await this.getDriverOrFail(driverId);
 
-    let orders: any[];
+    // ── Deux populations sans recouvrement, donc deux requêtes ────────────────
+    //
+    // Les courses de ce transporteur et les opportunités non réclamées n'ont
+    // aucune commande en commun : une course assignée n'est pas libre. Une
+    // seule requête ne peut donc pas les couvrir toutes les deux — d'où
+    // `?driver=` d'un côté et `?without_driver=true` de l'autre, au lieu du
+    // balayage de toute la compagnie qui servait les deux.
+    //
+    // Chaque onglet ne demande que ce qu'il affiche : ouvrir « mes courses » ne
+    // déclenche plus la requête des opportunités, et réciproquement.
+    const wantsAssigned = query.type !== 'adhoc';
+    const wantsAdhoc = !query.type || query.type === 'adhoc';
+
+    let assignedRaw: any[] = [];
+    let adhocRaw: any[] = [];
     try {
-      orders = await this.fleetbaseClient.fetchEveryOrder();
+      [assignedRaw, adhocRaw] = await Promise.all([
+        wantsAssigned
+          ? this.fleetbaseClient.fetchEveryOrder(100, 50, {
+              driver: driver.fleetbaseDriverUuid,
+            })
+          : Promise.resolve([]),
+        // `without_driver` couvre aussi l'exclusion des états terminaux
+        // (completed/canceled/expired), que le filtre en mémoire ci-dessous
+        // refaisait partiellement. Les deux sont conservés : le serveur allège,
+        // le code décide.
+        wantsAdhoc
+          ? this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true })
+          : Promise.resolve([]),
+      ]);
     } catch (error) {
       this.logger.error(`Order list failed for driver ${driverId}: ${error.message}`);
       throw new BadRequestException('Failed to fetch orders');
     }
 
-    const assigned = orders.filter((o) => this.isAssignedTo(o, driver.fleetbaseDriverUuid));
+    // Revérifié en mémoire : le filtre serveur allège la requête, il n'autorise
+    // pas. Un nom de filtre qui régresserait serait abandonné en silence par
+    // Fleetbase, et cette ligne est ce qui fait qu'une telle régression vide la
+    // liste au lieu d'exposer les courses des autres.
+    const assigned = assignedRaw.filter((o) =>
+      this.isAssignedTo(o, driver.fleetbaseDriverUuid),
+    );
 
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
     // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);
@@ -464,7 +497,7 @@ export class TransporteurService {
       ).map((d: any) => d.fleetbaseOrderUuid),
     );
 
-    const adhoc = orders.filter(
+    const adhoc = adhocRaw.filter(
       (o) =>
         o?.adhoc === true &&
         !o?.driver_assigned_uuid &&
