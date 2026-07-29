@@ -125,7 +125,17 @@ const ORDER_FIELDS = [
  * qu'un intégrateur y déposerait un jour, sans que personne ne le décide —
  * exactement le défaut que cette projection corrige au niveau de la commande.
  */
-const META_FIELDS = ['instructions', 'vehicle_type', 'items', 'pickup_notes', 'dropoff_notes'];
+const META_FIELDS = [
+  'instructions',
+  'vehicle_type',
+  'items',
+  'pickup_notes',
+  'dropoff_notes',
+  // Le prix est proposé par le commerçant et doit atteindre le transporteur :
+  // c'est ce qui lui permet de décider s'il prend la course.
+  'price',
+  'currency',
+];
 
 function projectMeta(meta: any): Record<string, any> | undefined {
   if (!meta || typeof meta !== 'object') return undefined;

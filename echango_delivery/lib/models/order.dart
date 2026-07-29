@@ -42,6 +42,14 @@ class Order extends Equatable {
   /// l'adresse précise arrivent à l'acceptation.
   final bool redacted;
 
+  /// Rémunération proposée par le commerçant, et sa devise.
+  ///
+  /// C'est l'information qui permet au transporteur de décider s'il prend la
+  /// course. `null` quand le commerçant n'a rien proposé — l'écran doit alors
+  /// le dire, et non afficher « 0 ».
+  final num? price;
+  final String? currency;
+
   const Order({
     required this.id,
     required this.publicId,
@@ -63,6 +71,8 @@ class Order extends Equatable {
     this.deliveryFailure,
     this.deliveryFailures = const [],
     this.redacted = false,
+    this.price,
+    this.currency,
   });
 
   // Prédicats alignés sur les statuts Fleetbase réels. L'ancienne version
@@ -137,6 +147,10 @@ class Order extends Equatable {
   /// Tolérant par principe : une commande mal formée doit être ignorable, pas
   /// faire échouer la liste entière. Tout est donc nullable ou défaillable.
   factory Order.fromJson(Map<String, dynamic> json) {
+    final meta = json['meta'] is Map<String, dynamic>
+        ? json['meta'] as Map<String, dynamic>
+        : null;
+
     Place? place(String key) {
       final raw = readPlaceJson(json, key);
       return raw == null ? null : Place.fromJson(raw);
@@ -164,6 +178,8 @@ class Order extends Equatable {
       estimatedDuration: json['estimated_duration'] as int?,
       proofUrl: json['proof_url'] as String?,
       redacted: json['redacted'] == true,
+      price: meta?['price'] as num?,
+      currency: meta?['currency'] as String?,
       deliveryFailures: (json['delivery_failures'] as List?)
               ?.whereType<Map<String, dynamic>>()
               .map(DeliveryFailure.fromJson)
@@ -211,7 +227,12 @@ class Order extends Equatable {
         deliveryFailure,
         deliveryFailures,
         redacted,
+        price,
       ];
+
+  /// Prix formaté, ou `null` si le commerçant n'a rien proposé.
+  String? get formattedPrice =>
+      price == null ? null : '${price!.toStringAsFixed(0)} ${currency ?? ''}'.trim();
 }
 
 class Place extends Equatable {

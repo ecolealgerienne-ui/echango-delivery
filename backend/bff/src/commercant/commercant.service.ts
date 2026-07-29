@@ -138,6 +138,13 @@ export class CommerçantService {
     if (dto.deliveryInstructions) meta.instructions = dto.deliveryInstructions;
     if (dto.vehicleType) meta.vehicle_type = dto.vehicleType;
     if (dto.items?.length) meta.items = dto.items;
+    if (dto.price !== undefined) {
+      meta.price = dto.price;
+      // La devise accompagne toujours le montant : un nombre nu se lit
+      // différemment selon le lecteur, et une plateforme qui s'ouvrirait à un
+      // second pays n'aurait aucun moyen de rattraper l'historique.
+      meta.currency = this.configService.get('CURRENCY') || 'DZD';
+    }
     if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
     if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
     return Object.keys(meta).length ? meta : undefined;

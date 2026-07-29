@@ -1217,7 +1217,7 @@ Quatre, tous dans du code écrit dans la même session :
 
 ### 13.6 Non fait, et pourquoi
 
-**Le prix affiché.** C'est le manque le plus important côté commerçant — il valide sans savoir ce qu'il paie — mais la tarification est une décision produit non tranchée (Priorité 3). Inventer un barème serait pire que ne rien afficher.
+~~**Le prix affiché.**~~ **Ajouté après retour utilisateur**, sous une forme qui contourne la question du barème : le commerçant **propose** un montant, le transporteur le voit et décide. Ça résout le vrai problème — un transporteur qui ignore ce que rapporte une course ne peut pas la choisir — sans préempter la tarification : le marché ajuste, et les montants observés au pilote informeront le barème plutôt que l'inverse. Le prix figure en tête de carte dans la liste des opportunités, pas seulement au détail : l'enterrer obligerait à ouvrir chaque course pour le connaître.
 
 **La signature comme preuve.** Le contrat serveur l'accepte, rien ne la recueille côté transporteur. L'app ne la propose donc pas : offrir une option qui promettrait une trace inexistante est pire qu'une option absente.
 

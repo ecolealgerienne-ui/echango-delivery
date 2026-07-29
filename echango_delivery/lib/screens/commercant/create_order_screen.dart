@@ -39,6 +39,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   final _instructions = TextEditingController();
   final _itemDescription = TextEditingController();
+  final _price = TextEditingController();
 
   /// Livraison programmée. `null` = dès que possible.
   DateTime? _scheduledAt;
@@ -75,7 +76,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
-      _instructions, _itemDescription,
+      _instructions, _itemDescription, _price,
     ]) {
       c.dispose();
     }
@@ -142,6 +143,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (_vehicleType != null) 'vehicleType': _vehicleType,
       'podMethod': _podMethod,
       'preferFavourites': _preferFavourites,
+      if (double.tryParse(_price.text.trim()) != null)
+        'price': double.parse(_price.text.trim()),
       if (_itemDescription.text.trim().isNotEmpty)
         'items': [
           {'description': _itemDescription.text.trim(), 'quantity': 1},
@@ -198,6 +201,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
                     Icons.inventory_2_outlined),
                 _vehicleSelector(),
+                _field(_price, 'Rémunération proposée (DZD)',
+                    Icons.payments_outlined,
+                    keyboard: TextInputType.number),
+                Text(
+                  'Ce montant est affiché aux transporteurs : c\'est sur lui '
+                  'qu\'ils décident de prendre la course.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 16),
                 _section('Options'),
                 _scheduleTile(),

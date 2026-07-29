@@ -10,6 +10,8 @@ import {
   ValidateNested,
   ArrayMaxSize,
   MaxLength,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -115,6 +117,29 @@ export class CreateOrderDto {
   @IsOptional()
   @IsBoolean()
   preferFavourites?: boolean;
+
+  /**
+   * Rémunération proposée au transporteur, dans la devise de l'organisation.
+   *
+   * ── Pourquoi le commerçant le saisit plutôt qu'un barème ────────────────────
+   *
+   * La tarification n'est pas tranchée (Priorité 3 du plan d'action), et
+   * inventer un barème serait une décision produit prise par défaut. Laisser le
+   * commerçant proposer résout le vrai problème — un transporteur qui ignore ce
+   * que rapporte une course ne peut pas décider de la prendre — sans préempter
+   * la question : le marché ajuste, et les montants observés au pilote
+   * informeront le barème plutôt que l'inverse.
+   *
+   * Borné pour attraper la faute de frappe, pas pour encadrer un tarif :
+   * 500 000 est absurde pour une course urbaine, et un zéro de trop est
+   * l'erreur de saisie la plus courante.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(500000)
+  price?: number;
 }
 
 export class OrderItemDto {

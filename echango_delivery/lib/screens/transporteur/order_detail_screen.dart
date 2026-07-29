@@ -80,6 +80,23 @@ class OrderDetailScreen extends StatelessWidget {
                               ),
                             ],
                           ),
+                          if (order.formattedPrice != null) ...[
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Icon(Icons.payments_outlined,
+                                    color: Colors.green.shade800),
+                                const SizedBox(width: 8),
+                                Text(
+                                  order.formattedPrice!,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleLarge
+                                      ?.copyWith(color: Colors.green.shade800),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 16),
                           _buildInfoRow('Créée le :', order.createdAt.toString().split('.')[0]),
                           _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),

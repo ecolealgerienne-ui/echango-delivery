@@ -198,6 +198,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// affichées : une liste de « — » n'informe personne.
   Widget _orderOptionsCard(MerchantOrder order) {
     final rows = <(IconData, String, String)>[
+      if (order.price != null)
+        (
+          Icons.payments_outlined,
+          'Rémunération',
+          '${order.price!.toStringAsFixed(0)} ${order.currency ?? ''}'.trim(),
+        ),
       if (order.scheduledAt != null)
         (
           Icons.schedule_outlined,

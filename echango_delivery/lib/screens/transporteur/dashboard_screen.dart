@@ -339,7 +339,22 @@ class _OrdersListScreenState extends State<OrdersListScreen>
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
           child: ListTile(
-            title: Text('Commande #${order.publicId}'),
+            title: Row(
+              children: [
+                Expanded(child: Text('Commande #${order.publicId}')),
+                // Le prix en tête de carte : c'est sur lui que le transporteur
+                // décide de prendre la course ou non. L'enterrer dans le détail
+                // obligerait à ouvrir chaque opportunité pour le savoir.
+                if (order.formattedPrice != null)
+                  Text(
+                    order.formattedPrice!,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: Colors.green.shade800,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+              ],
+            ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

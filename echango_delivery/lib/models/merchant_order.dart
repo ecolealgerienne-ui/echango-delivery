@@ -40,6 +40,8 @@ class MerchantOrder extends Equatable {
   final String? podMethod;
   final String? instructions;
   final String? packageContents;
+  final num? price;
+  final String? currency;
 
   const MerchantOrder({
     required this.id,
@@ -57,6 +59,8 @@ class MerchantOrder extends Equatable {
     this.podMethod,
     this.instructions,
     this.packageContents,
+    this.price,
+    this.currency,
   });
 
   bool get isCompleted => status == 'completed';
@@ -102,6 +106,8 @@ class MerchantOrder extends Equatable {
       podMethod: json['pod_method'] as String?,
       instructions: meta?['instructions'] as String?,
       packageContents: _firstItemDescription(meta?['items']),
+      price: meta?['price'] as num?,
+      currency: meta?['currency'] as String?,
     );
   }
 
