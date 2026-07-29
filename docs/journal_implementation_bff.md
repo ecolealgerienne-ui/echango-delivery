@@ -2080,3 +2080,44 @@ c'est ce dernier point qui révèle les erreurs d'ordre de déclaration que le
 compilateur ne voit pas (§17.7). **Aucun test d'intégration** : l'instance
 Fleetbase n'est pas accessible d'ici. Les quatre chemins de liste sont à
 rejouer côté utilisateur.
+
+---
+
+## 22. Le même défaut de pagination sur quatre chemins (29/07/2026)
+
+§21.8 signalait un plafond invisible sur la recherche d'un conducteur par uuid.
+En le corrigeant, trois autres occurrences du même appel sont apparues. Toutes
+partagent une cause : **`DriverFilter` n'expose aucun filtre par uuid**, donc
+retrouver un `Driver` derrière un compte Echango impose de parcourir la liste —
+et le parcours s'arrêtait à la première page.
+
+Une liste tronquée n'est pas ici une liste partielle. Puisqu'on y cherche un
+élément précis, **c'est une réponse fausse**. Et fausse dans le sens le plus
+trompeur : négative.
+
+Les quatre conséquences, par ordre de gravité :
+
+1. **`auth.registerDriver()`** — un transporteur pourtant provisionné est
+   déclaré inconnu, et le message d'erreur envoie l'opérateur *vérifier un
+   provisioning parfaitement correct*.
+2. **`transporteur.findFleetbaseDriver()`** — même effet sur un compte existant.
+3. **`pickAvailableFavourite()`** — un favori invisible est un favori non
+   disponible. La course part au pool, et le commerçant ne comprend pas pourquoi
+   son transporteur habituel a été ignoré : sa préférence semble sans effet.
+4. **`addFavourite()`** — le transporteur est refusé comme inexistant **juste
+   après avoir été proposé par la recherche**, qui elle interroge le serveur.
+   Deux réponses contradictoires sur la même personne, dans le même écran.
+
+`fetchEveryDriver()` pagine, sur le modèle de `fetchEveryOrder()`.
+
+**Ce qui n'est pas fait, et pourquoi** : la lecture unitaire
+`GET /drivers/{uuid}` serait le vrai remède, un appel au lieu d'un parcours.
+Elle n'est pas utilisée tant qu'elle n'est pas vérifiée — §2.13 a montré que
+`GET /vendors/{uuid}` **ignore son paramètre de chemin** et renvoie la liste
+complète. Le même comportement ici ne provoquerait pas d'erreur : il renverrait
+le premier conducteur venu, c'est-à-dire **rattacherait un compte au mauvais
+transporteur**. Un échec silencieux qui écrit une donnée fausse est pire que
+celui qu'on vient de corriger.
+
+À tester avec le reste : `GET /int/v1/drivers/{uuid}` renvoie-t-il un objet
+unique, ou la liste ?

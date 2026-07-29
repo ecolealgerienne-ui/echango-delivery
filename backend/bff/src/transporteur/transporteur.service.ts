@@ -59,12 +59,12 @@ export class TransporteurService {
   /**
    * The Fleetbase Driver record behind an Echango account.
    *
-   * A full list fetch, because `/drivers` has the same silently-ignored-filter
-   * behaviour as `/orders` (journal §2.8) — there is no by-uuid lookup to use.
+   * Parcours paginé, et non une page unique : `DriverFilter` n'a pas de filtre
+   * par uuid, et s'arrêter à la première page rendait invisible tout
+   * transporteur enregistré au-delà — sans erreur (journal §21.8).
    */
   private async findFleetbaseDriver(fleetbaseDriverUuid: string) {
-    const response = await this.fleetbaseClient.getAllDrivers();
-    const drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+    const drivers = await this.fleetbaseClient.fetchEveryDriver();
     return drivers.find((d: any) => d?.uuid === fleetbaseDriverUuid);
   }
 

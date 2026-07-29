@@ -321,10 +321,15 @@ export class CommerçantService {
 
     // La disponibilité fait foi côté Fleetbase, pas côté BFF : c'est lui qui
     // décide à qui le dispatch parle.
+    //
+    // Parcours paginé (journal §21.8) : une page unique laissait hors de vue
+    // tout transporteur enregistré au-delà, et **un favori invisible est un
+    // favori non disponible**. La course serait partie au pool sans que le
+    // commerçant comprenne pourquoi son transporteur habituel a été ignoré —
+    // une préférence qui semble n'avoir aucun effet.
     let drivers: any[] = [];
     try {
-      const response = await this.fleetbaseClient.getAllDrivers();
-      drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+      drivers = await this.fleetbaseClient.fetchEveryDriver();
     } catch (error) {
       this.logger.warn(`Favoris non résolus, repli sur le pool : ${error.message}`);
       return null;
@@ -600,12 +605,16 @@ export class CommerçantService {
     // `DriverAccount` ici aurait refusé tout transporteur qui n'a pas encore
     // installé l'application — c'est-à-dire précisément ceux que la recherche
     // vient de proposer.
+    //
+    // Parcours paginé (journal §21.8). Sans lui, un transporteur situé au-delà
+    // de la première page était déclaré inexistant — c'est-à-dire refusé en
+    // favori juste après avoir été proposé par la recherche, qui elle interroge
+    // le serveur. Deux réponses contradictoires sur la même personne.
     let driver: any = null;
     try {
-      const response = await this.fleetbaseClient.getAllDrivers();
-      driver = this.fleetbaseClient
-        .extractCollection(response, 'drivers')
-        .find((d: any) => d?.uuid === fleetbaseDriverUuid);
+      driver = (await this.fleetbaseClient.fetchEveryDriver()).find(
+        (d: any) => d?.uuid === fleetbaseDriverUuid,
+      );
     } catch (error) {
       this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
       throw new BadRequestException('Ajout impossible pour le moment');

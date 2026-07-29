@@ -256,6 +256,36 @@ EOF
 
 echo
 # ─────────────────────────────────────────────────────────────────────────────
+echo "── V9 : GET /drivers/{uuid} renvoie-t-il UN objet, ou la liste ? ──"
+#
+# §2.13 a montré que GET /vendors/{uuid} ignore son paramètre de chemin et
+# renvoie les 7 vendors de la compagnie. Si /drivers se comporte pareil, une
+# lecture unitaire renverrait le premier conducteur venu — donc rattacherait un
+# compte au mauvais transporteur, sans la moindre erreur. C'est pour ça que le
+# BFF parcourt encore la liste (journal §22).
+
+DRIVER_UUID=$(body "$DRIVERS" | jq -r '((.drivers // .data // .) | .[0].uuid // empty)')
+if [ -n "$DRIVER_UUID" ]; then
+  ONE=$(call "/int/v1/drivers/$DRIVER_UUID")
+  N_ONE=$(count_of "$ONE" drivers)
+  RETURNED=$(body "$ONE" | jq -r '(.driver.uuid // .uuid // ((.drivers // .data // [])[0].uuid) // "?")')
+
+  if [ "$RETURNED" = "$DRIVER_UUID" ] && { [ "$N_ONE" = "1" ] || [ "$N_ONE" = "0" ]; }; then
+    echo "✅ V9 — lecture unitaire fiable (uuid demandé = uuid renvoyé)"
+    echo "     → le parcours paginé de fetchEveryDriver() peut être remplacé."
+    PASS=$((PASS + 1))
+  else
+    echo "⚠️  V9 — réponse suspecte : $N_ONE enregistrement(s), premier uuid $RETURNED"
+    echo "     → même défaut que /vendors/{uuid} : NE PAS passer en lecture unitaire."
+    SKIP=$((SKIP + 1))
+  fi
+else
+  echo "⏭️  V9 — aucun conducteur dans cette instance."
+  SKIP=$((SKIP + 1))
+fi
+
+echo
+# ─────────────────────────────────────────────────────────────────────────────
 echo "── V7 : le statut du Vendor, support de la validation commerçant ──"
 
 VENDORS=$(call '/int/v1/vendors?limit=5')

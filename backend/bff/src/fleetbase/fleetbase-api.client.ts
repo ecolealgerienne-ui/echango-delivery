@@ -608,6 +608,56 @@ export class FleetbaseApiClient {
    *
    * Détail : `docs/architecture_bff_fleetbase.md` §5.
    */
+  /**
+   * Tous les conducteurs, page après page.
+   *
+   * ── Pourquoi cette méthode existe ────────────────────────────────────────
+   *
+   * `DriverFilter` **n'expose aucun filtre par uuid**. Retrouver le `Driver`
+   * derrière un compte Echango — ce que font la connexion et l'inscription sur
+   * invitation — impose donc de parcourir la liste.
+   *
+   * Sans pagination, ce parcours s'arrêtait à la première page : passé la
+   * taille par défaut de Fleetbase, **un transporteur ne pouvait plus se
+   * connecter parce que son enregistrement était sur la deuxième page**. Aucune
+   * erreur, aucun journal — juste « conducteur inconnu » pour quelqu'un qui
+   * existe. Même famille que le plafond de 100 sur les commandes, mais sur un
+   * chemin d'authentification.
+   *
+   * Une liste tronquée n'est pas ici une liste partielle : c'est une **réponse
+   * fausse**, puisqu'on y cherche un élément précis.
+   *
+   * Le vrai remède serait une lecture unitaire `GET /drivers/{uuid}`, non
+   * utilisée tant qu'elle n'est pas vérifiée : §2.13 a montré que
+   * `GET /vendors/{uuid}` **ignore son paramètre de chemin** et renvoie toute
+   * la liste. La même chose ici passerait pour un succès en renvoyant le
+   * premier conducteur venu — c'est-à-dire en rattachant un compte au mauvais
+   * transporteur.
+   */
+  async fetchEveryDriver(pageSize = 100, maxPages = 20): Promise<any[]> {
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const drivers = this.extractCollection(
+        await this.getAllDrivers({ page, limit: pageSize }),
+        'drivers',
+      );
+
+      if (drivers.length === 0) break;
+      all.push(...drivers);
+      if (drivers.length < pageSize) break;
+
+      if (page === maxPages) {
+        this.logger.warn(
+          `fetchEveryDriver a atteint le garde-fou de ${maxPages} pages — un transporteur ` +
+            'au-delà pourrait ne plus pouvoir se connecter',
+        );
+      }
+    }
+
+    return all;
+  }
+
   async getAllDrivers(filters: DriverFilters = {}) {
     try {
       const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
