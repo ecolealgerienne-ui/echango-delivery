@@ -71,7 +71,7 @@ Script : `scripts/verify-fleetbase-filters.sh`.
 | V5 | `drivers?phone=x` seul / `drivers?name=x` seul | **500** / **200** | confirme le bug amont |
 | V6 | modifier une commande, relire aussitôt | `x-cache-status`, version de `x-cache-key` | Lot 3, Lot 5 |
 | V7 | champ de statut du `Vendor`, modifié en console | valeur relue changée | Lot 4 |
-| V8 | webhook déclaré, commande passée | évènement reçu et signé | Lot 5 |
+| ~~V8~~ | ~~webhook déclaré, commande passée~~ | — | **reporté au VPS**, voir §7 |
 
 **La comparaison valide/invalide de V1 à V4 n'est pas du zèle.** C'est exactement
 ce qui manquait au test de juillet : les données cherchées sont présentes dans les
@@ -147,9 +147,48 @@ pas avant.
 
 ---
 
-## 7. Lot 5 — Webhooks
+## 7. Lot 5 — Webhooks — **reporté au déploiement VPS (29/07/2026)**
 
 **Gate : V8 + Lot 1.** Environ une journée et demie. Le lot le plus structurant.
+
+> ### ⏸️ Reporté, et pour une raison qui se règle d'elle-même
+>
+> **Fleetbase refuse toute URL de webhook non publique** — ni `localhost`, ni
+> `host.docker.internal`, ni une adresse privée : *« The url must be a public
+> HTTP or HTTPS URL »*. Observer les évènements en développement impose donc un
+> tunnel (`cloudflared`, `ngrok`), c'est-à-dire exposer un service sur Internet
+> pour un contrôle de dix minutes.
+>
+> Cet obstacle **n'existe plus sur le VPS** : il y aura un domaine et un
+> certificat, donc l'URL sera publique sans rien monter. Faire le contrôle
+> maintenant coûterait plus cher que d'attendre le moment où il devient gratuit.
+>
+> **Ce qui reste en place entre-temps, et fonctionne** : `OrderReconcilerService`
+> et les colonnes `Order.status` / `Order.driverAssignedUuid` qui lui servent de
+> mémoire. La chaîne a été **constatée de bout en bout le 29/07/2026** — une
+> commande assignée depuis la console remonte jusqu'à l'application commerçant
+> (journal §23.5). Ce n'est pas un pis-aller en attente de réparation : c'est un
+> mécanisme qui marche, simplement plus coûteux et plus lent qu'un webhook.
+>
+> **Ce qui a été retiré** : l'endpoint `POST /webhooks/fleetbase` du BFF, écrit
+> puis supprimé le même jour. Une route publique sans vérification de signature
+> qu'on ne toucherait plus avant le VPS finirait par y être déployée telle
+> quelle. Elle est dans l'historique git, et le §7 ci-dessous dit quoi
+> reconstruire.
+>
+> **Ce qui est conservé** : `scripts/webhook-listener.js`, un écouteur autonome
+> sans dépendance. C'est un outil de développement, pas une route du serveur —
+> il ne peut rien exposer qu'on ne lance pas exprès.
+>
+> **Au moment de le reprendre**, dans l'ordre :
+> 1. déclarer le webhook depuis la console (Developers → Webhooks) vers l'URL
+>    publique du VPS, **tous** les identifiants API et **tous** les évènements —
+>    on ne connaît pas encore leur vocabulaire réel ;
+> 2. observer avec `scripts/webhook-listener.js` pour relever le **nom et le
+>    format de l'en-tête de signature**, les noms d'évènements, et la forme du
+>    corps (commande entière, ou simples identifiants ? cela décide si le
+>    réconciliateur peut vraiment disparaître) ;
+> 3. seulement ensuite recréer l'endpoint, **signature d'abord, effets ensuite**.
 
 - `POST /webhooks/fleetbase`, **vérification de signature obligatoire** — endpoint
   public, donc la signature n'est pas optionnelle
@@ -184,13 +223,19 @@ trois colonnes contre un rapatriement complet à chaque rafraîchissement de car
 ## 9. Ordre d'exécution
 
 ```
-Lot 0  →  Lot 2  →  Lot 1  →  Lot 5  →  Lot 3  →  Lot 4  →  Lot 6
-         (sans gate)                    (libéré par 5)
+Lot 0  ✅  →  Lot 2  ✅  →  Lot 1  ✅  →  Lot 3  ✅  →  Lot 4  →  ⏸ Lot 5  →  Lot 6
+                                                                (au VPS)
 ```
 
-Le Lot 2 passe en premier parce qu'il n'attend rien. Le Lot 5 précède le Lot 3
-parce que c'est lui qui libère `status` : dans l'autre ordre, on toucherait deux
-fois aux mêmes endroits.
+**L'ordre initial plaçait le Lot 5 avant le Lot 3**, au motif que c'est lui qui
+libère `status`. Le report du Lot 5 a inversé les deux, sans dommage : le Lot 3
+n'a retiré que les colonnes dont il pouvait se passer seul
+(`trackingNumber`, `driverName`, les deux horodatages), et `status` comme
+`driverAssignedUuid` sont restées — elles restent la mémoire du réconciliateur
+tant qu'aucun webhook ne le remplace.
+
+Le Lot 6 vient après le Lot 5 pour la même raison : c'est le dernier, et le
+moins utile.
 
 ---
 
@@ -208,9 +253,11 @@ Indépendants de ce plan, mais bloquants pour tout déploiement.
   de Dart récent n'a jamais été compilé.
 - **La chaîne encaissement → dette → remise → confirmation** n'a jamais été jouée
   de bout en bout.
-- Au déploiement VPS : `APP_DEBUG=false` côté Fleetbase (le 500 observé le
-  29/07/2026 renvoyait une page d'erreur Laravel complète), et la reconfiguration
-  du contournement de preuve photo (`CLAUDE.md`).
+- Au déploiement VPS, trois choses à reprendre ensemble :
+  1. `APP_DEBUG=false` côté Fleetbase — le 500 observé le 29/07/2026 renvoyait
+     une page d'erreur Laravel complète, avec chemins de fichiers et requêtes ;
+  2. la reconfiguration du contournement de preuve photo (`CLAUDE.md`) ;
+  3. **le Lot 5, webhooks** (§7) — c'est là qu'il devient faisable sans tunnel.
 
 ---
 

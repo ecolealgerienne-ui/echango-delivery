@@ -2255,3 +2255,49 @@ Dans `pickAvailableFavourite`, `online` reste testé **strictement** à `true`. 
 favori dont la lecture échoue n'est pas « peut-être disponible » : lui confier la
 course l'enverrait à quelqu'un qui ne la verra jamais, et elle resterait bloquée
 là. Le repli sur le pool est le bon comportement.
+
+---
+
+## 25. Les webhooks reportés au VPS (29/07/2026)
+
+Fleetbase refuse toute URL de webhook non publique — *« The url must be a public
+HTTP or HTTPS URL »*. Ni `localhost`, ni `host.docker.internal`, ni une adresse
+privée.
+
+Observer les évènements en développement imposait donc un tunnel
+(`cloudflared`, `ngrok`) : exposer un service sur Internet pour un contrôle de
+dix minutes. **Décision de l'utilisateur : on remet ça au VPS**, où il y aura un
+domaine et un certificat, donc plus d'obstacle du tout.
+
+### 25.1 L'endpoint du BFF a été retiré, pas mis de côté
+
+`POST /webhooks/fleetbase` a été écrit puis supprimé le même jour. Ce n'est pas
+un revirement : son propre commentaire disait « à ne jamais déployer en l'état »,
+puisqu'il ne vérifiait aucune signature.
+
+Une route publique sans vérification, qu'on ne rouvrirait qu'au moment du
+déploiement, **serait déployée avec le reste**. Le laisser dormir revenait à
+parier qu'on se souviendrait de le retirer à l'instant précis où on a le plus de
+choses en tête. Il est dans l'historique git, et le plan dit quoi reconstruire.
+
+`scripts/webhook-listener.js` est conservé : c'est un outil de développement
+autonome, pas une route du serveur — il ne peut rien exposer qu'on ne lance pas
+exprès.
+
+### 25.2 Ce qui tient la place, et qui n'est pas un pis-aller
+
+`OrderReconcilerService` et les colonnes `Order.status` /
+`Order.driverAssignedUuid` restent. La chaîne complète a été **constatée en
+réel** le jour même (§23.5) : une commande assignée depuis la console remonte
+jusqu'à l'application commerçant.
+
+Ce n'est donc pas un mécanisme en attente de réparation, c'est un mécanisme qui
+marche — simplement plus lent (une minute de latence) et plus coûteux (un
+téléchargement complet par passage) qu'un webhook.
+
+### 25.3 L'ordre des lots s'en trouve inversé, sans dommage
+
+Le plan faisait passer le Lot 5 avant le Lot 3, au motif que c'est lui qui libère
+`status`. Le report inverse les deux, et ça tombe bien : le Lot 3 n'a retiré que
+les colonnes dont il pouvait se passer seul. `status` et `driverAssignedUuid`
+sont restées exactement pour la raison prévue.
