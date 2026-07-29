@@ -59,13 +59,12 @@ export class TransporteurService {
   /**
    * The Fleetbase Driver record behind an Echango account.
    *
-   * Parcours paginé, et non une page unique : `DriverFilter` n'a pas de filtre
-   * par uuid, et s'arrêter à la première page rendait invisible tout
-   * transporteur enregistré au-delà — sans erreur (journal §21.8).
+   * Lecture unitaire depuis la validation de V9 (journal §24) : elle vérifie
+   * elle-même que l'uuid renvoyé est celui demandé, donc elle ne peut pas
+   * rendre un autre conducteur.
    */
   private async findFleetbaseDriver(fleetbaseDriverUuid: string) {
-    const drivers = await this.fleetbaseClient.fetchEveryDriver();
-    return drivers.find((d: any) => d?.uuid === fleetbaseDriverUuid);
+    return this.fleetbaseClient.getDriverByUuid(fleetbaseDriverUuid);
   }
 
   /**

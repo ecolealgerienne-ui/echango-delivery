@@ -547,14 +547,11 @@ export class AuthService {
         throw new ConflictException('This driver is already linked to an account');
       }
 
-      // Parcours paginé : `DriverFilter` n'expose aucun filtre par uuid, et une
-      // page unique laissait « inconnu » un transporteur pourtant provisionné
-      // dès que la compagnie dépassait la taille de page par défaut. Le message
-      // d'erreur ci-dessous aurait alors envoyé l'opérateur vérifier un
-      // provisioning parfaitement correct (journal §21.8).
-      const drivers = await this.fleetbaseClient.fetchEveryDriver();
-      const fleetbaseDriver = drivers.find(
-        (d: any) => d?.uuid === invitation.fleetbaseDriverUuid,
+      // Lecture unitaire (journal §24). Elle compare l'uuid renvoyé à celui
+      // demandé, ce qui compte particulièrement ici : ce que cet appel ramène
+      // détermine à quel transporteur le nouveau compte sera rattaché.
+      const fleetbaseDriver = await this.fleetbaseClient.getDriverByUuid(
+        invitation.fleetbaseDriverUuid,
       );
 
       if (!fleetbaseDriver) {

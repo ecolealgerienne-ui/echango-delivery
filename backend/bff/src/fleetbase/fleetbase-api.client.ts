@@ -609,53 +609,47 @@ export class FleetbaseApiClient {
    * Détail : `docs/architecture_bff_fleetbase.md` §5.
    */
   /**
-   * Tous les conducteurs, page après page.
+   * Un conducteur par son uuid, ou `null` s'il n'existe pas.
    *
-   * ── Pourquoi cette méthode existe ────────────────────────────────────────
+   * ── Pourquoi cette méthode a mis deux tours à arriver ─────────────────────
    *
-   * `DriverFilter` **n'expose aucun filtre par uuid**. Retrouver le `Driver`
-   * derrière un compte Echango — ce que font la connexion et l'inscription sur
-   * invitation — impose donc de parcourir la liste.
+   * `DriverFilter` n'expose aucun filtre par uuid, donc retrouver le `Driver`
+   * derrière un compte Echango passait par un parcours de toute la liste — et
+   * ce parcours s'arrêtait à la première page, laissant « inconnu » un
+   * transporteur pourtant provisionné (journal §21.8, §22).
    *
-   * Sans pagination, ce parcours s'arrêtait à la première page : passé la
-   * taille par défaut de Fleetbase, **un transporteur ne pouvait plus se
-   * connecter parce que son enregistrement était sur la deuxième page**. Aucune
-   * erreur, aucun journal — juste « conducteur inconnu » pour quelqu'un qui
-   * existe. Même famille que le plafond de 100 sur les commandes, mais sur un
-   * chemin d'authentification.
+   * La lecture unitaire était le remède évident, et elle a été écartée un
+   * temps : §2.13 a montré que `GET /vendors/{uuid}` **ignore son paramètre de
+   * chemin** et renvoie la collection. Le même défaut ici ne lèverait aucune
+   * erreur — il rattacherait un compte au **mauvais** transporteur. Vérifié
+   * depuis (V9, en demandant délibérément le *dernier* conducteur de la liste :
+   * un endpoint qui ignore le chemin se trahit en renvoyant le premier).
    *
-   * Une liste tronquée n'est pas ici une liste partielle : c'est une **réponse
-   * fausse**, puisqu'on y cherche un élément précis.
+   * ── La garde qui rend cette méthode sûre quoi qu'il arrive ────────────────
    *
-   * Le vrai remède serait une lecture unitaire `GET /drivers/{uuid}`, non
-   * utilisée tant qu'elle n'est pas vérifiée : §2.13 a montré que
-   * `GET /vendors/{uuid}` **ignore son paramètre de chemin** et renvoie toute
-   * la liste. La même chose ici passerait pour un succès en renvoyant le
-   * premier conducteur venu — c'est-à-dire en rattachant un compte au mauvais
-   * transporteur.
+   * L'uuid renvoyé est comparé à celui demandé. Cette ligne coûte deux
+   * comparaisons et couvre **tout** : une enveloppe de réponse différente de ce
+   * qu'on croit, une régression amont sur la résolution du chemin, un endpoint
+   * qui se remettrait à renvoyer la liste. Le pire cas devient « non trouvé »,
+   * jamais « quelqu'un d'autre ».
    */
-  async fetchEveryDriver(pageSize = 100, maxPages = 20): Promise<any[]> {
-    const all: any[] = [];
-
-    for (let page = 1; page <= maxPages; page++) {
-      const drivers = this.extractCollection(
-        await this.getAllDrivers({ page, limit: pageSize }),
-        'drivers',
-      );
-
-      if (drivers.length === 0) break;
-      all.push(...drivers);
-      if (drivers.length < pageSize) break;
-
-      if (page === maxPages) {
-        this.logger.warn(
-          `fetchEveryDriver a atteint le garde-fou de ${maxPages} pages — un transporteur ` +
-            'au-delà pourrait ne plus pouvoir se connecter',
-        );
-      }
+  async getDriverByUuid(driverUuid: string): Promise<any | null> {
+    let data: any;
+    try {
+      data = (await this.callFleetOps('GET', `/drivers/${encodeURIComponent(driverUuid)}`)).data;
+    } catch (error: any) {
+      if (error.response?.status === 404) return null;
+      // Toute autre erreur remonte : la confondre avec une absence ferait dire
+      // « ce transporteur n'existe pas » à une panne réseau.
+      this.logger.error(`Lecture du conducteur ${driverUuid} échouée : ${error.message}`);
+      throw error;
     }
 
-    return all;
+    // Les trois enveloppes que Fleetbase emploie selon l'endpoint (§2.4).
+    const candidate =
+      data?.driver ?? (data?.uuid ? data : this.extractCollection(data, 'drivers')[0]);
+
+    return candidate?.uuid === driverUuid ? candidate : null;
   }
 
   async getAllDrivers(filters: DriverFilters = {}) {

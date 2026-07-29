@@ -335,22 +335,26 @@ export class CommerçantService {
     // La disponibilité fait foi côté Fleetbase, pas côté BFF : c'est lui qui
     // décide à qui le dispatch parle.
     //
-    // Parcours paginé (journal §21.8) : une page unique laissait hors de vue
-    // tout transporteur enregistré au-delà, et **un favori invisible est un
-    // favori non disponible**. La course serait partie au pool sans que le
-    // commerçant comprenne pourquoi son transporteur habituel a été ignoré —
-    // une préférence qui semble n'avoir aucun effet.
-    let drivers: any[] = [];
+    // Une lecture par favori, en parallèle, plutôt qu'un parcours de tout
+    // l'annuaire (journal §24) : le coût suit le nombre de favoris de ce
+    // commerçant — un ou deux en pratique — au lieu de la taille du réseau.
+    //
+    // ⚠️ `online` doit rester **strictement** `true`. Un favori dont la lecture
+    // échoue ou qui a disparu n'est pas « peut-être disponible » : le laisser
+    // passer enverrait la course à quelqu'un qui ne la verra jamais, et elle
+    // resterait bloquée là. Mieux vaut le repli sur le pool.
+    let online: Set<string>;
     try {
-      drivers = await this.fleetbaseClient.fetchEveryDriver();
+      const resolved = await Promise.all(
+        accounts.map((a: any) => this.fleetbaseClient.getDriverByUuid(a.fleetbaseDriverUuid)),
+      );
+      online = new Set(
+        resolved.filter((d: any) => d?.online === true).map((d: any) => d.uuid),
+      );
     } catch (error) {
       this.logger.warn(`Favoris non résolus, repli sur le pool : ${error.message}`);
       return null;
     }
-
-    const online = new Set(
-      drivers.filter((d: any) => d?.online === true).map((d: any) => d.uuid),
-    );
 
     const available = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
 
@@ -619,15 +623,11 @@ export class CommerçantService {
     // installé l'application — c'est-à-dire précisément ceux que la recherche
     // vient de proposer.
     //
-    // Parcours paginé (journal §21.8). Sans lui, un transporteur situé au-delà
-    // de la première page était déclaré inexistant — c'est-à-dire refusé en
-    // favori juste après avoir été proposé par la recherche, qui elle interroge
-    // le serveur. Deux réponses contradictoires sur la même personne.
+    // Lecture unitaire (journal §24) : un seul appel, et l'uuid renvoyé est
+    // vérifié côté client Fleetbase.
     let driver: any = null;
     try {
-      driver = (await this.fleetbaseClient.fetchEveryDriver()).find(
-        (d: any) => d?.uuid === fleetbaseDriverUuid,
-      );
+      driver = await this.fleetbaseClient.getDriverByUuid(fleetbaseDriverUuid);
     } catch (error) {
       this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
       throw new BadRequestException('Ajout impossible pour le moment');

@@ -2202,3 +2202,56 @@ jamais été observé autrement qu'en lisant le code.
 `tsc`, `npm run build`, chargement réel du module racine. Le schéma Prisma est
 modifié : **`npm run prisma:migrate` puis `prisma generate` sont nécessaires**,
 et le client n'a pas pu être régénéré ici (proxy).
+
+---
+
+## 24. La lecture unitaire d'un conducteur, une fois le contrôle réparé (29/07/2026)
+
+V9 durci passe au vert : **4 conducteurs dans l'instance, le dernier demandé et
+le dernier renvoyé**. `GET /int/v1/drivers/{uuid}` résout donc bien son
+paramètre de chemin, contrairement à `GET /vendors/{uuid}` (§2.13).
+
+C'est le même contrôle qui était vert ce matin sans rien prouver. La différence
+tient à un mot : *dernier* au lieu de *premier*.
+
+### 24.1 Ce que le parcours paginé devient
+
+`fetchEveryDriver()`, écrit ce matin, disparaît. Les quatre appelants passent à
+`getDriverByUuid()` :
+
+| Appelant | Avant | Après |
+|---|---|---|
+| `auth.registerDriver` | toutes les pages | un appel |
+| `transporteur.findFleetbaseDriver` | toutes les pages | un appel |
+| `commercant.addFavourite` | toutes les pages | un appel |
+| `pickAvailableFavourite` | toutes les pages | un appel **par favori**, en parallèle |
+
+Le dernier cas est le plus parlant : le coût suit désormais le nombre de favoris
+de ce commerçant — un ou deux en pratique — au lieu de la taille du réseau.
+
+### 24.2 La garde qui rend la bascule sûre
+
+`getDriverByUuid()` **compare l'uuid renvoyé à celui demandé** avant de rendre
+quoi que ce soit.
+
+Deux comparaisons, et elles couvrent tout : une enveloppe de réponse différente
+de ce qu'on croit, une régression amont sur la résolution du chemin, un endpoint
+qui se remettrait à renvoyer la collection. Le pire cas devient « non trouvé »,
+jamais « quelqu'un d'autre » — ce qui compte particulièrement pour
+`registerDriver`, où le résultat de cet appel décide **à quel transporteur un
+nouveau compte est rattaché**.
+
+C'est aussi la seule raison pour laquelle je me permets de ne pas connaître
+l'enveloppe exacte : les trois formes possibles sont essayées, et la garde
+tranche.
+
+Une erreur autre qu'un 404 remonte au lieu de valoir `null` : confondre une
+panne réseau avec une absence ferait dire « ce transporteur n'existe pas » à un
+incident passager.
+
+### 24.3 Et un choix qui n'est pas une optimisation
+
+Dans `pickAvailableFavourite`, `online` reste testé **strictement** à `true`. Un
+favori dont la lecture échoue n'est pas « peut-être disponible » : lui confier la
+course l'enverrait à quelqu'un qui ne la verra jamais, et elle resterait bloquée
+là. Le repli sur le pool est le bon comportement.
