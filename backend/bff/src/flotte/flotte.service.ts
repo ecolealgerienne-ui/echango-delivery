@@ -15,23 +15,7 @@ import {
   projectOrderForFleet,
   projectDriverForFleet,
 } from '../common/projections/order.projection';
-
-/**
- * Projection de DriverAccount servie par getDriverPositions.
- *
- * Annotée sur le paramètre du `.map()` plutôt qu'imposée par une conversion
- * sur le résultat de Prisma : une conversion aurait masqué le vrai problème
- * quand le client Prisma n'est pas régénéré après un changement de schéma —
- * les colonnes manquent alors dans les types, et l'erreur doit se voir.
- */
-interface LastKnownPosition {
-  fleetbaseDriverUuid: string;
-  firstName: string | null;
-  lastName: string | null;
-  lastLatitude: number | null;
-  lastLongitude: number | null;
-  lastPositionAt: Date | null;
-}
+import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 
 @Injectable()
 export class FlotteService {
@@ -153,21 +137,21 @@ export class FlotteService {
   }
 
   /**
-   * Dernière position connue des drivers de cette flotte.
+   * Dernière position connue des conducteurs de cette flotte.
    *
-   * Servie depuis le miroir local alimenté par POST /transporteur/position,
-   * et non depuis Fleetbase. L'endpoint /positions de Fleetbase n'a aucun
-   * filtre par driver (vérifié dans PositionFilter.php, journal §2.9) : il
-   * n'accepte qu'une recherche texte et une date, avec un cloisonnement
-   * automatique par compagnie. Le servir revenait donc à télécharger tout
-   * l'historique de positions de l'organisation à chaque rafraîchissement
-   * d'une carte qui n'affiche qu'un point par driver — un coût qui grandit
-   * avec l'historique, pas avec le nombre de drivers affichés.
+   * ── Où vit cette donnée, et où je l'ai longtemps cherchée ────────────────
    *
-   * Ce que ça change pour l'appelant : un driver qui n'a pas de compte
-   * Echango, ou qui n'a pas encore envoyé de position depuis l'app, n'apparaît
-   * pas dans le résultat. C'est le comportement voulu — Fleetbase n'en aurait
-   * de toute façon aucune position à donner.
+   * Sur le **conducteur lui-même** : `Driver.location`, mis à jour par l'appel
+   * `track` que le BFF fait déjà à chaque remontée GPS. La table `Position` est
+   * l'**historique**, pas l'état courant — et c'est là que je cherchais.
+   *
+   * L'absence de filtre par conducteur sur `/positions` (journal §2.11) est
+   * bien réelle, mais elle ne concernait pas ce besoin. C'est ce contresens qui
+   * a justifié trois colonnes de miroir pendant deux jours.
+   *
+   * Un conducteur sans position exploitable est absent du résultat, comme
+   * avant : `[0,0]` signifie « n'a jamais émis », pas « au large de la Guinée »
+   * (voir `readDriverPosition`).
    */
   async getDriverPositions(fleetId: string, requestedDriverIds: string[]) {
     const fleet = await this.getFleetWithValidation(fleetId);
@@ -185,28 +169,31 @@ export class FlotteService {
         return [];
       }
 
-      const accounts = await this.prisma.driverAccount.findMany({
-        where: {
-          fleetbaseDriverUuid: { in: targetIds },
-          lastPositionAt: { not: null },
-        },
-        select: {
-          fleetbaseDriverUuid: true,
-          firstName: true,
-          lastName: true,
-          lastLatitude: true,
-          lastLongitude: true,
-          lastPositionAt: true,
-        },
-      });
+      // ── La position vient des conducteurs déjà rapatriés (Lot 6) ─────────
+      //
+      // `fetchOwnedDrivers()` ci-dessus renvoie déjà `location` : la version
+      // précédente téléchargeait donc la donnée, la jetait, puis allait la
+      // relire dans un miroir local. Le miroir a été supprimé, pas remplacé par
+      // un second appel.
+      //
+      // Un conducteur sans position exploitable est simplement absent de la
+      // liste, comme avant — c'est ce que faisait `lastPositionAt: { not: null }`.
+      const targets = new Set(targetIds);
 
-      return accounts.map((a: LastKnownPosition) => ({
-        driver_uuid: a.fleetbaseDriverUuid,
-        name: [a.firstName, a.lastName].filter(Boolean).join(' ') || null,
-        latitude: a.lastLatitude,
-        longitude: a.lastLongitude,
-        recorded_at: a.lastPositionAt,
-      }));
+      return owned
+        .filter((driver: any) => targets.has(driver?.uuid))
+        .map((driver: any) => ({ driver, position: readDriverPosition(driver) }))
+        .filter((entry) => entry.position !== null)
+        .map(({ driver, position }) => ({
+          driver_uuid: driver.uuid,
+          // Le nom vient de Fleetbase, où l'opérateur l'a saisi, et non des
+          // champs facultatifs que le transporteur remplit à l'inscription —
+          // souvent vides (§19.3).
+          name: driver.name ?? null,
+          latitude: position!.latitude,
+          longitude: position!.longitude,
+          recorded_at: readPositionSeenAt(driver),
+        }));
     } catch (error) {
       this.logger.error(`Failed to fetch driver positions: ${error.message}`);
       throw new BadRequestException('Failed to fetch driver positions');
@@ -289,17 +276,51 @@ export class FlotteService {
   }
 
   /**
-   * Conducteurs de cette flotte.
+   * Conducteurs de cette flotte, avec un cache mémoire de courte durée.
    *
    * `?vendor=` est le nom réel du filtre — `vendor_uuid`, essayé en §2.8,
-   * n'existe pas et était abandonné en silence. La vérification en mémoire est
-   * conservée pour la même raison que dans `getOrders` : c'est elle qui
-   * autorise, le filtre ne fait qu'alléger.
+   * n'existe pas et était abandonné en silence. La vérification en mémoire qui
+   * suit est conservée pour la même raison que dans `getOrders` : c'est elle
+   * qui autorise, le filtre ne fait qu'alléger.
+   *
+   * ── Pourquoi un cache, et pourquoi celui-ci est légitime ─────────────────
+   *
+   * La charge utile d'un conducteur Fleetbase est **très lourde** : elle
+   * embarque `user.role.policies[].permissions[]`, soit plusieurs centaines
+   * d'entrées répétées pour chaque conducteur. Constaté sur les données réelles
+   * le 29/07/2026, pas supposé.
+   *
+   * Depuis le Lot 6, la carte de flotte lit les positions ici même : cet appel
+   * passe donc de « une fois par écran » à « à chaque rafraîchissement ».
+   *
+   * C'est l'exception §3.1 de `architecture_bff_fleetbase.md` dans son usage
+   * prévu : **jetable sans perte** — le vider ne fait que provoquer un appel de
+   * plus — et motivé par un coût mesuré, non par une préférence. Sa durée de vie
+   * est délibérément plus courte que la cadence d'émission GPS de l'app, pour
+   * qu'une position fraîche ne puisse pas attendre derrière lui.
+   *
+   * Cloisonné par `vendorUuid` : deux flottes ne partagent jamais une entrée.
    */
+  private readonly driverCache = new Map<string, { at: number; drivers: any[] }>();
+
+  private driverCacheTtlMs(): number {
+    const configured = Number(this.configService.get('FLEET_DRIVER_CACHE_MS'));
+    return Number.isFinite(configured) && configured >= 0 ? configured : 5_000;
+  }
+
   private async fetchOwnedDrivers(vendorUuid: string): Promise<any[]> {
+    const ttl = this.driverCacheTtlMs();
+    const cached = this.driverCache.get(vendorUuid);
+    if (cached && ttl > 0 && Date.now() - cached.at < ttl) {
+      return cached.drivers;
+    }
+
     const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
     const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
-    return (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
+    const owned = (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
+
+    this.driverCache.set(vendorUuid, { at: Date.now(), drivers: owned });
+    return owned;
   }
 
   private async getFleetWithValidation(fleetId: string) {

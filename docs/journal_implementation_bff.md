@@ -2500,3 +2500,93 @@ signifie « BFF antérieur à ce correctif », pas « mauvaise réponse » — l
 l'affiche en avertissement et poursuit, au lieu d'échouer sans expliquer.
 
 Vérifié contre deux faux serveurs, l'un renvoyant `code`, l'autre pas.
+
+---
+
+## 28. Lot 6 — la position était là où je ne la cherchais pas (29/07/2026)
+
+### 28.1 Le contresens
+
+Je déconseillais ce lot, au motif que `/positions` n'offre aucun filtre par
+conducteur (§2.11, vérifié dans `PositionFilter.php`) : lire une position depuis
+Fleetbase aurait imposé de télécharger tout l'historique de la compagnie.
+
+L'observation est exacte. Elle ne concernait simplement **pas ce besoin**.
+
+`Position` est l'**historique**. La position **courante** vit sur le conducteur
+lui-même — `Driver.location`, colonne géospatiale, mise à jour par le `track`
+que le BFF émet déjà à chaque remontée GPS. Vérifié sur les données réelles :
+`Driver Bob1` porte `[-122.084, 37.4219983]` avec un `updated_at` de l'heure
+même, soit les coordonnées par défaut de l'émulateur Android — la preuve que la
+chaîne GPS de l'app les a écrites.
+
+Trois colonnes de miroir ont donc existé deux jours parce que je cherchais la
+position dans la table de son historique. Même forme d'erreur que
+`facilitator_uuid` : une observation juste, une portée surestimée.
+
+### 28.2 Ce que le miroir masquait
+
+`fetchOwnedDrivers()` appelle `GET /drivers?vendor=X`, dont la réponse
+**contient `location`**. La carte de flotte téléchargeait donc la position, la
+jetait, puis allait la relire dans une colonne locale.
+
+Supprimer le miroir ne remplace pas un appel par un autre : ça supprime un
+chemin d'écriture pour utiliser ce qu'on recevait déjà.
+
+### 28.3 Deux pièges, réunis dans une seule fonction
+
+Tous deux échouent **en silence** — ils n'exceptent pas, ils affichent un point
+faux. D'où `readDriverPosition()`, à un seul endroit :
+
+- **`[longitude, latitude]`**, convention GeoJSON, l'inverse de l'usage courant.
+  « Toto » est à `[2.310905, 48.871941]` — Paris. Lu à l'envers : au large de la
+  Somalie.
+- **`[0, 0]` est une absence, pas une position.** C'est la valeur d'un conducteur
+  qui n'a jamais émis — deux sur quatre dans l'instance de test. Mais c'est un
+  point valide, dans le golfe de Guinée. Servi tel quel, il place des
+  transporteurs en mer et l'écran a l'air de marcher. **Une valeur par défaut
+  détruit l'information d'absence**, pour la énième fois de la semaine.
+
+### 28.4 La fraîcheur : ce qu'on perd, et pourquoi c'est acceptable
+
+Le conducteur ne porte **aucun horodatage de position** — vérifié sur une charge
+utile complète : `location`, `heading`, `altitude`, `speed`, `online`, `status`,
+`updated_at`. Rien de plus.
+
+`updated_at` bouge donc aussi sur un passage en ligne ou une modification admin,
+ce qui rend la fraîcheur **optimiste**. C'est la seule régression du lot, et elle
+est bornée par le libellé : « vu il y a X », pas « position datant de X ». La
+valeur est honnête sur ce qu'elle mesure.
+
+`online` reste le meilleur signal pour savoir si le point vaut quelque chose : un
+transporteur hors ligne n'a pas une position vieille, il n'en a pas.
+
+### 28.5 Un cache mémoire, cette fois pour une raison mesurée
+
+La charge utile d'un conducteur est très lourde : elle embarque
+`user.role.policies[].permissions[]`, plusieurs centaines d'entrées répétées par
+conducteur. Et depuis ce lot, la carte de flotte lit les positions par cet appel
+— qui passe de « une fois par écran » à « à chaque rafraîchissement ».
+
+D'où un cache mémoire de 5 s devant `fetchOwnedDrivers()`, cloisonné par vendor.
+C'est l'exception §3.1 dans son usage prévu : **jetable sans perte**, et motivé
+par un coût constaté plutôt que par une préférence. Sa durée de vie est plus
+courte que la cadence d'émission GPS de l'app, pour qu'une position fraîche
+n'attende pas derrière lui.
+
+### 28.6 Ce que la question de l'utilisateur a changé
+
+« Est-ce qu'on a besoin de tout ça ? » — la réponse était non pour ce que je
+proposais (garder un demi-miroir pour l'horodatage), et oui pour le lot lui-même,
+mais **pas pour la raison que j'avançais**. Mon motif était la cohérence avec la
+règle de non-duplication : honnête, mais faible. Le vrai bénéfice n'est apparu
+qu'en vérifiant.
+
+Une règle qui n'a pas de bénéfice concret sur un cas donné ne justifie pas une
+migration. Ici, il y en avait un — il était juste ailleurs.
+
+### 28.7 Vérification
+
+`tsc`, `npm run build`, chargement du module racine. **Aucun test d'intégration**
+: la carte de flotte et la position transporteur côté commerçant sont à rejouer.
+⚠️ `npm run prisma:migrate` puis `prisma generate`.

@@ -16,6 +16,7 @@ import { QuoteRequestDto } from './dto/quote.dto';
 import { projectOrderForMerchant, projectPlace } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
 import { CashService } from '../cash/cash.service';
+import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 
 @Injectable()
 export class CommerçantService {
@@ -924,24 +925,28 @@ export class CommerçantService {
     const driverUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid;
     if (!driverUuid) return { position: null };
 
-    // Le miroir local, et non l'historique Fleetbase : `/positions` n'offre
-    // aucun filtre par transporteur, donc le servir imposerait de télécharger
-    // tout l'historique de l'organisation à chaque rafraîchissement (§10).
-    const driver = await this.prisma.driverAccount.findUnique({
-      where: { fleetbaseDriverUuid: driverUuid },
-      select: { lastLatitude: true, lastLongitude: true, lastPositionAt: true },
-    });
-
-    if (!driver?.lastLatitude || !driver?.lastLongitude) {
+    // La position vit sur le conducteur Fleetbase, pas dans un miroir local
+    // (Lot 6). `Position` est l'historique ; `Driver.location` est l'état
+    // courant, mis à jour par le `track` que le BFF émet à chaque remontée GPS.
+    let driver: any;
+    try {
+      driver = await this.fleetbaseClient.getDriverByUuid(driverUuid);
+    } catch (error) {
+      this.logger.warn(`Position du transporteur indisponible : ${error.message}`);
       return { position: null };
     }
 
+    const position = readDriverPosition(driver);
+    if (!position) return { position: null };
+
     return {
       position: {
-        latitude: driver.lastLatitude,
-        longitude: driver.lastLongitude,
+        latitude: position.latitude,
+        longitude: position.longitude,
         // Jamais omise : c'est elle qui dit si le point vaut quelque chose.
-        recorded_at: driver.lastPositionAt?.toISOString() ?? null,
+        // ⚠️ C'est un « vu le », pas un « positionné le » — voir
+        // `readPositionSeenAt`.
+        recorded_at: readPositionSeenAt(driver),
       },
     };
   }

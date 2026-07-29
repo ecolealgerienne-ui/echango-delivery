@@ -352,23 +352,10 @@ export class TransporteurService {
       throw new BadRequestException('Failed to update position');
     }
 
-    // Miroir local du dernier point, pour que la carte de flotte n'ait pas à
-    // télécharger tout l'historique de la compagnie (cf. schema.prisma).
-    // Fleetbase reste la source de vérité : l'écriture ci-dessus a déjà réussi
-    // quand on arrive ici, et un échec du miroir ne doit pas faire croire au
-    // driver que sa position n'est pas partie.
-    try {
-      await this.prisma.driverAccount.update({
-        where: { id: driver.id },
-        data: {
-          lastLatitude: dto.latitude,
-          lastLongitude: dto.longitude,
-          lastPositionAt: new Date(),
-        },
-      });
-    } catch (error) {
-      this.logger.warn(`Position mirror failed for driver ${driverId}: ${error.message}`);
-    }
+    // Le miroir local a été supprimé (Lot 6) : `track` écrit déjà
+    // `Driver.location` chez Fleetbase, et c'est de là que les cartes le lisent
+    // désormais. Recopier le point ici revenait à stocker une donnée qu'on
+    // venait d'envoyer à sa source.
 
     return { success: true };
   }

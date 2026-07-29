@@ -207,7 +207,14 @@ commerçant. `MerchantNotification.orderId` bascule sur `fleetbaseOrderUuid`.
 
 ## 8. Lot 6 — Position en cache mémoire
 
-**Optionnel, faible priorité.** Environ deux heures + migration.
+**✅ Fait le 29/07/2026** (journal §28). Environ deux heures + migration.
+
+> **La réserve initiale de ce lot était un contresens**, et elle figurait ici :
+> « `positions` n'a réellement aucun filtre par conducteur ». C'est vrai, mais
+> `Position` est l'**historique** — la position **courante** vit sur
+> `Driver.location`, que `fetchOwnedDrivers()` rapatriait déjà sans la lire.
+> Le lot ne remplace donc pas un appel par un autre : il supprime un chemin
+> d'écriture. Détail et pièges (`[lon,lat]`, `[0,0]`) dans le journal.
 
 Suppression de `lastLatitude`, `lastLongitude`, `lastPositionAt` sur
 `DriverAccount`, remplacées par un cache mémoire à durée de vie (exception §3.1).
@@ -223,8 +230,7 @@ trois colonnes contre un rapatriement complet à chaque rafraîchissement de car
 ## 9. Ordre d'exécution
 
 ```
-Lot 0  ✅  →  Lot 2  ✅  →  Lot 1  ✅  →  Lot 3  ✅  →  Lot 4  →  ⏸ Lot 5  →  Lot 6
-                                                                (au VPS)
+Lot 0 ✅ → Lot 2 ✅ → Lot 1 ✅ → Lot 3 ✅ → Lot 4 ✅ → Lot 6 ✅ → ⏸ Lot 5 (au VPS)
 ```
 
 **L'ordre initial plaçait le Lot 5 avant le Lot 3**, au motif que c'est lui qui
