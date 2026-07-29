@@ -957,9 +957,20 @@ export class CommerçantService {
       const fleetbaseOrder = response.order;
       const fleetbaseOrderId = fleetbaseOrder?.uuid || fleetbaseOrder?.id;
 
-      // Cache order in BFF database
-      const order = await this.prisma.order.create({
-        data: {
+      // ── Ce qui suit est la seconde moitié d'une écriture en deux systèmes ──
+      //
+      // La commande existe désormais chez Fleetbase. La ligne locale qui dit
+      // **à qui elle appartient** n'existe pas encore, et sans elle la commande
+      // serait orpheline : invisible au commerçant, absente de ses
+      // notifications, et son encaissement refusé faute de savoir à qui
+      // l'imputer — alors qu'un transporteur la verrait et la livrerait.
+      //
+      // Il n'y a pas de transaction commune aux deux systèmes. À défaut, on
+      // compense : si l'écriture locale échoue, la commande Fleetbase est
+      // annulée, comme le `Vendor` l'est déjà quand une inscription commerçant
+      // échoue à mi-chemin.
+      const order = await this.createOrderCache(
+        {
           merchantId,
           fleetbaseOrderId,
           // Le statut RÉEL renvoyé par Fleetbase, et non `'pending'` — un
@@ -975,7 +986,8 @@ export class CommerçantService {
           codIncludesDelivery: dto.codIncludesDelivery === true,
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
-      });
+        fleetbaseOrderId,
+      );
 
       if (favourite) {
         this.logger.log(
@@ -1000,6 +1012,48 @@ export class CommerçantService {
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to create order: ${detail}`
           : 'Failed to create order',
+      );
+    }
+  }
+
+  /**
+   * Écrit la ligne de cache, ou annule la commande amont.
+   *
+   * ── Pourquoi une compensation, et non une simple journalisation ─────────────
+   *
+   * Cette ligne porte le rattachement commerçant ↔ commande, c'est-à-dire la
+   * seule chose que Fleetbase ne sait pas exprimer (§2.8 : ses filtres de
+   * requête sont ignorés en silence). Sans elle, la commande est **orpheline** :
+   * elle part au dispatch, un transporteur la voit et la livre, mais elle
+   * n'appartient à personne — le commerçant ne la voit pas, ses notifications
+   * ne l'atteignent pas, et son encaissement est refusé.
+   *
+   * Une commande orpheline est donc pire qu'une commande non créée. La
+   * compensation est best-effort — si l'annulation échoue à son tour, on
+   * journalise en `error` avec l'identifiant, seule trace permettant à un
+   * opérateur de la retrouver dans la console.
+   */
+  private async createOrderCache(data: any, fleetbaseOrderId: string) {
+    try {
+      return await this.prisma.order.create({ data });
+    } catch (error: any) {
+      this.logger.error(
+        `Cache de commande non écrit (${fleetbaseOrderId}) : ${error.message} — ` +
+          'annulation de la commande Fleetbase pour ne pas la laisser orpheline',
+      );
+
+      try {
+        await this.fleetbaseClient.cancelOrder(fleetbaseOrderId);
+      } catch (cancelError: any) {
+        this.logger.error(
+          `ANNULATION DE COMPENSATION ÉCHOUÉE — la commande Fleetbase ` +
+            `${fleetbaseOrderId} existe sans propriétaire et doit être annulée ` +
+            `à la main : ${cancelError.message}`,
+        );
+      }
+
+      throw new BadRequestException(
+        'La livraison n\'a pas pu être enregistrée. Réessayez.',
       );
     }
   }

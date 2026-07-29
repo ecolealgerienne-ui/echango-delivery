@@ -296,11 +296,45 @@ export class CashService {
       );
     }
 
+    // ── Idempotence, et pourquoi elle est indispensable ────────────────────
+    //
+    // L'appelant écrit ce registre **avant** de clôturer la livraison chez
+    // Fleetbase. Si cette clôture échoue — réseau, transition refusée, amont
+    // indisponible — le transporteur réessaie, et repasse ici.
+    //
+    // Lever à ce moment-là bloquait définitivement la course : l'encaissement
+    // était enregistré, la livraison restait ouverte, et **plus aucune tentative
+    // ne pouvait aboutir**. C'est le mode d'échec propre à l'écriture dans deux
+    // systèmes sans transaction commune : on ne peut pas les rendre atomiques,
+    // on peut rendre la reprise sûre.
+    //
+    // Un encaissement déjà déclaré par le MÊME transporteur est donc une
+    // reprise, et on la laisse passer. Par un autre, c'est une anomalie qu'il
+    // faut refuser — deux personnes ne peuvent pas avoir encaissé la même
+    // livraison.
     const existing = await this.prisma.cashCollection.findUnique({
       where: { fleetbaseOrderUuid },
     });
+
     if (existing) {
-      throw new BadRequestException('L\'encaissement de cette livraison a déjà été déclaré');
+      if (existing.driverId !== driverId) {
+        throw new BadRequestException(
+          'Un autre transporteur a déjà déclaré l\'encaissement de cette livraison',
+        );
+      }
+
+      this.logger.log(
+        `Encaissement ${fleetbaseOrderUuid} déjà enregistré — reprise après échec de clôture`,
+      );
+
+      return {
+        id: existing.id,
+        expectedAmount: existing.expectedAmount,
+        collectedAmount: existing.collectedAmount,
+        currency: existing.currency,
+        debt: await this.debtBetween(driverId, merchantId),
+        replayed: true,
+      };
     }
 
     const collection = await this.prisma.cashCollection.create({
@@ -344,6 +378,7 @@ export class CashService {
       currency: collection.currency,
       /** Dette totale du transporteur envers ce commerçant après l'opération. */
       debt,
+      replayed: false,
     };
   }
 
