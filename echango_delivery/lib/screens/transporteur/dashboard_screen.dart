@@ -577,8 +577,14 @@ class ProfileScreen extends StatelessWidget {
 class _VehicleTypeCard extends StatelessWidget {
   const _VehicleTypeCard();
 
+  /// Libellés courts, tenus dans la largeur du menu.
+  ///
+  /// « Non déclaré — je vois toutes les courses » débordait de 9 px sur un
+  /// téléphone ordinaire. L'information qu'il portait n'est pas perdue : elle
+  /// passe dans le texte d'aide ci-dessous, qui a la place de la dire en entier
+  /// et peut l'adapter au choix courant.
   static const _options = {
-    null: 'Non déclaré — je vois toutes les courses',
+    null: 'Non déclaré',
     'moto': 'Moto',
     'voiture': 'Voiture',
     'utilitaire': 'Utilitaire',
@@ -597,23 +603,36 @@ class _VehicleTypeCard extends StatelessWidget {
               const SizedBox(height: 12),
               DropdownButtonFormField<String?>(
                 initialValue: presence.vehicleType,
+                // Le bouton prend toute la largeur disponible et contraint son
+                // enfant, au lieu de le laisser prendre sa taille naturelle et
+                // déborder. Avec l'ellipse ci-dessous, un libellé long sur un
+                // écran étroit se tronque au lieu de casser la mise en page.
+                isExpanded: true,
                 decoration: InputDecoration(
                   border: const OutlineInputBorder(),
                   prefixIcon: Icon(vehicleIcon(presence.vehicleType)),
                   isDense: true,
                 ),
                 items: _options.entries
-                    .map((e) =>
-                        DropdownMenuItem<String?>(value: e.key, child: Text(e.value)))
+                    .map((e) => DropdownMenuItem<String?>(
+                          value: e.key,
+                          child: Text(e.value, overflow: TextOverflow.ellipsis),
+                        ))
                     .toList(),
                 onChanged: presence.isBusy
                     ? null
                     : (v) => presence.setVehicleType(v),
               ),
               const SizedBox(height: 8),
+              // Le texte d'aide suit le choix : sans véhicule déclaré, la phrase
+              // sur les courses trop grandes ne s'applique pas, et celle qui
+              // compte est l'inverse — rien n'est filtré. Une aide qui décrit
+              // une règle inactive est pire qu'une absence d'aide.
               Text(
-                'Une course exigeant un véhicule plus grand ne vous sera pas '
-                'proposée.',
+                presence.vehicleType == null
+                    ? 'Sans véhicule déclaré, toutes les courses vous sont proposées.'
+                    : 'Une course exigeant un véhicule plus grand ne vous sera pas '
+                        'proposée.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
