@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -11,6 +12,7 @@ import 'services/location_service.dart';
 import 'state/auth_state.dart';
 import 'state/driver_presence_state.dart';
 import 'state/cash_state.dart';
+import 'state/locale_state.dart';
 import 'state/merchant_order_state.dart';
 import 'state/order_state.dart';
 import 'theme/app_theme.dart';
@@ -52,13 +54,24 @@ Future<void> main() async {
   await apiClient.restoreSession();
   await LocationService().initialize(apiClient);
 
-  final authState = AuthState(prefs: prefs, apiClient: apiClient);
+  // La locale système ne sert qu'une fois, à défaut de choix déjà enregistré
+  // (voir LocaleState) — WidgetsBinding expose la locale du système avant que
+  // le premier widget ne soit construit. Créée avant AuthState : les messages
+  // d'erreur de connexion sont traduits dès le premier écran.
+  final localeState = LocaleState(
+    prefs: prefs,
+    systemLocale: WidgetsBinding.instance.platformDispatcher.locale,
+  );
+
+  final authState =
+      AuthState(prefs: prefs, apiClient: apiClient, localeState: localeState);
   await authState.restoreSession();
 
   runApp(
     EchangoDeliveryApp(
       authState: authState,
       apiClient: apiClient,
+      localeState: localeState,
     ),
   );
 }
@@ -66,11 +79,13 @@ Future<void> main() async {
 class EchangoDeliveryApp extends StatefulWidget {
   final AuthState authState;
   final BffApiClient apiClient;
+  final LocaleState localeState;
 
   const EchangoDeliveryApp({
     super.key,
     required this.authState,
     required this.apiClient,
+    required this.localeState,
   });
 
   @override
@@ -90,12 +105,18 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _orderState = OrderState(apiClient: widget.apiClient);
-    _merchantOrderState = MerchantOrderState(apiClient: widget.apiClient);
-    _cashState = CashState(apiClient: widget.apiClient);
+    _orderState =
+        OrderState(apiClient: widget.apiClient, localeState: widget.localeState);
+    _merchantOrderState = MerchantOrderState(
+      apiClient: widget.apiClient,
+      localeState: widget.localeState,
+    );
+    _cashState =
+        CashState(apiClient: widget.apiClient, localeState: widget.localeState);
     _presence = DriverPresenceState(
       apiClient: widget.apiClient,
       orderState: _orderState,
+      localeState: widget.localeState,
     );
 
     // La présence suit la session, pas un écran : elle doit démarrer aussi
@@ -140,6 +161,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     widget.authState.removeListener(_syncPresenceWithSession);
     widget.authState.onBeforeLogout = null;
     widget.authState.dispose();
+    widget.localeState.dispose();
     _presence.dispose();
     _orderState.dispose();
     _merchantOrderState.dispose();
@@ -160,14 +182,24 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
         // seule chose qui doit rester commune.
         ChangeNotifierProvider<CashState>.value(value: _cashState),
         ChangeNotifierProvider<DriverPresenceState>.value(value: _presence),
+        ChangeNotifierProvider<LocaleState>.value(value: widget.localeState),
       ],
-      child: MaterialApp.router(
-        title: ApiConfig.appName,
-        debugShowCheckedModeBanner: false,
-        theme: buildAppTheme(),
-        darkTheme: buildAppDarkTheme(),
-        themeMode: ThemeMode.system,
-        routerConfig: buildAppRouter(widget.authState),
+      child: Consumer<LocaleState>(
+        builder: (context, localeState, _) => MaterialApp.router(
+          title: ApiConfig.appName,
+          debugShowCheckedModeBanner: false,
+          theme: buildAppTheme(),
+          darkTheme: buildAppDarkTheme(),
+          themeMode: ThemeMode.system,
+          locale: localeState.locale,
+          supportedLocales: supportedLocales,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          routerConfig: buildAppRouter(widget.authState),
+        ),
       ),
     );
   }

@@ -1,12 +1,15 @@
 import 'package:flutter/foundation.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../models/order.dart';
 import '../services/bff_api_client.dart';
+import 'locale_state.dart';
 
 /// État de gestion des commandes pour le driver.
 class OrderState extends ChangeNotifier {
   final BffApiClient _apiClient;
+  final LocaleState _localeState;
 
   List<Order> _orders = [];
   List<Order> _adhocOrders = [];
@@ -16,7 +19,13 @@ class OrderState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
-  OrderState({required BffApiClient apiClient}) : _apiClient = apiClient;
+  OrderState({required BffApiClient apiClient, required LocaleState localeState})
+      : _apiClient = apiClient,
+        _localeState = localeState;
+
+  /// Message d'erreur générique de la langue courante, pour les échecs qui ne
+  /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
+  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   List<Order> get orders => _orders;
   Order? get selectedOrder => _selectedOrder;
@@ -68,9 +77,9 @@ class OrderState extends ChangeNotifier {
       _adhocOrders = buckets['adhoc'] ?? [];
       _historyOrders = buckets['history'] ?? [];
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Failed to load orders';
+      _errorMessage = _genericError;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -101,9 +110,9 @@ class OrderState extends ChangeNotifier {
         _nextActivities = [];
       }
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Failed to load order';
+      _errorMessage = _genericError;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -123,7 +132,6 @@ class OrderState extends ChangeNotifier {
   Future<bool> _mutateOrder(
     String orderId,
     Future<void> Function() action,
-    String fallbackError,
   ) async {
     _isLoading = true;
     _errorMessage = null;
@@ -135,10 +143,10 @@ class OrderState extends ChangeNotifier {
       await loadOrders();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = fallbackError;
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -150,14 +158,12 @@ class OrderState extends ChangeNotifier {
   Future<bool> acceptOrder(String orderId) => _mutateOrder(
         orderId,
         () => _apiClient.acceptOrder(orderId),
-        'Impossible d\'accepter cette commande',
       );
 
   /// Démarre la livraison d'une commande.
   Future<bool> startOrder(String orderId) => _mutateOrder(
         orderId,
         () => _apiClient.startOrder(orderId),
-        'Impossible de démarrer cette livraison',
       );
 
   /// Refus de la dernière course écartée : la course est-elle repartie au
@@ -201,10 +207,10 @@ class OrderState extends ChangeNotifier {
       await loadOrders();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Impossible de refuser cette course';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -229,10 +235,10 @@ class OrderState extends ChangeNotifier {
       await _apiClient.captureProofPhoto(orderId, [photoBase64]);
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Envoi de la preuve impossible';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -264,7 +270,6 @@ class OrderState extends ChangeNotifier {
           discrepancyReason: discrepancyReason,
           cashNotes: cashNotes,
         ),
-        'Impossible d\'appliquer cette étape',
       );
 
   /// Marque une commande comme livrée.
@@ -296,7 +301,6 @@ class OrderState extends ChangeNotifier {
             cashNotes: cashNotes,
           );
         },
-        'Impossible de clôturer cette commande',
       );
 
   /// Rapporte un échec de livraison.
@@ -334,7 +338,6 @@ class OrderState extends ChangeNotifier {
           _lastPhotoUploaded = response['photoUploaded'] == true;
         }
       },
-      'Impossible d\'enregistrer ce signalement',
     );
   }
 

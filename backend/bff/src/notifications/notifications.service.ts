@@ -1,4 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { notFound } from '../common/errors/http-errors';
 import { PrismaService } from '../database/prisma.service';
 
 /**
@@ -184,7 +185,7 @@ export class NotificationsService {
       const exists = await this.prisma.merchantNotification.count({
         where: { id: notificationId, merchantId },
       });
-      if (exists === 0) throw new NotFoundException('Notification introuvable');
+      if (exists === 0) notFound('notification.not_found', 'Notification introuvable');
     }
 
     return { read: true };

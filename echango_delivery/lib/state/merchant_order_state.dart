@@ -1,11 +1,14 @@
 import 'package:flutter/foundation.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
+import 'locale_state.dart';
 
 class MerchantOrderState extends ChangeNotifier {
   final BffApiClient _apiClient;
+  final LocaleState _localeState;
 
   List<MerchantOrder> _orders = [];
   List<SavedAddress> _addresses = [];
@@ -15,7 +18,13 @@ class MerchantOrderState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
-  MerchantOrderState({required BffApiClient apiClient}) : _apiClient = apiClient;
+  MerchantOrderState({required BffApiClient apiClient, required LocaleState localeState})
+      : _apiClient = apiClient,
+        _localeState = localeState;
+
+  /// Message d'erreur générique de la langue courante, pour les échecs qui ne
+  /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
+  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   List<MerchantOrder> get orders => _orders;
   List<MerchantOrder> get activeOrders => _matching.where((o) => !o.isFinished).toList();
@@ -88,9 +97,9 @@ class MerchantOrderState extends ChangeNotifier {
       _totalOrders = page.total;
       _loadedPages = 1;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Chargement des commandes impossible';
+      _errorMessage = _genericError;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -117,9 +126,9 @@ class MerchantOrderState extends ChangeNotifier {
       _totalOrders = page.total;
       _loadedPages++;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Chargement de la suite impossible';
+      _errorMessage = _genericError;
     } finally {
       _loadingMore = false;
       notifyListeners();
@@ -155,7 +164,7 @@ class MerchantOrderState extends ChangeNotifier {
       await loadFavourites();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -167,7 +176,7 @@ class MerchantOrderState extends ChangeNotifier {
       await loadFavourites();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -188,9 +197,9 @@ class MerchantOrderState extends ChangeNotifier {
         _tracking = null;
       }
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Commande introuvable';
+      _errorMessage = _genericError;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -211,11 +220,11 @@ class MerchantOrderState extends ChangeNotifier {
     try {
       return await _apiClient.getMerchantOrderTemplate(id);
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       notifyListeners();
       return null;
     } catch (_) {
-      _errorMessage = 'Impossible de reprendre cette commande';
+      _errorMessage = _genericError;
       notifyListeners();
       return null;
     }
@@ -292,10 +301,10 @@ class MerchantOrderState extends ChangeNotifier {
       await loadOrders();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Création de la commande impossible';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -315,10 +324,10 @@ class MerchantOrderState extends ChangeNotifier {
       }
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Annulation impossible';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -331,7 +340,7 @@ class MerchantOrderState extends ChangeNotifier {
       _addresses = await _apiClient.getMerchantAddresses();
       notifyListeners();
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       notifyListeners();
     }
   }
@@ -361,10 +370,10 @@ class MerchantOrderState extends ChangeNotifier {
       await loadAddresses();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Enregistrement de l\'adresse impossible';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;
@@ -397,18 +406,16 @@ class MerchantOrderState extends ChangeNotifier {
           contactName: contactName,
           contactPhone: contactPhone,
         ),
-        'Modification de l\'adresse impossible',
       );
 
   Future<bool> deleteAddress(String id) => _addressWrite(
         () => _apiClient.deleteMerchantAddress(id),
-        'Suppression de l\'adresse impossible',
       );
 
   /// Toute écriture sur le carnet est suivie d'une relecture : la liste est la
   /// seule vue de ce carnet, et la laisser périmée après une modification
   /// donnerait à croire que rien ne s'est passé.
-  Future<bool> _addressWrite(Future<void> Function() action, String fallback) async {
+  Future<bool> _addressWrite(Future<void> Function() action) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -417,10 +424,10 @@ class MerchantOrderState extends ChangeNotifier {
       await loadAddresses();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = fallback;
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;

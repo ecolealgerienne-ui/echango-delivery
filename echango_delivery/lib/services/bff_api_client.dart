@@ -62,9 +62,10 @@ class BffApiClient {
   /// Un jeton est-il présent en mémoire ?
   ///
   /// Ne dit rien de sa validité : le BFF signe des JWT expirables, et seul un
-  /// appel réel révèle une expiration (traitée en 401 → [AppError
-  /// .authSessionExpired] par [_parseResponse]). Sert uniquement à décider,
-  /// au démarrage, s'il vaut la peine de restaurer la session plutôt que
+  /// appel réel révèle une expiration (401, [AppError.authTokenInvalid] ou
+  /// [AppError.authSessionRevoked] selon le motif exact, lus depuis le corps
+  /// de la réponse par [_parseResponse]). Sert uniquement à décider, au
+  /// démarrage, s'il vaut la peine de restaurer la session plutôt que
   /// d'afficher l'écran de connexion.
   bool isAuthenticated() => _accessToken != null && _accessToken!.isNotEmpty;
 
@@ -119,23 +120,19 @@ class BffApiClient {
       return jsonDecode(response.body);
     }
 
-    if (response.statusCode == 401) {
-      throw AppException(
-        code: AppError.authSessionExpired,
-        message: 'Session expired',
-      );
-    }
-
-    if (response.statusCode == 404) {
-      throw AppException(
-        code: AppError.notFound,
-        message: 'Resource not found',
-      );
-    }
-
+    // ── 401 et 404 passent désormais par le même chemin que le reste ─────────
+    //
+    // Ces deux statuts avaient un traitement à part qui **écrasait** le `code`
+    // réel envoyé par le BFF : un mot de passe erroné (401,
+    // `auth.invalid_credentials`) et un jeton expiré (401, `auth.token_invalid`)
+    // recevaient tous deux le même code générique côté client, sans moyen de
+    // les distinguer à l'écran. `HttpExceptionFilter` pose déjà `code` sur
+    // toutes les réponses d'erreur du BFF (401/404 compris) — il n'y avait
+    // aucune raison de le jeter sur ces deux statuts précisément.
     try {
       final data = jsonDecode(response.body);
-      final errorCode = data['code'] ?? AppError.unknown;
+      final errorCode = data['code'] ??
+          (response.statusCode == 404 ? AppError.notFound : AppError.unknown);
       final errorMessage = data['message'] ?? data['error'] ?? 'An error occurred';
       throw AppException(
         code: errorCode,

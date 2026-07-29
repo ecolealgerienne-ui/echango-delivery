@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/merchant_order.dart';
 import '../../state/auth_state.dart';
 import '../../state/merchant_order_state.dart';
+import '../../widgets/language_selector.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -34,6 +35,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       appBar: AppBar(
         title: Text(authState.displayName ?? 'Mes livraisons'),
         actions: [
+          const LanguageSelector(),
           // La pastille est le seul signal d'un évènement, l'envoi push
           // n'étant pas branché : elle doit donc être visible depuis l'écran
           // d'accueil, et non enfouie dans un menu.

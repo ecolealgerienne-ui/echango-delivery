@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:image_picker/image_picker.dart';
 
+import '../errors/app_error.dart';
 import '../utils/logger.dart';
 
 /// Longueur maximale de la chaîne base64 acceptée par le BFF.
@@ -26,13 +27,17 @@ class CapturedPhoto {
   int get approximateSizeKb => (bytes.length / 1024).round();
 }
 
-/// Erreur de capture destinée à être affichée telle quelle.
+/// Erreur de capture, portée par un [code] (voir `errors/app_error.dart`) et
+/// traduite à l'écran par `error_translator.dart` — jamais par un message
+/// français en dur, ici purement client (aucun aller-retour serveur).
+///
+/// [params] ne sert qu'au seul cas dynamique ([AppError.photoTooLarge]) : la
+/// taille du fichier n'est connue qu'ici, la traduction porte un `{size}` que
+/// l'appelant remplace.
 class PhotoCaptureException implements Exception {
-  final String message;
-  const PhotoCaptureException(this.message);
-
-  @override
-  String toString() => message;
+  final String code;
+  final Map<String, String>? params;
+  const PhotoCaptureException(this.code, {this.params});
 }
 
 /// Prise de photo pour la preuve de livraison et le signalement d'échec.
@@ -66,17 +71,14 @@ class PhotoService {
       );
     } catch (e) {
       AppLogger.error('PhotoService', 'Capture impossible', e);
-      throw const PhotoCaptureException(
-        'Impossible d\'ouvrir l\'appareil photo. Vérifiez l\'autorisation '
-        'caméra dans les réglages.',
-      );
+      throw const PhotoCaptureException(AppError.photoCameraUnavailable);
     }
 
     if (file == null) return null;
 
     final bytes = await file.readAsBytes();
     if (bytes.isEmpty) {
-      throw const PhotoCaptureException('La photo est vide, réessayez.');
+      throw const PhotoCaptureException(AppError.photoEmpty);
     }
 
     final encoded = base64Encode(bytes);
@@ -84,8 +86,8 @@ class PhotoService {
       // Ne devrait pas arriver avec les bornes ci-dessus, mais un appareil
       // peut ignorer `imageQuality` selon le format source.
       throw PhotoCaptureException(
-        'Photo trop volumineuse (${(bytes.length / 1024 / 1024).toStringAsFixed(1)} Mo). '
-        'Reprenez-la de plus loin ou avec une résolution plus basse.',
+        AppError.photoTooLarge,
+        params: {'size': (bytes.length / 1024 / 1024).toStringAsFixed(1)},
       );
     }
 

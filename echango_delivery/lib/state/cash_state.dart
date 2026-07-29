@@ -1,8 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../models/cash.dart';
 import '../services/bff_api_client.dart';
+import 'locale_state.dart';
 
 /// Registre de caisse, partagé par les deux profils.
 ///
@@ -20,6 +22,7 @@ import '../services/bff_api_client.dart';
 /// déclaration).
 class CashState extends ChangeNotifier {
   final BffApiClient _apiClient;
+  final LocaleState _localeState;
 
   /// `driver` ou `merchant`.
   String _persona = 'driver';
@@ -29,7 +32,13 @@ class CashState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
-  CashState({required BffApiClient apiClient}) : _apiClient = apiClient;
+  CashState({required BffApiClient apiClient, required LocaleState localeState})
+      : _apiClient = apiClient,
+        _localeState = localeState;
+
+  /// Message d'erreur générique de la langue courante, pour les échecs qui ne
+  /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
+  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   CashLedger? get ledger => _ledger;
   List<CashRemittance> get remittances => _remittances;
@@ -80,9 +89,9 @@ class CashState extends ChangeNotifier {
           ? await _apiClient.getDriverRemittances()
           : await _apiClient.getMerchantRemittances();
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = 'Chargement du registre impossible';
+      _errorMessage = _genericError;
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -104,7 +113,7 @@ class CashState extends ChangeNotifier {
             amount: amount,
           );
         }
-      }, 'Déclaration impossible');
+      });
 
   Future<bool> confirmRemittance(String id) => _mutate(() async {
         if (_persona == 'driver') {
@@ -112,7 +121,7 @@ class CashState extends ChangeNotifier {
         } else {
           await _apiClient.confirmMerchantRemittance(id);
         }
-      }, 'Confirmation impossible');
+      });
 
   Future<bool> disputeRemittance(String id, {String? reason}) => _mutate(() async {
         if (_persona == 'driver') {
@@ -120,7 +129,7 @@ class CashState extends ChangeNotifier {
         } else {
           await _apiClient.disputeMerchantRemittance(id, reason: reason);
         }
-      }, 'Contestation impossible');
+      });
 
   /// Toute écriture est suivie d'une relecture complète.
   ///
@@ -128,7 +137,7 @@ class CashState extends ChangeNotifier {
   /// des encaissements et des remises confirmées, et l'ajuster ici en parallèle
   /// créerait deux vérités dont rien ne dirait laquelle est la bonne. Sur de
   /// l'argent, la divergence n'est pas un détail d'affichage.
-  Future<bool> _mutate(Future<void> Function() action, String fallback) async {
+  Future<bool> _mutate(Future<void> Function() action) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -138,10 +147,10 @@ class CashState extends ChangeNotifier {
       await load();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = fallback;
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isLoading = false;

@@ -1,11 +1,7 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERSONA_KEY } from '../decorators/persona.decorator';
+import { forbidden } from '../errors/http-errors';
 
 @Injectable()
 export class PersonaGuard implements CanActivate {
@@ -25,7 +21,8 @@ export class PersonaGuard implements CanActivate {
     const { user } = context.switchToHttp().getRequest();
 
     if (!user?.type || !required.includes(user.type)) {
-      throw new ForbiddenException(
+      forbidden(
+        'server.persona_forbidden',
         `This endpoint requires one of: ${required.join(', ')}`,
       );
     }

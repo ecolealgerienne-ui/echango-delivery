@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../services/bff_api_client.dart';
+import 'locale_state.dart';
 
 /// Profil de l'utilisateur connecté.
 ///
@@ -57,6 +59,7 @@ const sessionInactivityLimit = Duration(hours: 24);
 class AuthState extends ChangeNotifier {
   final SharedPreferences _prefs;
   final BffApiClient _apiClient;
+  final LocaleState _localeState;
 
   SessionStatus _status = SessionStatus.unauthenticated;
   UserRole? _role;
@@ -66,9 +69,13 @@ class AuthState extends ChangeNotifier {
   String? _errorMessage;
   bool _isLoading = false;
 
-  AuthState({required SharedPreferences prefs, required BffApiClient apiClient})
-      : _prefs = prefs,
-        _apiClient = apiClient;
+  AuthState({
+    required SharedPreferences prefs,
+    required BffApiClient apiClient,
+    required LocaleState localeState,
+  })  : _prefs = prefs,
+        _apiClient = apiClient,
+        _localeState = localeState;
 
   SessionStatus get status => _status;
   bool get isAuthenticated => _status == SessionStatus.authenticated;
@@ -149,7 +156,7 @@ class AuthState extends ChangeNotifier {
     touchActivity();
   }
 
-  Future<bool> _run(Future<void> Function() action, String fallbackError) async {
+  Future<bool> _run(Future<void> Function() action) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -157,10 +164,10 @@ class AuthState extends ChangeNotifier {
       await action();
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message ?? fallbackError;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = fallbackError;
+      _errorMessage = translateErrorCode(AppError.unknown, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -194,11 +201,8 @@ class AuthState extends ChangeNotifier {
                   await _apiClient.login(email: email, password: password),
                 UserRole.commercant =>
                   await _apiClient.loginMerchant(email: email, password: password),
-                UserRole.flotte => throw AppException(
-                    code: AppError.unknown,
-                    message: 'Le profil gestionnaire de flotte n\'est pas '
-                        'encore disponible dans l\'application.',
-                  ),
+                UserRole.flotte =>
+                  throw AppException(code: AppError.fleetProfileUnavailable),
               };
 
         // Le serveur ne tranche pas à la place de l'utilisateur quand
@@ -208,11 +212,7 @@ class AuthState extends ChangeNotifier {
               .map((r) => UserRoleX.fromJwtType(r as String?))
               .whereType<UserRole>()
               .toList();
-          throw AppException(
-            code: AppError.unknown,
-            message: 'Plusieurs profils correspondent à cet identifiant. '
-                'Choisissez celui à ouvrir.',
-          );
+          throw AppException(code: AppError.multipleProfilesMatch);
         }
 
         // Le rôle vient de la réponse serveur, jamais d'une supposition.
@@ -223,14 +223,11 @@ class AuthState extends ChangeNotifier {
                 role;
 
         if (resolved == null) {
-          throw AppException(
-            code: AppError.unknown,
-            message: 'Profil non reconnu dans la réponse du serveur.',
-          );
+          throw AppException(code: AppError.serverInvalidProfileType);
         }
 
         await _persist(role: resolved, response: response, email: email);
-      }, 'Connexion impossible');
+      });
 
   /// Inscription — réservée au commerçant.
   ///
@@ -257,7 +254,7 @@ class AuthState extends ChangeNotifier {
         await _persist(
             role: UserRole.commercant, response: response, email: email);
         _displayName ??= businessName;
-      }, 'Inscription impossible');
+      });
 
   /// Travail à faire pendant que le jeton est encore valide, avant d'invalider
   /// la session.

@@ -1,0 +1,147 @@
+/**
+ * Registre unique des codes d'erreur métier du BFF.
+ *
+ * ── Pourquoi un registre, et pas des chaînes inline ──────────────────────
+ *
+ * `http-errors.ts` fournit `badRequest(code, message)` etc., mais rien
+ * n'empêchait un futur `badRequest('cash.amont_negative', …)` — une faute de
+ * frappe — de compiler et de partir en production sous un code que ni le
+ * client ni ce fichier ne connaissent. Une chaîne répétée à chaque site
+ * d'appel n'est pas centralisée, elle est seulement cohérente par accident.
+ *
+ * Ce fichier est la seule source. `badRequest`/`unauthorized`/`forbidden`/
+ * `notFound`/`conflict` exigent un `ErrorCode`, pas un `string` — un code
+ * absent d'ici est donc une erreur de compilation, pas un bug découvert en
+ * recette. C'est la même discipline que `OrderFilters`/`DriverFilters` dans
+ * `fleetbase-api.client.ts` : le compilateur remplace le contrôle qu'aucune
+ * requête de test n'aurait pensé à faire.
+ *
+ * ── Correspondance avec le client ─────────────────────────────────────────
+ *
+ * Mêmes noms, dans `echango_delivery/lib/errors/app_error.dart`. Aucun
+ * partage de type entre les deux dépôts (langages différents) : la
+ * correspondance se vérifie par lecture, comme le reste des contrats de ce
+ * projet — et `lib/errors/error_translator.dart` échoue de façon visible
+ * (fallback générique traduit, jamais un texte français brut) si un code
+ * existe ici sans traduction là-bas.
+ *
+ * ── Une exception délibérée au nommage pointé ────────────────────────────
+ *
+ * `MERCHANT_PENDING = 'merchant_pending'` ne suit pas la convention
+ * `domaine.motif` : ce code existait avant ce registre, et
+ * `scripts/register-merchant.sh` le compare tel quel. Le renommer casserait
+ * un script de test sans aucun bénéfice — le nom n'a pas besoin d'être joli,
+ * il a besoin d'être stable.
+ */
+export const ErrorCode = {
+  // ── Authentification ────────────────────────────────────────────────────
+  AUTH_INVALID_CREDENTIALS: 'auth.invalid_credentials',
+  AUTH_EMAIL_TAKEN: 'auth.email_taken',
+  AUTH_MERCHANT_PENDING: 'merchant_pending',
+  AUTH_MERCHANT_NOT_FOUND: 'auth.merchant_not_found',
+  AUTH_MERCHANT_REGISTRATION_FAILED: 'auth.merchant_registration_failed',
+  AUTH_FLEET_REGISTRATION_FAILED: 'auth.fleet_registration_failed',
+  AUTH_DRIVER_REGISTRATION_FAILED: 'auth.driver_registration_failed',
+  AUTH_DRIVER_NOT_FOUND: 'auth.driver_not_found',
+  AUTH_DRIVER_UNKNOWN: 'auth.driver_unknown',
+  AUTH_DRIVER_ALREADY_LINKED: 'auth.driver_already_linked',
+  AUTH_DRIVER_ALREADY_HAS_ACCOUNT: 'auth.driver_already_has_account',
+  AUTH_DRIVER_INVITATION_FAILED: 'auth.driver_invitation_failed',
+  AUTH_INVITATION_INVALID: 'auth.invitation_invalid',
+  AUTH_TOKEN_INVALID: 'auth.token_invalid',
+  AUTH_MISSING_TOKEN: 'auth.missing_token',
+  AUTH_SESSION_REVOKED: 'auth.session_revoked',
+
+  // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  CASH_AMOUNT_NEGATIVE: 'cash.amount_negative',
+  CASH_AMOUNT_EXCEEDS_EXPECTED: 'cash.amount_exceeds_expected',
+  CASH_DISCREPANCY_REASON_REQUIRED: 'cash.discrepancy_reason_required',
+  CASH_COLLECTION_CONFLICT: 'cash.collection_conflict',
+  CASH_REMITTANCE_AMOUNT_MUST_BE_POSITIVE: 'cash.remittance_amount_must_be_positive',
+  CASH_NO_DEBT: 'cash.no_debt',
+  CASH_REMITTANCE_EXCEEDS_DEBT: 'cash.remittance_exceeds_debt',
+  CASH_REMITTANCE_ALREADY_CONFIRMED: 'cash.remittance_already_confirmed',
+  CASH_REMITTANCE_DISPUTED: 'cash.remittance_disputed',
+  CASH_REMITTANCE_MUST_BE_CONFIRMED_BY_OTHER_PARTY:
+    'cash.remittance_must_be_confirmed_by_other_party',
+  CASH_REMITTANCE_SELF_DISPUTE_FORBIDDEN: 'cash.remittance_self_dispute_forbidden',
+  CASH_REMITTANCE_NOT_FOUND: 'cash.remittance_not_found',
+  CASH_CEILING_EXCEEDED: 'cash.ceiling_exceeded',
+  CASH_COD_DECLARATION_REQUIRED: 'cash.cod_declaration_required',
+  CASH_ORDER_UNKNOWN_TO_REGISTRY: 'cash.order_unknown_to_registry',
+
+  // ── Commandes ────────────────────────────────────────────────────────────
+  ORDER_NOT_FOUND: 'order.not_found',
+  ORDER_FORBIDDEN: 'order.forbidden',
+  ORDER_FETCH_FAILED: 'order.fetch_failed',
+  ORDER_ASSIGN_FAILED: 'order.assign_failed',
+  ORDER_CREATE_FAILED: 'order.create_failed',
+  ORDER_CANCEL_FAILED: 'order.cancel_failed',
+  ORDER_CANCEL_NOT_ALLOWED: 'order.cancel_not_allowed',
+  ORDER_ALREADY_TERMINAL: 'order.already_terminal',
+  ORDER_ALREADY_STARTED: 'order.already_started',
+  ORDER_ALREADY_ACCEPTED: 'order.already_accepted',
+  ORDER_ALREADY_DECLINED: 'order.already_declined',
+  ORDER_NOT_ASSIGNED_TO_DRIVER: 'order.not_assigned_to_driver',
+  ORDER_DECLINE_REASON_REQUIRED: 'order.decline_reason_required',
+  ORDER_PROOF_REQUIRED: 'order.proof_required',
+  ORDER_PROOF_NOT_FOUND: 'order.proof_not_found',
+  ORDER_TRACKING_FAILED: 'order.tracking_failed',
+  ORDER_TEMPLATE_FAILED: 'order.template_failed',
+  ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
+  ORDER_RELEASE_FAILED: 'order.release_failed',
+  ORDER_ALREADY_TAKEN: 'order.already_taken',
+  ORDER_ACCEPT_FAILED: 'order.accept_failed',
+  ORDER_START_FAILED: 'order.start_failed',
+  ORDER_COMPLETE_FAILED: 'order.complete_failed',
+  ORDER_ACTIVITIES_FETCH_FAILED: 'order.activities_fetch_failed',
+  ORDER_ACTIVITY_UPDATE_FAILED: 'order.activity_update_failed',
+  ORDER_PROOF_UPLOAD_FAILED: 'order.proof_upload_failed',
+  ORDER_NOT_FOUND_UPSTREAM: 'order.not_found_upstream',
+
+  // ── Transporteurs (persona flotte + commerçant) ─────────────────────────
+  DRIVER_NOT_FOUND: 'driver.not_found',
+  DRIVER_FORBIDDEN: 'driver.forbidden',
+  DRIVER_FETCH_FAILED: 'driver.fetch_failed',
+  DRIVER_CREATE_FAILED: 'driver.create_failed',
+  DRIVER_POSITIONS_FETCH_FAILED: 'driver.positions_fetch_failed',
+  DRIVER_INACTIVE: 'driver.inactive',
+  DRIVER_UNAVAILABLE: 'driver.unavailable',
+  DRIVER_PUBLIC_ID_UNRESOLVED: 'driver.public_id_unresolved',
+  DRIVER_POSITION_UPDATE_FAILED: 'driver.position_update_failed',
+  DRIVER_ONLINE_TOGGLE_FAILED: 'driver.online_toggle_failed',
+  DRIVER_SEARCH_UNAVAILABLE: 'driver.search_unavailable',
+
+  // ── Flotte (persona petite flotte) ──────────────────────────────────────
+  FLEET_NOT_FOUND: 'fleet.not_found',
+  FLEET_INACTIVE: 'fleet.inactive',
+
+  // ── Commerçant ───────────────────────────────────────────────────────────
+  MERCHANT_NOT_FOUND: 'merchant.not_found',
+  MERCHANT_INACTIVE: 'merchant.inactive',
+  MERCHANT_ADDRESS_NOT_FOUND: 'merchant.address_not_found',
+  MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
+  MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
+  MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
+  MERCHANT_FAVOURITE_ADD_UNAVAILABLE: 'merchant.favourite_add_unavailable',
+  MERCHANT_ADDRESS_SAVE_FAILED: 'merchant.address_save_failed',
+  MERCHANT_ADDRESS_UPDATE_FAILED: 'merchant.address_update_failed',
+  MERCHANT_ADDRESS_DELETE_FAILED: 'merchant.address_delete_failed',
+
+  // ── Signalements et notifications ───────────────────────────────────────
+  NOTIFICATION_NOT_FOUND: 'notification.not_found',
+
+  // ── Géocodage ────────────────────────────────────────────────────────────
+  GEOCODING_UNAVAILABLE: 'geocoding.unavailable',
+
+  // ── Validation générique ─────────────────────────────────────────────────
+  VALIDATION_INVALID_ID: 'validation.invalid_id',
+  VALIDATION_FAILED: 'validation.failed',
+
+  // ── Erreurs serveur / techniques ─────────────────────────────────────────
+  SERVER_SCHEMA_OUT_OF_SYNC: 'server.schema_out_of_sync',
+  SERVER_INVALID_PROFILE_TYPE: 'server.invalid_profile_type',
+  SERVER_PERSONA_FORBIDDEN: 'server.persona_forbidden',
+} as const;
+
+export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

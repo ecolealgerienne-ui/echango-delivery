@@ -1,10 +1,5 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { badRequest, forbidden, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -50,7 +45,7 @@ export class TransporteurService {
     });
 
     if (!driver || !driver.active) {
-      throw new ForbiddenException('Driver account not found or inactive');
+      forbidden('driver.inactive', 'Driver account not found or inactive');
     }
 
     return driver;
@@ -81,7 +76,7 @@ export class TransporteurService {
     const match = await this.findFleetbaseDriver(driver.fleetbaseDriverUuid);
 
     if (!match?.public_id) {
-      throw new BadRequestException('Could not resolve this driver public_id in Fleetbase');
+      badRequest('driver.public_id_unresolved', 'Could not resolve this driver public_id in Fleetbase');
     }
 
     await this.prisma.driverAccount.update({
@@ -113,7 +108,7 @@ export class TransporteurService {
       orders = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       this.logger.error(`Order lookup failed (${orderId}): ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
 
     return orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
@@ -125,7 +120,7 @@ export class TransporteurService {
    */
   private orderPublicId(order: any): string {
     if (!order?.public_id) {
-      throw new BadRequestException('This order has no public_id — cannot address it on the v1 API');
+      badRequest('order.missing_public_id', 'This order has no public_id — cannot address it on the v1 API');
     }
     return order.public_id;
   }
@@ -227,11 +222,11 @@ export class TransporteurService {
         resourceId: failureId,
         reason: 'Signalement inexistant ou appartenant à un autre transporteur',
       });
-      throw new NotFoundException('Aucune preuve pour ce signalement');
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     if (!failure.proofUrl) {
-      throw new NotFoundException('Aucune preuve pour ce signalement');
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     try {
@@ -243,7 +238,7 @@ export class TransporteurService {
           'aucune route ne le sert : vérifier FLEETBASE_PROOF_DISK=public et que ' +
           '`php artisan storage:link` a bien été exécuté côté Fleetbase.',
       );
-      throw new NotFoundException('Preuve indisponible');
+      notFound('order.proof_not_found', 'Preuve indisponible');
     }
   }
 
@@ -349,7 +344,7 @@ export class TransporteurService {
       await this.fleetbaseClient.trackDriver(publicId, dto);
     } catch (error) {
       this.logger.error(`Position update failed for driver ${driverId}: ${error.message}`);
-      throw new BadRequestException('Failed to update position');
+      badRequest('driver.position_update_failed', 'Failed to update position');
     }
 
     // Le miroir local a été supprimé (Lot 6) : `track` écrit déjà
@@ -389,7 +384,7 @@ export class TransporteurService {
       return { online: null as boolean | null, requested: dto.online };
     } catch (error) {
       this.logger.error(`Online toggle failed for driver ${driverId}: ${error.message}`);
-      throw new BadRequestException('Failed to update online status');
+      badRequest('driver.online_toggle_failed', 'Failed to update online status');
     }
   }
 
@@ -444,7 +439,7 @@ export class TransporteurService {
       ]);
     } catch (error) {
       this.logger.error(`Order list failed for driver ${driverId}: ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
 
     // Revérifié en mémoire : le filtre serveur allège la requête, il n'autorise
@@ -526,7 +521,7 @@ export class TransporteurService {
     const order = await this.resolveOrder(orderId);
 
     if (!order) {
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
     const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
@@ -541,7 +536,7 @@ export class TransporteurService {
         resourceId: orderId,
         reason: 'Commande ni assignée à ce driver ni adhoc disponible',
       });
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
     // Une adhoc que ce driver n'a pas encore réclamée passe par la même
@@ -585,7 +580,7 @@ export class TransporteurService {
     const order = await this.resolveOrder(orderId);
 
     if (!order) {
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
     const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
@@ -600,11 +595,12 @@ export class TransporteurService {
         resourceId: orderId,
         reason: 'Commande ni assignée à ce driver ni adhoc disponible',
       });
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
     if (mine && !['created', 'dispatched'].includes(order?.status)) {
-      throw new BadRequestException(
+      badRequest(
+        'order.already_started',
         'Cette course est déjà démarrée : signalez un échec de livraison plutôt que de la refuser.',
       );
     }
@@ -621,7 +617,8 @@ export class TransporteurService {
         );
       } catch (error: any) {
         this.logger.error(`Remise au pool impossible (${orderId}) : ${error.message}`);
-        throw new BadRequestException(
+        badRequest(
+          'order.release_failed',
           error.response?.data?.errors?.[0] ||
             "Impossible de rendre cette course pour l'instant",
         );
@@ -716,7 +713,7 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (order?.driver_assigned_uuid && !this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order has already been taken by another driver');
+      badRequest('order.already_taken', 'This order has already been taken by another driver');
     }
 
     // Le plafond de dette est vérifié ICI, et pas seulement à la création.
@@ -738,9 +735,7 @@ export class TransporteurService {
     } catch (error) {
       this.logger.error(`Accept failed (${orderId}): ${error.message}`);
       // Losing a race for an adhoc order is expected, not exceptional.
-      throw new BadRequestException(
-        error.response?.data?.errors?.[0] || 'Failed to accept this order',
-      );
+      badRequest('order.accept_failed', error.response?.data?.errors?.[0] || 'Failed to accept this order');
     }
   }
 
@@ -749,16 +744,14 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     try {
       return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
     } catch (error) {
       this.logger.error(`Start failed (${orderId}): ${error.message}`);
-      throw new BadRequestException(
-        error.response?.data?.errors?.[0] || 'Failed to start this order',
-      );
+      badRequest('order.start_failed', error.response?.data?.errors?.[0] || 'Failed to start this order');
     }
   }
 
@@ -784,7 +777,7 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     await this.settleCashIfDue(driver.id, order, cash);
@@ -793,9 +786,7 @@ export class TransporteurService {
       return await this.fleetbaseClient.completeOrder(this.orderPublicId(order));
     } catch (error) {
       this.logger.error(`Complete failed (${orderId}): ${error.message}`);
-      throw new BadRequestException(
-        error.response?.data?.errors?.[0] || 'Failed to complete this order',
-      );
+      badRequest('order.complete_failed', error.response?.data?.errors?.[0] || 'Failed to complete this order');
     }
   }
 
@@ -812,14 +803,14 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     try {
       return await this.fleetbaseClient.getNextActivities(this.orderPublicId(order), waypoint);
     } catch (error) {
       this.logger.error(`Next activities failed (${orderId}): ${error.message}`);
-      throw new BadRequestException('Failed to fetch available activities');
+      badRequest('order.activities_fetch_failed', 'Failed to fetch available activities');
     }
   }
 
@@ -862,7 +853,8 @@ export class TransporteurService {
     if (codAmount <= 0 && price <= 0) return;
 
     if (codAmount > 0 && !cash) {
-      throw new BadRequestException(
+      badRequest(
+        'cash.cod_declaration_required',
         `Cette livraison est payée à la réception (${codAmount} ${this.cash.currency}) : ` +
           'déclarez le montant encaissé pour la clôturer.',
       );
@@ -880,7 +872,8 @@ export class TransporteurService {
       // pas de commerçant à qui rendre des comptes, donc pas de registre : mais
       // on refuse quand même l'encaissement, faute de savoir à qui l'imputer.
       if (codAmount > 0) {
-        throw new BadRequestException(
+        badRequest(
+          'cash.order_unknown_to_registry',
           "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
         );
       }
@@ -939,7 +932,8 @@ export class TransporteurService {
     );
 
     if (!allowed) {
-      throw new BadRequestException(
+      badRequest(
+        'cash.ceiling_exceeded',
         `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
           `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
           'Remettez les espèces avant de reprendre une course encaissée pour lui.',
@@ -963,7 +957,7 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     // La transition terminale exige la déclaration d'encaissement au même titre
@@ -980,9 +974,7 @@ export class TransporteurService {
       );
     } catch (error) {
       this.logger.error(`Activity update failed (${orderId}): ${error.message}`);
-      throw new BadRequestException(
-        error.response?.data?.errors?.[0] || 'Failed to update activity',
-      );
+      badRequest('order.activity_update_failed', error.response?.data?.errors?.[0] || 'Failed to update activity');
     }
   }
 
@@ -991,7 +983,7 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     try {
@@ -1010,9 +1002,7 @@ export class TransporteurService {
         error.response?.data?.errors?.[0] ||
         error.response?.data?.error ||
         error.response?.data?.message;
-      throw new BadRequestException(
-        detail ? `Failed to upload proof: ${detail}` : 'Failed to upload proof',
-      );
+      badRequest('order.proof_upload_failed', detail ? `Failed to upload proof: ${detail}` : 'Failed to upload proof');
     }
   }
 
@@ -1034,7 +1024,7 @@ export class TransporteurService {
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
-      throw new BadRequestException('This order is not assigned to you');
+      badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
     let fleetbaseProofUuid: string | null = null;

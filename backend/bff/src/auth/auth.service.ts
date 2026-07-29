@@ -6,6 +6,7 @@ import {
   Logger,
   ConflictException,
 } from '@nestjs/common';
+import { badRequest, unauthorized, forbidden, conflict } from '../common/errors/http-errors';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -73,7 +74,7 @@ export class AuthService {
       // « email déjà utilisé » — deux messages qui se contredisent sur le même
       // fait, et dont aucun ne dit quoi faire.
       await this.assertMerchantApproved(existing.fleetbaseVendorUuid);
-      throw new ConflictException('Email already registered');
+      conflict('auth.email_taken', 'Email already registered');
     }
 
     // Retenu pour la compensation ci-dessous : une inscription qui échoue
@@ -148,7 +149,8 @@ export class AuthService {
       await this.rollbackVendor(createdVendorUuid);
 
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'auth.merchant_registration_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to register merchant: ${detail}`
           : 'Failed to register merchant',
@@ -165,12 +167,11 @@ export class AuthService {
     // pas encore ouvert. C'est exactement ce que « validation par un admin »
     // veut dire — sans quoi le nouveau commerçant entrait aussitôt, et la
     // validation ne portait sur rien.
-    throw new ForbiddenException({
-      code: 'merchant_pending',
-      message:
-        'Votre demande a bien été enregistrée. Un administrateur Echango doit la valider ' +
+    forbidden(
+      'merchant_pending',
+      'Votre demande a bien été enregistrée. Un administrateur Echango doit la valider ' +
         'avant votre première connexion.',
-    });
+    );
   }
 
   /**
@@ -263,12 +264,11 @@ export class AuthService {
     // qu'il connaît le mot de passe, donc il n'y a plus rien à lui cacher. Lui
     // renvoyer « identifiants invalides » l'enverrait réinitialiser un mot de
     // passe parfaitement bon.
-    throw new ForbiddenException({
-      code: 'merchant_pending',
-      message:
-        'Votre compte est en cours de validation par Echango. Vous recevrez un accès dès ' +
+    forbidden(
+      'merchant_pending',
+      'Votre compte est en cours de validation par Echango. Vous recevrez un accès dès ' +
         "qu'il sera approuvé.",
-    });
+    );
   }
 
   /**
@@ -319,7 +319,7 @@ export class AuthService {
     }
 
     if (matches.length === 0) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     // Un même email peut légitimement valoir pour deux profils (un commerçant
@@ -346,21 +346,21 @@ export class AuthService {
     });
 
     if (!merchant) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, merchant.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     if (!merchant.emailVerified) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     if (!merchant.active) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     await this.assertMerchantApproved(merchant.fleetbaseVendorUuid);
@@ -405,7 +405,7 @@ export class AuthService {
     });
 
     if (existing) {
-      throw new ConflictException('Email already registered');
+      conflict('auth.email_taken', 'Email already registered');
     }
 
     try {
@@ -451,7 +451,8 @@ export class AuthService {
     } catch (error) {
       this.logger.error(`Fleet registration failed: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'auth.fleet_registration_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to register fleet account: ${detail}`
           : 'Failed to register fleet account',
@@ -468,17 +469,17 @@ export class AuthService {
     });
 
     if (!fleet) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, fleet.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     if (!fleet.active) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     await this.prisma.fleetAccount.update({
@@ -537,7 +538,8 @@ export class AuthService {
     );
 
     if (['P2021', 'P2022'].includes(error?.code) || looksUndefined) {
-      throw new BadRequestException(
+      badRequest(
+        'server.schema_out_of_sync',
         `Schéma Prisma désynchronisé (modèles concernés : ${modelNames.join(', ')}). ` +
           'Lancer : npm run prisma:migrate PUIS npm run prisma:generate. ' +
           `Détail : ${message.split('\n').pop()}`,
@@ -560,7 +562,7 @@ export class AuthService {
         where: { fleetbaseDriverUuid },
       });
       if (existing) {
-        throw new ConflictException('This driver already has an Echango account');
+        conflict('auth.driver_already_has_account', 'This driver already has an Echango account');
       }
 
       await this.prisma.driverInvitation.create({
@@ -577,7 +579,8 @@ export class AuthService {
       }
       this.logger.error(`Driver invitation failed: ${error.message}`, error);
       this.rethrowIfPrismaSetupIssue(error, 'driverInvitation', 'driverAccount');
-      throw new BadRequestException(
+      badRequest(
+        'auth.driver_invitation_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Émission d'invitation impossible : ${error.message}`
           : 'Could not issue driver invitation',
@@ -617,7 +620,7 @@ export class AuthService {
       });
 
       if (existingEmail) {
-        throw new ConflictException('Email already registered');
+        conflict('auth.email_taken', 'Email already registered');
       }
 
       // Le driver visé vient de l'INVITATION, jamais de la requête : c'est
@@ -633,12 +636,12 @@ export class AuthService {
         invitation && !invitation.usedAt && invitation.expiresAt > new Date();
 
       if (!invitationValid) {
-        throw new BadRequestException('Invitation invalide ou expirée');
+        badRequest('auth.invitation_invalid', 'Invitation invalide ou expirée');
       }
 
       // Une invitation nominative ne vaut que pour l'email visé.
       if (invitation.email && invitation.email.toLowerCase() !== dto.email.toLowerCase()) {
-        throw new BadRequestException('Invitation invalide ou expirée');
+        badRequest('auth.invitation_invalid', 'Invitation invalide ou expirée');
       }
 
       const existingUuid = await this.prisma.driverAccount.findUnique({
@@ -646,7 +649,7 @@ export class AuthService {
       });
 
       if (existingUuid) {
-        throw new ConflictException('This driver is already linked to an account');
+        conflict('auth.driver_already_linked', 'This driver is already linked to an account');
       }
 
       // Lecture unitaire (journal §24). Elle compare l'uuid renvoyé à celui
@@ -657,7 +660,7 @@ export class AuthService {
       );
 
       if (!fleetbaseDriver) {
-        throw new BadRequestException('Unknown Fleetbase driver UUID - ask an operator to verify provisioning');
+        badRequest('auth.driver_unknown', 'Unknown Fleetbase driver UUID - ask an operator to verify provisioning');
       }
 
       const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -704,7 +707,8 @@ export class AuthService {
       this.rethrowIfPrismaSetupIssue(error, 'driverAccount');
 
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'auth.driver_registration_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to register driver: ${detail}`
           : 'Failed to register driver',
@@ -721,17 +725,17 @@ export class AuthService {
     });
 
     if (!driver) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     const passwordMatches = await bcrypt.compare(dto.password, driver.password);
 
     if (!passwordMatches) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     if (!driver.active) {
-      throw new UnauthorizedException(INVALID_CREDENTIALS);
+      unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
     await this.prisma.driverAccount.update({
@@ -774,7 +778,7 @@ export class AuthService {
     });
 
     if (!driver) {
-      throw new BadRequestException('Driver not found');
+      badRequest('auth.driver_not_found', 'Driver not found');
     }
 
     const existing = await this.prisma.driverDeviceToken.findUnique({
@@ -895,7 +899,7 @@ export class AuthService {
     });
 
     if (!merchant) {
-      throw new BadRequestException('Merchant not found');
+      badRequest('auth.merchant_not_found', 'Merchant not found');
     }
 
     // Check if token already exists
@@ -931,7 +935,7 @@ export class AuthService {
     try {
       return this.jwtService.verify(token);
     } catch (error) {
-      throw new UnauthorizedException('Invalid or expired token');
+      unauthorized('auth.token_invalid', 'Invalid or expired token');
     }
   }
 
@@ -964,7 +968,7 @@ export class AuthService {
         await this.prisma.fleetAccount.update({ where: { id: userId }, data });
         break;
       default:
-        throw new BadRequestException('Profil inconnu');
+        badRequest('server.invalid_profile_type', 'Profil inconnu');
     }
 
     this.logger.log(`Sessions révoquées pour ${type} ${userId}`);

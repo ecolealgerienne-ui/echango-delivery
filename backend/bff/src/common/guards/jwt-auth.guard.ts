@@ -1,10 +1,6 @@
-import {
-  Injectable,
-  CanActivate,
-  ExecutionContext,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { unauthorized } from '../errors/http-errors';
 import { JwtService } from '@nestjs/jwt';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../database/prisma.service';
@@ -41,13 +37,13 @@ export class JwtAuthGuard implements CanActivate {
     const authHeader = request.headers.authorization;
 
     if (!authHeader) {
-      throw new UnauthorizedException('Missing authorization header');
+      unauthorized('auth.missing_token', 'Missing authorization header');
     }
 
     const [scheme, token] = authHeader.split(' ');
 
     if (scheme !== 'Bearer' || !token) {
-      throw new UnauthorizedException('Invalid authorization scheme');
+      unauthorized('auth.missing_token', 'Invalid authorization scheme');
     }
 
     let payload: any;
@@ -58,7 +54,7 @@ export class JwtAuthGuard implements CanActivate {
       // supprime la dépendance à ce défaut.
       payload = this.jwtService.verify(token, { algorithms: ['HS256'] });
     } catch {
-      throw new UnauthorizedException('Invalid or expired token');
+      unauthorized('auth.token_invalid', 'Invalid or expired token');
     }
 
     await this.assertSessionStillValid(payload);
@@ -95,11 +91,11 @@ export class JwtAuthGuard implements CanActivate {
     // Compte inconnu ou désactivé : le jeton ne vaut plus rien, quelle que
     // soit sa signature.
     if (!account || account.active === false) {
-      throw new UnauthorizedException('Invalid or expired token');
+      unauthorized('auth.token_invalid', 'Invalid or expired token');
     }
 
     if ((account.tokenVersion ?? 0) !== claimed) {
-      throw new UnauthorizedException('Session révoquée, reconnectez-vous');
+      unauthorized('auth.session_revoked', 'Session révoquée, reconnectez-vous');
     }
   }
 

@@ -4,11 +4,13 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../services/bff_api_client.dart';
 import '../services/foreground_service.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../utils/logger.dart';
+import 'locale_state.dart';
 import 'order_state.dart';
 
 /// Fréquence du repli par interrogation du BFF quand l'app est au premier plan.
@@ -31,17 +33,24 @@ class DriverPresenceState extends ChangeNotifier {
   final OrderState _orderState;
   final LocationService _location;
   final NotificationService _notifications;
+  final LocaleState _localeState;
   final DriverForegroundService _foregroundService = DriverForegroundService();
 
   DriverPresenceState({
     required BffApiClient apiClient,
     required OrderState orderState,
+    required LocaleState localeState,
     LocationService? location,
     NotificationService? notifications,
   })  : _apiClient = apiClient,
         _orderState = orderState,
+        _localeState = localeState,
         _location = location ?? LocationService(),
         _notifications = notifications ?? NotificationService();
+
+  /// Message d'erreur générique de la langue courante, pour les échecs qui ne
+  /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
+  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   /// `null` tant que la disponibilité réelle n'a pas été lue côté serveur.
   /// Afficher « hors ligne » par défaut mentirait dans le sens dangereux :
@@ -148,7 +157,7 @@ class DriverPresenceState extends ChangeNotifier {
       // que la lecture a recommencé à fonctionner.
       _errorMessage = null;
     } on AppException catch (e) {
-      _errorMessage = e.message;
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
       AppLogger.warn('DriverPresence', 'Profil illisible : $e');
     }
@@ -166,8 +175,8 @@ class DriverPresenceState extends ChangeNotifier {
     // Se déclarer en ligne sans pouvoir émettre de position revient à être
     // invisible du dispatch géospatial : autant le dire tout de suite.
     if (value && !await _location.requestPermission()) {
-      _errorMessage = 'Autorisez la localisation pour recevoir des courses : '
-          'les courses sont attribuées selon votre position.';
+      _errorMessage =
+          translateErrorCode(AppError.locationPermissionDenied, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -183,8 +192,8 @@ class DriverPresenceState extends ChangeNotifier {
     // l'effacerait sinon.
     String? warning;
     if (value && !await _foregroundService.requestPermissions()) {
-      warning = 'Sans autorisation de notification, le partage de position '
-          's\'arrêtera dès que vous quitterez l\'application.';
+      warning =
+          translateErrorCode(AppError.foregroundServiceDenied, _localeState.locale);
     }
 
     _isBusy = true;
@@ -214,10 +223,10 @@ class DriverPresenceState extends ChangeNotifier {
       _errorMessage = warning;
       return true;
     } on AppException catch (e) {
-      _errorMessage = e.message ?? 'Changement de disponibilité impossible';
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
       return false;
     } catch (e) {
-      _errorMessage = 'Changement de disponibilité impossible';
+      _errorMessage = _genericError;
       return false;
     } finally {
       _isBusy = false;
@@ -237,7 +246,7 @@ class DriverPresenceState extends ChangeNotifier {
       await _orderState.loadOrders();
       return true;
     } catch (e) {
-      _errorMessage = 'Déclaration du véhicule impossible';
+      _errorMessage = _genericError;
       notifyListeners();
       return false;
     }

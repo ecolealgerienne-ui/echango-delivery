@@ -6,6 +6,7 @@ import 'package:echango_delivery/config/api_config.dart';
 import 'package:echango_delivery/main.dart';
 import 'package:echango_delivery/services/bff_api_client.dart';
 import 'package:echango_delivery/state/auth_state.dart';
+import 'package:echango_delivery/state/locale_state.dart';
 
 void main() {
   group('UserRole', () {
@@ -40,10 +41,19 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     final apiClient = BffApiClient(baseUrl: ApiConfig.bffBaseUrl);
-    final authState = AuthState(prefs: prefs, apiClient: apiClient);
+    final localeState = LocaleState(prefs: prefs);
+    final authState = AuthState(
+      prefs: prefs,
+      apiClient: apiClient,
+      localeState: localeState,
+    );
 
     await tester.pumpWidget(
-      EchangoDeliveryApp(authState: authState, apiClient: apiClient),
+      EchangoDeliveryApp(
+        authState: authState,
+        apiClient: apiClient,
+        localeState: localeState,
+      ),
     );
     await tester.pumpAndSettle();
 

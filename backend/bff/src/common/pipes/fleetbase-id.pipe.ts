@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
+import { Injectable, PipeTransform } from '@nestjs/common';
+import { badRequest } from '../errors/http-errors';
 
 /**
  * Motif d'identifiant Fleetbase : uuid (8-4-4-4-12) ou public_id
@@ -21,7 +22,7 @@ export const FLEETBASE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export class FleetbaseIdPipe implements PipeTransform<string, string> {
   transform(value: string): string {
     if (typeof value !== 'string' || !FLEETBASE_ID_PATTERN.test(value)) {
-      throw new BadRequestException('Identifiant invalide');
+      badRequest('validation.invalid_id', 'Identifiant invalide');
     }
     return value;
   }

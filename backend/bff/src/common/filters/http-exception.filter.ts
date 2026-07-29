@@ -42,6 +42,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       ...(typeof exceptionResponse?.code === 'string'
         ? { code: exceptionResponse.code }
         : {}),
+      // `fields` : uniquement posé par `validationExceptionFactory` — les noms
+      // de champs invalides, jamais traduits, à l'usage de qui lit les logs ou
+      // le réseau. Le même principe de passthrough que `code` : le filtre ne
+      // doit pas décider ce qu'une exception a le droit de porter.
+      ...(Array.isArray(exceptionResponse?.fields)
+        ? { fields: exceptionResponse.fields }
+        : {}),
     };
 
     this.logger.error(`${request.method} ${request.url}`, errorResponse);

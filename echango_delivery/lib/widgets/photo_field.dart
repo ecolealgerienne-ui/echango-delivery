@@ -1,8 +1,12 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../errors/app_error.dart';
+import '../errors/error_translator.dart';
 import '../services/photo_service.dart';
+import '../state/locale_state.dart';
 
 /// Champ de prise de photo, partagé par la preuve de livraison et le
 /// signalement d'échec.
@@ -39,6 +43,8 @@ class _PhotoFieldState extends State<PhotoField> {
   bool _busy = false;
 
   Future<void> _pick({required bool fromGallery}) async {
+    final locale = context.read<LocaleState>().locale;
+
     setState(() {
       _busy = true;
       _error = null;
@@ -53,9 +59,14 @@ class _PhotoFieldState extends State<PhotoField> {
         widget.onChanged(photo);
       }
     } on PhotoCaptureException catch (e) {
-      _error = e.message;
+      var message = translateErrorCode(e.code, locale);
+      e.params?.forEach((key, value) {
+        message = message.replaceAll('{$key}', value);
+      });
+      _error = message;
     } catch (e) {
-      _error = 'Capture impossible : $e';
+      debugPrint('Capture photo impossible : $e');
+      _error = translateErrorCode(AppError.unknown, locale);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

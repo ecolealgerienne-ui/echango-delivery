@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/dev_accounts.dart';
 import '../../state/auth_state.dart';
+import '../../widgets/language_selector.dart';
 
 /// Dernier email utilisé, pré-rempli au lancement suivant. L'email seul —
 /// jamais le mot de passe, qui n'a rien à faire dans des préférences en clair.
@@ -87,6 +88,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: LanguageSelector(),
+                  ),
                   Icon(Icons.local_shipping,
                       size: 56, color: Theme.of(context).primaryColor),
                   const SizedBox(height: 12),

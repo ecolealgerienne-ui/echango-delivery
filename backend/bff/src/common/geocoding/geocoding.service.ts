@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { badRequest } from '../errors/http-errors';
 import axios, { AxiosInstance } from 'axios';
 
 export interface GeocodedPlace {
@@ -85,7 +86,7 @@ export class GeocodingService {
       return (Array.isArray(data) ? data : []).map((r: any) => this.toPlace(r));
     } catch (error) {
       this.logger.warn(`Recherche d'adresse échouée (${query}) : ${error.message}`);
-      throw new BadRequestException('Recherche d\'adresse indisponible');
+      badRequest('geocoding.unavailable', 'Recherche d\'adresse indisponible');
     }
   }
 

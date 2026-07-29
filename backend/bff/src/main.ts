@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { validationExceptionFactory } from './common/errors/validation-exception-factory';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -35,6 +36,11 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Sans ceci, un DTO invalide renvoie les messages `class-validator` bruts
+      // — toujours en anglais, jamais de `code` — le seul point d'entrée HTTP
+      // resté hors du registre après la conversion des 122 exceptions métier
+      // (`common/errors/`).
+      exceptionFactory: validationExceptionFactory,
     }),
   );
 

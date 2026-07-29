@@ -6,6 +6,7 @@ import '../../models/vehicle_type.dart';
 import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
+import '../../widgets/language_selector.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -44,6 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: const Icon(Icons.account_balance_wallet_outlined),
             onPressed: () => context.push('/transporteur/caisse'),
           ),
+          const LanguageSelector(),
           const _AvailabilitySwitch(),
         ],
       ),

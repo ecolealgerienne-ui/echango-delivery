@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/auth_state.dart';
+import '../../widgets/language_selector.dart';
 
 /// Espace « gestionnaire de flotte » — pas encore construit.
 ///
@@ -20,7 +21,10 @@ class FlottePlaceholderScreen extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Gestion de flotte')),
+      appBar: AppBar(
+        title: const Text('Gestion de flotte'),
+        actions: const [LanguageSelector()],
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),

@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { badRequest, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -276,14 +277,15 @@ export class CashService {
     const collected = Math.round(input.collectedAmount * 100) / 100;
 
     if (collected < 0) {
-      throw new BadRequestException('Le montant encaissé ne peut pas être négatif');
+      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
     }
 
     if (collected > expectedAmount) {
       // Un transporteur qui perçoit plus que dû n'est pas un cas à absorber en
       // silence : soit le montant annoncé était faux, soit la déclaration l'est.
       // Les deux appellent une correction humaine.
-      throw new BadRequestException(
+      badRequest(
+        'cash.amount_exceeds_expected',
         `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}). ` +
           'Contactez Echango si le montant à encaisser était incorrect.',
       );
@@ -291,7 +293,8 @@ export class CashService {
 
     const differs = collected !== expectedAmount;
     if (differs && !input.discrepancyReason) {
-      throw new BadRequestException(
+      badRequest(
+        'cash.discrepancy_reason_required',
         'Un écart entre le montant annoncé et le montant perçu exige un motif',
       );
     }
@@ -318,7 +321,8 @@ export class CashService {
 
     if (existing) {
       if (existing.driverId !== driverId) {
-        throw new BadRequestException(
+        badRequest(
+          'cash.collection_conflict',
           'Un autre transporteur a déjà déclaré l\'encaissement de cette livraison',
         );
       }
@@ -507,12 +511,12 @@ export class CashService {
   ) {
     const rounded = Math.round(amount * 100) / 100;
     if (rounded <= 0) {
-      throw new BadRequestException('Le montant remis doit être positif');
+      badRequest('cash.remittance_amount_must_be_positive', 'Le montant remis doit être positif');
     }
 
     const debt = await this.debtBetween(driverId, merchantId);
     if (debt === 0) {
-      throw new BadRequestException('Aucune somme due entre ces deux comptes');
+      badRequest('cash.no_debt', 'Aucune somme due entre ces deux comptes');
     }
 
     // Le SENS est déduit de qui doit, pas de qui déclare. Laisser le déclarant
@@ -523,7 +527,8 @@ export class CashService {
     const outstanding = Math.abs(debt);
 
     if (rounded > outstanding) {
-      throw new BadRequestException(
+      badRequest(
+        'cash.remittance_exceeds_debt',
         `Montant supérieur à la somme due (${outstanding} ${this.currency})`,
       );
     }
@@ -580,10 +585,10 @@ export class CashService {
     const remittance = await this.loadRemittanceFor(confirmedBy, actorId, remittanceId);
 
     if (remittance.confirmedAt) {
-      throw new BadRequestException('Cette remise est déjà confirmée');
+      badRequest('cash.remittance_already_confirmed', 'Cette remise est déjà confirmée');
     }
     if (remittance.disputedAt) {
-      throw new BadRequestException('Cette remise est contestée — contactez Echango');
+      badRequest('cash.remittance_disputed', 'Cette remise est contestée — contactez Echango');
     }
     if (remittance.declaredBy === confirmedBy) {
       this.audit.denied({
@@ -594,7 +599,8 @@ export class CashService {
         resourceId: remittanceId,
         reason: 'Tentative de confirmer sa propre déclaration',
       });
-      throw new BadRequestException(
+      badRequest(
+        'cash.remittance_must_be_confirmed_by_other_party',
         'Une remise doit être confirmée par l\'autre partie',
       );
     }
@@ -624,10 +630,10 @@ export class CashService {
     const remittance = await this.loadRemittanceFor(disputedBy, actorId, remittanceId);
 
     if (remittance.confirmedAt) {
-      throw new BadRequestException('Cette remise est déjà confirmée');
+      badRequest('cash.remittance_already_confirmed', 'Cette remise est déjà confirmée');
     }
     if (remittance.declaredBy === disputedBy) {
-      throw new BadRequestException('Vous ne pouvez pas contester votre propre déclaration');
+      badRequest('cash.remittance_self_dispute_forbidden', 'Vous ne pouvez pas contester votre propre déclaration');
     }
 
     const updated = await this.prisma.cashRemittance.update({
@@ -676,7 +682,7 @@ export class CashService {
         resourceId: remittanceId,
         reason: 'Remise inexistante ou concernant deux autres comptes',
       });
-      throw new NotFoundException('Remise introuvable');
+      notFound('cash.remittance_not_found', 'Remise introuvable');
     }
 
     return remittance;

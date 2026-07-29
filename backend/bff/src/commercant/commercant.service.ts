@@ -1,11 +1,5 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
-  HttpException,
-} from '@nestjs/common';
+import { Injectable, Logger, HttpException, BadRequestException } from '@nestjs/common';
+import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -207,7 +201,7 @@ export class CommerçantService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch orders: ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
@@ -553,7 +547,7 @@ export class CommerçantService {
       matches = this.fleetbaseClient.extractCollection(response, 'drivers');
     } catch (error) {
       this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
-      throw new BadRequestException('Recherche indisponible pour le moment');
+      badRequest('driver.search_unavailable', 'Recherche indisponible pour le moment');
     }
 
     // Repli sur les chiffres seuls : une saisie comme « 0555 12 34 » ne trouve
@@ -631,7 +625,7 @@ export class CommerçantService {
       driver = await this.fleetbaseClient.getDriverByUuid(fleetbaseDriverUuid);
     } catch (error) {
       this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
-      throw new BadRequestException('Ajout impossible pour le moment');
+      badRequest('merchant.favourite_add_unavailable', 'Ajout impossible pour le moment');
     }
 
     if (!driver) {
@@ -643,7 +637,7 @@ export class CommerçantService {
         resourceId: fleetbaseDriverUuid,
         reason: 'Transporteur inexistant ou inactif dans le réseau',
       });
-      throw new BadRequestException('Ce transporteur n\'existe pas dans le réseau Echango');
+      badRequest('merchant.driver_not_in_network', 'Ce transporteur n\'existe pas dans le réseau Echango');
     }
 
     // Le nom vient du serveur, jamais de la requête : sinon un commerçant
@@ -668,7 +662,7 @@ export class CommerçantService {
     });
 
     if (count === 0) {
-      throw new NotFoundException('Favori introuvable');
+      notFound('merchant.favourite_not_found', 'Favori introuvable');
     }
     return { removed: true };
   }
@@ -696,7 +690,7 @@ export class CommerçantService {
     });
 
     if (!order) {
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
     if (order.merchantId !== merchantId) {
@@ -708,7 +702,7 @@ export class CommerçantService {
         resourceId: orderId,
         reason: 'Commande appartenant à un autre commerçant',
       });
-      throw new ForbiddenException('You do not have access to this order');
+      forbidden('order.forbidden', 'You do not have access to this order');
     }
 
     return order;
@@ -839,18 +833,18 @@ export class CommerçantService {
           reason: 'Signalement portant sur la commande d\'un autre commerçant',
         });
       }
-      throw new NotFoundException('Aucune preuve pour ce signalement');
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     if (!failure.proofUrl) {
-      throw new NotFoundException('Aucune preuve pour ce signalement');
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     try {
       return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
     } catch (error) {
       this.logger.warn(`Preuve ${failureId} illisible : ${error.message}`);
-      throw new NotFoundException('Preuve indisponible');
+      notFound('order.proof_not_found', 'Preuve indisponible');
     }
   }
 
@@ -875,18 +869,18 @@ export class CommerçantService {
       live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, order);
     } catch (error) {
       this.logger.warn(`Preuve de commande indisponible : ${error.message}`);
-      throw new NotFoundException('Preuve indisponible');
+      notFound('order.proof_not_found', 'Preuve indisponible');
     }
 
     if (!live?.proof_url) {
-      throw new NotFoundException('Aucune preuve enregistrée pour cette livraison');
+      notFound('order.proof_not_found', 'Aucune preuve enregistrée pour cette livraison');
     }
 
     try {
       return await this.fleetbaseClient.fetchStoredFile(live.proof_url);
     } catch (error) {
       this.logger.warn(`Preuve de ${orderId} illisible : ${error.message}`);
-      throw new NotFoundException('Preuve indisponible');
+      notFound('order.proof_not_found', 'Preuve indisponible');
     }
   }
 
@@ -979,11 +973,11 @@ export class CommerçantService {
       live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, cached);
     } catch (error) {
       this.logger.warn(`Modèle de commande indisponible : ${error.message}`);
-      throw new BadRequestException('Impossible de relire cette commande pour l\'instant');
+      badRequest('order.template_failed', 'Impossible de relire cette commande pour l\'instant');
     }
 
     if (!live) {
-      throw new NotFoundException('Commande introuvable chez Fleetbase');
+      notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
     }
 
     const meta = live.meta ?? {};
@@ -1140,7 +1134,8 @@ export class CommerçantService {
 
       this.logger.error(`Failed to create order: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'order.create_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to create order: ${detail}`
           : 'Failed to create order',
@@ -1184,9 +1179,7 @@ export class CommerçantService {
         );
       }
 
-      throw new BadRequestException(
-        'La livraison n\'a pas pu être enregistrée. Réessayez.',
-      );
+      badRequest('order.create_failed', 'La livraison n\'a pas pu être enregistrée. Réessayez.');
     }
   }
 
@@ -1208,7 +1201,7 @@ export class CommerçantService {
     const liveStatus = (live as any)?.status ?? null;
 
     if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
-      throw new BadRequestException(`Commande déjà ${liveStatus}, annulation impossible`);
+      badRequest('order.already_terminal', `Commande déjà ${liveStatus}, annulation impossible`);
     }
 
     // Annuler pendant qu'un transporteur est en route est une décision qui
@@ -1217,7 +1210,8 @@ export class CommerçantService {
     // (specs_echango_delivery.md §6) ; l'opérateur, lui, peut toujours annuler
     // depuis la console Fleetbase.
     if (liveStatus && ['started', 'enroute'].includes(liveStatus)) {
-      throw new BadRequestException(
+      badRequest(
+        'order.cancel_not_allowed',
         'Le transporteur est déjà en route. Contactez Echango pour annuler cette livraison.',
       );
     }
@@ -1239,7 +1233,7 @@ export class CommerçantService {
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error(`Failed to cancel order: ${error.message}`);
-      throw new BadRequestException('Failed to cancel order');
+      badRequest('order.cancel_failed', 'Failed to cancel order');
     }
   }
 
@@ -1273,7 +1267,7 @@ export class CommerçantService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch tracking: ${error.message}`);
-      throw new BadRequestException('Failed to fetch tracking information');
+      badRequest('order.tracking_failed', 'Failed to fetch tracking information');
     }
   }
 
@@ -1332,7 +1326,7 @@ export class CommerçantService {
       return projectPlace(response.place, 'full');
     } catch (error) {
       this.logger.error(`Failed to save address: ${error.message}`);
-      throw new BadRequestException('Failed to save address');
+      badRequest('merchant.address_save_failed', 'Failed to save address');
     }
   }
 
@@ -1363,7 +1357,7 @@ export class CommerçantService {
         resourceId: placeId,
         reason: "Adresse inexistante ou appartenant au carnet d'un autre commerçant",
       });
-      throw new NotFoundException('Adresse introuvable');
+      notFound('merchant.address_not_found', 'Adresse introuvable');
     }
 
     return place;
@@ -1400,7 +1394,7 @@ export class CommerçantService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
       this.logger.error(`Modification d'adresse impossible : ${error.message}`);
-      throw new BadRequestException("Modification de l'adresse impossible");
+      badRequest('merchant.address_update_failed', "Modification de l'adresse impossible");
     }
   }
 
@@ -1422,7 +1416,7 @@ export class CommerçantService {
     } catch (error) {
       if (error instanceof HttpException) throw error;
       this.logger.error(`Suppression d'adresse impossible : ${error.message}`);
-      throw new BadRequestException("Suppression de l'adresse impossible");
+      badRequest('merchant.address_delete_failed', "Suppression de l'adresse impossible");
     }
   }
 
@@ -1435,11 +1429,11 @@ export class CommerçantService {
     });
 
     if (!merchant) {
-      throw new NotFoundException('Merchant not found');
+      notFound('merchant.not_found', 'Merchant not found');
     }
 
     if (!merchant.active) {
-      throw new ForbiddenException('Merchant account is inactive');
+      forbidden('merchant.inactive', 'Merchant account is inactive');
     }
 
     return merchant;

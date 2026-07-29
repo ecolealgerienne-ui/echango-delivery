@@ -1,10 +1,5 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -76,7 +71,7 @@ export class FlotteService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet orders: ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
@@ -92,7 +87,7 @@ export class FlotteService {
       const order = response?.order || response;
 
       if (!order || !order.uuid) {
-        throw new NotFoundException('Order not found');
+        notFound('order.not_found', 'Order not found');
       }
 
       if (order.facilitator_uuid !== fleet.fleetbaseVendorUuid) {
@@ -104,7 +99,7 @@ export class FlotteService {
           resourceId: orderId,
           reason: 'Commande rattachée à une autre flotte',
         });
-        throw new ForbiddenException('You do not have access to this order');
+        forbidden('order.forbidden', 'You do not have access to this order');
       }
 
       return projectOrderForFleet(order);
@@ -113,7 +108,7 @@ export class FlotteService {
         throw error;
       }
       this.logger.error(`Failed to fetch order ${orderId}: ${error.message}`);
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
   }
 
@@ -132,7 +127,7 @@ export class FlotteService {
       return { data: owned.map((d: any) => projectDriverForFleet(d)) };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet drivers: ${error.message}`);
-      throw new BadRequestException('Failed to fetch drivers');
+      badRequest('driver.fetch_failed', 'Failed to fetch drivers');
     }
   }
 
@@ -196,7 +191,7 @@ export class FlotteService {
         }));
     } catch (error) {
       this.logger.error(`Failed to fetch driver positions: ${error.message}`);
-      throw new BadRequestException('Failed to fetch driver positions');
+      badRequest('driver.positions_fetch_failed', 'Failed to fetch driver positions');
     }
   }
 
@@ -226,7 +221,8 @@ export class FlotteService {
     } catch (error) {
       this.logger.error(`Failed to add driver: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'driver.create_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to add driver: ${detail}`
           : 'Failed to add driver',
@@ -250,7 +246,7 @@ export class FlotteService {
     const ownsDriver = owned.some((d: any) => d.uuid === driverId);
 
     if (!ownsDriver) {
-      throw new ForbiddenException('You do not have access to this driver');
+      forbidden('driver.forbidden', 'You do not have access to this driver');
     }
 
     try {
@@ -259,7 +255,7 @@ export class FlotteService {
       return response;
     } catch (error) {
       this.logger.error(`Failed to assign driver: ${error.message}`);
-      throw new BadRequestException('Failed to assign driver');
+      badRequest('order.assign_failed', 'Failed to assign driver');
     }
   }
 
@@ -329,11 +325,11 @@ export class FlotteService {
     });
 
     if (!fleet) {
-      throw new NotFoundException('Fleet account not found');
+      notFound('fleet.not_found', 'Fleet account not found');
     }
 
     if (!fleet.active) {
-      throw new ForbiddenException('Fleet account is inactive');
+      forbidden('fleet.inactive', 'Fleet account is inactive');
     }
 
     return fleet;
