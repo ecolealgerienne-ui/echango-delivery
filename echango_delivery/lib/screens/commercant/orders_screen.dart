@@ -90,6 +90,27 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   ),
                 ),
               ),
+            // Recherche sur les commandes chargées. Le libellé dit la limite :
+            // laisser croire à une recherche exhaustive ferait conclure « je
+            // n'ai jamais livré ce client » sur une liste partielle.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: TextField(
+                onChanged: orderState.setSearch,
+                decoration: InputDecoration(
+                  hintText: 'Rechercher un destinataire, une adresse…',
+                  prefixIcon: const Icon(Icons.search),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  suffixIcon: orderState.search.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () => orderState.setSearch(''),
+                        ),
+                ),
+              ),
+            ),
             const TabBar(
               tabs: [
                 Tab(text: 'En cours'),
@@ -181,13 +202,32 @@ class _OrderList extends StatelessWidget {
       );
     }
 
+    final state = context.watch<MerchantOrderState>();
+    // Le bouton n'apparaît que s'il reste vraiment quelque chose : le total
+    // vient du serveur, pas d'une supposition sur la taille de page.
+    final showMore = state.hasMoreOrders && state.search.isEmpty;
+
     return RefreshIndicator(
       onRefresh: refresh,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(8),
-        itemCount: orders.length,
+        itemCount: orders.length + (showMore ? 1 : 0),
         itemBuilder: (context, index) {
+          if (index == orders.length) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: state.isLoadingMore
+                    ? const CircularProgressIndicator()
+                    : OutlinedButton(
+                        onPressed: () => state.loadMoreOrders(),
+                        child: const Text('Charger les livraisons précédentes'),
+                      ),
+              ),
+            );
+          }
+
           final order = orders[index];
           return Card(
             margin: const EdgeInsets.symmetric(vertical: 6),

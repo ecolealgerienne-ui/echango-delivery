@@ -1,7 +1,10 @@
 import 'package:equatable/equatable.dart';
 
 import 'fleetbase_json.dart';
-import 'order.dart' show Place;
+// `DeliveryFailure` est partagé avec le transporteur : c'est le même
+// signalement, vu des deux bouts. Une seconde classe pour le même JSON finirait
+// par le lire de deux façons (revue archi #14).
+import 'order.dart' show DeliveryFailure, Place;
 
 /// Commande vue par le commerçant.
 ///
@@ -43,6 +46,20 @@ class MerchantOrder extends Equatable {
   final num? price;
   final String? currency;
 
+  /// Téléphone du transporteur affecté.
+  ///
+  /// Le BFF le projetait déjà ; personne ne le lisait. Un commerçant qui veut
+  /// savoir où en est sa livraison n'avait aucun moyen de joindre le coursier,
+  /// alors que le numéro était déjà dans la réponse HTTP.
+  final String? driverPhone;
+
+  /// Signalements d'échec, du plus récent au plus ancien.
+  ///
+  /// Le commerçant ne recevait qu'une notification d'une ligne. C'est pourtant
+  /// lui qui devra répondre à son propre client, et le justificatif n'allait
+  /// qu'à celui qui l'avait produit.
+  final List<DeliveryFailure> deliveryFailures;
+
   const MerchantOrder({
     required this.id,
     required this.publicId,
@@ -61,6 +78,8 @@ class MerchantOrder extends Equatable {
     this.packageContents,
     this.price,
     this.currency,
+    this.driverPhone,
+    this.deliveryFailures = const [],
   });
 
   bool get isCompleted => status == 'completed';
@@ -99,6 +118,13 @@ class MerchantOrder extends Equatable {
       pickup: place('pickup'),
       dropoff: place('dropoff'),
       driverName: driver is Map<String, dynamic> ? driver['name'] as String? : null,
+      driverPhone: driver is Map<String, dynamic> ? driver['phone'] as String? : null,
+      deliveryFailures: json['delivery_failures'] is List
+          ? (json['delivery_failures'] as List)
+              .whereType<Map<String, dynamic>>()
+              .map(DeliveryFailure.fromJson)
+              .toList()
+          : const [],
       scheduledAt: json['scheduled_at'] is String
           ? DateTime.tryParse(json['scheduled_at'] as String)
           : null,
@@ -211,6 +237,66 @@ class GeocodedPlace extends Equatable {
 
   @override
   List<Object?> get props => [label, latitude, longitude, city, postalCode];
+}
+
+/// Une page de commandes, avec le total que le serveur en connaît.
+///
+/// Le total vient du serveur et non d'un comptage local : c'est lui qui dit
+/// s'il reste quelque chose à charger. Sans lui, l'app ne peut pas distinguer
+/// « dernière page » de « page pleine par coïncidence ».
+class MerchantOrderPage {
+  final List<MerchantOrder> orders;
+  final int total;
+
+  const MerchantOrderPage({required this.orders, required this.total});
+}
+
+/// Position d'un transporteur, avec sa fraîcheur.
+///
+/// [recordedAt] n'est pas décoratif : une position vieille d'une heure affichée
+/// comme actuelle est pire qu'aucune position — le commerçant croirait son
+/// transporteur immobile alors qu'il a simplement perdu le réseau. L'écran doit
+/// dire quand le point a été relevé.
+class DriverPosition extends Equatable {
+  final double latitude;
+  final double longitude;
+  final DateTime? recordedAt;
+
+  const DriverPosition({
+    required this.latitude,
+    required this.longitude,
+    this.recordedAt,
+  });
+
+  factory DriverPosition.fromJson(Map<String, dynamic> json) => DriverPosition(
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+        recordedAt: json['recorded_at'] is String
+            ? DateTime.tryParse(json['recorded_at'] as String)
+            : null,
+      );
+
+  /// Ancienneté du relevé, en clair. `null` quand la date manque — on ne
+  /// prétend alors pas savoir.
+  String? get freshness {
+    final at = recordedAt;
+    if (at == null) return null;
+
+    final delta = DateTime.now().difference(at);
+    if (delta.inMinutes < 2) return 'à l\'instant';
+    if (delta.inMinutes < 60) return 'il y a ${delta.inMinutes} min';
+    if (delta.inHours < 24) return 'il y a ${delta.inHours} h';
+    return 'position ancienne';
+  }
+
+  /// Au-delà de dix minutes, le point ne décrit plus où se trouve le
+  /// transporteur mais où il se trouvait. L'écran doit le signaler plutôt que
+  /// de laisser croire à un suivi en direct.
+  bool get isStale =>
+      recordedAt == null || DateTime.now().difference(recordedAt!).inMinutes > 10;
+
+  @override
+  List<Object?> get props => [latitude, longitude, recordedAt];
 }
 
 /// Évènement porté à la connaissance du commerçant.

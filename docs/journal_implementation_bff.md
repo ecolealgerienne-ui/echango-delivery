@@ -1334,3 +1334,73 @@ BFF : `tsc --noEmit` passe. **Le client Prisma n'a pas pu être régénéré** �
 App : **jamais compilée** (pas de toolchain Flutter dans ce bac à sable). `flutter analyze` reste la vérification manquante.
 
 ⚠️ **Prérequis** : `npm run prisma:migrate` (deux modèles, quatre colonnes sur `Order`), puis `prisma generate`. Nouvelles variables d'environnement facultatives : `RECONCILER_ENABLED`, `RECONCILER_INTERVAL_MS`.
+
+---
+
+## 15. Lot léger côté commerçant — le rattrapage serveur→app (29/07/2026)
+
+Suite de `docs/comparaison_marche_commercant.md`. La coupe suit une seule règle : **est léger ce dont la capacité existe déjà côté serveur et qu'il suffit de servir au commerçant ; est lourd ce qui engage le modèle d'affaires.**
+
+Écartés délibérément, et ce sont des décisions produit et non du développement : le barème (`computeQuote()`), la page de suivi pour le destinataire final, le paiement à la livraison, la notation du transporteur, la facturation.
+
+### 15.1 `proof_url` sortait vers le commerçant, sans protection
+
+Le champ figurait dans `ORDER_FIELDS`, donc la projection commerçant le servait. C'est l'URL que Fleetbase construit depuis son propre `APP_URL` : injoignable depuis un téléphone, et **protégée par rien**.
+
+Toute la discipline posée côté transporteur le 28/07 — jamais l'URL Fleetbase, toujours un chemin BFF authentifié — était contournée ici par un champ oublié dans une liste d'autorisation. C'est le mode d'échec propre aux listes d'autorisation : elles rendent l'oubli visible à l'écran, pas l'inclusion de trop.
+
+Le champ Dart `Order.proofUrl` a été supprimé avec lui. Il aurait toujours valu `null` : un champ mort au nom évocateur est un piège, et le prochain écran l'aurait affiché en croyant la preuve accessible — exactement l'erreur du `lastUsedAt` supprimé lors du P2.
+
+### 15.2 La preuve n'atteignait pas celui qui en a besoin
+
+Le transporteur photographie, Fleetbase stocke, le BFF relaie de façon authentifiée — **au transporteur seul**. Le commerçant, qui devra répondre à son propre client et éventuellement le rembourser, ne voyait rien : le seul destinataire du justificatif était celui qui l'avait produit.
+
+Deux routes symétriques de celles du transporteur : `GET /commercant/commandes/:id/preuve` (preuve de livraison) et `GET /commercant/preuves/:id` (photo d'un signalement d'échec). L'appartenance se vérifie en deux temps pour la seconde — le signalement porte l'uuid de la commande, et c'est le cache local qui dit à quel commerçant elle appartient.
+
+Les signalements sont désormais joints au détail de commande, **toute la série** : une livraison tentée trois fois n'est pas celle tentée une fois, et chaque tentative porte sa propre photo.
+
+⚠️ La preuve de livraison dépend de `proof_url` **sur la commande Fleetbase, dont le renseignement n'est pas vérifié**. La capture crée bien une ressource `Proof` ; que Fleetbase reporte son URL sur la commande reste à confirmer sur une vraie livraison avec `pod_required`. Si le champ reste vide, la route répond « pas de preuve » — indiscernable, pour l'appelant, d'une livraison sans preuve exigée.
+
+### 15.3 La position existait, et n'était servie qu'à la flotte
+
+Le transporteur remonte sa position, le BFF la miroite sur `DriverAccount`, le module flotte l'affiche. Le module commerçant ne l'exposait pas. `GET /commercant/commandes/:id/position` sert le miroir local — et non l'historique Fleetbase, dont l'endpoint `/positions` n'offre aucun filtre par transporteur (§10).
+
+**Un point, pas un suivi.** Ni itinéraire ni heure d'arrivée : celle-ci demande un moteur de routage non auto-hébergé. Attendre OSRM pour ne rien montrer laisserait le commerçant devant un statut textuel alors que la donnée est là.
+
+**La fraîcheur accompagne toujours le point.** Une position vieille d'une heure présentée comme actuelle est pire qu'aucune position : le commerçant croirait son transporteur immobile alors qu'il a perdu le réseau, et appellerait pour rien. Au-delà de dix minutes le marqueur passe au gris — la couleur se lit avant la légende.
+
+### 15.4 Le téléphone du transporteur, envoyé et jamais lu
+
+`projectOrderForMerchant` exposait déjà `driver_assigned: { name, phone, photo_url }`. Le modèle Dart ne lisait que le nom. Un commerçant qui voulait savoir où en était sa livraison n'avait aucun moyen d'appeler le coursier — alors que le numéro était déjà dans la réponse HTTP posée sur son téléphone.
+
+Le motif du projet dans sa forme la plus pure, et la correction tient en deux lignes.
+
+### 15.5 Vingt-cinq commandes, puis plus rien
+
+`GET /commercant/commandes` pagine depuis toujours ; l'app n'envoyait **aucun paramètre**. Au-delà de 25 livraisons, les plus anciennes devenaient inaccessibles sans que rien ne le signale. Même nature que le plafond de 100 corrigé côté transporteur : une liste tronquée en silence n'est pas partielle, elle est **fausse** pour qui la lit comme complète.
+
+Le total vient du serveur, jamais d'une supposition sur la taille de page : c'est ce qui distingue « dernière page » de « page pleine par coïncidence ».
+
+**La recherche est locale, et l'écran le dit.** Une recherche serveur serait plus juste, mais tout le filtrage du BFF est applicatif — Fleetbase ignore les filtres de requête — donc elle imposerait de parcourir toute l'organisation à chaque frappe. Le bouton « charger plus » étend le périmètre de recherche autant que la liste.
+
+### 15.6 Poids et fragilité : le contrat les acceptait, le formulaire ne les envoyait pas
+
+`OrderItemDto` déclare `weight` et `fragile` depuis l'origine. Le formulaire envoyait une description et `quantity: 1` en dur. Or c'est précisément ce qui permet au transporteur de juger si sa moto suffit — donc ce qui fonde son refus pour `colis_inadapte`, motif que nous venons d'ajouter.
+
+La fragilité est une case à cocher et non une mention libre : noyée dans les instructions, elle se lit après le chargement.
+
+### 15.7 Le carnet d'adresses servait du Fleetbase brut
+
+`getAddresses()` renvoyait les objets `Place` intégraux — seul reliquat de la fuite M10 corrigée partout ailleurs le 28/07. Ce qui sortait était donc décidé par Fleetbase, et aurait changé à sa prochaine mise à jour. Projeté comme le reste.
+
+### 15.8 `ProofImage` extrait plutôt que dupliqué
+
+Le widget était privé à l'écran transporteur. Le commerçant en avait besoin à l'identique : `widgets/proof_image.dart`, partagé. Deux copies auraient divergé — et c'est ce widget qui porte le piège du `FutureBuilder` reconstruit à chaque trame, corrigé une fois pour les deux profils.
+
+### 15.9 Vérification
+
+BFF : `tsc --noEmit` passe.
+
+App : **jamais compilée** (pas de toolchain). Trois API `flutter_map` utilisées ici pour la première fois ont été **vérifiées contre la documentation de la version épinglée (7.0.2)** plutôt que supposées : `MapOptions.interactionOptions`, les constantes `InteractiveFlag.drag`/`pinchZoom`, et le `Marker({point, width, height, child})` — `child` et non `builder`, la signature ayant changé entre versions majeures. C'est l'application directe de la leçon du 28/07 sur `initialValue` : **une précaution prise sans vérifier le fait qu'elle suppose est un pari**, et l'inverse vaut aussi — une API qu'on croit connaître se vérifie en une minute.
+
+`flutter analyze` reste la vérification manquante.

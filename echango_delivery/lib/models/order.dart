@@ -26,7 +26,6 @@ class Order extends Equatable {
   final Place? dropoffPlace;
   final double? totalDistance;
   final int? estimatedDuration; // in seconds
-  final String? proofUrl;
   final DeliveryFailure? deliveryFailure;
 
   /// Tous les signalements de cette commande, du plus récent au plus ancien.
@@ -67,7 +66,6 @@ class Order extends Equatable {
     this.dropoffPlace,
     this.totalDistance,
     this.estimatedDuration,
-    this.proofUrl,
     this.deliveryFailure,
     this.deliveryFailures = const [],
     this.redacted = false,
@@ -102,7 +100,6 @@ class Order extends Equatable {
     Place? dropoffPlace,
     double? totalDistance,
     int? estimatedDuration,
-    String? proofUrl,
     DeliveryFailure? deliveryFailure,
   }) {
     return Order(
@@ -122,7 +119,6 @@ class Order extends Equatable {
       dropoffPlace: dropoffPlace ?? this.dropoffPlace,
       totalDistance: totalDistance ?? this.totalDistance,
       estimatedDuration: estimatedDuration ?? this.estimatedDuration,
-      proofUrl: proofUrl ?? this.proofUrl,
       deliveryFailure: deliveryFailure ?? this.deliveryFailure,
       deliveryFailures: deliveryFailures,
       redacted: redacted,
@@ -140,9 +136,14 @@ class Order extends Equatable {
   ///   pickup_place    → payload.pickup
   ///   dropoff_place   → payload.dropoff
   ///   payload.type    → type (à la racine)
-  /// `notes`, `distance`, `estimated_duration`, `proof_url` et
-  /// `delivery_failure` n'existent pas dans la réponse : conservés comme
-  /// champs optionnels pour l'état local de l'app, jamais lus du serveur.
+  /// `notes`, `distance` et `estimated_duration` n'existent pas dans la
+  /// réponse : conservés comme champs optionnels, jamais lus du serveur.
+  ///
+  /// `proofUrl` a été SUPPRIMÉ le 29/07/2026 avec le champ `proof_url` de la
+  /// projection : c'était l'URL Fleetbase brute, non authentifiée. Elle n'était
+  /// affichée nulle part, et un champ mort au nom évocateur est un piège — le
+  /// prochain écran l'aurait affichée en croyant la preuve accessible. Les
+  /// preuves passent par une route du BFF qui vérifie l'appartenance.
   ///
   /// Tolérant par principe : une commande mal formée doit être ignorable, pas
   /// faire échouer la liste entière. Tout est donc nullable ou défaillable.
@@ -176,7 +177,6 @@ class Order extends Equatable {
       dropoffPlace: place('dropoff'),
       totalDistance: (json['distance'] as num?)?.toDouble(),
       estimatedDuration: json['estimated_duration'] as int?,
-      proofUrl: json['proof_url'] as String?,
       redacted: json['redacted'] == true,
       price: meta?['price'] as num?,
       currency: meta?['currency'] as String?,
@@ -223,7 +223,6 @@ class Order extends Equatable {
         dropoffPlace,
         totalDistance,
         estimatedDuration,
-        proofUrl,
         deliveryFailure,
         deliveryFailures,
         redacted,

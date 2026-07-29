@@ -1,15 +1,13 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/order.dart';
-import '../../services/bff_api_client.dart';
 import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
+import '../../widgets/proof_image.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final String orderId;
@@ -707,84 +705,6 @@ class _PlaceBlock extends StatelessWidget {
 /// le fichier, l'app n'atteint jamais Fleetbase directement — l'URL de
 /// stockage pointe sur un hôte inaccessible depuis un téléphone, et surtout
 /// elle n'est protégée par aucune authentification.
-class _ProofImage extends StatefulWidget {
-  final String url;
-
-  const _ProofImage({required this.url});
-
-  @override
-  State<_ProofImage> createState() => _ProofImageState();
-}
-
-class _ProofImageState extends State<_ProofImage> {
-  late Future<Uint8List> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-  }
-
-  @override
-  void didUpdateWidget(_ProofImage old) {
-    super.didUpdateWidget(old);
-    if (old.url != widget.url) _future = _load();
-  }
-
-  // Mémorisé dans l'état, jamais construit dans `build` : un FutureBuilder
-  // dont le `future` est recréé à chaque reconstruction relance le
-  // téléchargement à chaque fois — et l'écran en contient désormais un par
-  // tentative de livraison.
-  Future<Uint8List> _load() =>
-      context.read<BffApiClient>().fetchImage(widget.url);
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const SizedBox(
-            height: 180,
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        if (snapshot.hasError || snapshot.data == null) {
-          // Dire que la preuve existe : sans ce message, un échec de
-          // chargement se lit comme une photo perdue alors qu'elle est bien
-          // enregistrée côté serveur.
-          return Container(
-            padding: const EdgeInsets.all(12),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Row(
-              children: [
-                const Icon(Icons.image_not_supported_outlined),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Photo enregistrée, mais son chargement a échoué.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.memory(
-            snapshot.data!,
-            height: 180,
-            width: double.infinity,
-            fit: BoxFit.cover,
-          ),
-        );
-      },
-    );
-  }
-}
 
 /// Ligne « libellé : valeur ».
 ///
@@ -897,7 +817,7 @@ class _FailureEntry extends StatelessWidget {
         if (failure.notes != null) _buildInfoRow('Notes :', failure.notes!),
         if (failure.photoUrl != null) ...[
           const SizedBox(height: 8),
-          _ProofImage(url: failure.photoUrl!),
+          ProofImage(url: failure.photoUrl!),
         ],
       ],
     );

@@ -52,7 +52,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   final _instructions = TextEditingController();
   final _itemDescription = TextEditingController();
+  final _itemWeight = TextEditingController();
   final _price = TextEditingController();
+
+  /// Contenu imposant des précautions de transport. Le contrat serveur
+  /// l'accepte depuis l'origine ; le formulaire ne l'envoyait pas.
+  bool _fragile = false;
 
   /// Dernier devis renvoyé par le serveur.
   ///
@@ -136,8 +141,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
     final items = t['items'];
     if (items is List && items.isNotEmpty && items.first is Map) {
-      final description = (items.first as Map)['description'];
+      final item = items.first as Map;
+      final description = item['description'];
       if (description is String) _itemDescription.text = description;
+      final weight = item['weight'];
+      if (weight is num) _itemWeight.text = weight.toString();
+      _fragile = item['fragile'] == true;
     }
 
     final price = t['price'];
@@ -167,7 +176,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
-      _instructions, _itemDescription, _price,
+      _instructions, _itemDescription, _itemWeight, _price,
     ]) {
       c.dispose();
     }
@@ -236,9 +245,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'preferFavourites': _preferFavourites,
       if (double.tryParse(_price.text.trim()) != null)
         'price': double.parse(_price.text.trim()),
+      // Poids et fragilité sont transmis : le contrat serveur les acceptait
+      // déjà, le formulaire n'envoyait qu'une description et `quantity: 1` en
+      // dur. Or c'est précisément ce qui permet au transporteur de juger si sa
+      // moto suffit — donc ce qui fonde son refus pour `colis_inadapte`.
       if (_itemDescription.text.trim().isNotEmpty)
         'items': [
-          {'description': _itemDescription.text.trim(), 'quantity': 1},
+          {
+            'description': _itemDescription.text.trim(),
+            'quantity': 1,
+            if (double.tryParse(_itemWeight.text.trim()) != null)
+              'weight': double.parse(_itemWeight.text.trim()),
+            if (_fragile) 'fragile': true,
+          },
         ],
     });
 
@@ -298,6 +317,21 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _section('Colis'),
                 _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
                     Icons.inventory_2_outlined),
+                _field(_itemWeight, 'Poids approximatif (kg)',
+                    Icons.scale_outlined, keyboard: TextInputType.number),
+                // Case à cocher plutôt qu'une consigne écrite : une mention
+                // « fragile » noyée dans les instructions se lit après le
+                // chargement, quand il est trop tard.
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _fragile,
+                  onChanged: (v) => setState(() => _fragile = v ?? false),
+                  title: const Text('Contenu fragile'),
+                  subtitle: Text(
+                    'Signalé au transporteur avant qu\'il accepte la course.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
                 _vehicleSelector(),
                 _pricingSection(),
                 const SizedBox(height: 16),

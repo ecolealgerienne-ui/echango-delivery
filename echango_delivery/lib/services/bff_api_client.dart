@@ -719,12 +719,40 @@ class BffApiClient {
     return raw.whereType<Map<String, dynamic>>().map(build).toList();
   }
 
-  Future<List<MerchantOrder>> getMerchantOrders() async {
+  /// Une page de commandes du commerçant.
+  ///
+  /// ⚠️ Le serveur pagine depuis toujours (`page`, `limit`, 25 par défaut) et
+  /// l'app n'envoyait **aucun paramètre** : au-delà de 25 livraisons, les plus
+  /// anciennes devenaient inaccessibles sans que rien ne le signale. Même
+  /// défaut que le plafond de 100 corrigé côté transporteur — une liste
+  /// tronquée en silence n'est pas partielle, elle est fausse pour qui la lit
+  /// comme complète.
+  Future<MerchantOrderPage> getMerchantOrders({int page = 1, int limit = 25}) async {
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes'),
+      Uri.parse('$baseUrl/commercant/commandes').replace(
+        queryParameters: {'page': '$page', 'limit': '$limit'},
+      ),
       headers: _buildHeaders(),
     );
-    return _listOf(_parseResponse(response), 'orders', MerchantOrder.fromJson);
+    final data = _parseResponse(response);
+    return MerchantOrderPage(
+      orders: _listOf(data, 'orders', MerchantOrder.fromJson),
+      total: (data is Map ? (data['pagination']?['total'] as num?) : null)?.toInt() ?? 0,
+    );
+  }
+
+  /// Dernière position connue du transporteur affecté à cette course.
+  ///
+  /// `null` tant que personne n'est affecté — état normal d'une course en
+  /// attente, pas une erreur.
+  Future<DriverPosition?> getMerchantOrderPosition(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/commandes/$id/position'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final raw = (data is Map) ? data['position'] : null;
+    return raw is Map<String, dynamic> ? DriverPosition.fromJson(raw) : null;
   }
 
   Future<MerchantOrder> getMerchantOrder(String id) async {

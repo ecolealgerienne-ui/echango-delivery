@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Delete, Param, Body, Request, Query } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Request, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { CommerçantService } from './commercant.service';
 import { Persona } from '../common/decorators/persona.decorator';
@@ -126,6 +127,58 @@ export class CommerçantController {
   @Post('commandes/:id/annuler')
   async cancelOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.cancelOrder(req.user.id, orderId);
+  }
+
+  /**
+   * Dernière position connue du transporteur affecté à cette course.
+   *
+   * Un point avec sa fraîcheur, pas un itinéraire : l'heure d'arrivée estimée
+   * demande un moteur de routage qui n'est pas encore auto-hébergé.
+   */
+  @Get('commandes/:id/position')
+  async getDriverPosition(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
+    return this.commercantService.getOrderDriverPosition(req.user.id, orderId);
+  }
+
+  /** Preuve de livraison, relayée par le BFF après contrôle d'appartenance. */
+  @Get('commandes/:id/preuve')
+  async getOrderProof(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) orderId: string,
+    @Res() res: Response,
+  ) {
+    const { data, contentType } = await this.commercantService.getOrderProof(
+      req.user.id,
+      orderId,
+    );
+    this.sendImage(res, data, contentType);
+  }
+
+  /** Photo jointe à un signalement d'échec de livraison. */
+  @Get('preuves/:id')
+  async getFailureProof(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { data, contentType } = await this.commercantService.getFailureProof(
+      req.user.id,
+      id,
+    );
+    this.sendImage(res, data, contentType);
+  }
+
+  /**
+   * `private` dans l'en-tête de cache : une preuve de livraison ne doit jamais
+   * être retenue par un intermédiaire partagé.
+   */
+  private sendImage(res: Response, data: Buffer, contentType: string) {
+    res.set({
+      'Content-Type': contentType,
+      'Content-Length': String(data.length),
+      'Cache-Control': 'private, max-age=300',
+    });
+    res.send(data);
   }
 
   @Get('commandes/:id/suivi')

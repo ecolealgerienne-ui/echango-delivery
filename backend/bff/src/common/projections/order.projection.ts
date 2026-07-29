@@ -123,7 +123,15 @@ const ORDER_FIELDS = [
   'notes',
   'distance',
   'estimated_duration',
-  'proof_url',
+  // `proof_url` a été RETIRÉ (29/07/2026). C'est l'URL que Fleetbase construit
+  // depuis son propre `APP_URL` : injoignable depuis un téléphone, et surtout
+  // protégée par rien — la publier revient à livrer les preuves de livraison à
+  // qui devine l'adresse. Toute la discipline posée côté transporteur (§11 :
+  // jamais l'URL Fleetbase, toujours un chemin BFF authentifié) était
+  // contournée ici par un champ oublié dans la liste d'autorisation.
+  //
+  // La preuve reste accessible, par une route qui vérifie l'appartenance :
+  // `GET /commercant/commandes/:id/preuve`.
   'scheduled_at',
   'pod_required',
   'pod_method',

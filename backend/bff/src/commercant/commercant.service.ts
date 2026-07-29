@@ -12,7 +12,7 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
-import { projectOrderForMerchant } from '../common/projections/order.projection';
+import { projectOrderForMerchant, projectPlace } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
 
 @Injectable()
@@ -446,7 +446,197 @@ export class CommerçantService {
     // Les commissions ne sont PAS renvoyées : ce sont des données de
     // facturation interne, sans usage dans l'app commerçant, et
     // `include: { commissions: true }` les exposait au client (revue M10).
-    return merged;
+    return {
+      ...(merged as any),
+      ...(await this.failuresFor(order.fleetbaseOrderId)),
+    };
+  }
+
+  /**
+   * Signalements d'échec attachés à une commande, du plus récent au plus
+   * ancien.
+   *
+   * ── Pourquoi le commerçant doit les voir ────────────────────────────────────
+   *
+   * Il recevait « Échec de livraison : client absent » en notification, et rien
+   * de plus : ni la précision écrite par le transporteur, ni la photo. Or c'est
+   * lui qui devra répondre à son propre client, et éventuellement le
+   * rembourser. Le seul destinataire du justificatif était jusqu'ici celui qui
+   * l'avait produit.
+   *
+   * Le filtre porte sur la commande et non sur un transporteur : plusieurs
+   * peuvent s'y être succédé, et le commerçant a droit à la série complète —
+   * une livraison tentée trois fois n'est pas celle tentée une fois.
+   *
+   * La photo n'est jamais servie par son URL Fleetbase : celle-ci n'est
+   * protégée par rien. Le chemin renvoyé pointe sur le BFF, qui vérifie
+   * l'appartenance avant de relayer les octets.
+   */
+  private async failuresFor(fleetbaseOrderUuid: string) {
+    const failures = await this.prisma.deliveryFailure.findMany({
+      where: { fleetbaseOrderUuid },
+      orderBy: { reportedAt: 'desc' },
+    });
+
+    if (!failures.length) return {};
+
+    const project = (f: any) => ({
+      id: f.id,
+      reason: f.reason,
+      notes: f.notes,
+      photo_url: f.proofUrl ? `/commercant/preuves/${f.id}` : null,
+      created_at: f.reportedAt.toISOString(),
+    });
+
+    return {
+      delivery_failure: project(failures[0]),
+      delivery_failures: failures.map(project),
+    };
+  }
+
+  /**
+   * Photo d'un signalement d'échec, servie au commerçant propriétaire.
+   *
+   * L'appartenance se vérifie en deux temps — le signalement porte l'uuid de la
+   * commande, et c'est le cache local qui dit à quel commerçant elle est. Le
+   * même raisonnement que partout : Fleetbase ignore silencieusement les
+   * filtres, donc l'appartenance ne se demande jamais à lui.
+   */
+  async getFailureProof(merchantId: string, failureId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const failure = await this.prisma.deliveryFailure.findUnique({
+      where: { id: failureId },
+    });
+
+    const owned = failure
+      ? await this.prisma.order.findFirst({
+          where: { fleetbaseOrderId: failure.fleetbaseOrderUuid, merchantId },
+          select: { id: true },
+        })
+      : null;
+
+    if (!failure || !owned) {
+      // Un signalement inexistant et celui d'un autre commerçant donnent la
+      // même réponse ; seul le second est journalisé.
+      if (failure) {
+        this.audit.denied({
+          actorType: 'merchant',
+          actorId: merchantId,
+          action: 'proof.access',
+          resourceType: 'DeliveryFailure',
+          resourceId: failureId,
+          reason: 'Signalement portant sur la commande d\'un autre commerçant',
+        });
+      }
+      throw new NotFoundException('Aucune preuve pour ce signalement');
+    }
+
+    if (!failure.proofUrl) {
+      throw new NotFoundException('Aucune preuve pour ce signalement');
+    }
+
+    try {
+      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
+    } catch (error) {
+      this.logger.warn(`Preuve ${failureId} illisible : ${error.message}`);
+      throw new NotFoundException('Preuve indisponible');
+    }
+  }
+
+  /**
+   * Preuve de livraison de la commande, servie au commerçant.
+   *
+   * ⚠️ Dépend de `proof_url` sur la commande Fleetbase, **dont le
+   * renseignement n'est pas vérifié** : la preuve capturée par le transporteur
+   * crée bien une ressource `Proof`, mais que Fleetbase reporte son URL sur la
+   * commande elle-même reste à confirmer sur une livraison réelle. Si ce champ
+   * reste vide, la route répond « pas de preuve » — ce qui est indiscernable,
+   * pour l'appelant, d'une livraison sans preuve exigée. C'est le premier point
+   * à observer sur une vraie livraison avec `pod_required`.
+   */
+  async getOrderProof(merchantId: string, orderId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    let live: any;
+    try {
+      const orders = await this.fleetbaseClient.fetchEveryOrder();
+      live = orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+    } catch (error) {
+      this.logger.warn(`Preuve de commande indisponible : ${error.message}`);
+      throw new NotFoundException('Preuve indisponible');
+    }
+
+    if (!live?.proof_url) {
+      throw new NotFoundException('Aucune preuve enregistrée pour cette livraison');
+    }
+
+    try {
+      return await this.fleetbaseClient.fetchStoredFile(live.proof_url);
+    } catch (error) {
+      this.logger.warn(`Preuve de ${orderId} illisible : ${error.message}`);
+      throw new NotFoundException('Preuve indisponible');
+    }
+  }
+
+  /**
+   * Dernière position connue du transporteur affecté à cette commande.
+   *
+   * ── Ce que cette route est, et n'est pas ────────────────────────────────────
+   *
+   * C'est un **point**, pas un suivi : la position que le transporteur a
+   * remontée en dernier, avec sa date. Pas d'itinéraire, pas d'heure d'arrivée
+   * estimée — celle-ci demande un moteur de routage (OSRM), non auto-hébergé à
+   * ce stade. Attendre OSRM pour montrer quoi que ce soit reviendrait à laisser
+   * le commerçant devant un statut textuel alors que la donnée est là.
+   *
+   * La fraîcheur est renvoyée avec le point, et ce n'est pas cosmétique : une
+   * position vieille d'une heure affichée comme actuelle est pire qu'aucune
+   * position. Le transporteur peut être hors ligne, en tunnel, ou avoir fermé
+   * l'application.
+   *
+   * `null` plutôt qu'une erreur quand personne n'est encore affecté : c'est
+   * l'état normal d'une course en attente, pas un échec.
+   */
+  async getOrderDriverPosition(merchantId: string, orderId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    let live: any;
+    try {
+      const orders = await this.fleetbaseClient.fetchEveryOrder();
+      live = orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+    } catch (error) {
+      this.logger.warn(`Position indisponible (${orderId}) : ${error.message}`);
+      return { position: null };
+    }
+
+    const driverUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid;
+    if (!driverUuid) return { position: null };
+
+    // Le miroir local, et non l'historique Fleetbase : `/positions` n'offre
+    // aucun filtre par transporteur, donc le servir imposerait de télécharger
+    // tout l'historique de l'organisation à chaque rafraîchissement (§10).
+    const driver = await this.prisma.driverAccount.findUnique({
+      where: { fleetbaseDriverUuid: driverUuid },
+      select: { lastLatitude: true, lastLongitude: true, lastPositionAt: true },
+    });
+
+    if (!driver?.lastLatitude || !driver?.lastLongitude) {
+      return { position: null };
+    }
+
+    return {
+      position: {
+        latitude: driver.lastLatitude,
+        longitude: driver.lastLongitude,
+        // Jamais omise : c'est elle qui dit si le point vaut quelque chose.
+        recorded_at: driver.lastPositionAt?.toISOString() ?? null,
+      },
+    };
   }
 
 
@@ -698,7 +888,13 @@ export class CommerçantService {
 
     try {
       const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
-      return { data: response?.places || [] };
+      // Projeté comme partout ailleurs (revue M10) : cette route servait les
+      // objets `Place` Fleetbase **bruts**, seul reliquat de la fuite corrigée
+      // le 28/07. Ce qui sortait était donc décidé par Fleetbase — dont
+      // `owner_uuid`, `company_uuid` et toute relation qu'une mise à jour
+      // amont y ajouterait.
+      const places = this.fleetbaseClient.extractCollection(response, 'places');
+      return { data: places.map((p: any) => projectPlace(p, 'full')) };
     } catch (error) {
       this.logger.error(`Failed to fetch addresses: ${error.message}`);
       return { data: [] };
