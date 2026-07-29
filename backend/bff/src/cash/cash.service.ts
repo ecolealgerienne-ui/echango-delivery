@@ -61,6 +61,26 @@ export class CashService {
   }
 
   /**
+   * Taux de commission d'Echango sur la rémunération d'une course.
+   *
+   * ── Ce qu'il prélève, et sur quoi ───────────────────────────────────────────
+   *
+   * Sur la **rémunération du transporteur**, jamais sur le montant encaissé :
+   * ce dernier appartient au commerçant et ne fait que transiter. Prélever
+   * dessus reviendrait à taxer la marchandise de quelqu'un d'autre.
+   *
+   * ⚠️ 20 % par défaut est un **ordre de grandeur** aligné sur le secteur
+   * (Uber, Stuart, Yassir : 25-30 %), volontairement plus bas pour un réseau
+   * qui démarre et doit attirer des transporteurs. Ce n'est pas un arbitrage.
+   */
+  private commissionRate(): number {
+    const configured = Number(this.configService.get('COMMISSION_RATE'));
+    return Number.isFinite(configured) && configured >= 0 && configured < 1
+      ? configured
+      : 0.2;
+  }
+
+  /**
    * Plafond de dette d'un transporteur envers un commerçant.
    *
    * ── Pourquoi ce plafond est le garde-fou principal ──────────────────────────
@@ -96,31 +116,138 @@ export class CashService {
   }
 
   /**
-   * Dette d'un transporteur envers un commerçant.
+   * Position nette entre un transporteur et un commerçant.
    *
-   * Les remises non confirmées **ne réduisent pas** la dette : tant que la
-   * seconde partie n'a rien confirmé, la remise est une affirmation, pas un
-   * fait. Les compter reviendrait à laisser un transporteur effacer sa dette
-   * en la déclarant.
+   * ── Pourquoi elle est signée ────────────────────────────────────────────────
+   *
+   * **Positive** : le transporteur détient des espèces du commerçant.
+   * **Négative** : le commerçant lui doit une rémunération que l'encaissement
+   * n'a pas couverte — course sans encaissement, ou client qui n'a payé qu'une
+   * partie. Les deux situations sont normales, et une dette bornée à zéro
+   * effacerait la seconde : le transporteur aurait travaillé sans que rien ne
+   * l'enregistre.
+   *
+   *     position = encaissé − retenu sur l'encaissement
+   *                − rémunérations non retenues
+   *                − remises confirmées (transporteur → commerçant)
+   *                + versements confirmés (commerçant → transporteur)
+   *
+   * Ce qui se simplifie, sur une course encaissée couvrant la rémunération, en
+   * l'énoncé attendu : `dette = perçu − rémunération`. Et il vaut que les frais
+   * de livraison soient inclus ou non dans le montant à encaisser — c'est ce
+   * qui rend `codIncludesDelivery` purement informatif.
+   *
+   * Les remises **non confirmées ne comptent pas** : tant que la seconde partie
+   * n'a rien confirmé, une remise est une affirmation, pas un fait.
    */
   async debtBetween(driverId: string, merchantId: string): Promise<number> {
-    const [collected, remitted] = await Promise.all([
+    const [collected, earned, out, back] = await Promise.all([
       this.prisma.cashCollection.aggregate({
         where: { driverId, merchantId },
         _sum: { collectedAmount: true },
       }),
+      this.prisma.driverEarning.aggregate({
+        where: { driverId, merchantId },
+        _sum: { grossAmount: true },
+      }),
       this.prisma.cashRemittance.aggregate({
-        where: { driverId, merchantId, confirmedAt: { not: null } },
+        where: {
+          driverId,
+          merchantId,
+          direction: 'driver_to_merchant',
+          confirmedAt: { not: null },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.cashRemittance.aggregate({
+        where: {
+          driverId,
+          merchantId,
+          direction: 'merchant_to_driver',
+          confirmedAt: { not: null },
+        },
         _sum: { amount: true },
       }),
     ]);
 
     const total =
-      (collected._sum.collectedAmount ?? 0) - (remitted._sum.amount ?? 0);
+      Number(collected._sum.collectedAmount ?? 0) -
+      Number(earned._sum.grossAmount ?? 0) -
+      Number(out._sum.amount ?? 0) +
+      Number(back._sum.amount ?? 0);
 
     // Arrondi au centime : les flottants accumulent un résidu sur des sommes
     // d'argent, et une dette affichée « 0.000000001 » n'est jamais soldée.
     return Math.round(total * 100) / 100;
+  }
+
+  /**
+   * Commission cumulée qu'un transporteur doit à Echango.
+   *
+   * ⚠️ **Son recouvrement n'est pas construit**, et c'est assumé : facturer un
+   * transporteur est un acte de gestion, pas une fonctionnalité de
+   * l'application. Ce qui ne se rattrape pas, en revanche, c'est le calcul — le
+   * taux changera, les prix aussi, et une commission recalculée plus tard sur
+   * d'autres paramètres ne serait plus celle qui était due. On l'enregistre
+   * donc dès le premier jour, comme les entrées de tarification.
+   */
+  async platformCommissionOwed(driverId: string): Promise<number> {
+    const result = await this.prisma.driverEarning.aggregate({
+      where: { driverId },
+      _sum: { commissionAmount: true },
+    });
+    return Math.round(Number(result._sum.commissionAmount ?? 0) * 100) / 100;
+  }
+
+  /**
+   * Enregistre la rémunération d'une course et la commission qui s'y applique.
+   *
+   * ── La retenue est plafonnée à ce qui a été perçu ───────────────────────────
+   *
+   * Le transporteur se paie sur les espèces qu'il tient, mais **on ne se paie
+   * pas sur de l'argent qu'on n'a pas** : sur une course sans encaissement, ou
+   * dont le client n'a payé que 300 sur 500, la retenue est bornée en
+   * conséquence. Le reliquat reste dû par le commerçant — c'est ce que la
+   * position négative exprime, et ce qu'un versement en sens inverse règle.
+   */
+  async recordEarning(
+    driverId: string,
+    merchantId: string,
+    fleetbaseOrderUuid: string,
+    grossAmount: number,
+    collectedAmount: number,
+  ) {
+    const gross = Math.round(grossAmount * 100) / 100;
+    if (gross <= 0) return null;
+
+    const existing = await this.prisma.driverEarning.findUnique({
+      where: { fleetbaseOrderUuid },
+    });
+    if (existing) return existing;
+
+    const rate = this.commissionRate();
+    const commission = Math.round(gross * rate * 100) / 100;
+    const retained = Math.round(Math.min(gross, Math.max(collectedAmount, 0)) * 100) / 100;
+
+    const earning = await this.prisma.driverEarning.create({
+      data: {
+        driverId,
+        merchantId,
+        fleetbaseOrderUuid,
+        grossAmount: gross,
+        commissionRate: rate,
+        commissionAmount: commission,
+        retainedFromCash: retained,
+        currency: this.currency,
+      },
+    });
+
+    this.logger.log(
+      `Rémunération ${fleetbaseOrderUuid} : ${gross} ${this.currency} ` +
+        `(commission ${commission}, retenu sur encaissement ${retained})`,
+    );
+
+    return earning;
   }
 
   /**
@@ -236,114 +363,111 @@ export class CashService {
   }
 
   /**
-   * Soldes du transporteur, un par commerçant.
+   * Contreparties avec lesquelles un compte a une histoire.
    *
-   * Regroupé par commerçant et non globalement : la dette n'est pas une somme
-   * unique due à « la plateforme », c'est une série de dettes bilatérales, et
-   * c'est ainsi qu'elle se règle — un commerçant à la fois, au prochain
-   * enlèvement.
+   * L'union des trois tables, et non les seuls encaissements : un transporteur
+   * qui a livré sans encaisser n'apparaîtrait nulle part, alors que c'est
+   * précisément le cas où le commerçant lui doit quelque chose.
    */
-  async driverBalances(driverId: string) {
-    const [collections, remittances] = await Promise.all([
-      this.prisma.cashCollection.groupBy({
-        by: ['merchantId'],
-        where: { driverId },
-        _sum: { collectedAmount: true },
-      }),
-      this.prisma.cashRemittance.groupBy({
-        by: ['merchantId'],
-        where: { driverId, confirmedAt: { not: null } },
-        _sum: { amount: true },
-      }),
+  private async counterparties(
+    persona: 'driver' | 'merchant',
+    actorId: string,
+  ): Promise<string[]> {
+    const field = persona === 'driver' ? 'merchantId' : 'driverId';
+    const where = persona === 'driver' ? { driverId: actorId } : { merchantId: actorId };
+
+    const [collections, earnings, remittances] = await Promise.all([
+      this.prisma.cashCollection.groupBy({ by: [field as any], where }),
+      this.prisma.driverEarning.groupBy({ by: [field as any], where }),
+      this.prisma.cashRemittance.groupBy({ by: [field as any], where }),
     ]);
 
-    // Types explicites : le client Prisma n'a pas encore été régénéré dans cet
-    // environnement (le proxy sortant bloque le téléchargement des moteurs),
-    // donc `groupBy` y est typé `unknown` et l'arithmétique ne compile pas.
-    const remitted = new Map<string, number>(
-      remittances.map((r: any) => [r.merchantId, Number(r._sum.amount ?? 0)]),
-    );
+    const ids = new Set<string>();
+    for (const row of [...collections, ...earnings, ...remittances]) {
+      const value = (row as any)[field];
+      if (value) ids.add(value);
+    }
+    return [...ids];
+  }
 
-    const merchantIds = collections.map((c: any) => c.merchantId);
+  /**
+   * Soldes du transporteur, un par commerçant.
+   *
+   * Chaque solde passe par `debtBetween()` plutôt que par une agrégation
+   * parallèle : deux façons de calculer la même dette finiraient par en donner
+   * deux valeurs, et sur de l'argent la divergence n'est pas un détail
+   * d'affichage. Le coût est une requête par contrepartie — acceptable, et la
+   * correction ne se négocie pas ici.
+   *
+   * La dette n'est pas une somme unique due à la plateforme mais une série de
+   * dettes bilatérales, et c'est ainsi qu'elle se règle : un commerçant à la
+   * fois, au prochain enlèvement.
+   */
+  async driverBalances(driverId: string) {
+    const merchantIds = await this.counterparties('driver', driverId);
+    const ceiling = this.debtCeiling();
+
     const merchants = await this.prisma.merchantAccount.findMany({
       where: { id: { in: merchantIds } },
       select: { id: true, businessName: true, phone: true, businessPhone: true },
     });
     const byId = new Map<string, any>(merchants.map((m: any) => [m.id, m]));
 
-    const ceiling = this.debtCeiling();
+    const balances = await Promise.all(
+      merchantIds.map(async (merchantId) => {
+        const debt = await this.debtBetween(driverId, merchantId);
+        const merchant = byId.get(merchantId);
+        return {
+          merchant_id: merchantId,
+          merchant_name: merchant?.businessName ?? null,
+          merchant_phone: merchant?.businessPhone ?? merchant?.phone ?? null,
+          debt,
+          blocked: debt >= ceiling,
+        };
+      }),
+    );
 
     return {
       currency: this.currency,
       ceiling,
-      balances: collections
-        .map((c: any) => {
-          const merchant = byId.get(c.merchantId);
-          const debt =
-            Math.round(
-              ((c._sum.collectedAmount ?? 0) - (remitted.get(c.merchantId) ?? 0)) * 100,
-            ) / 100;
-          return {
-            merchant_id: c.merchantId,
-            merchant_name: merchant?.businessName ?? null,
-            merchant_phone: merchant?.businessPhone ?? merchant?.phone ?? null,
-            debt,
-            /** Au plafond, plus aucune course encaissée de ce commerçant. */
-            blocked: debt >= ceiling,
-          };
-        })
-        // Une dette soldée n'a rien à faire dans une liste de ce qu'on doit :
-        // elle la remplit de zéros et noie ce qui reste à régler.
-        .filter((b: any) => b.debt > 0)
-        .sort((a: any, b: any) => b.debt - a.debt),
+      /** Commission cumulée due à Echango. Son recouvrement n'est pas construit. */
+      platform_commission: await this.platformCommissionOwed(driverId),
+      // Les soldes nuls disparaissent, les négatifs restent : ils disent que le
+      // commerçant doit quelque chose au transporteur, ce qui appelle une
+      // action tout autant qu'une dette dans l'autre sens.
+      balances: balances
+        .filter((b) => b.debt !== 0)
+        .sort((a, b) => b.debt - a.debt),
     };
   }
 
   /** Soldes du commerçant, un par transporteur. Symétrique du précédent. */
   async merchantBalances(merchantId: string) {
-    const [collections, remittances] = await Promise.all([
-      this.prisma.cashCollection.groupBy({
-        by: ['driverId'],
-        where: { merchantId },
-        _sum: { collectedAmount: true },
-      }),
-      this.prisma.cashRemittance.groupBy({
-        by: ['driverId'],
-        where: { merchantId, confirmedAt: { not: null } },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const remitted = new Map<string, number>(
-      remittances.map((r: any) => [r.driverId, Number(r._sum.amount ?? 0)]),
-    );
+    const driverIds = await this.counterparties('merchant', merchantId);
 
     const drivers = await this.prisma.driverAccount.findMany({
-      where: { id: { in: collections.map((c: any) => c.driverId) } },
+      where: { id: { in: driverIds } },
       select: { id: true, firstName: true, lastName: true, phone: true },
     });
     const byId = new Map<string, any>(drivers.map((d: any) => [d.id, d]));
 
+    const balances = await Promise.all(
+      driverIds.map(async (driverId) => {
+        const debt = await this.debtBetween(driverId, merchantId);
+        const driver = byId.get(driverId);
+        return {
+          driver_id: driverId,
+          driver_name:
+            [driver?.firstName, driver?.lastName].filter(Boolean).join(' ') || null,
+          driver_phone: driver?.phone ?? null,
+          debt,
+        };
+      }),
+    );
+
     return {
       currency: this.currency,
-      balances: collections
-        .map((c: any) => {
-          const driver = byId.get(c.driverId);
-          const debt =
-            Math.round(
-              ((c._sum.collectedAmount ?? 0) - (remitted.get(c.driverId) ?? 0)) * 100,
-            ) / 100;
-          return {
-            driver_id: c.driverId,
-            driver_name: [driver?.firstName, driver?.lastName]
-              .filter(Boolean)
-              .join(' ') || null,
-            driver_phone: driver?.phone ?? null,
-            debt,
-          };
-        })
-        .filter((b: any) => b.debt > 0)
-        .sort((a: any, b: any) => b.debt - a.debt),
+      balances: balances.filter((b) => b.debt !== 0).sort((a, b) => b.debt - a.debt),
     };
   }
 
@@ -367,12 +491,20 @@ export class CashService {
     }
 
     const debt = await this.debtBetween(driverId, merchantId);
-    if (debt <= 0) {
+    if (debt === 0) {
       throw new BadRequestException('Aucune somme due entre ces deux comptes');
     }
-    if (rounded > debt) {
+
+    // Le SENS est déduit de qui doit, pas de qui déclare. Laisser le déclarant
+    // le choisir permettrait d'enregistrer un versement dans le mauvais sens et
+    // de doubler une dette au lieu de l'éteindre — une erreur de saisie qui
+    // coûterait de l'argent réel.
+    const direction = debt > 0 ? 'driver_to_merchant' : 'merchant_to_driver';
+    const outstanding = Math.abs(debt);
+
+    if (rounded > outstanding) {
       throw new BadRequestException(
-        `Montant supérieur à la dette en cours (${debt} ${this.currency})`,
+        `Montant supérieur à la somme due (${outstanding} ${this.currency})`,
       );
     }
 
@@ -383,6 +515,7 @@ export class CashService {
         amount: rounded,
         currency: this.currency,
         declaredBy,
+        direction,
       },
     });
 
@@ -394,9 +527,14 @@ export class CashService {
       await this.notifications.notify({
         merchantId,
         type: 'cash.remittance_declared',
-        title: 'Remise d\'espèces à confirmer',
-        body: `Un transporteur déclare vous avoir remis ${rounded} ${this.currency}. ` +
-          'Confirmez la réception pour solder le montant.',
+        title: direction === 'driver_to_merchant'
+            ? 'Remise d\'espèces à confirmer'
+            : 'Versement à confirmer',
+        body: direction === 'driver_to_merchant'
+            ? `Un transporteur déclare vous avoir remis ${rounded} ${this.currency}. ` +
+              'Confirmez la réception pour solder le montant.'
+            : `Un transporteur déclare avoir reçu ${rounded} ${this.currency} de votre part. ` +
+              'Confirmez pour solder le montant.',
       });
     }
 
@@ -563,6 +701,7 @@ export class CashService {
       amount: r.amount,
       currency: r.currency,
       declared_by: r.declaredBy,
+      direction: r.direction,
       declared_at: r.declaredAt.toISOString(),
       confirmed_at: r.confirmedAt?.toISOString() ?? null,
       disputed_at: r.disputedAt?.toISOString() ?? null,

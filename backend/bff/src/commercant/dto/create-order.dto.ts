@@ -151,8 +151,10 @@ export class CreateOrderDto {
    * (`docs/specs_paiement_livraison.md` §7).
    *
    * Ce qu'il recouvre — marchandise seule, ou marchandise plus frais de port —
-   * est laissé au commerçant : c'est sa relation commerciale, pas la nôtre. Le
-   * registre enregistre ce qu'il déclare.
+   * est laissé au commerçant (`codIncludesDelivery`), et ce choix ne concerne
+   * que ce qu'il demande à son propre client : **le règlement entre lui et le
+   * transporteur est le même dans les deux cas**, celui-ci retenant sa
+   * rémunération sur les espèces.
    *
    * Absent = livraison sans encaissement, le cas ordinaire.
    */
@@ -162,6 +164,19 @@ export class CreateOrderDto {
   @Min(1, { message: 'Un encaissement de 0 est une livraison sans encaissement : laissez le champ vide' })
   @Max(500000)
   codAmount?: number;
+
+  /**
+   * Le montant à encaisser couvre-t-il aussi les frais de livraison ?
+   *
+   * ⚠️ **Ne change rien au règlement.** Le transporteur retient sa rémunération
+   * sur les espèces dans les deux cas, et la dette vaut toujours
+   * `perçu − rémunération`. Ce drapeau sert au commerçant, pour reconstituer son
+   * chiffre d'affaires : marchandise = encaissé − livraison si les frais sont
+   * dedans, encaissé tout court sinon.
+   */
+  @IsOptional()
+  @IsBoolean()
+  codIncludesDelivery?: boolean;
 }
 
 export class OrderItemDto {

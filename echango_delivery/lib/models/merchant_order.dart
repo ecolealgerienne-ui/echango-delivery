@@ -62,6 +62,13 @@ class MerchantOrder extends Equatable {
   final num? codAmount;
   final String? codCurrency;
 
+  /// Le montant à encaisser inclut-il les frais de livraison ?
+  ///
+  /// Purement informatif : le règlement avec le transporteur est le même dans
+  /// les deux cas. Sert au commerçant à lire son chiffre d'affaires —
+  /// marchandise = encaissé moins livraison, ou encaissé tout court.
+  final bool codIncludesDelivery;
+
   /// Ce qui a réellement été encaissé, une fois la livraison faite.
   ///
   /// `null` tant que le transporteur n'a rien déclaré. Distinct de [codAmount],
@@ -98,6 +105,7 @@ class MerchantOrder extends Equatable {
     this.driverPhone,
     this.codAmount,
     this.codCurrency,
+    this.codIncludesDelivery = false,
     this.cashCollection,
     this.deliveryFailures = const [],
   });
@@ -156,6 +164,7 @@ class MerchantOrder extends Equatable {
       currency: meta?['currency'] as String?,
       codAmount: meta?['cod_amount'] as num?,
       codCurrency: meta?['cod_currency'] as String?,
+      codIncludesDelivery: meta?['cod_includes_delivery'] == true,
       cashCollection: json['cash_collection'] is Map<String, dynamic>
           ? CashCollectionEntry.fromJson(
               json['cash_collection'] as Map<String, dynamic>)

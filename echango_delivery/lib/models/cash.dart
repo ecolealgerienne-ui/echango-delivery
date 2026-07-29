@@ -21,6 +21,16 @@ class CashBalance extends Equatable {
   /// sera confiée à ce transporteur pour ce commerçant tant qu'il n'a pas remis.
   final bool blocked;
 
+  /// La position est **signée**. Positive : le transporteur détient des espèces
+  /// du commerçant. Négative : le commerçant lui doit une rémunération que
+  /// l'encaissement n'a pas couverte — course sans encaissement, ou client qui
+  /// n'a payé qu'une partie. Les deux appellent une action, en sens inverse.
+  bool get driverOwes => debt > 0;
+  bool get merchantOwes => debt < 0;
+
+  /// Somme due, quel que soit le sens.
+  double get outstanding => debt.abs();
+
   const CashBalance({
     required this.counterpartyId,
     required this.debt,
@@ -62,12 +72,22 @@ class CashLedger {
   /// bénéficie — c'est ce qui borne ce qu'un transporteur peut détenir de lui.
   final double? ceiling;
 
+  /// Commission cumulée due à Echango. Côté transporteur uniquement.
+  ///
+  /// ⚠️ Son recouvrement n'est pas construit : c'est un montant enregistré, pas
+  /// une somme que l'application sait encaisser. Affiché pour que le
+  /// transporteur ne découvre pas une facture, pas comme une dette exigible ici.
+  final double? platformCommission;
+
   const CashLedger({
     required this.balances,
     required this.currency,
     this.ceiling,
+    this.platformCommission,
   });
 
+  /// Somme des positions, signée. Un repère, jamais un montant à régler d'un
+  /// coup : il est dû à — ou par — plusieurs personnes différentes.
   double get total =>
       balances.fold<double>(0, (sum, b) => sum + b.debt);
 

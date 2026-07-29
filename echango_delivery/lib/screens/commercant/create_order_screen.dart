@@ -62,6 +62,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// qui hésite ne doit pas retaper.
   bool _cashOnDelivery = false;
 
+  /// Le montant à encaisser couvre-t-il aussi les frais de livraison ?
+  ///
+  /// Vrai par défaut : c'est l'usage courant — le client règle tout en une
+  /// fois. Purement informatif pour le règlement, qui est le même dans les deux
+  /// cas, mais il change ce que le commerçant doit saisir comme montant.
+  bool _codIncludesDelivery = true;
+
   /// Contenu imposant des précautions de transport. Le contrat serveur
   /// l'accepte depuis l'origine ; le formulaire ne l'envoyait pas.
   bool _fragile = false;
@@ -163,6 +170,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     if (cod is num) {
       _codAmount.text = cod.toStringAsFixed(0);
       _cashOnDelivery = true;
+      _codIncludesDelivery = t['codIncludesDelivery'] == true;
     }
 
     final vehicle = t['vehicleType'];
@@ -261,8 +269,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       // Montant à encaisser, distinct de la rémunération du transporteur : le
       // premier va du destinataire au commerçant, le second du commerçant au
       // transporteur. Sens inverses.
-      if (_cashOnDelivery && double.tryParse(_codAmount.text.trim()) != null)
+      if (_cashOnDelivery && double.tryParse(_codAmount.text.trim()) != null) ...{
         'codAmount': double.parse(_codAmount.text.trim()),
+        'codIncludesDelivery': _codIncludesDelivery,
+      },
       // Poids et fragilité sont transmis : le contrat serveur les acceptait
       // déjà, le formulaire n'envoyait qu'une description et `quantity: 1` en
       // dur. Or c'est précisément ce qui permet au transporteur de juger si sa
@@ -621,12 +631,29 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           _field(_codAmount, 'Montant à encaisser (DZD)',
               Icons.account_balance_wallet_outlined,
               keyboard: TextInputType.number),
+          // Ce choix ne change pas le règlement — le transporteur retient sa
+          // rémunération dans les deux cas — mais il change le montant que le
+          // commerçant doit saisir juste au-dessus. D'où sa place ici, et non
+          // dans un écran de réglages.
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _codIncludesDelivery,
+            onChanged: (v) => setState(() => _codIncludesDelivery = v ?? true),
+            title: const Text('Les frais de livraison sont inclus'),
+            subtitle: Text(
+              _codIncludesDelivery
+                  ? 'Le client règle la marchandise et la livraison en une fois.'
+                  : 'Le client ne règle que la marchandise ; la livraison reste '
+                      'à votre charge.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
-              'Cette livraison sera proposée en priorité à vos transporteurs '
-              'habituels. À ne pas confondre avec la rémunération ci-dessus, '
-              'qui est ce que vous payez au transporteur.',
+              'Le transporteur retient sa rémunération sur les espèces et ne '
+              'vous remet que la différence. Cette livraison sera proposée en '
+              'priorité à vos transporteurs habituels.',
               style: theme.textTheme.bodySmall,
             ),
           ),

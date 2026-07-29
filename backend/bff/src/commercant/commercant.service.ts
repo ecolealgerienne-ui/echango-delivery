@@ -152,6 +152,7 @@ export class CommerçantService {
     if (dto.codAmount) {
       meta.cod_amount = dto.codAmount;
       meta.cod_currency = this.pricing.currency;
+      meta.cod_includes_delivery = dto.codIncludesDelivery === true;
     }
 
     // Le devis est demandé sur TOUTE commande, même quand le commerçant a
@@ -448,7 +449,6 @@ export class CommerçantService {
   private async resolveOwnedOrder(merchantId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
       where: { OR: [{ id: orderId }, { fleetbaseOrderId: orderId }] },
-      include: { commissions: true },
     });
 
     if (!order) {
@@ -477,9 +477,9 @@ export class CommerçantService {
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
     const [merged] = await this.mergeWithFleetbase([order]);
-    // Les commissions ne sont PAS renvoyées : ce sont des données de
-    // facturation interne, sans usage dans l'app commerçant, et
-    // `include: { commissions: true }` les exposait au client (revue M10).
+    // Aucune donnée de facturation interne ne sort ici : la rémunération du
+    // transporteur et la commission Echango vivent dans `DriverEarning`, et
+    // n'ont pas d'usage dans l'app commerçant.
     return {
       ...(merged as any),
       ...(await this.failuresFor(order.fleetbaseOrderId)),
@@ -770,6 +770,7 @@ export class CommerçantService {
       // Repris comme le reste : une boulangerie qui livre le même client
       // encaisse en général le même montant. Modifiable à l'écran.
       codAmount: typeof meta.cod_amount === 'number' ? meta.cod_amount : null,
+      codIncludesDelivery: meta.cod_includes_delivery === true,
     };
   }
 
@@ -862,6 +863,7 @@ export class CommerçantService {
           // plafond le lisent à chaque encaissement, et la vérification d'un
           // plafond ne doit pas dépendre de la disponibilité de Fleetbase.
           codAmount: dto.codAmount ?? null,
+          codIncludesDelivery: dto.codIncludesDelivery === true,
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
       });

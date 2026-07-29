@@ -790,23 +790,30 @@ export class TransporteurService {
 
 
   /**
-   * Enregistre l'encaissement d'une livraison payée à la réception, si elle
-   * l'est.
+   * Solde une livraison qu'on s'apprête à clôturer : encaissement s'il y en a
+   * un, rémunération dans tous les cas.
    *
    * ── Appelé depuis les DEUX chemins de clôture, et c'est essentiel ───────────
    *
    * `POST /terminer` n'est pas le seul moyen de clore une livraison :
    * l'application suit en réalité les transitions que le serveur lui propose
-   * (`next-activity`), et la transition terminale passe par
-   * `update-activity`. Poser la garde sur le seul `terminer` l'aurait rendue
-   * décorative — le chemin réellement emprunté par l'app l'aurait contournée,
-   * et une livraison encaissée se serait close sans que l'argent figure nulle
-   * part. C'est-à-dire une somme perdue pour le commerçant, sans trace de qui
-   * la détient.
+   * (`next-activity`), et la transition terminale passe par `update-activity`.
+   * Poser la garde sur le seul `terminer` l'aurait rendue décorative — le
+   * chemin réellement emprunté par l'app l'aurait contournée, et une livraison
+   * encaissée se serait close sans que l'argent figure nulle part.
    *
-   * L'écriture du registre précède la clôture Fleetbase : si elle échoue, la
-   * commande reste ouverte et le transporteur peut réessayer. Dans l'ordre
+   * ── L'ordre n'est pas indifférent ───────────────────────────────────────────
+   *
+   * Le registre s'écrit **avant** la clôture Fleetbase. Si l'écriture échoue,
+   * la commande reste ouverte et le transporteur peut réessayer ; dans l'ordre
    * inverse, on obtiendrait une livraison close et un encaissement fantôme.
+   *
+   * ── Comment l'argent se répartit ────────────────────────────────────────────
+   *
+   * Le transporteur retient sa rémunération sur les espèces qu'il tient, et ne
+   * doit au commerçant que la différence. La formule vaut que les frais de
+   * livraison soient inclus ou non dans le montant à encaisser — c'est ce qui
+   * rend ce choix purement informatif pour le commerçant.
    */
   private async settleCashIfDue(
     driverId: string,
@@ -814,9 +821,12 @@ export class TransporteurService {
     cash?: CashCollectionDto,
   ): Promise<void> {
     const codAmount = Number(order?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return;
+    const price = Number(order?.meta?.price) || 0;
 
-    if (!cash) {
+    // Rien à enregistrer : ni encaissement, ni rémunération annoncée.
+    if (codAmount <= 0 && price <= 0) return;
+
+    if (codAmount > 0 && !cash) {
       throw new BadRequestException(
         `Cette livraison est payée à la réception (${codAmount} ${this.cash.currency}) : ` +
           'déclarez le montant encaissé pour la clôturer.',
@@ -831,17 +841,39 @@ export class TransporteurService {
     });
 
     if (!cached) {
-      throw new BadRequestException(
-        "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
-      );
+      // Commande créée hors d'Echango — depuis la console opérateur. Il n'y a
+      // pas de commerçant à qui rendre des comptes, donc pas de registre : mais
+      // on refuse quand même l'encaissement, faute de savoir à qui l'imputer.
+      if (codAmount > 0) {
+        throw new BadRequestException(
+          "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
+        );
+      }
+      return;
     }
 
-    await this.cash.declareCollection(
+    let collected = 0;
+    if (codAmount > 0 && cash) {
+      const result = await this.cash.declareCollection(
+        driverId,
+        cached.merchantId,
+        order.uuid,
+        codAmount,
+        cash,
+      );
+      collected = result.collectedAmount;
+    }
+
+    // La rémunération est enregistrée sur TOUTE course, encaissée ou non :
+    // c'est elle qui porte la commission d'Echango, et une course prépayée en
+    // produit une tout autant. `collected` borne ce que le transporteur peut
+    // retenir — on ne se paie pas sur de l'argent qu'on n'a pas.
+    await this.cash.recordEarning(
       driverId,
       cached.merchantId,
       order.uuid,
-      codAmount,
-      cash,
+      price,
+      collected,
     );
   }
 

@@ -61,6 +61,10 @@ class Order extends Equatable {
   final num? codAmount;
   final String? codCurrency;
 
+  /// Le montant à encaisser inclut-il les frais de livraison ? Sert à
+  /// l'expliquer au destinataire, qui demandera pourquoi il paie ce montant.
+  final bool codIncludesDelivery;
+
   const Order({
     required this.id,
     required this.publicId,
@@ -85,6 +89,7 @@ class Order extends Equatable {
     this.currency,
     this.codAmount,
     this.codCurrency,
+    this.codIncludesDelivery = false,
   });
 
   // Prédicats alignés sur les statuts Fleetbase réels. L'ancienne version
@@ -196,6 +201,7 @@ class Order extends Equatable {
       currency: meta?['currency'] as String?,
       codAmount: meta?['cod_amount'] as num?,
       codCurrency: meta?['cod_currency'] as String?,
+      codIncludesDelivery: meta?['cod_includes_delivery'] == true,
       deliveryFailures: (json['delivery_failures'] as List?)
               ?.whereType<Map<String, dynamic>>()
               .map(DeliveryFailure.fromJson)

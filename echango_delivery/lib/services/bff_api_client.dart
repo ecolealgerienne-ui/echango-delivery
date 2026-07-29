@@ -626,6 +626,8 @@ class BffApiClient {
           : const [],
       currency: (data is Map ? data['currency'] as String? : null) ?? '',
       ceiling: (data is Map ? (data['ceiling'] as num?) : null)?.toDouble(),
+      platformCommission:
+          (data is Map ? (data['platform_commission'] as num?) : null)?.toDouble(),
     );
   }
 

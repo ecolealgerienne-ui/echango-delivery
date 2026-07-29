@@ -167,6 +167,10 @@ const META_FIELDS = [
   // la remise, qui est là où se produit l'erreur de montant.
   'cod_amount',
   'cod_currency',
+  // Purement informatif : le règlement est le même dans les deux cas. Exposé
+  // pour que le commerçant sache lire son chiffre d'affaires, et pour que le
+  // transporteur sache expliquer au destinataire ce qu'il paie.
+  'cod_includes_delivery',
 ];
 
 function projectMeta(meta: any): Record<string, any> | undefined {

@@ -81,7 +81,7 @@ class _CashScreenState extends State<CashScreen> {
               const SizedBox(height: 16),
             ],
 
-            _sectionTitle(_isDriver ? 'Ce que je dois' : 'Ce qu\'on me doit'),
+            _sectionTitle(_isDriver ? 'Mes comptes' : 'Mes transporteurs'),
             if (state.isLoading && state.ledger == null)
               const Padding(
                 padding: EdgeInsets.all(32),
@@ -152,12 +152,33 @@ class _CashScreenState extends State<CashScreen> {
               // plusieurs personnes, et c'est le point qui distingue ce modèle
               // d'un compte chez un transporteur classique.
               _isDriver
-                  ? 'À remettre à chaque commerçant lors de votre prochain '
-                      'enlèvement chez lui. Echango ne détient jamais cet argent.'
-                  : 'Détenues par vos transporteurs jusqu\'à leur prochain '
-                      'passage. Echango ne détient jamais cet argent.',
+                  ? 'Votre rémunération est déjà déduite. Le reste est à remettre '
+                      'à chaque commerçant lors de votre prochain enlèvement chez '
+                      'lui. Echango ne détient jamais cet argent.'
+                  : 'Détenues par vos transporteurs, rémunération déduite, '
+                      'jusqu\'à leur prochain passage. Echango ne détient jamais '
+                      'cet argent.',
               style: theme.textTheme.bodySmall,
             ),
+            // La commission ne se règle pas ici, et l'écran doit le dire :
+            // l'afficher comme un solde exigible promettrait un bouton qui
+            // n'existe pas. C'est un montant enregistré, pas une dette que
+            // l'application sait encaisser.
+            if (_isDriver && (state.ledger?.platformCommission ?? 0) > 0) ...[
+              const Divider(height: 24),
+              Text(
+                'Commission Echango cumulée : '
+                '${state.ledger!.platformCommission!.toStringAsFixed(0)} '
+                '${state.currency}',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Déjà prélevée sur vos courses. Facturée séparément par Echango, '
+                'pas depuis cette application.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
           ],
         ),
       ),
@@ -184,13 +205,10 @@ class _CashScreenState extends State<CashScreen> {
     final amount = await showDialog<double>(
       context: context,
       builder: (_) => _AmountDialog(
-        title: _isDriver ? 'Remettre des espèces' : 'Enregistrer une réception',
-        subtitle: _isDriver
-            ? 'Montant remis à ${balance.displayName}. '
-                'La somme ne sera déduite qu\'après sa confirmation.'
-            : 'Montant reçu de ${balance.displayName}. '
-                'La somme ne sera déduite qu\'après sa confirmation.',
-        maximum: balance.debt,
+        title: 'Enregistrer un versement',
+        subtitle: 'Avec ${balance.displayName}. '
+            'La somme ne sera déduite qu\'après confirmation par l\'autre partie.',
+        maximum: balance.outstanding,
         currency: state.currency,
       ),
     );
@@ -278,6 +296,20 @@ class _BalanceCard extends StatelessWidget {
     required this.onDeclare,
   });
 
+  /// Qui doit à qui, en toutes lettres. Un montant nu sur un solde signé se
+  /// lit dans le mauvais sens une fois sur deux.
+  String _sense(CashBalance balance) {
+    if (balance.merchantOwes) {
+      return isDriver
+          ? 'Ce commerçant vous doit cette somme (course non couverte par '
+              'l\'encaissement).'
+          : 'Vous devez cette somme à ce transporteur.';
+    }
+    return isDriver
+        ? 'Vous détenez cette somme pour ce commerçant.'
+        : 'Détenue par ce transporteur.';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -296,8 +328,15 @@ class _BalanceCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${balance.debt.toStringAsFixed(0)} $currency',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  '${balance.outstanding.toStringAsFixed(0)} $currency',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        // Le sens se lit à la couleur avant le texte : ce que je
+                        // dois n'est pas ce qu'on me doit, même quand c'est le
+                        // même nombre.
+                        color: balance.merchantOwes
+                            ? Colors.green.shade800
+                            : null,
+                      ),
                 ),
               ],
             ),
@@ -322,6 +361,11 @@ class _BalanceCard extends StatelessWidget {
                 ],
               ),
             ],
+            const SizedBox(height: 4),
+            Text(
+              _sense(balance),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -334,7 +378,14 @@ class _BalanceCard extends StatelessWidget {
                 const Spacer(),
                 FilledButton.tonal(
                   onPressed: onDeclare,
-                  child: Text(isDriver ? 'J\'ai remis' : 'J\'ai reçu'),
+                  // Le libellé suit le sens réel du versement, pas le profil :
+                  // un transporteur à qui le commerçant doit de l'argent
+                  // *reçoit*, il ne remet pas.
+                  child: Text(
+                    balance.driverOwes
+                        ? (isDriver ? 'J\'ai remis' : 'J\'ai reçu')
+                        : (isDriver ? 'J\'ai reçu' : 'J\'ai versé'),
+                  ),
                 ),
               ],
             ),

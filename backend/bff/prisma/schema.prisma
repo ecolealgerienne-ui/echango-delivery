@@ -44,11 +44,11 @@ model MerchantAccount {
   // Relations
   deviceTokens      DeviceToken[]
   orders            Order[]
-  commissions       Commission[]
   favouriteDrivers  DriverFavourite[]
   notifications     MerchantNotification[]
   cashCollections   CashCollection[]
   cashRemittances   CashRemittance[]
+  driverEarnings    DriverEarning[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -156,6 +156,7 @@ model DriverAccount {
   declines              OrderDecline[]
   cashCollections       CashCollection[]
   cashRemittances       CashRemittance[]
+  earnings              DriverEarning[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -346,13 +347,25 @@ model Order {
   /// `null` = livraison sans encaissement, le cas ordinaire.
   codAmount          Float?
 
+  /// Le montant à encaisser couvre-t-il aussi les frais de livraison ?
+  ///
+  /// C'est une décision du commerçant, et elle ne concerne QUE ce qu'il demande
+  /// à son propre client. **Elle ne change pas le règlement entre lui et le
+  /// transporteur** : celui-ci déduit sa rémunération de l'encaissement dans
+  /// les deux cas, et la dette vaut toujours `perçu − rémunération`. Ce champ
+  /// existe pour que le commerçant sache reconstituer son chiffre d'affaires
+  /// (marchandise = encaissé − livraison, ou encaissé tout court), pas pour
+  /// piloter un calcul.
+  codIncludesDelivery Boolean @default(false)
+
   // Failure details
   failureReason     String?
   failureNotes      String?
 
-  // Commission tracking
-  totalAmount       Float?   // In currency units
-  commission        Float?   // Calculated by BFF
+  // `totalAmount` et `commission` supprimés avec le modèle `Commission` :
+  // jamais écrits, jamais lus. Deux colonnes de plus qui laissaient croire que
+  // la facturation existait quelque part. `DriverEarning` porte désormais le
+  // calcul, sur la course et non sur le cache de commande.
 
   // Timestamps (synced from Fleetbase)
   createdAt         DateTime @default(now())
@@ -360,42 +373,18 @@ model Order {
   fleetbaseCreatedAt DateTime?
   fleetbaseUpdatedAt DateTime?
 
-  // Relations
-  commissions       Commission[]
 
   @@index([merchantId])
   @@index([fleetbaseOrderId])
   @@index([status])
 }
 
-// Commission Ledger (for analytics + future payouts)
-model Commission {
-  id                String   @id @default(cuid())
-  merchantId        String
-  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-
-  orderId           String
-  order             Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  // Commission calculation
-  orderAmount       Float
-  commissionType    String   // 'percentage', 'fixed', 'distance', 'hybrid'
-  commissionAmount  Float
-
-  // Details for audit
-  calculatedAt      DateTime @default(now())
-  calculatedBy      String   // 'system', 'manual', etc.
-
-  // Payment status (if integrated with payouts)
-  paidAt            DateTime?
-
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([merchantId])
-  @@index([orderId])
-  @@index([paidAt])
-}
+// `Commission` a été SUPPRIMÉ (29/07/2026). Le modèle existait depuis l'origine
+// et **aucune ligne n'y a jamais été écrite** : `include: { commissions: true }`
+// le lisait pour jeter le résultat, c'était tout. `DriverEarning` le remplace
+// et fait ce qu'il promettait — enregistrer ce qu'Echango prélève, sur qui, et
+// à quel taux. Garder les deux aurait laissé un modèle mort au nom évocateur,
+// exactement le piège relevé pour `lastUsedAt` lors du P2.
 
 // Audit Log (for security, traceability)
 // Piste d'audit des refus d'accès et des actions sensibles.
@@ -605,6 +594,16 @@ model CashRemittance {
   amount              Float
   currency            String
 
+  /// Sens du versement.
+  ///
+  /// `driver_to_merchant` : le cas ordinaire, le transporteur rend les espèces
+  /// qu'il a encaissées. `merchant_to_driver` : le commerçant règle une
+  /// rémunération que l'encaissement n'a pas couverte — course sans
+  /// encaissement, ou montant perçu inférieur à la course. Sans ce second sens,
+  /// un transporteur qui a livré sans encaisser n'aurait aucun moyen d'être
+  /// payé dans l'application.
+  direction           String   @default("driver_to_merchant")
+
   /// `driver` ou `merchant` — qui a déclaré. La confirmation revient
   /// nécessairement à l'autre.
   declaredBy          String
@@ -622,6 +621,66 @@ model CashRemittance {
   @@index([driverId, merchantId])
   @@index([merchantId, confirmedAt])
   @@index([driverId, confirmedAt])
+}
+
+
+/// Rémunération d'une course, et la commission qu'Echango y prélève.
+///
+/// ── Pourquoi enregistrer, dès maintenant, ce que personne ne facture encore ──
+///
+/// La commission est le revenu d'Echango. Son recouvrement — facture au
+/// transporteur, compensation sur un versement — n'est pas construit, et c'est
+/// assumé : c'est un acte de gestion, pas une fonctionnalité de l'application.
+/// Mais le **calcul** ne se rattrape pas après coup : le taux peut changer, le
+/// prix d'une course aussi, et une commission recalculée six mois plus tard sur
+/// des paramètres différents ne serait plus celle qui était due. On fige donc
+/// le montant et le taux au moment de la course, comme les entrées de
+/// tarification.
+///
+/// ── Comment l'argent se répartit ────────────────────────────────────────────
+///
+/// Sur une course à 500 dont la commission est de 20 %, encaissée 5 000 :
+///
+///     le transporteur détient          5 000
+///     il retient sa rémunération       −500   (`retainedFromCash`)
+///     il doit au commerçant             4 500
+///     il doit à Echango                   100  (`commissionAmount`)
+///     il lui reste                        400
+///
+/// La retenue est **plafonnée au montant réellement perçu** : sur une course
+/// sans encaissement, ou dont le client n'a payé que 300, il ne peut pas se
+/// payer sur de l'argent qu'il n'a pas. Le reliquat demeure dû par le
+/// commerçant, et c'est ce que `direction: merchant_to_driver` permet de
+/// régler.
+model DriverEarning {
+  id                  String   @id @default(cuid())
+
+  driverId            String
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  merchantId          String
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  fleetbaseOrderUuid  String   @unique
+
+  /// Rémunération brute de la course, telle qu'annoncée au transporteur.
+  grossAmount         Float
+
+  /// Taux appliqué, figé ici : il changera, et une commission passée doit
+  /// rester explicable avec le taux qui était le sien.
+  commissionRate      Float
+  commissionAmount    Float
+
+  /// Part que le transporteur a pu prélever directement sur les espèces
+  /// encaissées. Plafonnée au montant perçu — on ne se paie pas sur de l'argent
+  /// qu'on n'a pas.
+  retainedFromCash    Float    @default(0)
+
+  currency            String
+  earnedAt            DateTime @default(now())
+
+  @@index([driverId, merchantId])
+  @@index([merchantId])
 }
 
 

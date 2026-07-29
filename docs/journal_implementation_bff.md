@@ -1546,3 +1546,125 @@ ce lot est celui où le plus de Dart neuf a été écrit sans toolchain.
 **Non éprouvé par un test réel** : la chaîne complète encaissement → dette →
 remise → confirmation. C'est le premier scénario à jouer, et il demande deux
 comptes (un transporteur, un commerçant) et une commande avec `codAmount`.
+
+---
+
+## 17. Règlement net et commission Echango (29/07/2026)
+
+Deux décisions produit prises ce jour : le transporteur **déduit sa rémunération
+de l'encaissement**, et Echango se rémunère par une **commission sur le prix du
+transport**.
+
+### 17.1 Le calcul qui simplifie tout
+
+Le montant à encaisser vaut normalement marchandise + frais de livraison, et
+c'est le commerçant qui décide si le transport y est inclus. On s'attendait à
+deux règlements distincts. Il n'y en a qu'un :
+
+```
+frais inclus     : client paie 5 000, dette = 5 000 − 500 = 4 500
+frais non inclus : client paie 4 500, dette = 4 500 − 500 = 4 000
+```
+
+Dans les deux cas **`dette = perçu − rémunération`**. Le drapeau
+`codIncludesDelivery` ne pilote donc aucun calcul : il sert au commerçant à lire
+son chiffre d'affaires, et au transporteur à expliquer au destinataire ce qu'il
+paie. C'est dit explicitement partout, faute de quoi quelqu'un finira par écrire
+une branche conditionnelle qui n'a pas lieu d'être.
+
+### 17.2 La dette devient signée, et il le fallait
+
+Borner la dette à zéro effaçait un cas entier : une course **sans encaissement**,
+ou dont le client n'a payé qu'une partie, laisse le commerçant débiteur du
+transporteur. Le transporteur aurait travaillé sans que rien ne l'enregistre.
+
+```
+position = encaissé − rémunérations − remises confirmées + versements confirmés
+```
+
+Positive : le transporteur détient des espèces. Négative : le commerçant lui
+doit. `CashRemittance.direction` porte les deux sens, **et le sens est déduit de
+qui doit, jamais du déclarant** — laisser le déclarant le choisir permettrait
+d'enregistrer un versement à l'envers et de doubler une dette au lieu de
+l'éteindre, une erreur de saisie qui coûterait de l'argent réel.
+
+### 17.3 On ne se paie pas sur de l'argent qu'on n'a pas
+
+La retenue est plafonnée au montant réellement perçu. Sur une course prépayée,
+le transporteur ne retient rien ; sur une course où le client n'a payé que 300
+d'un dû de 500, il retient 300. Le reliquat demeure dû par le commerçant — c'est
+ce que la position négative exprime, et ce qu'un versement en sens inverse règle.
+
+`DriverEarning` enregistre les quatre grandeurs : brut, taux, commission, part
+retenue. Le taux est **figé au moment de la course** : il changera, et une
+commission recalculée plus tard sur d'autres paramètres ne serait plus celle qui
+était due. Même raisonnement que `pricing_inputs`.
+
+### 17.4 Les soldes passent par la formule canonique
+
+`driverBalances` et `merchantBalances` appellent `debtBetween()` par
+contrepartie plutôt que de refaire l'agrégation à côté. Deux façons de calculer
+la même dette finissent par en donner deux valeurs, et sur de l'argent la
+divergence n'est pas un détail d'affichage. Le coût — une requête par
+contrepartie — est assumé.
+
+Les contreparties viennent de **l'union des trois tables**, pas des seuls
+encaissements : un transporteur qui a livré sans encaisser n'apparaîtrait nulle
+part, alors que c'est précisément le cas où on lui doit quelque chose.
+
+### 17.5 La commission est calculée, son recouvrement ne l'est pas
+
+Sur la **rémunération**, jamais sur le montant encaissé : celui-ci appartient au
+commerçant et ne fait que transiter, prélever dessus reviendrait à taxer la
+marchandise d'autrui.
+
+Son recouvrement — facture au transporteur, compensation — n'est pas construit,
+et l'écran le dit en toutes lettres plutôt que d'afficher un solde exigible :
+« déjà prélevée sur vos courses, facturée séparément par Echango, pas depuis
+cette application ». Ce qui ne se rattrape pas, c'est le calcul ; c'est donc lui
+qu'on fait dès le premier jour.
+
+### 17.6 Deux modèles morts supprimés
+
+`Commission` existait depuis l'origine et **aucune ligne n'y a jamais été
+écrite** : `include: { commissions: true }` le lisait pour jeter le résultat.
+`Order.totalAmount` et `Order.commission` de même. Trois choses qui laissaient
+croire que la facturation existait quelque part. `DriverEarning` les remplace et
+fait ce qu'elles promettaient.
+
+### 17.7 Le démarrage cassé, et ce qu'il apprend
+
+`UpdateActivityDto.cash` est typé `CashCollectionDto`, déclaré cent lignes plus
+bas. `emitDecoratorMetadata` émet `__metadata("design:type", CashCollectionDto)`
+**à la définition de la classe**, et une classe n'est pas hissée : zone morte
+temporelle, le processus meurt au chargement. TypeScript ne le voit pas — la
+référence est légale à la compilation, seul l'ordre d'évaluation la casse. D'où
+un « Found 0 errors » suivi d'un crash.
+
+Deux causes de fond corrigées avec : les DTO importaient une constante depuis
+`cash.service`, tirant Prisma et les notifications dans leur graphe pour une
+liste de chaînes (`cash.constants.ts` désormais) ; et `FLEETBASE_ID_PATTERN`
+était **défini deux fois**, alors qu'il porte une garantie de sécurité — deux
+copies d'une règle de sécurité finissent par en devenir deux règles différentes.
+
+**Leçon de méthode** : `tsc --noEmit` ne suffit pas pour une erreur d'ordre
+d'évaluation. La vérification est désormais de compiler **et de charger** le
+module racine.
+
+### 17.8 Vérification
+
+BFF : `tsc` passe, et `app.module` se charge réellement — l'erreur restante est
+`validateEnv` qui refuse un environnement vide, c'est-à-dire son travail.
+
+**Client Prisma non régénéré** (proxy bloquant), donc les trois nouveaux modèles
+sont typés `any` ici.
+
+App : **jamais compilée**. `flutter analyze` reste la vérification manquante.
+
+⚠️ **Prérequis** : `npm run prisma:migrate` puis `prisma generate`. Nouvelle
+variable : `COMMISSION_RATE`.
+
+**Reste non construit, et assumé** : le recouvrement de la commission, et le
+règlement d'une course prépayée — le commerçant doit alors verser au
+transporteur, et la position négative le dit, mais aucun moyen de paiement n'est
+intégré.
