@@ -47,6 +47,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
             onPressed: () => context.push('/commercant/notifications'),
           ),
           IconButton(
+            tooltip: 'Encaissements',
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            onPressed: () => context.push('/commercant/encaissements'),
+          ),
+          IconButton(
             tooltip: 'Carnet d\'adresses',
             icon: const Icon(Icons.bookmark_border),
             onPressed: () => context.push('/commercant/adresses'),

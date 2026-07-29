@@ -10,8 +10,12 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   MaxLength,
+  Min,
+  Max,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.service';
 
 
 /**
@@ -68,6 +72,20 @@ export class UpdateActivityDto {
   @IsOptional()
   @IsString()
   proof?: string;
+
+  /**
+   * Déclaration d'encaissement, exigée quand l'activité est terminale et que la
+   * livraison est payée à la réception.
+   *
+   * Portée ici et non sur une route séparée parce que **c'est ce chemin que
+   * l'application emprunte réellement** pour clôturer : elle suit les
+   * transitions proposées par le serveur. Une garde posée sur le seul
+   * `POST /terminer` aurait été décorative.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CashCollectionDto)
+  cash?: CashCollectionDto;
 }
 
 /**
@@ -153,6 +171,56 @@ export class DeclineOrderDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+}
+
+/**
+ * Déclaration d'encaissement, jointe à la clôture d'une livraison payée à la
+ * réception.
+ *
+ * Le montant est **obligatoire** sur une course encaissée : `completeOrder` la
+ * refuse sans lui. En faire une étape séparée garantirait qu'elle soit oubliée,
+ * et un encaissement non déclaré est exactement ce que le registre existe pour
+ * empêcher.
+ */
+export class CashCollectionDto {
+  /** Ce qui a réellement été perçu. Zéro est une valeur légitime : un client
+   *  qui refuse de payer est un fait à enregistrer. */
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(500000)
+  collectedAmount: number;
+
+  /** Obligatoire dès que le montant diffère de celui annoncé — contrôlé côté
+   *  service, qui seul connaît le montant attendu. */
+  @IsOptional()
+  @IsIn(COLLECTION_DISCREPANCY_REASONS as unknown as string[])
+  discrepancyReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
+}
+
+/** Déclaration d'une remise d'espèces à un commerçant. */
+export class DeclareRemittanceDto {
+  @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'merchantId invalide' })
+  merchantId: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(5000000)
+  amount: number;
+}
+
+export class DisputeRemittanceDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 export class CapturePhotoDto {

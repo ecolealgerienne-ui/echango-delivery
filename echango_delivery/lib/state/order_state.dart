@@ -244,10 +244,26 @@ class OrderState extends ChangeNotifier {
   ///
   /// [activity] doit être renvoyé tel quel : le serveur valide l'objet
   /// complet, pas son seul code.
-  Future<bool> applyActivity(String orderId, Map<String, dynamic> activity) =>
+  ///
+  /// [collectedAmount] accompagne la transition terminale d'une course payée à
+  /// la réception. Le serveur la refuse sans lui : « livré » et « perçu X »
+  /// sont un seul fait.
+  Future<bool> applyActivity(
+    String orderId,
+    Map<String, dynamic> activity, {
+    double? collectedAmount,
+    String? discrepancyReason,
+    String? cashNotes,
+  }) =>
       _mutateOrder(
         orderId,
-        () => _apiClient.updateActivity(orderId, activity),
+        () => _apiClient.updateActivity(
+          orderId,
+          activity,
+          collectedAmount: collectedAmount,
+          discrepancyReason: discrepancyReason,
+          cashNotes: cashNotes,
+        ),
         'Impossible d\'appliquer cette étape',
       );
 
@@ -256,9 +272,16 @@ class OrderState extends ChangeNotifier {
   /// [proofPhotoBase64] est optionnelle : quand elle est fournie, la preuve
   /// est envoyée d'abord, puis la commande est clôturée. L'ordre compte —
   /// une preuve attachée après clôture n'aurait plus de valeur probante.
+  ///
+  /// [collectedAmount] est **obligatoire sur une course payée à la réception**,
+  /// et le serveur refuse la clôture sans lui : « livré » et « perçu X » sont
+  /// un seul fait. Un écart avec le montant annoncé exige un motif.
   Future<bool> completeOrder({
     required String orderId,
     String? proofPhotoBase64,
+    double? collectedAmount,
+    String? discrepancyReason,
+    String? cashNotes,
   }) =>
       _mutateOrder(
         orderId,
@@ -266,7 +289,12 @@ class OrderState extends ChangeNotifier {
           if (proofPhotoBase64 != null) {
             await _apiClient.captureProofPhoto(orderId, [proofPhotoBase64]);
           }
-          await _apiClient.completeOrder(orderId);
+          await _apiClient.completeOrder(
+            orderId,
+            collectedAmount: collectedAmount,
+            discrepancyReason: discrepancyReason,
+            cashNotes: cashNotes,
+          );
         },
         'Impossible de clôturer cette commande',
       );

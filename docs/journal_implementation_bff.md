@@ -1404,3 +1404,145 @@ BFF : `tsc --noEmit` passe.
 App : **jamais compilée** (pas de toolchain). Trois API `flutter_map` utilisées ici pour la première fois ont été **vérifiées contre la documentation de la version épinglée (7.0.2)** plutôt que supposées : `MapOptions.interactionOptions`, les constantes `InteractiveFlag.drag`/`pinchZoom`, et le `Marker({point, width, height, child})` — `child` et non `builder`, la signature ayant changé entre versions majeures. C'est l'application directe de la leçon du 28/07 sur `initialValue` : **une précaution prise sans vérifier le fait qu'elle suppose est un pari**, et l'inverse vaut aussi — une API qu'on croit connaître se vérifie en une minute.
 
 `flutter analyze` reste la vérification manquante.
+
+---
+
+## 16. Paiement à la livraison — mise en œuvre de la Voie B (29/07/2026)
+
+Étude et arbitrage : `docs/specs_paiement_livraison.md`. Le modèle retenu est le
+Voie B — **le transporteur encaisse et conserve, l'application tient le
+registre, Echango ne touche jamais l'argent**.
+
+### 16.1 Le registre enregistre des faits, jamais un solde
+
+`CashCollection` (espèces perçues à la porte) et `CashRemittance` (espèces
+rendues au commerçant) sont des évènements ; la dette s'en déduit par
+différence. Aucun compteur n'est stocké.
+
+Un solde incrémenté à chaque écriture dérive au premier échec partiel, et plus
+rien ne dit alors laquelle des deux valeurs — le compteur ou les faits — fait
+foi. Recalculer coûte une agrégation. Se tromper coûte la confiance dans le
+registre, qui est ici **le seul produit que nous vendons** : nous ne détenons
+pas l'argent, nous n'en tenons que le compte.
+
+**Les remises non confirmées ne réduisent pas la dette.** Tant que la seconde
+partie n'a rien confirmé, une remise est une affirmation, pas un fait — les
+compter laisserait un transporteur effacer sa dette en la déclarant. Et une
+remise n'est jamais confirmable par son propre déclarant : ce serait une
+répétition, pas une preuve.
+
+### 16.2 Le montant à encaisser n'est pas la rémunération, et rien ne doit les rapprocher
+
+`meta.cod_amount` est ce que le destinataire doit au **commerçant** ;
+`meta.price` est ce que le commerçant doit au **transporteur**. Ils circulent en
+sens inverse. Les additionner, les substituer ou les afficher sans les nommer
+serait l'erreur fondatrice de tout le mécanisme — d'où deux champs, deux
+libellés distincts sur chaque écran, et l'avertissement répété dans le schéma,
+le DTO et les deux modèles Dart.
+
+### 16.3 Le défaut qui aurait tout vidé de son sens
+
+La garde « pas de clôture sans déclaration d'encaissement » avait d'abord été
+posée sur `POST /transporteur/commandes/:id/terminer`.
+
+**L'application n'emprunte pas ce chemin.** Elle suit les transitions que le
+serveur lui propose (`next-activity`) et applique la transition terminale par
+`update-activity` — mécanisme mis en place le 28/07 précisément pour ne pas
+reconstruire la machine à états côté client. La garde était donc **décorative** :
+le chemin réellement emprunté la contournait, et une livraison encaissée se
+serait close sans que l'argent figure nulle part. C'est-à-dire une somme perdue
+pour le commerçant, sans trace de qui la détient.
+
+Corrigé en factorisant `settleCashIfDue()`, appelée depuis **les deux** chemins.
+La leçon vaut au-delà : une garde se pose sur le chemin qu'on emprunte, pas sur
+celui qui porte le nom de l'action.
+
+**L'ordre est aussi une décision** : le registre s'écrit **avant** la clôture
+Fleetbase. Si l'écriture échoue, la commande reste ouverte et le transporteur
+peut réessayer. Dans l'ordre inverse, on obtiendrait une livraison close et un
+encaissement fantôme — soit exactement ce qu'on cherche à empêcher.
+
+### 16.4 Deux garde-fous, tous deux logiciels
+
+Un transporteur intégré borne son risque par des agences et un dépôt quotidien.
+Nous n'avons ni l'un ni l'autre : les seuls instruments disponibles sont
+logiciels, et ils remplacent une contrainte physique.
+
+**Plafond de dette** (`COD_DEBT_CEILING`, 20 000 par défaut) : au-delà, plus
+aucune course encaissée n'est confiée à ce transporteur **pour ce commerçant**.
+Le montant de la course à venir entre dans le calcul — autoriser celle qui fait
+franchir le plafond viderait le plafond de son sens. C'est le mécanisme de
+DoorDash, transposé.
+
+**Courses encaissées réservées aux favoris** (`COD_FAVOURITES_ONLY=true`) :
+confier des espèces à quelqu'un qu'on n'a jamais vu travailler est le scénario
+que la Voie B ne sait pas couvrir. Et si aucun favori n'est disponible, la
+course **est refusée** au lieu de partir au pool : un repli silencieux
+contournerait la garantie au moment précis où elle compte, et le commerçant
+croirait sa règle appliquée.
+
+Conséquence assumée, dite à l'écran plutôt que découverte au refus : un
+commerçant sans favori ne peut pas encore faire de livraison encaissée.
+
+### 16.5 L'écart se déclare à la porte, dans une liste fermée
+
+Cinq motifs (`somme_incomplete`, `refus_de_payer`, `pas_de_monnaie`,
+`montant_conteste`, `autre`), obligatoires dès que le montant perçu diffère de
+celui annoncé. Un champ libre ne se compte pas, et c'est le comptage qui
+remplace l'enquête au dépôt — 3 à 5 % d'erreurs et 15 % de trésorerie en suspens
+dans les rapprochements manuels du marché.
+
+Percevoir **plus** que dû est refusé plutôt qu'absorbé : soit le montant annoncé
+était faux, soit la déclaration l'est, et les deux appellent une correction
+humaine.
+
+La feuille de déclaration **pré-remplit le montant attendu** — le cas de très
+loin le plus fréquent, et une saisie de moins devant une porte — tout en le
+laissant modifiable. Le masquer derrière un second écran pousserait à valider le
+montant théorique, c'est-à-dire à perdre exactement l'information recherchée.
+
+### 16.6 Ce que le registre ne décide pas
+
+**Qui supporte la perte** en cas d'écart ou de non-remise. C'est une règle métier
+non tranchée (§9 du document d'étude), et l'encoder l'aurait tranchée par
+défaut. Le registre constate ; l'arbitrage viendra se poser dessus.
+
+### 16.7 Un seul écran pour les deux profils
+
+Transporteur et commerçant regardent le **même registre depuis les deux bouts** :
+ce que l'un doit est ce que l'autre attend, et les gestes sont symétriques —
+déclarer, confirmer, contester. `CashScreen(persona:)` et `CashState` sont
+partagés ; seuls les mots changent, et ils comptent : « je dois » n'est pas « on
+me doit », même quand c'est le même nombre.
+
+La dette est présentée **par contrepartie et jamais globalement** : le
+transporteur ne doit rien « à la plateforme », il doit une somme à chaque
+commerçant, et c'est ainsi que ça se règle. Un total unique n'aurait aucun
+destinataire — il est affiché comme repère, avec la phrase qui le dit.
+
+### 16.8 Défaut trouvé en relisant
+
+Une interpolation Dart échappée (`\$currency` au lieu de `$currency`) dans la
+carte d'encaissement du commerçant : l'écran aurait affiché le texte littéral
+« $currency » à la place de la devise. Introduite par une substitution
+automatisée, invisible à la relecture rapide — et impossible à voir sans
+compiler.
+
+### 16.9 Vérification
+
+BFF : `tsc --noEmit` passe. **Client Prisma non régénéré** (le proxy bloque
+`binaries.prisma.sh`), donc `CashCollection` et `CashRemittance` sont typés
+`any` ici : deux agrégations ont demandé des annotations explicites pour
+compiler, et la vérification de types réelle reste à faire après
+`prisma generate`.
+
+App : **jamais compilée**. `flutter analyze` reste la vérification manquante, et
+ce lot est celui où le plus de Dart neuf a été écrit sans toolchain.
+
+⚠️ **Prérequis** : `npm run prisma:migrate` (deux modèles, une colonne sur
+`Order`) puis `prisma generate`. Nouvelles variables facultatives :
+`COD_DEBT_CEILING`, `COD_FAVOURITES_ONLY`.
+
+**Non éprouvé par un test réel** : la chaîne complète encaissement → dette →
+remise → confirmation. C'est le premier scénario à jouer, et il demande deux
+comptes (un transporteur, un commerçant) et une commande avec `codAmount`.

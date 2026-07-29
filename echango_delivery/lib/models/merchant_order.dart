@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 
+import 'cash.dart';
 import 'fleetbase_json.dart';
 // `DeliveryFailure` est partagé avec le transporteur : c'est le même
 // signalement, vu des deux bouts. Une seconde classe pour le même JSON finirait
@@ -53,6 +54,22 @@ class MerchantOrder extends Equatable {
   /// alors que le numéro était déjà dans la réponse HTTP.
   final String? driverPhone;
 
+  /// Somme que le destinataire doit remettre au transporteur.
+  ///
+  /// Distincte de [price], la rémunération du transporteur : elles circulent en
+  /// sens inverse. Le commerçant est le seul à voir les deux, raison de plus
+  /// pour ne jamais les présenter ensemble sans les nommer.
+  final num? codAmount;
+  final String? codCurrency;
+
+  /// Ce qui a réellement été encaissé, une fois la livraison faite.
+  ///
+  /// `null` tant que le transporteur n'a rien déclaré. Distinct de [codAmount],
+  /// qui n'est que ce qui était **demandé** : afficher le second en croyant lire
+  /// le premier ferait passer une livraison à moitié payée pour une livraison
+  /// réglée.
+  final CashCollectionEntry? cashCollection;
+
   /// Signalements d'échec, du plus récent au plus ancien.
   ///
   /// Le commerçant ne recevait qu'une notification d'une ligne. C'est pourtant
@@ -79,6 +96,9 @@ class MerchantOrder extends Equatable {
     this.price,
     this.currency,
     this.driverPhone,
+    this.codAmount,
+    this.codCurrency,
+    this.cashCollection,
     this.deliveryFailures = const [],
   });
 
@@ -134,6 +154,12 @@ class MerchantOrder extends Equatable {
       packageContents: _firstItemDescription(meta?['items']),
       price: meta?['price'] as num?,
       currency: meta?['currency'] as String?,
+      codAmount: meta?['cod_amount'] as num?,
+      codCurrency: meta?['cod_currency'] as String?,
+      cashCollection: json['cash_collection'] is Map<String, dynamic>
+          ? CashCollectionEntry.fromJson(
+              json['cash_collection'] as Map<String, dynamic>)
+          : null,
     );
   }
 

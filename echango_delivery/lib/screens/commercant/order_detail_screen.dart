@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/cash.dart';
 import '../../models/merchant_order.dart';
 import '../../models/order.dart' show DeliveryFailure;
 import '../../models/vehicle_type.dart';
@@ -188,6 +189,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       const SizedBox(height: 12),
                       _proofCard(),
                     ],
+                    if (order.codAmount != null) ...[
+                      const SizedBox(height: 12),
+                      _cashCard(order),
+                    ],
                     const SizedBox(height: 12),
                     _orderOptionsCard(order),
                     if (order.isCompleted && order.driverName != null) ...[
@@ -280,6 +285,74 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ),
         ),
       );
+
+  /// Paiement à la livraison : ce qui était demandé, et ce qui a été perçu.
+  ///
+  /// Les deux montants sont affichés séparément dès qu'ils diffèrent. Ne
+  /// montrer que le premier ferait passer une livraison à moitié payée pour une
+  /// livraison réglée — et c'est précisément l'écart que le registre existe
+  /// pour rendre visible.
+  Widget _cashCard(MerchantOrder order) {
+    final collection = order.cashCollection;
+    final currency = order.codCurrency ?? collection?.currency ?? '';
+    final theme = Theme.of(context);
+
+    return Card(
+      color: collection?.hasDiscrepancy == true
+          ? Colors.orange.shade50
+          : Colors.amber.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.account_balance_wallet_outlined, size: 20),
+                const SizedBox(width: 8),
+                Text('Paiement à la livraison', style: theme.textTheme.titleSmall),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('Montant demandé : '
+                '${order.codAmount!.toStringAsFixed(0)} $currency'.trim()),
+            if (collection == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Pas encore encaissé.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              )
+            else ...[
+              const SizedBox(height: 4),
+              Text(
+                'Perçu : ${collection.collectedAmount.toStringAsFixed(0)} $currency'
+                    .trim(),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              if (collection.hasDiscrepancy) ...[
+                const SizedBox(height: 4),
+                Text(
+                  cashDiscrepancyLabels[collection.discrepancyReason] ??
+                      collection.discrepancyReason ??
+                      'Écart signalé',
+                  style: TextStyle(color: Colors.orange.shade900),
+                ),
+                if (collection.notes != null) Text(collection.notes!),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                'Cette somme est détenue par le transporteur jusqu\'à sa remise. '
+                'Suivez-la dans « Encaissements ».',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _banner(Color color, IconData icon, String text) => Container(
         margin: const EdgeInsets.only(bottom: 8),

@@ -14,6 +14,7 @@ import { SaveAddressDto } from './dto/address.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { projectOrderForMerchant, projectPlace } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
+import { CashService } from '../cash/cash.service';
 
 @Injectable()
 export class CommerçantService {
@@ -25,6 +26,7 @@ export class CommerçantService {
     private configService: ConfigService,
     private audit: AuditService,
     private pricing: PricingService,
+    private cash: CashService,
   ) {}
 
   /**
@@ -144,6 +146,14 @@ export class CommerçantService {
     if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
     if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
 
+    // Montant à encaisser. Porté dans `meta` et non confondu avec `price` :
+    // c'est ce que le destinataire doit au commerçant, tandis que `price` est
+    // ce que le commerçant doit au transporteur. Sens inverses.
+    if (dto.codAmount) {
+      meta.cod_amount = dto.codAmount;
+      meta.cod_currency = this.pricing.currency;
+    }
+
     // Le devis est demandé sur TOUTE commande, même quand le commerçant a
     // saisi son montant : ce qui est enregistré au passage — distance, horaire,
     // catégorie de véhicule — sont les entrées de la future formule de calcul.
@@ -193,7 +203,11 @@ export class CommerçantService {
    * qui l'ignore reste bloquée : c'est la limite à connaître avant d'activer
    * l'option en production.
    */
-  private async pickAvailableFavourite(merchantId: string, vehicleType?: string) {
+  private async pickAvailableFavourite(
+    merchantId: string,
+    vehicleType?: string,
+    codAmount?: number,
+  ) {
     const favourites = await this.prisma.driverFavourite.findMany({
       where: { merchantId },
     });
@@ -237,7 +251,27 @@ export class CommerçantService {
       drivers.filter((d: any) => d?.online === true).map((d: any) => d.uuid),
     );
 
-    return accounts.find((a: any) => online.has(a.fleetbaseDriverUuid)) ?? null;
+    const available = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
+
+    if (!codAmount) return available[0] ?? null;
+
+    // Course encaissée : on écarte en plus ceux dont la dette atteindrait le
+    // plafond. Le premier garde-fou du modèle — sans dépôt physique, cesser de
+    // confier des espèces à qui en doit déjà trop est le seul instrument de
+    // limitation du risque dont nous disposions.
+    for (const account of available) {
+      const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+        account.id,
+        merchantId,
+        codAmount,
+      );
+      if (allowed) return account;
+      this.logger.log(
+        `Favori ${account.id} écarté d'une course encaissée : dette ${debt} + ${codAmount} > ${ceiling}`,
+      );
+    }
+
+    return null;
   }
 
   /**
@@ -449,6 +483,36 @@ export class CommerçantService {
     return {
       ...(merged as any),
       ...(await this.failuresFor(order.fleetbaseOrderId)),
+      ...(await this.collectionFor(order.fleetbaseOrderId)),
+    };
+  }
+
+  /**
+   * Encaissement enregistré sur cette livraison, s'il y en a un.
+   *
+   * Sans lui, le commerçant voit ce qu'il a *demandé* d'encaisser et jamais ce
+   * qui l'a réellement été : le montant annoncé resterait affiché sur une
+   * livraison où le client n'a payé que la moitié. C'est exactement l'écart que
+   * le registre existe pour rendre visible, et le cacher sur la fiche de la
+   * commande concernée le rendrait introuvable là où on le cherche.
+   */
+  private async collectionFor(fleetbaseOrderUuid: string) {
+    const collection = await this.prisma.cashCollection.findUnique({
+      where: { fleetbaseOrderUuid },
+    });
+
+    if (!collection) return {};
+
+    return {
+      cash_collection: {
+        id: collection.id,
+        expected_amount: collection.expectedAmount,
+        collected_amount: collection.collectedAmount,
+        discrepancy_reason: collection.discrepancyReason,
+        notes: collection.notes,
+        currency: collection.currency,
+        collected_at: collection.collectedAt.toISOString(),
+      },
     };
   }
 
@@ -703,6 +767,9 @@ export class CommerçantService {
       // avait été refusé pour insuffisance, l'écran de création reste
       // modifiable.
       price: typeof meta.price === 'number' ? meta.price : null,
+      // Repris comme le reste : une boulangerie qui livre le même client
+      // encaisse en général le même montant. Modifiable à l'écran.
+      codAmount: typeof meta.cod_amount === 'number' ? meta.cod_amount : null,
     };
   }
 
@@ -737,9 +804,27 @@ export class CommerçantService {
       ]);
 
       // Favori disponible ? On le sollicite ; sinon la course part au pool.
-      const favourite = dto.preferFavourites
-        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType)
-        : null;
+      //
+      // Une course encaissée sollicite TOUJOURS les favoris, quelle que soit la
+      // préférence exprimée : confier des espèces à quelqu'un qu'on n'a jamais
+      // vu travailler est le scénario que ce modèle ne sait pas couvrir
+      // (`specs_paiement_livraison.md` §6, garde-fou n°2).
+      const favourite =
+        dto.preferFavourites || dto.codAmount
+          ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, dto.codAmount)
+          : null;
+
+      // Et si aucun favori n'est disponible, la course encaissée ne part pas au
+      // pool : elle est refusée, avec la raison. Un repli silencieux sur le
+      // réseau anonyme contournerait la garantie au moment précis où elle
+      // compte — et le commerçant croirait sa règle appliquée.
+      if (dto.codAmount && !favourite && this.cash.favouritesOnly()) {
+        throw new BadRequestException(
+          'Une livraison avec encaissement ne peut être confiée qu\'à un de vos ' +
+            'transporteurs habituels, et aucun n\'est disponible pour l\'instant. ' +
+            'Réessayez plus tard, ou créez cette livraison sans encaissement.',
+        );
+      }
 
       const response = await this.fleetbaseClient.createOrder({
         order_config_uuid: orderConfigUuid,
@@ -773,6 +858,10 @@ export class CommerçantService {
           // notifierait une transition qui n'a jamais eu lieu.
           status: fleetbaseOrder?.status ?? 'created',
           driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
+          // Miroité localement : le registre de caisse et le contrôle de
+          // plafond le lisent à chaque encaissement, et la vérification d'un
+          // plafond ne doit pas dépendre de la disponibilité de Fleetbase.
+          codAmount: dto.codAmount ?? null,
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
       });

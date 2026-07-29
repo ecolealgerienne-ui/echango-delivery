@@ -2,12 +2,16 @@ import { Controller, Get, Post, Body, Param, Query, Request, Res } from '@nestjs
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
+import { CashService } from '../cash/cash.service';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
   UpdateActivityDto,
   ReportDeliveryFailureDto,
   DeclineOrderDto,
+  CashCollectionDto,
+  DeclareRemittanceDto,
+  DisputeRemittanceDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
@@ -25,7 +29,59 @@ import { Persona } from '../common/decorators/persona.decorator';
 @Persona('transporteur')
 @Controller('transporteur')
 export class TransporteurController {
-  constructor(private readonly transporteurService: TransporteurService) {}
+  constructor(
+    private readonly transporteurService: TransporteurService,
+    private readonly cash: CashService,
+  ) {}
+
+  // ── Caisse ───────────────────────────────────────────────────────────────
+  //
+  // Le transporteur conserve les espèces qu'il encaisse ; ces routes servent le
+  // compte de ce qu'il doit, commerçant par commerçant. La dette n'est pas une
+  // somme unique due à la plateforme mais une série de dettes bilatérales, et
+  // c'est ainsi qu'elle se règle — un commerçant à la fois, au prochain
+  // enlèvement (docs/specs_paiement_livraison.md §6, Voie B).
+
+  @Get('caisse')
+  async cashBalances(@Request() req: any) {
+    return this.cash.driverBalances(this.driverId(req));
+  }
+
+  @Get('caisse/encaissements')
+  async cashCollections(@Request() req: any) {
+    return this.cash.listCollections('driver', this.driverId(req));
+  }
+
+  @Get('caisse/remises')
+  async cashRemittances(@Request() req: any) {
+    return this.cash.listRemittances('driver', this.driverId(req));
+  }
+
+  /** « J'ai remis X à ce commerçant. » Reste en attente jusqu'à sa confirmation. */
+  @Post('caisse/remises')
+  async declareRemittance(@Request() req: any, @Body() dto: DeclareRemittanceDto) {
+    return this.cash.declareRemittance(
+      'driver',
+      this.driverId(req),
+      dto.merchantId,
+      dto.amount,
+    );
+  }
+
+  /** Confirme une remise déclarée par le commerçant — jamais une des siennes. */
+  @Post('caisse/remises/:id/confirmer')
+  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.cash.confirmRemittance('driver', this.driverId(req), id);
+  }
+
+  @Post('caisse/remises/:id/contester')
+  async disputeRemittance(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: DisputeRemittanceDto,
+  ) {
+    return this.cash.disputeRemittance('driver', this.driverId(req), id, dto.reason);
+  }
 
   // Le contrôle de type est porté par @Persona sur la classe ; il ne reste
   // qu'à extraire l'identifiant.
@@ -113,9 +169,24 @@ export class TransporteurController {
     return this.transporteurService.startOrder(this.driverId(req), id);
   }
 
+  /**
+   * Clôture la livraison, encaissement compris.
+   *
+   * Sur une course payée à la réception, le corps DOIT porter le montant perçu :
+   * le service refuse la clôture sans lui. « Livré » et « perçu X » sont un seul
+   * fait, et les séparer garantirait que le second soit oublié.
+   */
   @Post('commandes/:id/terminer')
-  async completeOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
-    return this.transporteurService.completeOrder(this.driverId(req), id);
+  async completeOrder(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto?: CashCollectionDto,
+  ) {
+    // Corps vide sur une course ordinaire : le DTO n'est appliqué que s'il
+    // porte un montant, faute de quoi la validation exigerait `collectedAmount`
+    // sur toutes les clôtures.
+    const cash = dto && dto.collectedAmount !== undefined ? dto : undefined;
+    return this.transporteurService.completeOrder(this.driverId(req), id, cash);
   }
 
   @Get('commandes/:id/activites-suivantes')

@@ -49,6 +49,18 @@ class Order extends Equatable {
   final num? price;
   final String? currency;
 
+  /// Somme à encaisser auprès du destinataire, et sa devise.
+  ///
+  /// ⚠️ **Sans rapport avec [price]**, qui est ce que le transporteur gagne.
+  /// Celle-ci est ce que le destinataire doit au commerçant : elle circule en
+  /// sens inverse, et le transporteur ne fait que la transporter. Les afficher
+  /// côte à côte sans les distinguer serait la pire confusion possible sur
+  /// cet écran.
+  ///
+  /// `null` = livraison sans encaissement, le cas ordinaire.
+  final num? codAmount;
+  final String? codCurrency;
+
   const Order({
     required this.id,
     required this.publicId,
@@ -71,6 +83,8 @@ class Order extends Equatable {
     this.redacted = false,
     this.price,
     this.currency,
+    this.codAmount,
+    this.codCurrency,
   });
 
   // Prédicats alignés sur les statuts Fleetbase réels. L'ancienne version
@@ -180,6 +194,8 @@ class Order extends Equatable {
       redacted: json['redacted'] == true,
       price: meta?['price'] as num?,
       currency: meta?['currency'] as String?,
+      codAmount: meta?['cod_amount'] as num?,
+      codCurrency: meta?['cod_currency'] as String?,
       deliveryFailures: (json['delivery_failures'] as List?)
               ?.whereType<Map<String, dynamic>>()
               .map(DeliveryFailure.fromJson)

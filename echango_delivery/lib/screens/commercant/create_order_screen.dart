@@ -54,6 +54,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _itemDescription = TextEditingController();
   final _itemWeight = TextEditingController();
   final _price = TextEditingController();
+  final _codAmount = TextEditingController();
+
+  /// Le destinataire paie-t-il à la réception ?
+  ///
+  /// Séparé du montant pour que décocher n'efface pas la saisie : un commerçant
+  /// qui hésite ne doit pas retaper.
+  bool _cashOnDelivery = false;
 
   /// Contenu imposant des précautions de transport. Le contrat serveur
   /// l'accepte depuis l'origine ; le formulaire ne l'envoyait pas.
@@ -152,6 +159,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final price = t['price'];
     if (price is num) _price.text = price.toStringAsFixed(0);
 
+    final cod = t['codAmount'];
+    if (cod is num) {
+      _codAmount.text = cod.toStringAsFixed(0);
+      _cashOnDelivery = true;
+    }
+
     final vehicle = t['vehicleType'];
     if (vehicle is String) _vehicleType = vehicle;
 
@@ -176,7 +189,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
-      _instructions, _itemDescription, _itemWeight, _price,
+      _instructions, _itemDescription, _itemWeight, _price, _codAmount,
     ]) {
       c.dispose();
     }
@@ -245,6 +258,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'preferFavourites': _preferFavourites,
       if (double.tryParse(_price.text.trim()) != null)
         'price': double.parse(_price.text.trim()),
+      // Montant à encaisser, distinct de la rémunération du transporteur : le
+      // premier va du destinataire au commerçant, le second du commerçant au
+      // transporteur. Sens inverses.
+      if (_cashOnDelivery && double.tryParse(_codAmount.text.trim()) != null)
+        'codAmount': double.parse(_codAmount.text.trim()),
       // Poids et fragilité sont transmis : le contrat serveur les acceptait
       // déjà, le formulaire n'envoyait qu'une description et `quantity: 1` en
       // dur. Or c'est précisément ce qui permet au transporteur de juger si sa
@@ -336,6 +354,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _pricingSection(),
                 const SizedBox(height: 16),
                 _section('Options'),
+                _codSection(),
                 _scheduleTile(),
                 _podSelector(),
                 _favouritesTile(orderState),
@@ -564,6 +583,54 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  /// Paiement à la livraison.
+  ///
+  /// ── Ce que l'écran doit dire, et qu'il serait tentant de taire ─────────────
+  ///
+  /// Echango ne détient jamais cet argent : le transporteur l'encaisse, le
+  /// conserve, et le remet au commerçant au prochain enlèvement. Un commerçant
+  /// qui croirait la plateforme dépositaire prendrait un risque qu'il n'a pas
+  /// choisi — c'est exactement le malentendu qui rendait une implémentation
+  /// partielle plus dangereuse que l'absence de la fonctionnalité.
+  ///
+  /// La réservation aux transporteurs habituels est dite ici plutôt que
+  /// découverte au refus de création : une contrainte annoncée est une règle,
+  /// la même contrainte découverte est une panne.
+  Widget _codSection() {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _cashOnDelivery,
+          onChanged: (v) => setState(() => _cashOnDelivery = v),
+          title: const Text('Le client paie à la livraison'),
+          subtitle: Text(
+            'Le transporteur encaisse et vous remet la somme lors de son '
+            'prochain passage. Echango ne détient jamais cet argent.',
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+        if (_cashOnDelivery) ...[
+          _field(_codAmount, 'Montant à encaisser (DZD)',
+              Icons.account_balance_wallet_outlined,
+              keyboard: TextInputType.number),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              'Cette livraison sera proposée en priorité à vos transporteurs '
+              'habituels. À ne pas confondre avec la rémunération ci-dessus, '
+              'qui est ce que vous payez au transporteur.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
       ],
     );
   }

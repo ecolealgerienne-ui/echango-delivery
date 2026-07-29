@@ -1,0 +1,475 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../models/cash.dart';
+import '../../services/navigation_launcher.dart';
+import '../../state/cash_state.dart';
+
+/// Registre de caisse, vu du transporteur ou du commerçant.
+///
+/// ── Un seul écran pour deux profils ─────────────────────────────────────────
+///
+/// Les deux regardent le même registre depuis les deux bouts : ce que l'un doit
+/// est ce que l'autre attend, et les gestes sont symétriques — déclarer une
+/// remise, confirmer celle de l'autre, la contester. Deux écrans auraient
+/// dupliqué la seule logique qui doit rester commune : qui peut confirmer quoi.
+///
+/// Seuls les mots changent, et ils comptent : « je dois » n'est pas « on me
+/// doit », même quand c'est le même nombre.
+class CashScreen extends StatefulWidget {
+  /// `driver` ou `merchant`.
+  final String persona;
+
+  const CashScreen({super.key, required this.persona});
+
+  @override
+  State<CashScreen> createState() => _CashScreenState();
+}
+
+class _CashScreenState extends State<CashScreen> {
+  bool get _isDriver => widget.persona == 'driver';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final state = context.read<CashState>();
+      state.setPersona(widget.persona);
+      state.load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<CashState>();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_isDriver ? 'Ma caisse' : 'Encaissements'),
+      ),
+      body: RefreshIndicator(
+        onRefresh: state.load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (state.errorMessage != null)
+              Card(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(state.errorMessage!),
+                ),
+              ),
+            _totalCard(state),
+            const SizedBox(height: 16),
+
+            // Ce qui appelle une action passe en premier. Une confirmation en
+            // attente bloque une dette : la reléguer sous l'historique la ferait
+            // oublier, et la dette resterait due alors que l'argent a changé de
+            // mains.
+            if (state.awaitingMyConfirmation.isNotEmpty) ...[
+              _sectionTitle('À confirmer'),
+              for (final r in state.awaitingMyConfirmation)
+                _PendingRemittanceCard(
+                  remittance: r,
+                  isDriver: _isDriver,
+                  onConfirm: () => _confirm(state, r),
+                  onDispute: () => _dispute(state, r),
+                ),
+              const SizedBox(height: 16),
+            ],
+
+            _sectionTitle(_isDriver ? 'Ce que je dois' : 'Ce qu\'on me doit'),
+            if (state.isLoading && state.ledger == null)
+              const Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (state.ledger?.isEmpty ?? true)
+              _empty()
+            else
+              for (final balance in state.ledger!.balances)
+                _BalanceCard(
+                  balance: balance,
+                  currency: state.currency,
+                  isDriver: _isDriver,
+                  onDeclare: () => _declare(state, balance),
+                ),
+
+            if (state.awaitingOther.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _sectionTitle('En attente de l\'autre partie'),
+              for (final r in state.awaitingOther)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.hourglass_empty),
+                    title: Text(r.formattedAmount),
+                    subtitle: Text(
+                      _isDriver
+                          ? 'Le commerçant n\'a pas encore confirmé la réception.'
+                          : 'Le transporteur n\'a pas encore confirmé.',
+                    ),
+                  ),
+                ),
+            ],
+            const SizedBox(height: 32),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(text, style: Theme.of(context).textTheme.titleMedium),
+      );
+
+  Widget _totalCard(CashState state) {
+    final theme = Theme.of(context);
+    return Card(
+      color: _isDriver ? Colors.orange.shade50 : Colors.green.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _isDriver
+                  ? 'Espèces que vous détenez'
+                  : 'Espèces encaissées pour vous',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${state.total.toStringAsFixed(0)} ${state.currency}',
+              style: theme.textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              // Dire que ce total ne se règle pas d'un coup : il est dû à
+              // plusieurs personnes, et c'est le point qui distingue ce modèle
+              // d'un compte chez un transporteur classique.
+              _isDriver
+                  ? 'À remettre à chaque commerçant lors de votre prochain '
+                      'enlèvement chez lui. Echango ne détient jamais cet argent.'
+                  : 'Détenues par vos transporteurs jusqu\'à leur prochain '
+                      'passage. Echango ne détient jamais cet argent.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _empty() => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: Column(
+          children: [
+            Icon(Icons.payments_outlined, size: 56, color: Colors.grey[400]),
+            const SizedBox(height: 12),
+            Text(
+              _isDriver
+                  ? 'Vous ne détenez aucune somme'
+                  : 'Aucune somme en attente',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+
+  Future<void> _declare(CashState state, CashBalance balance) async {
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (_) => _AmountDialog(
+        title: _isDriver ? 'Remettre des espèces' : 'Enregistrer une réception',
+        subtitle: _isDriver
+            ? 'Montant remis à ${balance.displayName}. '
+                'La somme ne sera déduite qu\'après sa confirmation.'
+            : 'Montant reçu de ${balance.displayName}. '
+                'La somme ne sera déduite qu\'après sa confirmation.',
+        maximum: balance.debt,
+        currency: state.currency,
+      ),
+    );
+
+    if (amount == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.declareRemittance(balance.counterpartyId, amount);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Remise déclarée. Elle sera déduite après confirmation.'
+            : state.errorMessage ?? 'Déclaration impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _confirm(CashState state, CashRemittance r) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.confirmRemittance(r.id);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Remise confirmée — ${r.formattedAmount} déduits.'
+            : state.errorMessage ?? 'Confirmation impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _dispute(CashState state, CashRemittance r) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Contester cette remise ?'),
+        content: Text(
+          'Vous déclarez ne pas avoir reçu ${r.formattedAmount}. '
+          'La somme reste due et Echango sera alerté.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Retour'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Contester'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.disputeRemittance(r.id);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Remise contestée. La somme reste due.'
+            : state.errorMessage ?? 'Contestation impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+}
+
+class _BalanceCard extends StatelessWidget {
+  final CashBalance balance;
+  final String currency;
+  final bool isDriver;
+  final VoidCallback onDeclare;
+
+  const _BalanceCard({
+    required this.balance,
+    required this.currency,
+    required this.isDriver,
+    required this.onDeclare,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    balance.displayName,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '${balance.debt.toStringAsFixed(0)} $currency',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            // Le blocage se dit, il ne se subit pas en silence : un transporteur
+            // qui cesse de recevoir des courses encaissées sans savoir pourquoi
+            // conclurait à une panne, ou à une mise à l'écart.
+            if (balance.blocked) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.block, size: 16, color: Colors.red.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      isDriver
+                          ? 'Plafond atteint : plus de course encaissée pour ce '
+                              'commerçant avant votre remise.'
+                          : 'Plafond atteint pour ce transporteur.',
+                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (balance.phone != null)
+                  TextButton.icon(
+                    onPressed: () => NavigationLauncher.call(balance.phone!),
+                    icon: const Icon(Icons.phone, size: 18),
+                    label: const Text('Appeler'),
+                  ),
+                const Spacer(),
+                FilledButton.tonal(
+                  onPressed: onDeclare,
+                  child: Text(isDriver ? 'J\'ai remis' : 'J\'ai reçu'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingRemittanceCard extends StatelessWidget {
+  final CashRemittance remittance;
+  final bool isDriver;
+  final VoidCallback onConfirm;
+  final VoidCallback onDispute;
+
+  const _PendingRemittanceCard({
+    required this.remittance,
+    required this.isDriver,
+    required this.onConfirm,
+    required this.onDispute,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.amber.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(remittance.formattedAmount,
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              isDriver
+                  ? 'Le commerçant déclare vous avoir remis cette somme.'
+                  : 'Le transporteur déclare vous avoir remis cette somme.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton(
+                  onPressed: onDispute,
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  child: const Text('Je n\'ai rien reçu'),
+                ),
+                const Spacer(),
+                FilledButton(
+                  onPressed: onConfirm,
+                  child: const Text('Confirmer'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Saisie d'un montant, bornée par la dette réelle.
+///
+/// Le plafond n'est pas une commodité : déclarer plus qu'on ne doit ne décrit
+/// aucun geste possible, et le serveur le refuse. L'imposer ici évite d'envoyer
+/// une requête vouée à l'échec, et le bouton « tout » couvre le cas courant —
+/// on solde généralement l'intégralité.
+class _AmountDialog extends StatefulWidget {
+  final String title;
+  final String subtitle;
+  final double maximum;
+  final String currency;
+
+  const _AmountDialog({
+    required this.title,
+    required this.subtitle,
+    required this.maximum,
+    required this.currency,
+  });
+
+  @override
+  State<_AmountDialog> createState() => _AmountDialogState();
+}
+
+class _AmountDialogState extends State<_AmountDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.maximum.toStringAsFixed(0));
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  double? get _value {
+    final parsed = double.tryParse(_controller.text.trim());
+    if (parsed == null || parsed <= 0 || parsed > widget.maximum) return null;
+    return parsed;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.subtitle, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: 'Montant (${widget.currency})',
+              border: const OutlineInputBorder(),
+              helperText: 'Maximum ${widget.maximum.toStringAsFixed(0)}',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        FilledButton(
+          onPressed: _value == null ? null : () => Navigator.pop(context, _value),
+          child: const Text('Valider'),
+        ),
+      ],
+    );
+  }
+}

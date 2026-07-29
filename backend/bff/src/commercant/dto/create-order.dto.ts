@@ -140,6 +140,28 @@ export class CreateOrderDto {
   @Min(0)
   @Max(500000)
   price?: number;
+
+  /**
+   * Somme que le destinataire remettra au transporteur à la livraison.
+   *
+   * ⚠️ **À ne jamais confondre avec `price`.** Celui-ci est ce que le
+   * commerçant doit au transporteur ; celui-là ce que le destinataire doit au
+   * commerçant. Ils circulent en sens inverse, et les additionner ou les
+   * substituer serait l'erreur fondatrice du mécanisme
+   * (`docs/specs_paiement_livraison.md` §7).
+   *
+   * Ce qu'il recouvre — marchandise seule, ou marchandise plus frais de port —
+   * est laissé au commerçant : c'est sa relation commerciale, pas la nôtre. Le
+   * registre enregistre ce qu'il déclare.
+   *
+   * Absent = livraison sans encaissement, le cas ordinaire.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1, { message: 'Un encaissement de 0 est une livraison sans encaissement : laissez le champ vide' })
+  @Max(500000)
+  codAmount?: number;
 }
 
 export class OrderItemDto {

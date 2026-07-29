@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/register_screen.dart';
+import '../screens/cash/cash_screen.dart';
 import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
@@ -61,6 +62,12 @@ GoRouter buildAppRouter(AuthState authState) {
         path: '/transporteur',
         builder: (_, __) => const DashboardScreen(),
         routes: [
+          // Registre de caisse, vu du transporteur : ce qu'il détient et doit
+          // remettre, commerçant par commerçant.
+          GoRoute(
+            path: 'caisse',
+            builder: (_, __) => const CashScreen(persona: 'driver'),
+          ),
           GoRoute(
             path: 'commandes/:id',
             builder: (_, s) =>
@@ -104,6 +111,12 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'notifications',
             builder: (_, __) => const NotificationsScreen(),
+          ),
+          // Même écran, autre bout du registre : ce que les transporteurs ont
+          // encaissé pour ce commerçant et ne lui ont pas encore remis.
+          GoRoute(
+            path: 'encaissements',
+            builder: (_, __) => const CashScreen(persona: 'merchant'),
           ),
           GoRoute(
             path: 'commandes/:id',

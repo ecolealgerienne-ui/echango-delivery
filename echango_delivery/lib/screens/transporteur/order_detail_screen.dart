@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/cash.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
@@ -93,6 +94,49 @@ class OrderDetailScreen extends StatelessWidget {
                                       ?.copyWith(color: Colors.green.shade800),
                                 ),
                               ],
+                            ),
+                          ],
+                          // Le montant à encaisser, séparé et nommé. Le
+                          // confondre avec la rémunération serait la pire
+                          // erreur possible sur cet écran : l'un est ce que le
+                          // transporteur gagne, l'autre ce qu'il transporte
+                          // pour le compte du commerçant.
+                          if (order.codAmount != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.account_balance_wallet_outlined),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'À encaisser : '
+                                        '${order.codAmount!.toStringAsFixed(0)} '
+                                        '${order.codCurrency ?? ''}'.trim(),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Somme due par le destinataire au commerçant. '
+                                    'Vous la conservez et la lui remettez au '
+                                    'prochain enlèvement.',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                           const SizedBox(height: 16),
@@ -208,8 +252,8 @@ class OrderDetailScreen extends StatelessWidget {
           onPressed: busy
               ? null
               : () => requiresPod
-                  ? _applyActivityWithProof(context, order.id, activity, orderState)
-                  : _applyActivity(context, order.id, activity, orderState),
+                  ? _applyActivityWithProof(context, order, activity, orderState)
+                  : _applyActivity(context, order, activity, orderState),
           style: ElevatedButton.styleFrom(
             backgroundColor: code == 'completed' ? Colors.green : Colors.orange,
           ),
@@ -276,10 +320,11 @@ class OrderDetailScreen extends StatelessWidget {
   /// exigeait.
   Future<void> _applyActivityWithProof(
     BuildContext context,
-    String orderId,
+    dynamic order,
     Map<String, dynamic> activity,
     OrderState orderState,
   ) async {
+    final orderId = order.id as String;
     final photo = await showModalBottomSheet<CapturedPhoto>(
       context: context,
       isScrollControlled: true,
@@ -303,17 +348,54 @@ class OrderDetailScreen extends StatelessWidget {
       return;
     }
 
-    await _applyActivity(context, orderId, activity, orderState);
+    await _applyActivity(context, order, activity, orderState);
   }
 
   /// Applique une transition serveur.
+  ///
+  /// Sur la transition **terminale** d'une course payée à la réception, le
+  /// montant encaissé est demandé d'abord : le serveur refuse la clôture sans
+  /// lui, et « livré » et « perçu X » sont un seul fait. Interroger après
+  /// coup, dans un écran séparé, garantirait l'oubli un jour de pluie.
   Future<void> _applyActivity(
     BuildContext context,
-    String orderId,
+    dynamic order,
     Map<String, dynamic> activity,
     OrderState orderState,
   ) async {
-    final success = await orderState.applyActivity(orderId, activity);
+    final orderId = order.id as String;
+    final code = (activity['code'] ?? activity['status'] ?? '') as String;
+    final needsCash = code == 'completed' && order.codAmount != null;
+
+    _CashDeclaration? cash;
+    if (needsCash) {
+      cash = await showModalBottomSheet<_CashDeclaration>(
+        context: context,
+        isScrollControlled: true,
+        // Non annulable d'un geste : la livraison est faite, l'argent a changé
+        // de mains. Fermer par inadvertance laisserait la course ouverte sans
+        // que le transporteur comprenne pourquoi.
+        isDismissible: false,
+        enableDrag: false,
+        builder: (_) => _CashSheet(
+          expected: (order.codAmount as num).toDouble(),
+          currency: (order.codCurrency ?? '') as String,
+        ),
+      );
+
+      // L'utilisateur a fait « retour » : on n'applique rien. Mieux vaut une
+      // course encore ouverte, qu'il peut reprendre, qu'une course close dont
+      // l'argent n'est comptabilisé nulle part.
+      if (cash == null || !context.mounted) return;
+    }
+
+    final success = await orderState.applyActivity(
+      orderId,
+      activity,
+      collectedAmount: cash?.amount,
+      discrepancyReason: cash?.reason,
+      cashNotes: cash?.notes,
+    );
     if (!context.mounted) return;
 
     if (success) {
@@ -820,6 +902,159 @@ class _FailureEntry extends StatelessWidget {
           ProofImage(url: failure.photoUrl!),
         ],
       ],
+    );
+  }
+}
+
+/// Ce que le transporteur déclare avoir perçu.
+class _CashDeclaration {
+  final double amount;
+  final String? reason;
+  final String? notes;
+
+  const _CashDeclaration({required this.amount, this.reason, this.notes});
+}
+
+/// Feuille de déclaration d'encaissement, présentée juste avant la clôture.
+///
+/// ── Pourquoi le montant est pré-rempli, et modifiable ───────────────────────
+///
+/// Le cas de très loin le plus fréquent est « le client a payé la somme
+/// exacte » : le pré-remplir supprime une saisie sur un téléphone tenu d'une
+/// main devant une porte, et c'est là que se produisent les fautes de frappe.
+/// Mais il reste modifiable, parce que l'écart est justement ce que le registre
+/// existe pour capter — le masquer derrière un second écran reviendrait à
+/// pousser le transporteur à valider le montant théorique.
+///
+/// Le motif devient obligatoire dès que le montant change, et l'écran le dit
+/// avant que le bouton se désactive plutôt qu'après.
+class _CashSheet extends StatefulWidget {
+  final double expected;
+  final String currency;
+
+  const _CashSheet({required this.expected, required this.currency});
+
+  @override
+  State<_CashSheet> createState() => _CashSheetState();
+}
+
+class _CashSheetState extends State<_CashSheet> {
+  late final TextEditingController _amount =
+      TextEditingController(text: widget.expected.toStringAsFixed(0));
+  final _notes = TextEditingController();
+  String? _reason;
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _notes.dispose();
+    super.dispose();
+  }
+
+  double? get _value {
+    final parsed = double.tryParse(_amount.text.trim());
+    if (parsed == null || parsed < 0 || parsed > widget.expected) return null;
+    return parsed;
+  }
+
+  bool get _differs => _value != null && _value != widget.expected;
+  bool get _canSubmit => _value != null && (!_differs || _reason != null);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Encaissement', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              'Montant attendu : ${widget.expected.toStringAsFixed(0)} '
+              '${widget.currency}',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _amount,
+              keyboardType: TextInputType.number,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Montant réellement perçu',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
+                suffixText: widget.currency,
+              ),
+            ),
+            if (_differs) ...[
+              const SizedBox(height: 16),
+              Text('Pourquoi l\'écart ?', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              for (final entry in cashDiscrepancyLabels.entries)
+                ListTile(
+                  onTap: () => setState(() => _reason = entry.key),
+                  title: Text(entry.value),
+                  trailing: _reason == entry.key
+                      ? const Icon(Icons.check_circle, color: Colors.orange)
+                      : null,
+                  selected: _reason == entry.key,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              TextField(
+                controller: _notes,
+                maxLines: 2,
+                maxLength: 200,
+                decoration: const InputDecoration(
+                  labelText: 'Précision (facultatif)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              // Rappeler ce qu'implique la validation : la somme devient une
+              // dette du transporteur envers le commerçant, et elle le suit
+              // jusqu'à la remise.
+              'Cette somme sera ajoutée à ce que vous devez remettre au '
+              'commerçant. Vous la retrouverez dans « Ma caisse ».',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _canSubmit
+                  ? () => Navigator.pop(
+                        context,
+                        _CashDeclaration(
+                          amount: _value!,
+                          reason: _differs ? _reason : null,
+                          notes: _notes.text.trim().isEmpty
+                              ? null
+                              : _notes.text.trim(),
+                        ),
+                      )
+                  : null,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('Valider et clôturer la livraison'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Retour'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

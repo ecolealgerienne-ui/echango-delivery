@@ -47,6 +47,8 @@ model MerchantAccount {
   commissions       Commission[]
   favouriteDrivers  DriverFavourite[]
   notifications     MerchantNotification[]
+  cashCollections   CashCollection[]
+  cashRemittances   CashRemittance[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -152,6 +154,8 @@ model DriverAccount {
   deviceTokens          DriverDeviceToken[]
   deliveryFailures      DeliveryFailure[]
   declines              OrderDecline[]
+  cashCollections       CashCollection[]
+  cashRemittances       CashRemittance[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -325,6 +329,22 @@ model Order {
   /// non. Distingue « rien n'a bougé » de « personne ne regarde » — sans quoi
   /// un réconciliateur arrêté est indiscernable d'une commande stable.
   lastSyncedAt       DateTime?
+
+  /// Somme que le destinataire doit remettre au transporteur à la livraison.
+  ///
+  /// ⚠️ **N'a rien à voir avec `meta.price`**, la rémunération du transporteur.
+  /// Les confondre serait l'erreur fondatrice de tout ce mécanisme : l'un est
+  /// ce que le destinataire doit au commerçant, l'autre ce que le commerçant
+  /// doit au transporteur. **Ils circulent en sens inverse.**
+  ///
+  /// Miroité ici en plus des métadonnées Fleetbase parce que le registre de
+  /// caisse et le contrôle de plafond s'en servent à chaque création de
+  /// commande : les lire chez Fleetbase imposerait un appel réseau sur un
+  /// chemin qui doit rester court, et surtout la vérification d'un plafond ne
+  /// doit pas dépendre de la disponibilité d'un service tiers.
+  ///
+  /// `null` = livraison sans encaissement, le cas ordinaire.
+  codAmount          Float?
 
   // Failure details
   failureReason     String?
@@ -503,6 +523,105 @@ model OrderDecline {
   /// statistiques de refus.
   @@unique([driverId, fleetbaseOrderUuid])
   @@index([fleetbaseOrderUuid])
+}
+
+
+/// Espèces encaissées par un transporteur à la livraison.
+///
+/// ── Un fait, jamais un solde ────────────────────────────────────────────────
+///
+/// Cette table et `CashRemittance` enregistrent des **évènements** ; la dette
+/// courante s'en déduit par différence. Aucun solde n'est stocké nulle part, et
+/// c'est délibéré : un compteur incrémenté à chaque écriture dérive au premier
+/// échec partiel, et plus rien ne permet alors de savoir laquelle des deux
+/// valeurs — le compteur ou les faits — est la bonne. Recalculer coûte une
+/// agrégation ; se tromper coûte la confiance dans le registre, qui est le seul
+/// produit que nous vendons ici.
+///
+/// ── Ce que cette table ne décide pas ────────────────────────────────────────
+///
+/// Elle enregistre l'écart entre attendu et perçu, avec son motif. Elle ne dit
+/// **pas qui supporte la perte** — commerçant, transporteur, Echango ou
+/// partage. C'est une règle métier non tranchée (`specs_paiement_livraison.md`
+/// §9), et l'encoder ici reviendrait à la trancher par défaut. Le registre
+/// constate ; l'arbitrage viendra se poser dessus.
+model CashCollection {
+  id                  String   @id @default(cuid())
+
+  driverId            String
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  merchantId          String
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  fleetbaseOrderUuid  String   @unique
+
+  /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
+  /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
+  /// pas sans savoir ce qui était annoncé au moment du geste.
+  expectedAmount      Float
+
+  /// Ce que le transporteur déclare avoir réellement perçu. Peut valoir 0 :
+  /// un client qui refuse de payer est un fait à enregistrer, pas une absence
+  /// d'évènement.
+  collectedAmount     Float
+
+  /// Obligatoire dès que les deux montants diffèrent — voir COLLECTION_DISCREPANCY_REASONS.
+  /// C'est ce motif, déclaré à la porte, qui remplace l'enquête au dépôt.
+  discrepancyReason   String?
+  notes               String?
+
+  currency            String
+
+  collectedAt         DateTime @default(now())
+
+  @@index([driverId, merchantId])
+  @@index([merchantId])
+}
+
+
+/// Remise d'espèces d'un transporteur à un commerçant.
+///
+/// ── Pourquoi une confirmation des deux côtés ────────────────────────────────
+///
+/// Une remise déclarée d'un seul côté n'est pas une preuve, c'est une
+/// affirmation — et c'est précisément le moment où le registre doit être
+/// incontestable, puisqu'il éteint une dette. Tant que la seconde partie n'a
+/// pas confirmé, la remise n'existe pas pour le calcul du solde.
+///
+/// Déclarable **par l'un ou l'autre** : le transporteur qui remet, ou le
+/// commerçant qui reçoit. Imposer un sens unique bloquerait la moitié des cas
+/// réels — celui qui a le téléphone en main au moment de la remise n'est pas
+/// toujours le même.
+model CashRemittance {
+  id                  String   @id @default(cuid())
+
+  driverId            String
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  merchantId          String
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  amount              Float
+  currency            String
+
+  /// `driver` ou `merchant` — qui a déclaré. La confirmation revient
+  /// nécessairement à l'autre.
+  declaredBy          String
+  declaredAt          DateTime @default(now())
+
+  /// Tant que ce champ est nul, la remise ne réduit pas la dette.
+  confirmedAt         DateTime?
+
+  /// Refus explicite : « je n'ai jamais reçu cette somme ». Distinct d'une
+  /// remise simplement en attente — l'une appelle une vérification, l'autre
+  /// seulement de la patience.
+  disputedAt          DateTime?
+  disputeReason       String?
+
+  @@index([driverId, merchantId])
+  @@index([merchantId, confirmedAt])
+  @@index([driverId, confirmedAt])
 }
 
 

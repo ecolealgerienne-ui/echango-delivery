@@ -10,6 +10,8 @@ import { AddFavouriteDto } from './dto/favourite.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CashService } from '../cash/cash.service';
+import { MerchantRemittanceDto, DisputeRemittanceDto } from './dto/cash.dto';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
 // E4) : un jeton transporteur ou flotte y était structurellement valide.
@@ -20,7 +22,51 @@ export class CommerçantController {
     private commercantService: CommerçantService,
     private geocoding: GeocodingService,
     private notifications: NotificationsService,
+    private cash: CashService,
   ) {}
+
+  // ── Encaissements ────────────────────────────────────────────────────────
+  //
+  // Ce que les transporteurs ont perçu pour ce commerçant et ne lui ont pas
+  // encore remis. Echango ne détient jamais ces sommes : la remise est physique
+  // entre les deux parties, et l'application n'en tient que le registre
+  // (docs/specs_paiement_livraison.md §6, Voie B).
+
+  @Get('encaissements')
+  async cashBalances(@Request() req: any) {
+    return this.cash.merchantBalances(req.user.id);
+  }
+
+  @Get('encaissements/details')
+  async cashCollections(@Request() req: any) {
+    return this.cash.listCollections('merchant', req.user.id);
+  }
+
+  @Get('encaissements/remises')
+  async remittances(@Request() req: any) {
+    return this.cash.listRemittances('merchant', req.user.id);
+  }
+
+  /** « J'ai reçu X de ce transporteur. » En attente de sa confirmation. */
+  @Post('encaissements/remises')
+  async declareRemittance(@Request() req: any, @Body() dto: MerchantRemittanceDto) {
+    return this.cash.declareRemittance('merchant', dto.driverId, req.user.id, dto.amount);
+  }
+
+  /** Confirme une remise déclarée par le transporteur — jamais une des siennes. */
+  @Post('encaissements/remises/:id/confirmer')
+  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.cash.confirmRemittance('merchant', req.user.id, id);
+  }
+
+  @Post('encaissements/remises/:id/contester')
+  async disputeRemittance(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: DisputeRemittanceDto,
+  ) {
+    return this.cash.disputeRemittance('merchant', req.user.id, id, dto.reason);
+  }
 
   // ── Notifications ────────────────────────────────────────────────────────
   //

@@ -34,7 +34,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       appBar: AppBar(
         title: const Text('Echango Delivery'),
         elevation: 0,
-        actions: const [_AvailabilitySwitch()],
+        actions: [
+          // La caisse est accessible depuis l'accueil : un transporteur qui
+          // détient des espèces doit pouvoir vérifier ce qu'il doit sans
+          // chercher, notamment au moment d'un enlèvement chez le commerçant
+          // concerné — c'est là que la remise se fait.
+          IconButton(
+            tooltip: 'Ma caisse',
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            onPressed: () => context.push('/transporteur/caisse'),
+          ),
+          const _AvailabilitySwitch(),
+        ],
       ),
       body: Column(
         children: [

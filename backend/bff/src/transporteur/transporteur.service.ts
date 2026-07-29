@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CashService } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { projectOrderForDriver } from '../common/projections/order.projection';
 import {
@@ -17,6 +18,7 @@ import {
   UpdateActivityDto,
   ReportDeliveryFailureDto,
   DeclineOrderDto,
+  CashCollectionDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
 } from './dto/transporteur.dto';
@@ -30,6 +32,7 @@ export class TransporteurService {
     private readonly fleetbaseClient: FleetbaseApiClient,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
+    private readonly cash: CashService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -724,13 +727,32 @@ export class TransporteurService {
     }
   }
 
-  async completeOrder(driverId: string, orderId: string) {
+  /**
+   * Clôture la livraison.
+   *
+   * ── L'encaissement fait partie de la clôture, il ne la suit pas ─────────────
+   *
+   * Sur une course payée à la réception, l'appel est **refusé sans déclaration
+   * d'encaissement**. En faire une étape distincte et facultative garantirait
+   * qu'elle soit oubliée un jour de pluie — et un encaissement non déclaré est
+   * exactement ce que le registre existe pour empêcher. « Livré » et « perçu X »
+   * sont un seul fait (`specs_paiement_livraison.md` §4.2).
+   *
+   * L'ordre importe : le registre est écrit **avant** la clôture Fleetbase. Si
+   * l'écriture du registre échoue, la commande reste ouverte et le transporteur
+   * peut réessayer ; dans l'ordre inverse, on aurait une livraison close dont
+   * l'argent n'est comptabilisé nulle part — c'est-à-dire une somme perdue pour
+   * le commerçant, sans trace de qui la détient.
+   */
+  async completeOrder(driverId: string, orderId: string, cash?: CashCollectionDto) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       throw new BadRequestException('This order is not assigned to you');
     }
+
+    await this.settleCashIfDue(driver.id, order, cash);
 
     try {
       return await this.fleetbaseClient.completeOrder(this.orderPublicId(order));
@@ -766,12 +788,86 @@ export class TransporteurService {
     }
   }
 
+
+  /**
+   * Enregistre l'encaissement d'une livraison payée à la réception, si elle
+   * l'est.
+   *
+   * ── Appelé depuis les DEUX chemins de clôture, et c'est essentiel ───────────
+   *
+   * `POST /terminer` n'est pas le seul moyen de clore une livraison :
+   * l'application suit en réalité les transitions que le serveur lui propose
+   * (`next-activity`), et la transition terminale passe par
+   * `update-activity`. Poser la garde sur le seul `terminer` l'aurait rendue
+   * décorative — le chemin réellement emprunté par l'app l'aurait contournée,
+   * et une livraison encaissée se serait close sans que l'argent figure nulle
+   * part. C'est-à-dire une somme perdue pour le commerçant, sans trace de qui
+   * la détient.
+   *
+   * L'écriture du registre précède la clôture Fleetbase : si elle échoue, la
+   * commande reste ouverte et le transporteur peut réessayer. Dans l'ordre
+   * inverse, on obtiendrait une livraison close et un encaissement fantôme.
+   */
+  private async settleCashIfDue(
+    driverId: string,
+    order: any,
+    cash?: CashCollectionDto,
+  ): Promise<void> {
+    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    if (codAmount <= 0) return;
+
+    if (!cash) {
+      throw new BadRequestException(
+        `Cette livraison est payée à la réception (${codAmount} ${this.cash.currency}) : ` +
+          'déclarez le montant encaissé pour la clôturer.',
+      );
+    }
+
+    // Le commerçant vient du cache local, jamais de Fleetbase : c'est lui qui
+    // fait autorité sur « à qui appartient cette commande » (§2.8).
+    const cached = await this.prisma.order.findFirst({
+      where: { fleetbaseOrderId: order.uuid },
+      select: { merchantId: true },
+    });
+
+    if (!cached) {
+      throw new BadRequestException(
+        "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
+      );
+    }
+
+    await this.cash.declareCollection(
+      driverId,
+      cached.merchantId,
+      order.uuid,
+      codAmount,
+      cash,
+    );
+  }
+
+  /**
+   * Cette transition clôt-elle la livraison ?
+   *
+   * `completed` est le code terminal des configurations de commande Fleetbase —
+   * le même que celui sur lequel l'application colore déjà son bouton. Reconnu
+   * ici pour savoir quand exiger la déclaration d'encaissement.
+   */
+  private isTerminalActivity(activity: any): boolean {
+    return activity?.code === 'completed' || activity?.status === 'completed';
+  }
+
   async updateActivity(driverId: string, orderId: string, dto: UpdateActivityDto) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.getOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       throw new BadRequestException('This order is not assigned to you');
+    }
+
+    // La transition terminale exige la déclaration d'encaissement au même titre
+    // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.
+    if (this.isTerminalActivity(dto.activity)) {
+      await this.settleCashIfDue(driver.id, order, dto.cash);
     }
 
     try {

@@ -160,6 +160,13 @@ const META_FIELDS = [
   // proposé par le commerçant d'un tarif de la plateforme, ils ne se négocient
   // pas de la même façon.
   'price_source',
+  // Somme à encaisser auprès du destinataire. Rien à voir avec `price` : elle
+  // circule en sens inverse, du destinataire vers le commerçant. Le
+  // transporteur doit la connaître avant d'accepter — porter des espèces
+  // n'engage pas comme porter un colis — et l'avoir sous les yeux au moment de
+  // la remise, qui est là où se produit l'erreur de montant.
+  'cod_amount',
+  'cod_currency',
 ];
 
 function projectMeta(meta: any): Record<string, any> | undefined {

@@ -8,6 +8,7 @@ import '../config/api_config.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
+import '../models/cash.dart';
 
 const _tokenKey = 'echango_session_token';
 
@@ -487,12 +488,145 @@ class BffApiClient {
 
   /// Marque la commande comme terminée. Distinct de [updateActivity] : c'est
   /// la transition terminale dédiée côté Fleetbase.
-  Future<void> completeOrder(String orderId) async {
+  ///
+  /// Sur une course payée à la réception, [collectedAmount] est **obligatoire**
+  /// et le serveur refuse la clôture sans lui : « livré » et « perçu X » sont un
+  /// seul fait, et les séparer garantirait que le second soit oublié. Un écart
+  /// avec le montant annoncé exige [discrepancyReason].
+  Future<void> completeOrder(
+    String orderId, {
+    double? collectedAmount,
+    String? discrepancyReason,
+    String? cashNotes,
+  }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/transporteur/commandes/$orderId/terminer'),
       headers: _buildHeaders(),
+      body: collectedAmount == null
+          ? null
+          : jsonEncode({
+              'collectedAmount': collectedAmount,
+              if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
+              if (cashNotes != null && cashNotes.isNotEmpty) 'notes': cashNotes,
+            }),
     );
     _parseResponse(response);
+  }
+
+  // ── Caisse (transporteur) ──────────────────────────────────────────────
+  //
+  // Le transporteur conserve les espèces qu'il encaisse ; ces routes servent le
+  // compte de ce qu'il doit, commerçant par commerçant. Echango ne détient
+  // jamais ces sommes.
+
+  Future<CashLedger> getDriverCashLedger() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/transporteur/caisse'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return _ledgerFrom(data, CashBalance.fromDriverJson);
+  }
+
+  Future<List<CashRemittance>> getDriverRemittances() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/transporteur/caisse/remises'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', CashRemittance.fromJson);
+  }
+
+  Future<void> declareDriverRemittance({
+    required String merchantId,
+    required double amount,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/caisse/remises'),
+      headers: _buildHeaders(),
+      body: jsonEncode({'merchantId': merchantId, 'amount': amount}),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> confirmDriverRemittance(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/caisse/remises/$id/confirmer'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> disputeDriverRemittance(String id, {String? reason}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/caisse/remises/$id/contester'),
+      headers: _buildHeaders(),
+      body: jsonEncode({if (reason != null) 'reason': reason}),
+    );
+    _parseResponse(response);
+  }
+
+  // ── Encaissements (commerçant) ─────────────────────────────────────────
+
+  Future<CashLedger> getMerchantCashLedger() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/encaissements'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return _ledgerFrom(data, CashBalance.fromMerchantJson);
+  }
+
+  Future<List<CashRemittance>> getMerchantRemittances() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/encaissements/remises'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', CashRemittance.fromJson);
+  }
+
+  Future<void> declareMerchantRemittance({
+    required String driverId,
+    required double amount,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/encaissements/remises'),
+      headers: _buildHeaders(),
+      body: jsonEncode({'driverId': driverId, 'amount': amount}),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> confirmMerchantRemittance(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/encaissements/remises/$id/confirmer'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> disputeMerchantRemittance(String id, {String? reason}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/encaissements/remises/$id/contester'),
+      headers: _buildHeaders(),
+      body: jsonEncode({if (reason != null) 'reason': reason}),
+    );
+    _parseResponse(response);
+  }
+
+  /// Désérialisation commune aux deux profils : même forme, seule la clé
+  /// d'identifiant de la contrepartie change.
+  CashLedger _ledgerFrom(
+    dynamic data,
+    CashBalance Function(Map<String, dynamic>) build,
+  ) {
+    final raw = (data is Map) ? data['balances'] : null;
+    return CashLedger(
+      balances: raw is List
+          ? raw.whereType<Map<String, dynamic>>().map(build).toList()
+          : const [],
+      currency: (data is Map ? data['currency'] as String? : null) ?? '',
+      ceiling: (data is Map ? (data['ceiling'] as num?) : null)?.toDouble(),
+    );
   }
 
   /// Transitions possibles sur cette commande à l'instant T.
@@ -526,14 +660,28 @@ class BffApiClient {
   /// [activity] doit être un objet Activity COMPLET tel que renvoyé par
   /// [getNextActivities], pas une chaîne de statut — c'est ce que valide
   /// POST /v1/orders/{id}/update-activity côté Fleetbase.
+  ///
+  /// [collectedAmount] accompagne la transition **terminale** d'une livraison
+  /// payée à la réception : le serveur la refuse sans lui. C'est ce chemin, et
+  /// non `completeOrder`, que l'application emprunte pour clore une course —
+  /// les boutons viennent des transitions proposées par le serveur.
   Future<void> updateActivity(String orderId, Map<String, dynamic> activity,
-      {String? proof}) async {
+      {String? proof,
+      double? collectedAmount,
+      String? discrepancyReason,
+      String? cashNotes}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/transporteur/commandes/$orderId/activite'),
       headers: _buildHeaders(),
       body: jsonEncode({
         'activity': activity,
         if (proof != null) 'proof': proof,
+        if (collectedAmount != null)
+          'cash': {
+            'collectedAmount': collectedAmount,
+            if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
+            if (cashNotes != null && cashNotes.isNotEmpty) 'notes': cashNotes,
+          },
       }),
     );
     _parseResponse(response);

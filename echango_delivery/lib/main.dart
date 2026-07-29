@@ -10,6 +10,7 @@ import 'services/bff_api_client.dart';
 import 'services/location_service.dart';
 import 'state/auth_state.dart';
 import 'state/driver_presence_state.dart';
+import 'state/cash_state.dart';
 import 'state/merchant_order_state.dart';
 import 'state/order_state.dart';
 import 'theme/app_theme.dart';
@@ -80,6 +81,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     with WidgetsBindingObserver {
   late final OrderState _orderState;
   late final MerchantOrderState _merchantOrderState;
+  late final CashState _cashState;
   late final DriverPresenceState _presence;
 
   bool _presenceStarted = false;
@@ -90,6 +92,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     WidgetsBinding.instance.addObserver(this);
     _orderState = OrderState(apiClient: widget.apiClient);
     _merchantOrderState = MerchantOrderState(apiClient: widget.apiClient);
+    _cashState = CashState(apiClient: widget.apiClient);
     _presence = DriverPresenceState(
       apiClient: widget.apiClient,
       orderState: _orderState,
@@ -140,6 +143,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     _presence.dispose();
     _orderState.dispose();
     _merchantOrderState.dispose();
+    _cashState.dispose();
     super.dispose();
   }
 
@@ -151,6 +155,10 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
         Provider<BffApiClient>.value(value: widget.apiClient),
         ChangeNotifierProvider<OrderState>.value(value: _orderState),
         ChangeNotifierProvider<MerchantOrderState>.value(value: _merchantOrderState),
+        // Un seul registre pour les deux profils : ce que le transporteur doit
+        // est ce que le commerçant attend. Deux états auraient divergé sur la
+        // seule chose qui doit rester commune.
+        ChangeNotifierProvider<CashState>.value(value: _cashState),
         ChangeNotifierProvider<DriverPresenceState>.value(value: _presence),
       ],
       child: MaterialApp.router(

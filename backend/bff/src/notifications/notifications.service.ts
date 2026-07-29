@@ -29,6 +29,15 @@ export const NOTIFICATION_TYPES = [
   'order.canceled',
   /** Le transporteur a signalé un échec de livraison. */
   'order.failed',
+  /** Le transporteur a encaissé le montant dû à la livraison. */
+  'cash.collected',
+  /** Le montant perçu diffère de celui annoncé — le commerçant doit le savoir
+   *  tout de suite, pas au moment de la remise, quand la discussion sera plus
+   *  difficile. */
+  'cash.discrepancy',
+  /** Un transporteur déclare avoir remis des espèces : sans cette notification,
+   *  la remise attendrait une confirmation que personne ne sait devoir donner. */
+  'cash.remittance_declared',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
