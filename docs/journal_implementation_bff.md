@@ -2412,16 +2412,43 @@ d'environnement désactivant la validation — serait un interrupteur capable
 d'éteindre un contrôle de sécurité, et ce genre d'interrupteur finit en
 production.
 
-### 26.9 Non vérifié
+### 26.9 ✅ Validé de bout en bout par test réel (29/07/2026)
 
-Aucun test réel : `tsc`, `npm run build` et le chargement du module racine
-passent, mais la lecture de `Vendor.status` par `GET /vendors/{uuid}` **repose
-sur une méthode tolérante et non sur une observation**. §2.13 a montré que cet
-endpoint renvoie la collection entière ; `getVendorByUuid()` encaisse les deux
-formes et compare l'uuid, mais laquelle des deux se produit reste inconnue.
+Le parcours complet passe : inscription refusée, connexion refusée, activation
+du `Vendor` en console, connexion acceptée.
 
-Premier scénario à jouer : inscrire un commerçant, tenter de se connecter
-(refus attendu), passer le `Vendor` à `active` dans la console, réessayer.
+**Ce que ça tranche au passage** : `getVendorByUuid()` lit bien le statut du
+**bon** fournisseur. C'était la vraie inconnue — §2.13 a montré que
+`GET /vendors/{uuid}` renvoie la collection entière, et la méthode encaisse les
+deux formes en comparant l'uuid. Le refus puis l'acceptation, sur le même
+compte, prouvent que la valeur lue suit bien celle qu'on a modifiée.
+
+L'application affiche le refus telle quelle, sans modification d'écran : le
+message arrive mis en forme sur l'écran de connexion.
+
+### 26.10 ⚠️ Piège d'exploitation : deux statuts, un seul compte
+
+Constaté en jouant le test — la première activation a porté sur le mauvais
+objet, et le refus n'a pas bougé.
+
+| Liste console | Ce que le statut décrit | Lu par le BFF |
+|---|---|---|
+| **Fleet-Ops → Fournisseurs** | l'entreprise du commerçant | ✅ oui |
+| IAM → Customers | le compte utilisateur Fleetbase | ❌ non |
+
+**L'admin laissé à lui-même va dans IAM** : c'est la section qui parle de
+comptes, elle affiche un statut `Pending` bien visible, et son menu propose
+« Activer l'utilisateur ». Tout y invite. Le geste réussit, l'écran passe au
+vert, et le commerçant reste bloqué — sans que rien ne relie les deux.
+
+Deux conséquences :
+
+1. **À écrire dans la procédure d'exploitation** avant le premier commerçant
+   réel. Sans ça, un admin certain d'avoir validé cherchera l'erreur ailleurs
+   pendant que le commerçant attend.
+2. `scripts/register-merchant.sh` **mesure** désormais le statut du fournisseur
+   avant et après la pause, nomme la bonne liste et la mauvaise, et s'arrête si
+   rien n'a changé plutôt que de rejouer une connexion au refus certain.
 
 ---
 
