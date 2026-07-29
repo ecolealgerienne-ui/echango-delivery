@@ -47,11 +47,15 @@ export class FlotteService {
   /**
    * List orders belonging to this fleet's Vendor.
    *
-   * Fleetbase's `facilitator_uuid` query filter on GET /orders is silently
-   * ignored server-side (confirmed by direct testing, see
-   * docs/journal_implementation_bff.md §2.8) - it returns the full
-   * company-wide dataset regardless of the value passed. We therefore fetch
-   * everything and filter/paginate in memory; the query param is never sent.
+   * ⚠️ **Correction du 29/07/2026** : ce commentaire affirmait que Fleetbase
+   * ignore le filtrage serveur. C'est faux — le paramètre testé en §2.8,
+   * `facilitator_uuid`, n'est simplement pas un nom de filtre. La méthode
+   * s'appelle `facilitator`, et `GET /orders?facilitator=<uuid>` fait bien le
+   * `where` attendu.
+   *
+   * Le rapatriement complet + filtrage mémoire reste en place tant que les
+   * appels réels de `docs/architecture_bff_fleetbase.md` §9 n'ont pas été
+   * passés. Il est correct, juste inutilement coûteux.
    */
   async getOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
     const fleet = await this.getFleetWithValidation(fleetId);
@@ -270,8 +274,12 @@ export class FlotteService {
   }
 
   /**
-   * Fetch every order in the company, across pages, since the
-   * facilitator_uuid filter cannot be trusted server-side.
+   * Fetch every order in the company, across pages.
+   *
+   * ⚠️ Le motif d'origine — « le filtre `facilitator_uuid` n'est pas fiable » —
+   * était une erreur de nom de paramètre, corrigée le 29/07/2026 (voir
+   * `getOrders` ci-dessus). Cette méthode devient supprimable dès que
+   * `?facilitator=` est vérifié par appel réel.
    *
    * The pagination itself now lives in the Fleetbase client: the other two
    * personas were scanning a single 100-item page for the same reason and had

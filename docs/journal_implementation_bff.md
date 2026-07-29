@@ -138,6 +138,29 @@ Lecture de `CreateOrderRequest::rules()` (le fichier réel des règles de valida
 
 ### 2.8 ⚠️ CRITIQUE — les filtres `facilitator_uuid` (`/orders`) et `vendor_uuid` (`/drivers`) sont ignorés côté serveur
 
+> ## 🛑 CORRECTION DU 29/07/2026 — LIRE AVANT D'UTILISER CETTE SECTION
+>
+> **L'observation ci-dessous est exacte ; la conclusion qu'on en a tirée est
+> fausse, et elle a coûté trois reconstructions.**
+>
+> `facilitator_uuid` et `vendor_uuid` **ne sont pas les noms des filtres**. Les
+> méthodes de `OrderFilter`/`DriverFilter` s'appellent **`facilitator`**,
+> **`vendor`**, **`customer`**, **`driver`**, sans suffixe. Un paramètre sans
+> méthode correspondante est abandonné en silence, d'où le résultat observé.
+>
+> **Fleetbase filtre bien côté serveur** — la console Fleetbase le fait à chaque
+> requête. Ne pas généraliser cette section en « les filtres de query string ne
+> sont pas fiables » : ce qui n'est pas fiable, c'est **un nom de paramètre
+> supposé**.
+>
+> Détail complet, noms exacts relevés sur la console, et vérifications restant à
+> faire : **`docs/architecture_bff_fleetbase.md`** §4 et §9. Récit :
+> §20.2 de ce journal.
+>
+> Restent vraies et non affectées par cette correction : `places?owner_uuid`
+> fonctionne (§2.7), `positions` n'a réellement aucun filtre par driver (§2.11),
+> `GET /vendors/{uuid}` ignore réellement son paramètre de chemin (§2.13).
+
 **Ne pas confondre avec §2.7** : tous les filtres de query string ne se valent pas — certains fonctionnent réellement (`owner_uuid` sur `/places`, vérifié), d'autres non. Chaque filtre doit être vérifié individuellement, jamais supposé par analogie.
 
 **Hypothèse du document de scoping initial** (`docs/specs_bff.md` §5.2) : le module `flotte` (petite flotte, persona 2) pourrait scoper ses appels à Fleetbase en passant `facilitator_uuid=<vendor_uuid_du_gestionnaire>` sur `GET /orders`, et `vendor_uuid=<vendor_uuid>` sur `GET /drivers`, en confiant à Fleetbase le filtrage côté serveur — ce qui aurait permis d'éviter tout filtrage applicatif côté BFF.
@@ -1832,3 +1855,100 @@ préférence enregistrée.
 Le motif est celui de la journée, une fois de plus : **une donnée cherchée là où
 elle n'est pas encore**. Le cache local ne décrit qu'une partie du réel, et le
 prendre pour l'ensemble produit un vide qui ressemble à une absence.
+
+---
+
+## 20. Deux écritures reprenables, et une hypothèse fondatrice invalidée (29/07/2026)
+
+Session de discussion, presque sans code. Point de départ : *« on fait de la
+double écriture, BFF et Fleetbase ? D'un point d'archi ce n'est pas propre. »*
+La décision d'architecture qui en sort et l'inventaire complet des faits vérifiés
+sont dans **`docs/architecture_bff_fleetbase.md`** — ce journal ne garde que le
+récit et les deux correctifs.
+
+### 20.1 Les deux défauts trouvés en instruisant la question (commit `e390a3b`)
+
+Chercher où le BFF écrivait deux fois a fait apparaître deux vrais bugs, tous
+deux du même genre : une opération qui doit aboutir **des deux côtés**, sans
+transaction commune entre le MySQL de Fleetbase et le PostgreSQL du BFF.
+
+**Un interblocage sur l'encaissement.** `declareCollection()` levait quand
+l'encaissement était déjà enregistré. Or le registre s'écrit **avant** la
+clôture Fleetbase — délibérément, pour qu'un échec laisse la course reprenable
+plutôt qu'un encaissement fantôme (§16.3). Si cette clôture échouait, le
+transporteur réessayait, repassait par le registre, et levait. **La course
+devenait définitivement non clôturable, l'argent enregistré nulle part
+d'exploitable.** On ne peut pas rendre les deux systèmes atomiques ; on peut
+rendre la reprise sûre. Un encaissement déjà déclaré par le **même**
+transporteur est désormais rejoué (`replayed: true`) ; par un autre, refusé —
+deux personnes n'ont pas encaissé la même livraison.
+
+**Une commande orpheline.** `createOrder()` laissait la commande Fleetbase en
+place quand la ligne locale de rattachement ne s'écrivait pas. Cette ligne porte
+le lien commerçant ↔ commande. Sans elle, la commande **part au dispatch, un
+transporteur la voit et la livre, et elle n'appartient à personne** : invisible
+au commerçant, absente de ses notifications, encaissement refusé faute de savoir
+à qui l'imputer. Une commande orpheline est pire qu'une commande non créée.
+`createOrderCache()` annule donc la commande amont en compensation — même geste
+que pour le `Vendor` d'une inscription commerçant interrompue (§12). Si
+l'annulation échoue à son tour, l'identifiant est journalisé en `error`, seule
+trace permettant de la retrouver à la main.
+
+Trois propriétés, à défaut d'atomicité : **ordre** (écrire d'abord le côté
+récupérable), **idempotence** (une reprise après échec partiel doit être sûre),
+**compensation** (défaire l'amont si l'aval échoue). L'idempotence était la
+jambe manquante, et elle a produit un blocage réel.
+
+### 20.2 §2.8 était une observation juste et une conclusion fausse
+
+L'utilisateur a contesté l'affirmation « Fleetbase ignore les filtres » :
+*« il y a bien des filtres au niveau de la console, donc il sait faire. »*
+
+Il avait raison. Lecture de `Filter::apply()` : chaque paramètre est cherché
+comme méthode sur la classe de filtre, sous son nom brut puis en camelCase, sans
+aucun repli. Et `OrderFilter` déclare une méthode **`facilitator`** — pas
+`facilitator_uuid`. Nos tests de §2.8 envoyaient `facilitator_uuid` et
+`vendor_uuid` : deux noms qui n'existent pas, jetés en silence.
+
+Le défaut amont est réel mais banal — **un paramètre inconnu est abandonné sans
+erreur** — et c'est ce qui a transformé une faute de frappe en fausse limitation
+permanente, sur laquelle trois mécanismes ont été construits : isolation
+commerçant, isolation flotte, recherche de transporteur. Tous filtrent en
+mémoire ce que le serveur savait filtrer.
+
+Détail qui pique : §2.9 note que `facilitator` sans suffixe avait bien été
+essayé — mais pendant la session où la variable shell était vide. Le bon nom
+testé avec une mauvaise valeur, le mauvais nom avec une bonne valeur.
+
+**La correction a été obtenue par lecture de code, exactement comme l'erreur
+qu'elle corrige.** Elle n'est pas acquise : les appels réels de vérification sont
+listés dans `architecture_bff_fleetbase.md` §9, et rien n'a été supprimé.
+
+### 20.3 Deux découvertes des en-têtes de la console
+
+**Les lectures passent par un cache Redis.** `x-cache-key:
+{api_query}:orders:company_<uuid>:v357:<hash>` — invalidation par génération, un
+compteur par ressource. C'est la première objection sérieuse au fait de
+supprimer nos colonnes miroir pour tout lire en direct : reste à savoir si le
+compteur est incrémenté à **chaque** écriture. Détail et scénario de test :
+`architecture_bff_fleetbase.md` §6.
+
+**Le filtre `phone` des conducteurs renvoie 500.** `DriverFilter::phone()` fait
+un `whereHas('phone', …)` alors que `phone` n'est pas une relation sur `Driver`
+mais un attribut calculé (`$appends` + `getPhoneAttribute()` qui traverse
+`user`). Reproduit depuis leur propre console. Troisième bug amont trouvé après
+le bucket de `capturePhoto()` (§6.12) et la résolution non uniforme des
+identifiants (§6.7). **Utiliser `query`, jamais `phone`** — `query()` couvre le
+téléphone via la bonne relation, on ne perd rien.
+
+### 20.4 Ce que la séquence apprend sur la méthode
+
+Le motif du 28 était *« le serveur savait, l'app ignorait »*. Celui du 29 est
+plus embarrassant : **le serveur savait, et on avait écrit noir sur blanc qu'il
+ne savait pas.** Une conclusion fausse, documentée avec soin et référencée dans
+une douzaine de commentaires de code, est plus coûteuse qu'une absence de
+documentation — elle empêche de reposer la question.
+
+D'où la règle ajoutée : **avant d'écrire un filtre côté BFF, regarder ce que la
+console envoie pour la même question.** L'onglet réseau donne les noms exacts en
+trente secondes, et la console est l'implémentation de référence.

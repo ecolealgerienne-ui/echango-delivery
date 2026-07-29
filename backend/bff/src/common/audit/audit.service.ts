@@ -17,9 +17,9 @@ export interface AuditEntry {
  * Écriture de la piste d'audit.
  *
  * Ce qui est journalisé, et pourquoi ce périmètre : les **refus** d'accès. Sur
- * un système dont tout le cloisonnement est applicatif — Fleetbase ignore
- * silencieusement les filtres de requête, donc rien ne protège en dehors du
- * code du BFF — une tentative d'accès à la ressource d'autrui est le signal
+ * un système dont tout le cloisonnement est applicatif — Fleetbase ne connaît
+ * ni nos commerçants ni nos flottes, donc rien ne protège en dehors du code du
+ * BFF — une tentative d'accès à la ressource d'autrui est le signal
  * qui compte. Un `logger.warn` ne suffisait pas : non structuré, non
  * requêtable, perdu à la rotation (revue F14).
  *

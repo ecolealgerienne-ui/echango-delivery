@@ -410,12 +410,18 @@ export class TransporteurService {
   /**
    * List the driver's orders.
    *
-   * ⚠️ Filtering happens HERE, in the BFF, never by passing the driver uuid as
-   * a query param. Journal §2.8 established that Fleetbase silently ignores
-   * unsupported filters on /orders and returns the whole company collection —
-   * so a server-side filter that looks like it works would in fact leak every
-   * order in the organization to every driver. This is the same anti-IDOR
-   * discipline as the two other personas (docs/specs_bff.md §5.3).
+   * ⚠️ Le contrôle d'appartenance se fait **ici**, dans le BFF.
+   *
+   * **Correction du 29/07/2026** : la raison invoquée jusqu'ici — « Fleetbase
+   * ignore les filtres » — était fausse (nom de paramètre erroné, voir
+   * `docs/architecture_bff_fleetbase.md` §4.3). `GET /orders?driver=<uuid>`
+   * filtre réellement.
+   *
+   * **La pratique reste pourtant la bonne, pour une meilleure raison** : un
+   * paramètre de requête exprime une demande, pas une garantie. Le jour où le
+   * filtre serveur sera utilisé, ce sera pour ne pas rapatrier toute la
+   * compagnie — la vérification d'appartenance, elle, restera locale, parce
+   * qu'une frontière de sécurité ne se délègue pas à un paramètre d'URL.
    */
   async listOrders(driverId: string, query: ListDriverOrdersQueryDto) {
     const driver = await this.getDriverOrFail(driverId);

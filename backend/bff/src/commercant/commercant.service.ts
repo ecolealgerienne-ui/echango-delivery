@@ -43,9 +43,16 @@ export class CommerçantService {
    *
    * The cache keeps the job it is actually good at: recording which orders
    * belong to which merchant. That mapping is what makes the anti-IDOR check
-   * trustworthy, and it must stay authoritative — §2.8 established that
-   * Fleetbase silently ignores unsupported filters on /orders, so asking it
-   * "which orders are this merchant's" would return the whole company.
+   * trustworthy.
+   *
+   * ⚠️ **Correction du 29/07/2026** : la justification qui suivait — « §2.8 a
+   * établi que Fleetbase ignore les filtres, donc lui demander à qui sont ces
+   * commandes renverrait toute la compagnie » — était fausse. Le paramètre
+   * envoyé, `facilitator_uuid`, n'était pas un nom de filtre ; `customer` en
+   * est un, et il fait le `where` attendu. Fleetbase **sait** répondre à « à
+   * qui appartient cette commande », ce qui remet en cause l'existence même de
+   * ce cache (`docs/architecture_bff_fleetbase.md` §4.4). Rien n'est supprimé
+   * avant les vérifications du §9 de ce document.
    */
   private async mergeWithFleetbase(cached: { id: string; fleetbaseOrderId: string }[]) {
     if (!cached.length) return [];
@@ -554,10 +561,11 @@ export class CommerçantService {
    * silence côté client (revue archi #3). `getOrderDetail` faisait déjà la
    * bonne chose ; ce helper évite que les trois divergent à nouveau.
    *
-   * L'appartenance est décidée **ici**, sur la table locale, jamais sur ce que
-   * renvoie Fleetbase : §2.8 a établi que Fleetbase ignore silencieusement les
-   * filtres non supportés, donc lui demander « quelles commandes sont à ce
-   * commerçant » renverrait toute la compagnie.
+   * L'appartenance est décidée **ici**, sur la table locale. Le motif invoqué
+   * (§2.8, « Fleetbase ignore les filtres ») est faux depuis le 29/07/2026 —
+   * mais décider l'appartenance localement reste juste : un paramètre d'URL
+   * n'est pas une frontière de sécurité. Voir
+   * `docs/architecture_bff_fleetbase.md` §4.3.
    */
   private async resolveOwnedOrder(merchantId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({
@@ -675,9 +683,11 @@ export class CommerçantService {
    * Photo d'un signalement d'échec, servie au commerçant propriétaire.
    *
    * L'appartenance se vérifie en deux temps — le signalement porte l'uuid de la
-   * commande, et c'est le cache local qui dit à quel commerçant elle est. Le
-   * même raisonnement que partout : Fleetbase ignore silencieusement les
-   * filtres, donc l'appartenance ne se demande jamais à lui.
+   * commande, et c'est le cache local qui dit à quel commerçant elle est.
+   * L'appartenance ne se demande jamais à Fleetbase — non parce qu'il ne
+   * saurait pas répondre (l'affirmation §2.8 est corrigée depuis le
+   * 29/07/2026), mais parce qu'un contrôle d'accès ne se délègue pas à un
+   * paramètre de requête.
    */
   async getFailureProof(merchantId: string, failureId: string) {
     await this.getMerchantWithValidation(merchantId);

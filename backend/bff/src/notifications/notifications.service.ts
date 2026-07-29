@@ -111,9 +111,9 @@ export class NotificationsService {
   /**
    * Notifie le commerçant propriétaire d'une commande Fleetbase.
    *
-   * Le rattachement passe par le cache local, jamais par ce que renvoie
-   * Fleetbase : c'est la même règle que partout ailleurs dans le BFF (§2.8 —
-   * les filtres de requête y sont ignorés en silence). Une commande inconnue du
+   * Le rattachement passe par le cache local. La référence à §2.8 (« les
+   * filtres de requête sont ignorés en silence ») est corrigée depuis le
+   * 29/07/2026 — c'était une erreur de nom de paramètre. Une commande inconnue du
    * cache n'appartient à aucun commerçant Echango : rien à notifier, et rien
    * d'anormal — l'opérateur peut créer des commandes depuis la console.
    */

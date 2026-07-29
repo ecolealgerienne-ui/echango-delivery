@@ -289,10 +289,13 @@ export class AuthService {
    * Creates Echango account + Fleetbase Vendor only - no Customer/personnel,
    * no dedicated Fleetbase User (Option A, docs/specs_bff.md §2): the fleet
    * manager authenticates purely against the BFF, which then acts as a
-   * service account against FleetOps, scoping every call by this Vendor's
-   * uuid as facilitator_uuid/vendor_uuid (filtered client-side, see
-   * docs/journal_implementation_bff.md §2.8 - Fleetbase does not enforce
-   * these filters server-side).
+   * service account against FleetOps, scoping every call by this Vendor's uuid.
+   *
+   * ⚠️ Le scoping est aujourd'hui appliqué **en mémoire** côté BFF. Le motif
+   * historique (« Fleetbase n'applique pas ces filtres ») était une erreur de
+   * nom de paramètre : `facilitator` et `vendor` fonctionnent, `facilitator_uuid`
+   * et `vendor_uuid` n'existent pas. Voir `docs/architecture_bff_fleetbase.md`
+   * §4.3.
    */
   async registerFleet(dto: FleetRegisterDto) {
     const existing = await this.prisma.fleetAccount.findUnique({

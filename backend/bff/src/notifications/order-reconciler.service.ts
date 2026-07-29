@@ -40,10 +40,15 @@ const TERMINAL = ['completed', 'canceled', 'cancelled'];
  * ── Limites assumées ────────────────────────────────────────────────────────
  *
  * Un passage télécharge toutes les commandes de l'organisation. Tenable au
- * pilote, pas à l'échelle — et c'est le même plafond que partout ailleurs dans
- * le BFF, puisque Fleetbase ignore les filtres de requête. La latence est celle
- * de l'intervalle : une minute par défaut. Les deux disparaissent avec les
- * webhooks.
+ * pilote, pas à l'échelle. Le motif invoqué — « Fleetbase ignore les filtres de
+ * requête » — est faux depuis le 29/07/2026 : c'était une erreur de nom de
+ * paramètre (`docs/architecture_bff_fleetbase.md` §4.3). La latence est celle
+ * de l'intervalle : une minute par défaut.
+ *
+ * Les deux disparaissent avec les **webhooks**, qui restent la bonne réponse
+ * ici — un filtre serveur ne dirait toujours pas *qu'un changement a eu lieu*,
+ * et ce service existe pour détecter une transition, pas pour lire une liste
+ * (§8.3 du même document).
  */
 @Injectable()
 export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {

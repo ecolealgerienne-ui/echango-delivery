@@ -378,12 +378,19 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * List ALL company orders, unfiltered. Confirmed by direct testing (28/07/2026,
-   * see docs/journal_implementation_bff.md §2.8) that Fleetbase silently IGNORES
-   * `facilitator_uuid` as a query filter on this endpoint - it returns the full
-   * company-wide dataset regardless of the value passed. Callers MUST filter the
-   * result client-side by `facilitator_uuid`; never trust a query param here as
-   * a security boundary.
+   * Toutes les commandes de la compagnie, sans filtre.
+   *
+   * ⚠️ **Correction du 29/07/2026 — l'ancien commentaire de cette méthode était
+   * faux.** Il affirmait, sur la foi de §2.8, que Fleetbase ignore les filtres de
+   * requête. Ce qu'on avait envoyé, c'est `facilitator_uuid` — **un nom de
+   * paramètre qui n'existe pas**. La méthode de `OrderFilter` s'appelle
+   * `facilitator`, et il en va de même pour `customer` et `driver` : le filtrage
+   * serveur fonctionne, la console Fleetbase s'en sert à chaque requête.
+   *
+   * Le rapatriement complet reste en place **tant que les appels réels de
+   * `docs/architecture_bff_fleetbase.md` §9 n'ont pas été passés** — c'est un
+   * défaut de performance, pas de sécurité, et le supprimer sur la seule foi
+   * d'une deuxième lecture de code répéterait l'erreur d'origine.
    */
   async getAllOrders(page = 1, limit = 100) {
     try {
@@ -527,10 +534,19 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * List ALL company drivers, unfiltered. Confirmed by direct testing (28/07/2026,
-   * see docs/journal_implementation_bff.md §2.8) that `vendor_uuid` is silently
-   * IGNORED as a query filter here too - same bypass as /orders. Callers MUST
-   * filter client-side by `vendor_uuid`; never trust this query param.
+   * Tous les conducteurs de la compagnie, sans filtre.
+   *
+   * ⚠️ **Même correction que `getAllOrders()` (29/07/2026)** : le paramètre testé
+   * en §2.8 était `vendor_uuid`, alors que la méthode de `DriverFilter` s'appelle
+   * `vendor`. `DriverFilter` expose aussi `query`, `name`, `fleet` et `status`.
+   *
+   * ⚠️ **Ne jamais utiliser `phone`** : `DriverFilter::phone()` fait un
+   * `whereHas('phone', …)` alors que `phone` est un attribut calculé et non une
+   * relation sur `Driver` — Laravel lève, la réponse est un **500**. Bug amont
+   * reproduit depuis la console Fleetbase. `query` couvre le téléphone en passant
+   * par la relation `user`, c'est-à-dire ce que `phone()` aurait dû faire.
+   *
+   * Détail : `docs/architecture_bff_fleetbase.md` §5.
    */
   async getAllDrivers() {
     try {
