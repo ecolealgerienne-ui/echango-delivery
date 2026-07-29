@@ -101,21 +101,6 @@ export class CashService {
   }
 
   /**
-   * Les courses encaissées sont-elles réservées aux transporteurs favoris ?
-   *
-   * Actif par défaut, et c'est le second garde-fou : confier des espèces à
-   * quelqu'un qu'on n'a jamais vu travailler est le scénario que la Voie B ne
-   * peut pas couvrir autrement. Le pool anonyme reste ouvert à tout le reste.
-   *
-   * Conséquence assumée : un commerçant sans favori ne peut pas encore faire
-   * de livraison encaissée. Le chemin pour en sortir existe — une livraison
-   * ordinaire, puis la mise en favori proposée à sa clôture.
-   */
-  favouritesOnly(): boolean {
-    return this.configService.get('COD_FAVOURITES_ONLY') !== 'false';
-  }
-
-  /**
    * Position nette entre un transporteur et un commerçant.
    *
    * ── Pourquoi elle est signée ────────────────────────────────────────────────

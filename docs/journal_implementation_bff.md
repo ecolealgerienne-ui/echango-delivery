@@ -1668,3 +1668,56 @@ variable : `COMMISSION_RATE`.
 règlement d'une course prépayée — le commerçant doit alors verser au
 transporteur, et la position négative le dit, mais aucun moyen de paiement n'est
 intégré.
+
+
+---
+
+## 18. La réservation aux favoris était un garde-fou mal placé (29/07/2026)
+
+Constaté à l'usage, dès la première commande encaissée : refus, avec un message
+demandant un transporteur habituel qu'un commerçant nouveau ne peut pas avoir.
+
+**Le raisonnement de départ était faux sur un fait.** Il supposait un pool
+anonyme — « on ne confie pas d'espèces à quelqu'un qu'on n'a jamais vu
+travailler ». Or les transporteurs ne s'inscrivent pas : ils sont **sélectionnés
+et provisionnés par Echango**, sur invitation nominative (`DriverInvitation`,
+décision de provisioning manuel actée au 27/07). Le contrôle a donc déjà eu
+lieu, **à l'entrée du réseau**, et il est plus fort qu'une liste par commerçant :
+il porte sur l'identité réelle, pas sur une habitude de travail.
+
+Refaire ce contrôle par commerçant ne protégeait de rien, et interdisait
+l'encaissement à tout commerçant sans favori — c'est-à-dire à tout nouveau
+commerçant, précisément ceux qu'on cherche à convaincre.
+
+Le **plafond de dette** demeure, et c'est celui qui fait le travail : il ne
+présume rien de la personne, il borne l'exposition.
+
+### 18.1 Ce que la levée a déplacé, et qu'il fallait rattraper
+
+Une course encaissée peut désormais partir au pool commun. Le plafond était
+vérifié **à la création**, sur les favoris sollicités d'avance — il ne couvrait
+donc plus le chemin devenu le plus fréquent : un transporteur du pool qui
+accepte. Il serait resté décoratif, exactement comme la garde de clôture posée
+sur la route que l'application n'emprunte pas (§16.3).
+
+`assertCashCeiling()` s'exécute maintenant à l'acceptation, et le message porte
+les chiffres : « vous détenez déjà X, cette course en ajouterait Y, plafond Z ».
+Un refus sans montant laisse le transporteur sans moyen de savoir combien
+remettre pour repartir.
+
+### 18.2 Un défaut révélé par le message d'erreur lui-même
+
+Le journal montrait le refus **réemballé** :
+
+```
+Failed to create order: Une livraison avec encaissement ne peut être confiée...
+```
+
+`createOrder` lève son erreur métier **à l'intérieur du `try`**, et le `catch`
+générique la réemballait. En développement le détail survivait par accident ; en
+production, le commerçant aurait reçu « Failed to create order » — un message
+qui ne dit ni ce qui ne va pas, ni quoi faire, alors que le refus avait été
+rédigé exactement pour le lui expliquer.
+
+Une `HttpException` traverse désormais intacte. `cancelOrder` faisait déjà cette
+distinction ; `createOrder` l'avait perdue.

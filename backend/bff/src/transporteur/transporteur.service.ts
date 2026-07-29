@@ -694,6 +694,16 @@ export class TransporteurService {
       throw new BadRequestException('This order has already been taken by another driver');
     }
 
+    // Le plafond de dette est vérifié ICI, et pas seulement à la création.
+    //
+    // Depuis que les courses encaissées peuvent partir au pool commun, c'est
+    // l'acceptation qui décide qui les prend — le contrôle posé à la création
+    // ne couvre que les favoris sollicités d'avance. Sans cette vérification,
+    // le plafond serait décoratif sur exactement le chemin le plus fréquent :
+    // la même erreur que la garde de clôture posée sur la route que
+    // l'application n'emprunte pas.
+    await this.assertCashCeiling(driver.id, order);
+
     const publicId = await this.getDriverPublicId(driver);
 
     try {
@@ -875,6 +885,41 @@ export class TransporteurService {
       price,
       collected,
     );
+  }
+
+  /**
+   * Refuse la course si l'encaissement ferait franchir le plafond de dette.
+   *
+   * Ce plafond est le garde-fou principal du paiement à la livraison : sans
+   * agences ni dépôts, cesser de confier des espèces à qui en doit déjà trop
+   * est le seul instrument de limitation du risque dont nous disposions.
+   *
+   * Le message dit le montant et la somme due : « refusé » sans chiffre laisse
+   * le transporteur sans moyen de savoir combien remettre pour repartir.
+   */
+  private async assertCashCeiling(driverId: string, order: any): Promise<void> {
+    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    if (codAmount <= 0) return;
+
+    const cached = await this.prisma.order.findFirst({
+      where: { fleetbaseOrderId: order.uuid },
+      select: { merchantId: true },
+    });
+    if (!cached) return;
+
+    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+      driverId,
+      cached.merchantId,
+      codAmount,
+    );
+
+    if (!allowed) {
+      throw new BadRequestException(
+        `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
+          `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
+          'Remettez les espèces avant de reprendre une course encaissée pour lui.',
+      );
+    }
   }
 
   /**

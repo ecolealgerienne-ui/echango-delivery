@@ -4,6 +4,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  HttpException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -804,28 +805,24 @@ export class CommerçantService {
         this.fleetbaseClient.getDefaultOrderConfigUuid(),
       ]);
 
-      // Favori disponible ? On le sollicite ; sinon la course part au pool.
+      // Favori disponible ? On le sollicite ; sinon la course part au pool,
+      // **y compris quand elle est encaissée**.
       //
-      // Une course encaissée sollicite TOUJOURS les favoris, quelle que soit la
-      // préférence exprimée : confier des espèces à quelqu'un qu'on n'a jamais
-      // vu travailler est le scénario que ce modèle ne sait pas couvrir
-      // (`specs_paiement_livraison.md` §6, garde-fou n°2).
-      const favourite =
-        dto.preferFavourites || dto.codAmount
-          ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, dto.codAmount)
-          : null;
-
-      // Et si aucun favori n'est disponible, la course encaissée ne part pas au
-      // pool : elle est refusée, avec la raison. Un repli silencieux sur le
-      // réseau anonyme contournerait la garantie au moment précis où elle
-      // compte — et le commerçant croirait sa règle appliquée.
-      if (dto.codAmount && !favourite && this.cash.favouritesOnly()) {
-        throw new BadRequestException(
-          'Une livraison avec encaissement ne peut être confiée qu\'à un de vos ' +
-            'transporteurs habituels, et aucun n\'est disponible pour l\'instant. ' +
-            'Réessayez plus tard, ou créez cette livraison sans encaissement.',
-        );
-      }
+      // Une version précédente réservait les courses encaissées aux favoris, au
+      // motif qu'on ne confie pas d'espèces à quelqu'un qu'on n'a jamais vu
+      // travailler. Le raisonnement supposait un pool anonyme — il ne l'est
+      // pas : **les transporteurs sont sélectionnés et provisionnés par
+      // Echango**, sur invitation nominative (voir `DriverInvitation`), et
+      // aucun ne s'inscrit de lui-même. Le contrôle a donc déjà eu lieu, à
+      // l'entrée dans le réseau, et le refaire par commerçant ne protégeait de
+      // rien tout en interdisant l'encaissement à tout commerçant sans favori —
+      // c'est-à-dire à tout nouveau commerçant.
+      //
+      // Le plafond de dette reste, lui : il ne présume rien de la personne, il
+      // borne l'exposition. C'est le garde-fou qui fait le travail.
+      const favourite = dto.preferFavourites
+        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, dto.codAmount)
+        : null;
 
       const response = await this.fleetbaseClient.createOrder({
         order_config_uuid: orderConfigUuid,
@@ -878,6 +875,13 @@ export class CommerçantService {
 
       return order;
     } catch (error) {
+      // Une erreur métier délibérée traverse intacte. Sans cette ligne, le
+      // filet générique la réemballait en « Failed to create order » : le
+      // commerçant recevait, en production, un message qui ne disait ni ce qui
+      // n'allait pas ni quoi faire — alors que le refus avait précisément été
+      // écrit pour le lui expliquer.
+      if (error instanceof HttpException) throw error;
+
       this.logger.error(`Failed to create order: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       throw new BadRequestException(

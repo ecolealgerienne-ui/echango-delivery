@@ -607,9 +607,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// choisi — c'est exactement le malentendu qui rendait une implémentation
   /// partielle plus dangereuse que l'absence de la fonctionnalité.
   ///
-  /// La réservation aux transporteurs habituels est dite ici plutôt que
-  /// découverte au refus de création : une contrainte annoncée est une règle,
-  /// la même contrainte découverte est une panne.
+  /// Tous les transporteurs du réseau peuvent prendre une course encaissée :
+  /// ils sont sélectionnés et provisionnés par Echango, le contrôle a lieu à
+  /// l'entrée du réseau et non commerçant par commerçant.
   Widget _codSection() {
     final theme = Theme.of(context);
 
@@ -652,8 +652,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
               'Le transporteur retient sa rémunération sur les espèces et ne '
-              'vous remet que la différence. Cette livraison sera proposée en '
-              'priorité à vos transporteurs habituels.',
+              'vous remet que la différence, lors de son prochain passage.',
               style: theme.textTheme.bodySmall,
             ),
           ),

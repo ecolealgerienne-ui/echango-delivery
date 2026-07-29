@@ -115,7 +115,7 @@ Echango ne touche jamais l'argent. Son apport est le registre : montant attendu,
 **Contre, et il est réel** : le risque de non-remise est porté par le commerçant, pas par la plateforme. Un transporteur peut disparaître avec les espèces. Trois garde-fous, tous logiciels :
 
 1. **Un plafond de dette par transporteur** — au-delà, il ne reçoit plus de courses encaissées. Le mécanisme DoorDash, transposé.
-2. **Les courses encaissées réservées aux favoris** au démarrage, c'est-à-dire à des transporteurs que le commerçant a déjà vus travailler. Le pool anonyme reste ouvert aux courses non encaissées.
+2. ~~**Les courses encaissées réservées aux favoris**~~ — **écarté le 29/07/2026, après implémentation.** Le raisonnement supposait un pool anonyme. Il ne l'est pas : les transporteurs sont **sélectionnés et provisionnés par Echango**, sur invitation nominative, et aucun ne s'inscrit de lui-même. Le contrôle a donc déjà eu lieu à l'entrée du réseau ; le refaire commerçant par commerçant ne protégeait de rien et interdisait l'encaissement à tout commerçant sans favori — c'est-à-dire à tout nouveau commerçant. La sélection à l'entrée **est** le garde-fou, et elle est plus forte qu'une liste par commerçant.
 3. **La trace** : chaque encaissement horodaté, géolocalisé, avec photo. Elle ne récupère pas l'argent, mais elle change ce qu'un litige coûte à établir.
 
 ### Voie C — Ne rien faire, et le dire
