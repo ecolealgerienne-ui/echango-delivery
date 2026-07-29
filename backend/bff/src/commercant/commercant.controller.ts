@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Body, Request, Query, Res } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Request, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { CommerçantService } from './commercant.service';
@@ -7,6 +7,7 @@ import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { GeocodeQueryDto, ReverseGeocodeQueryDto } from './dto/geocode.dto';
 import { AddFavouriteDto } from './dto/favourite.dto';
+import { DriverSearchDto } from './dto/driver-search.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -111,6 +112,18 @@ export class CommerçantController {
   @Get('transporteurs/favoris')
   async listFavourites(@Request() req: any) {
     return this.commercantService.listFavourites(req.user.id);
+  }
+
+  /**
+   * Cherche un transporteur du réseau par nom ou téléphone.
+   *
+   * Une recherche, pas un annuaire : au-delà de dix correspondances, le serveur
+   * demande de préciser plutôt que d'en montrer dix. Une liste tronquée qu'on
+   * balaie en changeant une lettre serait l'annuaire qu'on refuse d'ouvrir.
+   */
+  @Get('transporteurs/recherche')
+  async searchDrivers(@Request() req: any, @Query() query: DriverSearchDto) {
+    return this.commercantService.searchDrivers(req.user.id, query.q);
   }
 
   /** Transporteurs ayant déjà livré pour ce commerçant, proposables en favori. */
@@ -240,5 +253,25 @@ export class CommerçantController {
   @Post('adresses')
   async saveAddress(@Request() req: any, @Body() dto: SaveAddressDto) {
     return this.commercantService.saveAddress(req.user.id, dto);
+  }
+
+  /**
+   * Modifie une adresse du carnet.
+   *
+   * Une adresse enregistrée pré-remplit chaque livraison qui la choisit : un
+   * point mal placé ne gêne pas une fois, il se répète.
+   */
+  @Put('adresses/:id')
+  async updateAddress(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: SaveAddressDto,
+  ) {
+    return this.commercantService.updateAddress(req.user.id, id, dto);
+  }
+
+  @Delete('adresses/:id')
+  async deleteAddress(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.commercantService.deleteAddress(req.user.id, id);
   }
 }

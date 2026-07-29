@@ -1721,3 +1721,82 @@ rédigé exactement pour le lui expliquer.
 
 Une `HttpException` traverse désormais intacte. `cancelOrder` faisait déjà cette
 distinction ; `createOrder` l'avait perdue.
+
+---
+
+## 19. Deux impasses d'écran, même cause (29/07/2026)
+
+Constatées à l'usage, dans la foulée : « Mes transporteurs » sans moyen d'en
+trouver un, et un carnet d'adresses où les entrées ne s'ouvrent ni ne se
+modifient. Deux écrans construits pour un chemin unique, celui qui remplit la
+liste — et rien pour partir d'une liste vide, ni pour revenir sur ce qu'on y a
+mis.
+
+### 19.1 Trouver un transporteur : une recherche, pas un annuaire
+
+Les favoris ne se constituaient qu'à partir des transporteurs **ayant déjà
+livré**. Un commerçant nouveau voyait donc une page vide et sans issue.
+
+Le raisonnement d'origine tenait en deux moitiés. La première reste vraie :
+« exposer l'annuaire complet livrerait la composition du réseau à quiconque crée
+un compte » — un concurrent s'inscrit et énumère nos transporteurs. La seconde
+était fausse : « on ne met en favori que quelqu'un qu'on a vu travailler ». On
+peut aussi l'avoir croisé, ou se l'être fait recommander.
+
+**Et le mécanisme avait changé de nature le matin même.** Tant que les courses
+encaissées étaient réservées aux favoris, la liste était une *barrière* et son
+contenu comptait beaucoup. Depuis la levée de cette restriction (§18), c'est une
+simple *préférence* avec repli automatique. L'enjeu a chuté, et l'argument pour
+verrouiller la liste avec lui.
+
+Retenu : **recherche par nom ou téléphone**, trois caractères minimum. Elle sert
+le seul cas réel — la relation existe déjà hors de l'application.
+
+**Au-delà de dix correspondances, le serveur refuse et demande de préciser**,
+plutôt que d'en renvoyer dix. Une liste tronquée qu'on balaie en changeant une
+lettre serait exactement l'annuaire qu'on refuse d'ouvrir ; « précisez » ferme ce
+chemin sans gêner celui qui cherche une personne — il tape un nom, pas une
+lettre.
+
+**Le téléphone n'est jamais renvoyé.** Celui qui cherche le connaît déjà, c'est
+par là qu'il cherche ; le renvoyer ferait de la recherche un moyen de récupérer
+les coordonnées de prestataires qu'on n'a jamais fait travailler.
+
+Le garde d'`addFavourite` change de nature en conséquence : de « a déjà livré
+pour vous » à « existe et est actif dans le réseau ». Il empêche toujours de
+sonder un uuid arbitraire, sans interdire les favoris à un commerçant nouveau.
+**Le nom vient désormais du serveur**, jamais de la requête — sinon une liste de
+favoris cesserait de décrire des personnes réelles.
+
+### 19.2 Le carnet d'adresses était en écriture seule
+
+Créer, oui. Consulter, modifier, supprimer : rien. La liste n'était qu'un
+affichage mort.
+
+Ce qui rend le manque sérieux : **une adresse enregistrée est réutilisée** —
+elle pré-remplit chaque livraison qui la choisit. Une position mal placée ou un
+téléphone erroné ne gêne donc pas une fois, il se répète, et la seule issue
+était d'accumuler des doublons.
+
+`PUT` et `DELETE` sur `/commercant/adresses/:id`, avec contrôle d'appartenance
+par `owner_uuid` — le seul filtre que Fleetbase honore réellement sur `/places`.
+Sans lui, un identifiant deviné suffirait à modifier l'adresse d'un autre
+commerçant : les lieux vivent tous dans la même organisation.
+
+Le formulaire de création sert aussi à la modification, plutôt qu'un second
+écran : les champs sont identiques, et deux écrans auraient divergé — celui de
+modification aurait fini par ne plus proposer la carte, comme la création avant
+sa correction.
+
+**Défaut trouvé en écrivant la relecture** : la création déposait le contact
+sous `meta.contactName`, tandis que `projectPlace` relit `meta.contact_name` —
+la clé posée par la création de commande. Le contact d'une adresse enregistrée
+disparaissait donc **à sa première relecture**. Deux orthographes pour la même
+donnée, sur un chemin où personne ne relisait ce qu'il venait d'écrire.
+
+La liste signale aussi les adresses **sans position** : le formulaire de commande
+en exige une, et le découvrir au moment de commander est trop tard.
+
+Une suppression ne demande qu'une confirmation légère, et l'explique : chaque
+livraison a créé son propre lieu à la commande, distinct de l'entrée du carnet.
+Supprimer n'efface donc aucun historique.

@@ -1029,6 +1029,24 @@ class BffApiClient {
     return _listOf(_parseResponse(response), 'data', KnownDriver.fromJson);
   }
 
+  /// Cherche un transporteur du réseau par nom ou téléphone.
+  ///
+  /// Une recherche, pas un annuaire : au-delà de dix correspondances le serveur
+  /// renvoie `tooMany` et aucune donnée, plutôt qu'une liste tronquée qu'on
+  /// pourrait balayer en changeant une lettre.
+  Future<DriverSearchResult> searchDrivers(String query) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/transporteurs/recherche')
+          .replace(queryParameters: {'q': query}),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return DriverSearchResult(
+      drivers: _listOf(data, 'data', KnownDriver.fromJson),
+      tooMany: (data is Map) && data['too_many'] == true,
+    );
+  }
+
   Future<List<KnownDriver>> getFavouriteDrivers() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/transporteurs/favoris'),
@@ -1097,6 +1115,41 @@ class BffApiClient {
       headers: _buildHeaders(),
     );
     return _listOf(_parseResponse(response), 'places', SavedAddress.fromJson);
+  }
+
+  /// Modifie une adresse du carnet. [id] est l'identifiant du lieu.
+  Future<void> updateMerchantAddress(
+    String id, {
+    required String label,
+    required String name,
+    required String address,
+    required double latitude,
+    required double longitude,
+    String? contactName,
+    String? contactPhone,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/commercant/adresses/$id'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'label': label,
+        'name': name,
+        'address': address,
+        'latitude': latitude,
+        'longitude': longitude,
+        if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
+        if (contactPhone != null && contactPhone.isNotEmpty) 'contactPhone': contactPhone,
+      }),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> deleteMerchantAddress(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/commercant/adresses/$id'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
   }
 
   Future<void> saveMerchantAddress({

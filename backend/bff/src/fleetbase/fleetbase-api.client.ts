@@ -260,6 +260,36 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Met à jour un lieu du carnet d'adresses.
+   *
+   * ⚠️ `owner_uuid` n'est **jamais** renvoyé dans la charge : le transmettre
+   * permettrait, si un appelant oubliait le contrôle d'appartenance en amont,
+   * de faire changer un lieu de propriétaire. L'appartenance se vérifie avant,
+   * dans le service, contre la liste des lieux du commerçant.
+   */
+  async updateOwnedPlace(
+    placeUuid: string,
+    data: { name: string; latitude: number; longitude: number; address?: string; phone?: string; meta?: Record<string, any> },
+  ) {
+    const response = await this.callFleetOps('PUT', `/places/${this.seg(placeUuid)}`, {
+      name: data.name,
+      location: {
+        type: 'Point',
+        coordinates: [data.longitude, data.latitude],
+      },
+      address: data.address,
+      phone: data.phone,
+      meta: data.meta,
+    });
+    return response.data;
+  }
+
+  async deletePlace(placeUuid: string) {
+    const response = await this.callFleetOps('DELETE', `/places/${this.seg(placeUuid)}`);
+    return response.data;
+  }
+
+  /**
    * List Places owned by a given Vendor (a merchant's saved addresses).
    */
   async getOwnedPlaces(ownerUuid: string) {

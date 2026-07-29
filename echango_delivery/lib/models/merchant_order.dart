@@ -428,6 +428,18 @@ class KnownDriver extends Equatable {
   List<Object?> get props => [driverUuid, name, favouriteId];
 }
 
+/// Résultat d'une recherche de transporteur.
+///
+/// [tooMany] distingue « aucun résultat » de « trop de résultats » : les deux
+/// donnent une liste vide, et les confondre ferait conclure au commerçant que
+/// la personne n'existe pas alors qu'il faut seulement préciser sa recherche.
+class DriverSearchResult {
+  final List<KnownDriver> drivers;
+  final bool tooMany;
+
+  const DriverSearchResult({required this.drivers, this.tooMany = false});
+}
+
 /// Devis renvoyé par le serveur.
 ///
 /// [amount] est `null` tant que le barème n'est pas implémenté : l'écran

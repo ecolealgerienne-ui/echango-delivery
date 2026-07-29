@@ -34,15 +34,65 @@ class _AddressesScreenState extends State<AddressesScreen> {
   /// précédente enregistrait donc **le centre d'Alger pour toute adresse** —
   /// pire encore qu'à la création d'une commande, puisqu'une adresse fausse
   /// empoisonne ensuite chaque livraison qui la réutilise.
-  Future<void> _addAddress(MerchantOrderState orderState) async {
+  Future<void> _openForm(SavedAddress? existing) async {
     final messenger = ScaffoldMessenger.of(context);
 
     final result = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => const _AddressFormScreen()),
+      MaterialPageRoute(builder: (_) => _AddressFormScreen(existing: existing)),
     );
 
     if (result != true || !mounted) return;
-    messenger.showSnackBar(const SnackBar(content: Text('Adresse enregistrée')));
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          existing == null ? 'Adresse enregistrée' : 'Adresse modifiée',
+        ),
+      ),
+    );
+  }
+
+  /// Supprime une adresse, après confirmation.
+  ///
+  /// La confirmation reste légère à dessein : supprimer une entrée du carnet
+  /// **n'efface aucun historique**. Chaque livraison a créé son propre lieu à
+  /// la commande, distinct de l'entrée du carnet — les livraisons passées
+  /// gardent donc leur adresse.
+  Future<void> _delete(MerchantOrderState orderState, SavedAddress a) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Supprimer « ${a.name} » ?'),
+        content: const Text(
+          'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
+          'affectées.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Retour'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Supprimer'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await orderState.deleteAddress(a.id);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Adresse supprimée'
+            : orderState.errorMessage ?? 'Suppression impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
   }
 
   @override
@@ -52,7 +102,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Carnet d\'adresses')),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _addAddress(orderState),
+        onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
       ),
       body: orderState.addresses.isEmpty
@@ -87,10 +137,36 @@ class _AddressesScreenState extends State<AddressesScreen> {
                   child: ListTile(
                     leading: const Icon(Icons.place_outlined),
                     title: Text(a.name),
-                    subtitle: Text(
-                      [a.address, a.contactPhone].where((e) => e != null && e.isNotEmpty).join(' · '),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          [a.address, a.contactName, a.contactPhone]
+                              .where((e) => e != null && e.isNotEmpty)
+                              .join(' · '),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        // Une adresse sans position ne peut pas servir : le
+                        // formulaire de commande exige un point. Le dire ici
+                        // évite de le découvrir au moment de commander.
+                        if (a.latitude == 0 && a.longitude == 0)
+                          Text(
+                            'Position manquante — à compléter',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                      ],
+                    ),
+                    // Toute la ligne ouvre la fiche : c'est le geste attendu, et
+                    // la liste n'était jusqu'ici qu'un affichage mort.
+                    onTap: () => _openForm(a),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Supprimer',
+                      onPressed: () => _delete(orderState, a),
                     ),
                   ),
                 );
@@ -103,7 +179,14 @@ class _AddressesScreenState extends State<AddressesScreen> {
 
 /// Formulaire d'adresse, position comprise.
 class _AddressFormScreen extends StatefulWidget {
-  const _AddressFormScreen();
+  /// Adresse à modifier, ou `null` pour une création.
+  ///
+  /// Le même formulaire sert aux deux : les champs sont identiques, et deux
+  /// écrans auraient divergé — celui de modification aurait fini par ne plus
+  /// proposer la carte, comme la création avant sa correction.
+  final SavedAddress? existing;
+
+  const _AddressFormScreen({this.existing});
 
   @override
   State<_AddressFormScreen> createState() => _AddressFormScreenState();
@@ -119,6 +202,26 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   /// refusé dans ce cas plutôt que d'inventer une position.
   LatLng? _point;
   bool _saving = false;
+
+  bool get _isEdit => widget.existing != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final a = widget.existing;
+    if (a == null) return;
+
+    _name.text = a.name;
+    _address.text = a.address;
+    _contact.text = a.contactName ?? '';
+    _phone.text = a.contactPhone ?? '';
+    // Une adresse enregistrée sans coordonnées exploitables laisse le point
+    // nul : le formulaire redemandera de le placer, plutôt que de reconduire
+    // un point faux qui empoisonnerait chaque livraison qui la réutilise.
+    if (a.latitude != 0 || a.longitude != 0) {
+      _point = LatLng(a.latitude, a.longitude);
+    }
+  }
 
   @override
   void dispose() {
@@ -162,15 +265,26 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     }
 
     setState(() => _saving = true);
-    final ok = await orderState.saveAddress(
-      label: 'commerce',
-      name: _name.text.trim(),
-      address: _address.text.trim(),
-      latitude: _point!.latitude,
-      longitude: _point!.longitude,
-      contactName: _contact.text.trim(),
-      contactPhone: _phone.text.trim(),
-    );
+    final ok = _isEdit
+        ? await orderState.updateAddress(
+            widget.existing!.id,
+            label: 'commerce',
+            name: _name.text.trim(),
+            address: _address.text.trim(),
+            latitude: _point!.latitude,
+            longitude: _point!.longitude,
+            contactName: _contact.text.trim(),
+            contactPhone: _phone.text.trim(),
+          )
+        : await orderState.saveAddress(
+            label: 'commerce',
+            name: _name.text.trim(),
+            address: _address.text.trim(),
+            latitude: _point!.latitude,
+            longitude: _point!.longitude,
+            contactName: _contact.text.trim(),
+            contactPhone: _phone.text.trim(),
+          );
     if (!mounted) return;
     setState(() => _saving = false);
 
@@ -189,7 +303,9 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Nouvelle adresse')),
+      appBar: AppBar(
+        title: Text(_isEdit ? 'Modifier l\'adresse' : 'Nouvelle adresse'),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),

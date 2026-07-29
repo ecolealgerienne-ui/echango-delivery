@@ -388,31 +388,107 @@ export class CommerçantService {
     };
   }
 
+  /**
+   * Cherche un transporteur du réseau par nom ou téléphone.
+   *
+   * ── Ce qui n'est pas renvoyé, et pourquoi ───────────────────────────────────
+   *
+   * **Pas le téléphone.** Le commerçant qui cherche le connaît déjà — c'est par
+   * là qu'il cherche. Le renvoyer transformerait la recherche en moyen de
+   * récupérer les coordonnées de prestataires indépendants qu'on n'a jamais
+   * fait travailler.
+   *
+   * **Pas de liste tronquée.** Au-delà de dix correspondances, on demande de
+   * préciser plutôt que d'en montrer dix : une liste tronquée qu'on peut
+   * balayer en changeant une lettre est exactement l'annuaire qu'on refuse
+   * d'ouvrir. « Précisez » ferme ce chemin sans gêner personne — celui qui
+   * connaît la personne tape un nom, pas une lettre.
+   */
+  async searchDrivers(merchantId: string, query: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const q = query.trim();
+    // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
+    // espaces ou un indicatif que l'enregistrement n'a pas.
+    const digits = q.replace(/\D/g, '');
+
+    const where: any = {
+      active: true,
+      OR: [
+        { firstName: { contains: q, mode: 'insensitive' } },
+        { lastName: { contains: q, mode: 'insensitive' } },
+        ...(digits.length >= 4 ? [{ phone: { contains: digits } }] : []),
+      ],
+    };
+
+    const total = await this.prisma.driverAccount.count({ where });
+
+    if (total > 10) {
+      return { data: [], too_many: true };
+    }
+
+    const drivers = await this.prisma.driverAccount.findMany({
+      where,
+      select: {
+        fleetbaseDriverUuid: true,
+        firstName: true,
+        lastName: true,
+        vehicleType: true,
+      },
+      take: 10,
+    });
+
+    return {
+      data: drivers.map((d: any) => ({
+        driver_uuid: d.fleetbaseDriverUuid,
+        name: [d.firstName, d.lastName].filter(Boolean).join(' ') || null,
+        vehicle_type: d.vehicleType,
+      })),
+      too_many: false,
+    };
+  }
+
   async addFavourite(merchantId: string, fleetbaseDriverUuid: string, driverName?: string) {
     await this.getMerchantWithValidation(merchantId);
 
-    // Un commerçant ne met en favori qu'un transporteur qui a déjà travaillé
-    // pour lui : sans ce contrôle, l'endpoint permettrait de sonder l'existence
-    // d'un uuid arbitraire.
-    const known = await this.listKnownDrivers(merchantId);
-    if (!known.data.some((d: any) => d.driver_uuid === fleetbaseDriverUuid)) {
+    // Le transporteur doit exister dans le réseau et y être actif.
+    //
+    // La règle précédente — « il doit avoir déjà livré pour vous » — a été
+    // levée le 29/07 : elle rendait les favoris inaccessibles à tout nouveau
+    // commerçant, et supposait que la seule façon de connaître un transporteur
+    // soit de l'avoir vu travailler. On peut aussi l'avoir croisé, ou se l'être
+    // fait recommander.
+    //
+    // Ce contrôle-ci demeure, sous une autre forme : il empêche de sonder
+    // l'existence d'un uuid arbitraire, et de mettre en favori quelqu'un qui a
+    // quitté le réseau.
+    const driver = await this.prisma.driverAccount.findFirst({
+      where: { fleetbaseDriverUuid, active: true },
+      select: { firstName: true, lastName: true },
+    });
+
+    if (!driver) {
       this.audit.denied({
         actorType: 'merchant',
         actorId: merchantId,
         action: 'favourite.add',
         resourceType: 'Driver',
         resourceId: fleetbaseDriverUuid,
-        reason: "Transporteur n'ayant jamais livré pour ce commerçant",
+        reason: 'Transporteur inexistant ou inactif dans le réseau',
       });
-      throw new BadRequestException(
-        "Vous ne pouvez mettre en favori qu'un transporteur ayant déjà effectué une de vos livraisons",
-      );
+      throw new BadRequestException('Ce transporteur n\'existe pas dans le réseau Echango');
     }
+
+    // Le nom vient du serveur, jamais de la requête : sinon un commerçant
+    // pourrait enregistrer n'importe quelle étiquette sur n'importe qui, et sa
+    // liste de favoris cesserait de décrire des personnes réelles.
+    const resolvedName =
+      [driver.firstName, driver.lastName].filter(Boolean).join(' ') || driverName;
 
     return this.prisma.driverFavourite.upsert({
       where: { merchantId_fleetbaseDriverUuid: { merchantId, fleetbaseDriverUuid } },
-      create: { merchantId, fleetbaseDriverUuid, driverName },
-      update: { driverName },
+      create: { merchantId, fleetbaseDriverUuid, driverName: resolvedName },
+      update: { driverName: resolvedName },
     });
   }
 
@@ -1013,16 +1089,110 @@ export class CommerçantService {
         phone: dto.contactPhone,
         meta: {
           label: dto.label,
-          contactName: dto.contactName,
+          // `contact_name`, et non `contactName` : c'est la clé que
+          // `projectPlace` relit, et que la création de commande dépose. Deux
+          // orthographes pour la même donnée faisaient disparaître le contact
+          // d'une adresse enregistrée dès sa relecture.
+          contact_name: dto.contactName,
           notes: dto.notes,
         },
       });
 
       this.logger.log(`Address saved: ${response?.place?.uuid}`);
-      return response.place;
+      return projectPlace(response.place, 'full');
     } catch (error) {
       this.logger.error(`Failed to save address: ${error.message}`);
       throw new BadRequestException('Failed to save address');
+    }
+  }
+
+  /**
+   * Vérifie qu'un lieu appartient bien au carnet de ce commerçant.
+   *
+   * Le contrôle passe par `owner_uuid`, seul filtre que Fleetbase honore
+   * réellement sur `/places` (vérifié par test direct : interroger un
+   * propriétaire sans lieu renvoie une liste vide, pas la collection entière).
+   * Sans lui, un identifiant deviné suffirait à modifier ou supprimer l'adresse
+   * d'un autre commerçant — les lieux vivent tous dans la même organisation.
+   */
+  private async assertOwnsPlace(merchantId: string, placeId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
+    const places = this.fleetbaseClient.extractCollection(response, 'places');
+    const place = places.find(
+      (p: any) => p?.uuid === placeId || p?.public_id === placeId || p?.id === placeId,
+    );
+
+    if (!place) {
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'address.access',
+        resourceType: 'Place',
+        resourceId: placeId,
+        reason: "Adresse inexistante ou appartenant au carnet d'un autre commerçant",
+      });
+      throw new NotFoundException('Adresse introuvable');
+    }
+
+    return place;
+  }
+
+  /**
+   * Modifie une adresse du carnet.
+   *
+   * ── Pourquoi la modification importe plus qu'il n'y paraît ──────────────────
+   *
+   * Une adresse enregistrée est **réutilisée** : elle pré-remplit chaque
+   * livraison qui la choisit. Un point mal placé ou un téléphone erroné ne gêne
+   * donc pas une fois, il se répète — et sans moyen de corriger, la seule issue
+   * était d'accumuler des doublons.
+   */
+  async updateAddress(merchantId: string, placeId: string, dto: SaveAddressDto) {
+    const place = await this.assertOwnsPlace(merchantId, placeId);
+
+    try {
+      const response = await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
+        name: dto.name,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        address: dto.address,
+        phone: dto.contactPhone,
+        meta: {
+          label: dto.label,
+          contact_name: dto.contactName,
+          notes: dto.notes,
+        },
+      });
+      this.logger.log(`Adresse ${place.uuid} modifiée`);
+      return projectPlace(response?.place ?? response, 'full');
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`Modification d'adresse impossible : ${error.message}`);
+      throw new BadRequestException("Modification de l'adresse impossible");
+    }
+  }
+
+  /**
+   * Retire une adresse du carnet.
+   *
+   * ⚠️ Ne touche **pas** les livraisons passées : chaque commande a créé son
+   * propre `Place`, distinct de l'entrée du carnet. Supprimer une adresse
+   * n'efface donc aucun historique — ce qui est précisément la raison pour
+   * laquelle on peut se permettre de la supprimer sans confirmation lourde.
+   */
+  async deleteAddress(merchantId: string, placeId: string) {
+    const place = await this.assertOwnsPlace(merchantId, placeId);
+
+    try {
+      await this.fleetbaseClient.deletePlace(place.uuid);
+      this.logger.log(`Adresse ${place.uuid} supprimée`);
+      return { removed: true };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`Suppression d'adresse impossible : ${error.message}`);
+      throw new BadRequestException("Suppression de l'adresse impossible");
     }
   }
 

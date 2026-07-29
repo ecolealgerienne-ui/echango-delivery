@@ -16,10 +16,17 @@ import '../../state/merchant_order_state.dart';
 /// premier, et la course retombe dans le pool si aucun n'est libre : la
 /// préférence est respectée, la liquidité du réseau préservée.
 ///
-/// La liste proposée se limite aux transporteurs **ayant déjà livré pour ce
-/// commerçant** — décision serveur. Exposer l'annuaire complet livrerait la
-/// composition du réseau à quiconque crée un compte, et n'aurait aucune
-/// utilité : on ne met en favori que quelqu'un qu'on a vu travailler.
+/// ── Deux chemins pour trouver quelqu'un ────────────────────────────────────
+///
+/// **Ceux qui ont déjà livré** pour ce commerçant : la source naturelle, elle
+/// se remplit toute seule.
+///
+/// **La recherche par nom ou téléphone** : pour le cas où la relation existe
+/// hors de l'application — le coursier a laissé son numéro, un confrère l'a
+/// recommandé. Ce n'est **pas un annuaire** : au-delà de dix correspondances le
+/// serveur demande de préciser. Un annuaire parcourable livrerait la
+/// composition du réseau à quiconque crée un compte, et n'aiderait personne —
+/// trente noms inconnus ne s'ordonnent pas, on choisirait au hasard.
 class FavouriteDriversScreen extends StatefulWidget {
   const FavouriteDriversScreen({super.key});
 
@@ -31,6 +38,68 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
   List<KnownDriver> _known = [];
   bool _loading = true;
   String? _error;
+
+  final _searchController = TextEditingController();
+  List<KnownDriver> _results = [];
+  bool _searching = false;
+  bool _tooMany = false;
+  /// Distingue « pas encore cherché » de « cherché, rien trouvé » : les deux
+  /// donnent une liste vide, et les confondre afficherait « aucun résultat »
+  /// avant la moindre frappe.
+  bool _searched = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    final query = _searchController.text.trim();
+    if (query.length < 3) {
+      setState(() {
+        _searched = false;
+        _results = [];
+        _tooMany = false;
+      });
+      return;
+    }
+
+    final api = context.read<BffApiClient>();
+    setState(() => _searching = true);
+    try {
+      final result = await api.searchDrivers(query);
+      if (!mounted) return;
+      setState(() {
+        _results = result.drivers;
+        _tooMany = result.tooMany;
+        _searched = true;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Recherche impossible : $e');
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _addFavourite(MerchantOrderState state, KnownDriver d) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.addFavourite(d);
+    if (!mounted) return;
+
+    if (ok) {
+      // Le résultat disparaît de la recherche une fois ajouté : le laisser
+      // ferait douter que l'ajout ait eu lieu.
+      setState(() => _results.removeWhere((r) => r.driverUuid == d.driverUuid));
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(state.errorMessage ?? 'Ajout impossible'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   @override
   void initState() {
@@ -79,6 +148,69 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         style: TextStyle(color: Theme.of(context).colorScheme.error)),
                     const SizedBox(height: 16),
                   ],
+                  // La recherche passe en tête : c'est le seul chemin dont
+                  // dispose un commerçant nouveau, dont toutes les autres
+                  // listes sont vides.
+                  Text('Ajouter un transporteur',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _searchController,
+                    onChanged: (_) => _search(),
+                    decoration: InputDecoration(
+                      hintText: 'Nom ou téléphone du transporteur',
+                      prefixIcon: const Icon(Icons.search),
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                      suffixIcon: _searching
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Cherchez quelqu\'un que vous connaissez déjà — un coursier '
+                    'croisé, ou recommandé. Trois caractères minimum.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (_tooMany)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'Trop de correspondances. Précisez le nom ou saisissez '
+                        'le numéro de téléphone.',
+                      ),
+                    )
+                  else if (_searched && _results.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'Aucun transporteur ne correspond. Vérifiez le nom, ou '
+                        'demandez-lui le numéro qu\'il a donné à Echango.',
+                      ),
+                    )
+                  else
+                    ..._results.map(
+                      (d) => Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.person_search_outlined),
+                          title: Text(d.displayName),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.star_outline),
+                            tooltip: 'Ajouter aux favoris',
+                            onPressed: () => _addFavourite(state, d),
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 24),
                   Text('Favoris', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
                   if (state.favourites.isEmpty)
@@ -126,19 +258,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
                             tooltip: 'Ajouter aux favoris',
-                            onPressed: () async {
-                              final ok = await state.addFavourite(d);
-                              if (!context.mounted) return;
-                              if (!ok) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(state.errorMessage ??
-                                        'Ajout impossible'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            },
+                            onPressed: () => _addFavourite(state, d),
                           ),
                         ),
                       ),

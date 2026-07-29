@@ -372,6 +372,62 @@ class MerchantOrderState extends ChangeNotifier {
     }
   }
 
+  /// Modifie une adresse existante.
+  ///
+  /// Une adresse enregistrée pré-remplit chaque livraison qui la choisit : une
+  /// erreur ne gêne pas une fois, elle se répète.
+  Future<bool> updateAddress(
+    String id, {
+    required String label,
+    required String name,
+    required String address,
+    required double latitude,
+    required double longitude,
+    String? contactName,
+    String? contactPhone,
+  }) =>
+      _addressWrite(
+        () => _apiClient.updateMerchantAddress(
+          id,
+          label: label,
+          name: name,
+          address: address,
+          latitude: latitude,
+          longitude: longitude,
+          contactName: contactName,
+          contactPhone: contactPhone,
+        ),
+        'Modification de l\'adresse impossible',
+      );
+
+  Future<bool> deleteAddress(String id) => _addressWrite(
+        () => _apiClient.deleteMerchantAddress(id),
+        'Suppression de l\'adresse impossible',
+      );
+
+  /// Toute écriture sur le carnet est suivie d'une relecture : la liste est la
+  /// seule vue de ce carnet, et la laisser périmée après une modification
+  /// donnerait à croire que rien ne s'est passé.
+  Future<bool> _addressWrite(Future<void> Function() action, String fallback) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await action();
+      await loadAddresses();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
+    } catch (e) {
+      _errorMessage = fallback;
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   void clearError() {
     _errorMessage = null;
     notifyListeners();
