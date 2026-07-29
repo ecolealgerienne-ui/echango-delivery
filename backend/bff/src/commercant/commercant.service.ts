@@ -12,6 +12,7 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { projectOrderForMerchant } from '../common/projections/order.projection';
+import { PricingService } from '../common/pricing/pricing.service';
 
 @Injectable()
 export class CommerçantService {
@@ -22,6 +23,7 @@ export class CommerçantService {
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
     private audit: AuditService,
+    private pricing: PricingService,
   ) {}
 
   /**
@@ -138,15 +140,39 @@ export class CommerçantService {
     if (dto.deliveryInstructions) meta.instructions = dto.deliveryInstructions;
     if (dto.vehicleType) meta.vehicle_type = dto.vehicleType;
     if (dto.items?.length) meta.items = dto.items;
-    if (dto.price !== undefined) {
-      meta.price = dto.price;
-      // La devise accompagne toujours le montant : un nombre nu se lit
-      // différemment selon le lecteur, et une plateforme qui s'ouvrirait à un
-      // second pays n'aurait aucun moyen de rattraper l'historique.
-      meta.currency = this.configService.get('CURRENCY') || 'DZD';
-    }
     if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
     if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
+
+    // Le devis est demandé sur TOUTE commande, même quand le commerçant a
+    // saisi son montant : ce qui est enregistré au passage — distance, horaire,
+    // catégorie de véhicule — sont les entrées de la future formule de calcul.
+    // Elles ne sont pas rattrapables après coup : la distance dépend du
+    // géocodage et du réseau routier du moment, et une commande rejouée plus
+    // tard ne donnerait pas le même chiffre. Sans elles, les courses du pilote
+    // ne serviront pas à calibrer le barème.
+    const quote = this.pricing.quote(
+      {
+        pickupLatitude: dto.pickupLatitude,
+        pickupLongitude: dto.pickupLongitude,
+        dropoffLatitude: dto.dropoffLatitude,
+        dropoffLongitude: dto.dropoffLongitude,
+        scheduledAt: dto.scheduledAt,
+        vehicleType: dto.vehicleType,
+      },
+      dto.price,
+    );
+
+    meta.pricing_inputs = quote.inputs;
+
+    if (quote.amount !== null) {
+      meta.price = quote.amount;
+      meta.currency = quote.currency;
+      // L'origine du montant est enregistrée AVEC lui. Sans elle, l'historique
+      // mélangerait prix proposés et prix calculés, et la calibration de la
+      // future formule se ferait sur ses propres résultats.
+      meta.price_source = quote.source;
+    }
+
     return Object.keys(meta).length ? meta : undefined;
   }
 

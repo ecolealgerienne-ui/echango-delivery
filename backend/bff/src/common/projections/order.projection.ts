@@ -135,6 +135,10 @@ const META_FIELDS = [
   // c'est ce qui lui permet de décider s'il prend la course.
   'price',
   'currency',
+  // L'origine du montant : le transporteur doit pouvoir distinguer un prix
+  // proposé par le commerçant d'un tarif de la plateforme, ils ne se négocient
+  // pas de la même façon.
+  'price_source',
 ];
 
 function projectMeta(meta: any): Record<string, any> | undefined {

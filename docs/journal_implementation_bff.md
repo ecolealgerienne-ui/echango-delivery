@@ -1228,3 +1228,19 @@ Quatre, tous dans du code écrit dans la même session :
 BFF : compile. **Non exécuté**. App : `flutter analyze` à passer — et cette fois il compte plus que d'habitude, la carte introduisant deux dépendances dont je n'ai pu vérifier aucune signature d'API.
 
 **Prérequis** : `flutter pub get`, puis `npm run prisma:migrate` et `prisma generate` (modèle `DriverFavourite`, colonne `vehicleType`).
+
+### 13.8 Préparer la tarification calculée sans la décider
+
+Le barème — au kilomètre, à la durée, avec majorations d'horaire — viendra plus tard (décision utilisateur). Ce qui ne peut **pas** attendre, c'est la capture de ses données d'entrée.
+
+**Pourquoi ce n'est pas rattrapable.** La distance dépend du géocodage et du réseau routier au moment de la course : recalculée six mois après sur les mêmes adresses, elle ne donnera pas le même chiffre. Sans ces valeurs figées, les commandes du pilote ne permettront pas de répondre à « qu'aurait coûté ce trajet au tarif X ? » — donc ne serviront pas à calibrer quoi que ce soit. On aurait un historique de prix sans les trajets qui les justifiaient.
+
+`PricingService.buildInputs()` enregistre sur chaque commande : distance, méthode de calcul de cette distance, catégorie de véhicule, horodatage de l'enlèvement, plus l'heure et le jour extraits séparément — ce sont eux qui porteront les majorations, et les extraire au moment du calcul supposerait de connaître le fuseau d'alors.
+
+**La distance est à vol d'oiseau, et c'est dit.** Elle sous-estime la distance routière de 20 à 40 % en ville. Étiquetée `distance_method: 'haversine'`, elle pourra coexister avec une distance routière le jour où OSRM sera auto-hébergé — sans que l'historique devienne ambigu.
+
+**L'origine du prix est enregistrée avec lui** (`price_source`). Sans elle, l'historique mélangerait les montants proposés par les commerçants et ceux calculés par la plateforme, et la calibration se ferait sur ses propres résultats — ce qui validerait la formule quoi qu'elle vaille.
+
+`pricing_inputs` n'est **pas** projeté vers les clients : c'est de la donnée de calibration, sans usage dans les applications. Le prix et son origine, eux, atteignent le transporteur — un prix proposé et un tarif de plateforme ne se négocient pas de la même façon.
+
+Quand le barème sera tranché : implémenter `computeQuote()` et basculer `PRICING_MODE=computed`. Aucun appelant ne change. Et le barème pourra être éprouvé rétroactivement sur les vraies courses du pilote avant d'être activé.
