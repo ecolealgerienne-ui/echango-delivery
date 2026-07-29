@@ -3,28 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { COLLECTION_DISCREPANCY_REASONS } from './cash.constants';
 
-/**
- * Motifs d'écart entre le montant annoncé et le montant perçu.
- *
- * Liste fermée, comme les motifs de refus et d'échec : un champ libre ne se
- * compte pas, et c'est justement le comptage qui remplace l'enquête au dépôt.
- *
- * Ce que chacun désigne est un fait constaté à la porte, pas une appréciation :
- * « le client n'avait pas la somme » se vérifie, « le client était de mauvaise
- * foi » ne se vérifie pas.
- */
-export const COLLECTION_DISCREPANCY_REASONS = [
-  /** Le destinataire n'avait pas la totalité. */
-  'somme_incomplete',
-  /** Le destinataire refuse de payer, colis repris ou laissé. */
-  'refus_de_payer',
-  /** Ni le transporteur ni le client n'avaient de monnaie. */
-  'pas_de_monnaie',
-  /** Le montant annoncé ne correspondait pas à ce qui avait été convenu. */
-  'montant_conteste',
-  'autre',
-] as const;
+// Réexporté pour les appelants historiques ; la déclaration vit dans
+// `cash.constants.ts`, sans dépendance, pour que les DTO n'aient pas à
+// importer ce service.
+export { COLLECTION_DISCREPANCY_REASONS };
+
 
 export interface DeclareCollectionInput {
   collectedAmount: number;

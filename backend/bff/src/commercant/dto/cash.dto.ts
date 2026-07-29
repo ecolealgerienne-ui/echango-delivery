@@ -1,6 +1,6 @@
 import { IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
-import { FLEETBASE_ID_PATTERN } from '../../transporteur/dto/transporteur.dto';
+import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 
 /**
  * Remise déclarée par le commerçant : « j'ai reçu X de ce transporteur ».

@@ -15,7 +15,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.service';
+import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.constants';
+import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 
 
 /**
@@ -23,13 +24,15 @@ import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.service';
  * (`order_xxx`, `driver_xxx`, `place_xxx`…). Aucun des deux ne contient de
  * slash, de point ou d'espace.
  *
- * Cette contrainte n'est pas cosmétique : ces valeurs finissent interpolées
- * dans une URL Fleetbase appelée avec le token de service. Sans elle,
+ * ⚠️ La regex était **définie deux fois** — ici et dans `FleetbaseIdPipe` —
+ * alors qu'elle porte une garantie de sécurité : ces valeurs finissent
+ * interpolées dans une URL Fleetbase appelée avec le token de service, et
  * `"../../ORDER_X/cancel"` détournait la requête vers une autre commande
- * (revue E3). Le client HTTP ré-encode aussi les segments — deux barrières,
- * pour qu'un futur appelant qui oublierait l'une ne rouvre pas la faille.
+ * (revue E3). Deux copies d'une règle de sécurité finissent par en devenir
+ * deux règles différentes ; la seule définition vit désormais avec le pipe qui
+ * l'applique, et n'est que réexportée ici pour les appelants existants.
  */
-export const FLEETBASE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export { FLEETBASE_ID_PATTERN };
 
 export class UpdatePositionDto {
   @Type(() => Number)
@@ -61,6 +64,36 @@ export class ToggleOnlineDto {
   // `online` is omitted, which would desync on a retried request.
   @IsBoolean()
   online: boolean;
+}
+
+/**
+ * Déclaration d'encaissement, jointe à la clôture d'une livraison payée à la
+ * réception.
+ *
+ * Le montant est **obligatoire** sur une course encaissée : `completeOrder` la
+ * refuse sans lui. En faire une étape séparée garantirait qu'elle soit oubliée,
+ * et un encaissement non déclaré est exactement ce que le registre existe pour
+ * empêcher.
+ */
+export class CashCollectionDto {
+  /** Ce qui a réellement été perçu. Zéro est une valeur légitime : un client
+   *  qui refuse de payer est un fait à enregistrer. */
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(500000)
+  collectedAmount: number;
+
+  /** Obligatoire dès que le montant diffère de celui annoncé — contrôlé côté
+   *  service, qui seul connaît le montant attendu. */
+  @IsOptional()
+  @IsIn(COLLECTION_DISCREPANCY_REASONS as unknown as string[])
+  discrepancyReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }
 
 export class UpdateActivityDto {
@@ -170,36 +203,6 @@ export class DeclineOrderDto {
   @IsOptional()
   @IsString()
   @MaxLength(1000)
-  notes?: string;
-}
-
-/**
- * Déclaration d'encaissement, jointe à la clôture d'une livraison payée à la
- * réception.
- *
- * Le montant est **obligatoire** sur une course encaissée : `completeOrder` la
- * refuse sans lui. En faire une étape séparée garantirait qu'elle soit oubliée,
- * et un encaissement non déclaré est exactement ce que le registre existe pour
- * empêcher.
- */
-export class CashCollectionDto {
-  /** Ce qui a réellement été perçu. Zéro est une valeur légitime : un client
-   *  qui refuse de payer est un fait à enregistrer. */
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  @Max(500000)
-  collectedAmount: number;
-
-  /** Obligatoire dès que le montant diffère de celui annoncé — contrôlé côté
-   *  service, qui seul connaît le montant attendu. */
-  @IsOptional()
-  @IsIn(COLLECTION_DISCREPANCY_REASONS as unknown as string[])
-  discrepancyReason?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
   notes?: string;
 }
 
