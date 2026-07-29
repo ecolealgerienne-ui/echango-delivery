@@ -71,6 +71,23 @@ is_pending() { # body
   return 1
 }
 
+FLEETBASE_URL="${FLEETBASE_URL:-http://localhost:8000}"
+FLEETBASE_API_KEY="${FLEETBASE_API_KEY:-}"
+
+# Statut du Vendor tel que Fleetbase le voit, ou vide si on ne peut pas lire.
+#
+# Sans ça, l'étape d'activation est un pari : deux listes de la console
+# affichent un statut — IAM → Customers et Fleet-Ops → Fournisseurs — et **une
+# seule compte**. Activer la mauvaise donne un écran vert et un refus
+# inchangé, sans que rien ne relie les deux.
+vendor_status() { # nom du fournisseur
+  [ -n "$FLEETBASE_API_KEY" ] || return 1
+  curl -sS -H "Authorization: Bearer $FLEETBASE_API_KEY" -H 'Accept: application/json' \
+    "$FLEETBASE_URL/int/v1/vendors?limit=200" 2>/dev/null \
+    | jq -r --arg n "$1" '(.vendors // .data // []) | map(select(.name == $n))
+         | if length == 0 then empty else (last.status // "non renseigné") end' 2>/dev/null
+}
+
 CREDS=$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')
 
 echo "════════════════════════════════════════════════════════════════"
@@ -125,18 +142,42 @@ fi
 echo
 
 # ── 3. Activation manuelle ──────────────────────────────────────────────────
+echo "── 3. Activation, dans la console Fleetbase ──"
+echo
+
+BEFORE=$(vendor_status "$BUSINESS" || true)
+if [ -n "$BEFORE" ]; then
+  info "statut actuel du fournisseur « $BUSINESS » : $BEFORE"
+  echo
+fi
+
 cat <<EOF
-── 3. Activation, dans la console Fleetbase ──
+   ⚠️  DEUX listes de la console affichent un statut. Une seule compte.
+
+       ✅ Fleet-Ops → Fournisseurs   ← c'est CELLE-CI que le BFF lit
+       ❌ IAM → Customers            ← statut du compte utilisateur Fleetbase,
+                                       que nos commerçants n'utilisent pas :
+                                       l'activer ne change rien au refus.
 
    Fleet-Ops → Fournisseurs → rechercher « $SUFFIX »
    → « $BUSINESS » → Modifier → Statut → Active → Save Changes
 
-   Le suffixe rend le fournisseur unique : aucun risque de confusion avec les
-   homonymes des exécutions précédentes.
-
 EOF
-read -r -p "   Appuyer sur Entrée une fois le fournisseur activé… " _
+read -r -p "   Appuyer sur Entrée une fois le FOURNISSEUR activé… " _
 echo
+
+AFTER=$(vendor_status "$BUSINESS" || true)
+if [ -n "$AFTER" ]; then
+  if [ "$AFTER" = "active" ]; then
+    pass "fournisseur lu à « active » — la connexion devrait passer"
+  else
+    echo "❌ le fournisseur est toujours à « $AFTER »."
+    echo "   Rien n'a été activé, ou c'est le Customer d'IAM qui l'a été."
+    echo "   Inutile de poursuivre : le refus est certain."
+    exit 1
+  fi
+  echo
+fi
 
 # ── 4. Connexion après validation ───────────────────────────────────────────
 echo "── 4. Connexion APRÈS validation ──"
@@ -156,7 +197,9 @@ if [ -n "$TOKEN" ]; then
 else
   fail "toujours refusé après activation (HTTP $L2_CODE).
    À vérifier dans l'ordre :
-     • le bon fournisseur a-t-il été activé ? (les homonymes sont nombreux)
+     • est-ce bien le FOURNISSEUR (Fleet-Ops) qui a été activé, et non le
+       Customer d'IAM ? C'est la confusion la plus fréquente : les deux
+       affichent un statut, le BFF ne lit que le premier.
      • le statut est-il bien 'Active' et non 'Inactive' ou 'Suspended' ?
      • le journal du BFF indique le statut réellement lu :
          docker logs echango_bff_app | grep 'Connexion refusée'
