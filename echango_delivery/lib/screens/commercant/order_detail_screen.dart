@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/merchant_order.dart';
+import '../../models/vehicle_type.dart';
 import '../../state/merchant_order_state.dart';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -145,6 +148,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     _placeCard('Retrait', order.pickup?.name, order.pickup?.address),
                     const SizedBox(height: 12),
                     _placeCard('Livraison', order.dropoff?.name, order.dropoff?.address),
+                    const SizedBox(height: 12),
+                    _orderOptionsCard(order),
+                    if (order.isCompleted && order.driverName != null) ...[
+                      const SizedBox(height: 12),
+                      _favouriteCard(order),
+                    ],
                     const SizedBox(height: 24),
                     if (order.canCancel)
                       OutlinedButton.icon(
@@ -180,6 +189,94 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ],
         ),
       );
+
+  /// Ce qui a été demandé à la création.
+  ///
+  /// Le détail n'en montrait rien : le commerçant ne pouvait ni vérifier sa
+  /// commande, ni la rappeler en cas de litige — alors que ces options
+  /// changent le prix et le service rendu. Les lignes absentes ne sont pas
+  /// affichées : une liste de « — » n'informe personne.
+  Widget _orderOptionsCard(MerchantOrder order) {
+    final rows = <(IconData, String, String)>[
+      if (order.scheduledAt != null)
+        (
+          Icons.schedule_outlined,
+          'Enlèvement',
+          _formatDateTime(order.scheduledAt!),
+        )
+      else
+        (Icons.schedule_outlined, 'Enlèvement', 'Dès que possible'),
+      if (order.vehicleType != null)
+        (
+          vehicleIcon(order.vehicleType),
+          'Véhicule',
+          '${vehicleLabel(order.vehicleType)} minimum',
+        ),
+      if (order.podMethod != null)
+        (
+          Icons.verified_outlined,
+          'Preuve',
+          order.podMethod == 'photo' ? 'Photo à la livraison' : order.podMethod!,
+        ),
+      if (order.packageContents != null)
+        (Icons.inventory_2_outlined, 'Colis', order.packageContents!),
+      if (order.instructions != null)
+        (Icons.notes_outlined, 'Instructions', order.instructions!),
+    ];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Votre demande',
+                style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 12),
+            for (final (icon, label, value) in rows)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(icon, size: 18),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 92,
+                      child: Text(label,
+                          style: const TextStyle(fontWeight: FontWeight.w500)),
+                    ),
+                    Expanded(child: Text(value)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Proposer la mise en favori au moment où elle a du sens : la livraison
+  /// vient d'aboutir, le commerçant sait s'il veut retravailler avec ce
+  /// transporteur. Sans ce point d'entrée, un nouveau commerçant n'avait aucun
+  /// moyen de constituer sa liste — l'écran des favoris reste vide tant qu'on
+  /// n'y ajoute rien, et rien n'y menait.
+  Widget _favouriteCard(MerchantOrder order) => Card(
+        child: ListTile(
+          leading: const Icon(Icons.star_outline),
+          title: Text('Ajouter ${order.driverName} à mes transporteurs'),
+          subtitle: const Text(
+            'Vos prochaines livraisons lui seront proposées en premier.',
+          ),
+          onTap: () => context.push('/commercant/transporteurs'),
+        ),
+      );
+
+  static String _formatDateTime(DateTime date) {
+    final local = date.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
+  }
 
   Widget _placeCard(String title, String? name, String? address) => Card(
         child: Padding(

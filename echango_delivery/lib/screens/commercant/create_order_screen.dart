@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
+import '../../models/vehicle_type.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 
@@ -352,10 +353,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       padding: const EdgeInsets.only(bottom: 12),
       child: DropdownButtonFormField<String?>(
         initialValue: _vehicleType,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Véhicule nécessaire',
-          border: OutlineInputBorder(),
-          prefixIcon: Icon(Icons.two_wheeler_outlined),
+          border: const OutlineInputBorder(),
+          // L'icône suit la sélection : figée sur la moto, elle contredisait le
+          // libellé et laissait croire que le choix n'avait pas été pris en
+          // compte.
+          prefixIcon: Icon(vehicleIcon(_vehicleType)),
           isDense: true,
         ),
         items: options.entries

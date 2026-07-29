@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/vehicle_type.dart';
 import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
@@ -570,8 +571,9 @@ class _VehicleTypeCard extends StatelessWidget {
               const SizedBox(height: 12),
               DropdownButtonFormField<String?>(
                 initialValue: presence.vehicleType,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  border: const OutlineInputBorder(),
+                  prefixIcon: Icon(vehicleIcon(presence.vehicleType)),
                   isDense: true,
                 ),
                 items: _options.entries

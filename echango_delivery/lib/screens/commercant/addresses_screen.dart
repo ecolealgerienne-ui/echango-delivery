@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:latlong2/latlong.dart';
+
 import '../../state/merchant_order_state.dart';
+import 'map_picker_screen.dart';
 
 /// Carnet d'adresses du commerçant.
 ///
@@ -24,84 +27,22 @@ class _AddressesScreenState extends State<AddressesScreen> {
     });
   }
 
+  /// Ouvre le formulaire d'adresse.
+  ///
+  /// Une page et non une boîte de dialogue : la position se choisit sur une
+  /// carte, et un dialogue ne peut pas en ouvrir une proprement. La version
+  /// précédente enregistrait donc **le centre d'Alger pour toute adresse** —
+  /// pire encore qu'à la création d'une commande, puisqu'une adresse fausse
+  /// empoisonne ensuite chaque livraison qui la réutilise.
   Future<void> _addAddress(MerchantOrderState orderState) async {
-    final name = TextEditingController();
-    final address = TextEditingController();
-    final contact = TextEditingController();
-    final phone = TextEditingController();
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Nouvelle adresse'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Nom *'),
-              ),
-              TextField(
-                controller: address,
-                decoration: const InputDecoration(labelText: 'Adresse'),
-              ),
-              TextField(
-                controller: contact,
-                decoration: const InputDecoration(labelText: 'Contact'),
-              ),
-              TextField(
-                controller: phone,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Téléphone'),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'La position précise sera réglable sur une carte dans une '
-                'prochaine version. En attendant, l\'adresse est enregistrée '
-                'au centre-ville.',
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Annuler'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Enregistrer'),
-          ),
-        ],
-      ),
-    );
-
-    if (saved != true || !mounted) return;
-    if (name.text.trim().isEmpty) return;
-
     final messenger = ScaffoldMessenger.of(context);
-    final ok = await orderState.saveAddress(
-      label: 'commerce',
-      name: name.text.trim(),
-      address: address.text.trim(),
-      // Repli tant que la sélection sur carte n'existe pas — centre d'Alger.
-      latitude: 36.7538,
-      longitude: 3.0588,
-      contactName: contact.text.trim(),
-      contactPhone: phone.text.trim(),
-    );
-    if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Adresse enregistrée'
-            : orderState.errorMessage ?? 'Enregistrement impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const _AddressFormScreen()),
     );
+
+    if (result != true || !mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('Adresse enregistrée')));
   }
 
   @override
@@ -157,4 +98,177 @@ class _AddressesScreenState extends State<AddressesScreen> {
             ),
     );
   }
+}
+
+
+/// Formulaire d'adresse, position comprise.
+class _AddressFormScreen extends StatefulWidget {
+  const _AddressFormScreen();
+
+  @override
+  State<_AddressFormScreen> createState() => _AddressFormScreenState();
+}
+
+class _AddressFormScreenState extends State<_AddressFormScreen> {
+  final _name = TextEditingController();
+  final _address = TextEditingController();
+  final _contact = TextEditingController();
+  final _phone = TextEditingController();
+
+  /// Nulle tant que le commerçant n'a pas placé le point. L'enregistrement est
+  /// refusé dans ce cas plutôt que d'inventer une position.
+  LatLng? _point;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    for (final c in [_name, _address, _contact, _phone]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _pickOnMap() async {
+    final result = await Navigator.of(context).push<PickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(
+          title: 'Position de l\'adresse',
+          initial: _point,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() {
+      _point = result.point;
+      if (_address.text.trim().isEmpty) _address.text = result.label;
+    });
+  }
+
+  Future<void> _save() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final orderState = context.read<MerchantOrderState>();
+
+    if (_name.text.trim().isEmpty || _point == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(_name.text.trim().isEmpty
+              ? 'Le nom est obligatoire'
+              : 'Placez la position sur la carte'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+    final ok = await orderState.saveAddress(
+      label: 'commerce',
+      name: _name.text.trim(),
+      address: _address.text.trim(),
+      latitude: _point!.latitude,
+      longitude: _point!.longitude,
+      contactName: _contact.text.trim(),
+      contactPhone: _phone.text.trim(),
+    );
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (ok) {
+      navigator.pop(true);
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(orderState.errorMessage ?? 'Enregistrement impossible'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Nouvelle adresse')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _field(_name, 'Nom *', Icons.label_outline),
+              _field(_address, 'Adresse', Icons.place_outlined),
+              _field(_contact, 'Contact', Icons.person_outline),
+              _field(_phone, 'Téléphone', Icons.phone_outlined,
+                  keyboard: TextInputType.phone),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: _pickOnMap,
+                icon: const Icon(Icons.map_outlined),
+                label: Text(_point == null
+                    ? 'Placer sur la carte *'
+                    : 'Modifier la position'),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    _point == null
+                        ? Icons.error_outline
+                        : Icons.check_circle_outline,
+                    size: 16,
+                    color: _point == null
+                        ? Theme.of(context).colorScheme.error
+                        : Colors.green.shade700,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _point == null
+                          ? 'Position non définie — c\'est elle qui permet de '
+                              'trouver un transporteur à proximité'
+                          : 'Position définie',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: const Text('Enregistrer'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _field(
+    TextEditingController controller,
+    String label,
+    IconData icon, {
+    TextInputType? keyboard,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: controller,
+          keyboardType: keyboard,
+          decoration: InputDecoration(
+            labelText: label,
+            border: const OutlineInputBorder(),
+            prefixIcon: Icon(icon),
+            isDense: true,
+          ),
+        ),
+      );
 }

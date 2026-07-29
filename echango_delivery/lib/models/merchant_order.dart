@@ -30,6 +30,17 @@ class MerchantOrder extends Equatable {
   final Place? dropoff;
   final String? driverName;
 
+  /// Options telles qu'elles ont été demandées à la création.
+  ///
+  /// Le détail les affichait pas — le commerçant ne pouvait donc pas vérifier
+  /// ce qu'il avait commandé, ni le rappeler en cas de litige. Elles viennent
+  /// de `meta` et des colonnes natives, toutes projetées par le BFF.
+  final DateTime? scheduledAt;
+  final String? vehicleType;
+  final String? podMethod;
+  final String? instructions;
+  final String? packageContents;
+
   const MerchantOrder({
     required this.id,
     required this.publicId,
@@ -41,6 +52,11 @@ class MerchantOrder extends Equatable {
     this.pickup,
     this.dropoff,
     this.driverName,
+    this.scheduledAt,
+    this.vehicleType,
+    this.podMethod,
+    this.instructions,
+    this.packageContents,
   });
 
   bool get isCompleted => status == 'completed';
@@ -64,6 +80,9 @@ class MerchantOrder extends Equatable {
     }
 
     final driver = json['driver_assigned'];
+    final meta = json['meta'] is Map<String, dynamic>
+        ? json['meta'] as Map<String, dynamic>
+        : null;
 
     return MerchantOrder(
       id: readId(json),
@@ -76,6 +95,13 @@ class MerchantOrder extends Equatable {
       pickup: place('pickup'),
       dropoff: place('dropoff'),
       driverName: driver is Map<String, dynamic> ? driver['name'] as String? : null,
+      scheduledAt: json['scheduled_at'] is String
+          ? DateTime.tryParse(json['scheduled_at'] as String)
+          : null,
+      vehicleType: meta?['vehicle_type'] as String?,
+      podMethod: json['pod_method'] as String?,
+      instructions: meta?['instructions'] as String?,
+      packageContents: _firstItemDescription(meta?['items']),
     );
   }
 
