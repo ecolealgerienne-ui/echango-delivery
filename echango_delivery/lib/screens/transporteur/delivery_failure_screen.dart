@@ -73,7 +73,11 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Order #$widget.orderId',
+                      // Accolades obligatoires : `'#$widget.orderId'`
+                      // interpolait l'objet `widget` puis affichait « .orderId »
+                      // en littéral — l'écran montrait le nom de la classe
+                      // suivi d'un fragment de code.
+                      'Commande ${widget.orderId}',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 8),

@@ -556,6 +556,33 @@ class BffApiClient {
     _parseResponse(response);
   }
 
+  /// Refuse une course, avec un motif.
+  ///
+  /// [reason] appartient à la liste fermée du BFF : prix_insuffisant,
+  /// trop_loin, vehicule_inadapte, creneau_impossible, colis_inadapte,
+  /// indisponible, autre.
+  ///
+  /// La réponse porte `releasedToPool` : `true` quand la course était assignée
+  /// à ce transporteur et vient de repartir au réseau, `false` quand elle était
+  /// simplement diffusée et se contente de disparaître de sa liste. Les deux
+  /// ne se disent pas de la même façon à l'écran — le premier cas a une
+  /// conséquence pour le commerçant, le second non.
+  Future<Map<String, dynamic>> declineOrder(
+    String orderId, {
+    required String reason,
+    String? notes,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/commandes/$orderId/refuser'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'reason': reason,
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      }),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   /// Signale un échec de livraison (§4.3).
   ///
   /// [reason] doit appartenir à la liste fermée du BFF : client_absent,
@@ -725,6 +752,55 @@ class BffApiClient {
       body: jsonEncode(body),
     );
     return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Champs à reprendre pour recommencer une livraison identique.
+  ///
+  /// Ne crée rien : le serveur renvoie de quoi pré-remplir le formulaire, que
+  /// le commerçant valide ensuite. L'enlèvement programmé n'est pas repris —
+  /// celui d'hier est dans le passé, et le recopier créerait une commande dont
+  /// l'échéance est déjà dépassée.
+  Future<Map<String, dynamic>> getMerchantOrderTemplate(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/commandes/$id/modele'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  // ── Notifications (commerçant) ─────────────────────────────────────────
+  //
+  // Relevées par interrogation : l'envoi push vers un commerçant n'est pas
+  // branché côté serveur (aucun credential Firebase serveur, et le commerçant
+  // n'est volontairement pas un utilisateur Fleetbase). Le journal serveur
+  // reste la source de vérité — une notification non vue n'est pas perdue.
+
+  Future<MerchantNotifications> getNotifications({bool unreadOnly = false}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/notifications')
+          .replace(queryParameters: unreadOnly ? {'nonLues': 'true'} : null),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    return MerchantNotifications.fromJson(
+      (data ?? <String, dynamic>{}) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/notifications/$id/lu'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/notifications/tout-lu'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
   }
 
   Future<void> cancelMerchantOrder(String id) async {

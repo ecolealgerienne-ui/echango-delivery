@@ -21,7 +21,19 @@ import 'map_picker_screen.dart';
 /// Le formulaire exige désormais un point réel — c'est la seule donnée du
 /// formulaire dont dépend le choix du transporteur.
 class CreateOrderScreen extends StatefulWidget {
-  const CreateOrderScreen({super.key});
+  /// Champs repris d'une livraison passée, tels que renvoyés par
+  /// `GET /commercant/commandes/:id/modele`.
+  ///
+  /// Volontairement une `Map` brute et non un modèle typé : sa forme est
+  /// exactement celle du corps de création, et un modèle intermédiaire
+  /// n'ajouterait qu'un endroit de plus où oublier un champ quand le
+  /// formulaire s'enrichira.
+  ///
+  /// L'enlèvement programmé n'y figure jamais : celui de la commande d'origine
+  /// est dans le passé, et le formulaire retombe sur « dès que possible ».
+  final Map<String, dynamic>? template;
+
+  const CreateOrderScreen({super.key, this.template});
 
   @override
   State<CreateOrderScreen> createState() => _CreateOrderScreenState();
@@ -73,12 +85,81 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   @override
   void initState() {
     super.initState();
+    _applyTemplate();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final state = context.read<MerchantOrderState>();
       state.loadAddresses();
       state.loadFavourites();
+      // Le devis est demandé d'emblée sur une commande reprise : les deux
+      // points sont déjà connus, et attendre une modification pour l'afficher
+      // laisserait le champ prix vide alors que tout est là.
+      if (_pickupPoint != null && _dropoffPoint != null) _refreshQuote();
     });
+  }
+
+  /// Reprend les champs d'une livraison passée.
+  ///
+  /// Appliqué dans `initState` et non dans un `postFrameCallback` : les
+  /// contrôleurs de texte doivent porter leur valeur avant la première
+  /// construction, sinon l'écran s'affiche vide puis se remplit — ce qui se lit
+  /// comme un formulaire qui s'auto-modifie.
+  ///
+  /// Tolérant sur les types : un champ absent ou d'un type inattendu est
+  /// ignoré, il laisse simplement sa case à remplir. Une duplication qui
+  /// planterait sur un champ manquant serait pire que pas de duplication.
+  void _applyTemplate() {
+    final t = widget.template;
+    if (t == null) return;
+
+    String text(String key) {
+      final value = t[key];
+      return value is String ? value : '';
+    }
+
+    double? coord(String key) {
+      final value = t[key];
+      return value is num ? value.toDouble() : null;
+    }
+
+    _pickupName.text = text('pickupLocationName');
+    _pickupAddress.text = text('pickupNotes');
+    _pickupContact.text = text('pickupContactName');
+    _pickupPhone.text = text('pickupContactPhone');
+
+    _dropoffName.text = text('dropoffLocationName');
+    _dropoffAddress.text = text('dropoffNotes');
+    _dropoffContact.text = text('dropoffContactName');
+    _dropoffPhone.text = text('dropoffContactPhone');
+
+    _instructions.text = text('deliveryInstructions');
+
+    final items = t['items'];
+    if (items is List && items.isNotEmpty && items.first is Map) {
+      final description = (items.first as Map)['description'];
+      if (description is String) _itemDescription.text = description;
+    }
+
+    final price = t['price'];
+    if (price is num) _price.text = price.toStringAsFixed(0);
+
+    final vehicle = t['vehicleType'];
+    if (vehicle is String) _vehicleType = vehicle;
+
+    final pod = t['podMethod'];
+    if (pod is String) _podMethod = pod;
+
+    final pickupLat = coord('pickupLatitude');
+    final pickupLon = coord('pickupLongitude');
+    if (pickupLat != null && pickupLon != null) {
+      _pickupPoint = LatLng(pickupLat, pickupLon);
+    }
+
+    final dropoffLat = coord('dropoffLatitude');
+    final dropoffLon = coord('dropoffLongitude');
+    if (dropoffLat != null && dropoffLon != null) {
+      _dropoffPoint = LatLng(dropoffLat, dropoffLon);
+    }
   }
 
   @override
@@ -182,7 +263,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final orderState = context.watch<MerchantOrderState>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Nouvelle livraison')),
+      // Le titre dit d'où vient le formulaire. Sans ça, un écran pré-rempli
+      // ressemble à une commande déjà créée qu'on serait en train de modifier
+      // — et le commerçant hésite à valider.
+      appBar: AppBar(
+        title: Text(
+          widget.template == null ? 'Nouvelle livraison' : 'Reprendre une livraison',
+        ),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),

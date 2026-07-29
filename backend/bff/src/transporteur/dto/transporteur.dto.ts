@@ -119,6 +119,42 @@ export class ReportDeliveryFailureDto {
   photo?: string;
 }
 
+/**
+ * Motifs de refus d'une course.
+ *
+ * ── Pourquoi cette liste-là ─────────────────────────────────────────────────
+ *
+ * Chaque entrée désigne un **paramètre de la course** que la plateforme peut
+ * corriger, pas un état d'humeur. C'est ce qui la rend exploitable : un
+ * « prix_insuffisant » récurrent sur les trajets longs dit quelque chose du
+ * barème à écrire, un « creneau_impossible » massif à 18 h dit quelque chose
+ * de la couverture du réseau.
+ *
+ * `indisponible` est la soupape : sans elle, un transporteur qui refuse
+ * simplement parce qu'il finit sa journée choisirait un motif au hasard, et
+ * empoisonnerait les quatre autres. Une catégorie « aucune information » qu'on
+ * sait ignorer vaut mieux qu'une donnée fausse qu'on croit lire.
+ */
+export const DECLINE_REASONS = [
+  'prix_insuffisant',
+  'trop_loin',
+  'vehicule_inadapte',
+  'creneau_impossible',
+  'colis_inadapte',
+  'indisponible',
+  'autre',
+] as const;
+
+export class DeclineOrderDto {
+  @IsIn(DECLINE_REASONS as unknown as string[])
+  reason: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
 export class CapturePhotoDto {
   @IsArray()
   @ArrayMinSize(1)

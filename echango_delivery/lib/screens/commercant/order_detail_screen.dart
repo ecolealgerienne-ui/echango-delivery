@@ -61,6 +61,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  /// Rouvre le formulaire de création, pré-rempli à partir de cette livraison.
+  ///
+  /// Le formulaire est ouvert, pas la commande créée : l'enlèvement programmé
+  /// ne se reprend pas (celui d'origine est passé), et une livraison réelle
+  /// facturée à quelqu'un ne doit pas pouvoir naître d'un tapotement.
+  ///
+  /// Un échec de reprise n'est pas une impasse : le formulaire s'ouvre vide,
+  /// avec un mot pour dire pourquoi.
+  Future<void> _duplicate(MerchantOrderState orderState) async {
+    final router = GoRouter.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final template = await orderState.loadOrderTemplate(widget.orderId);
+    if (!mounted) return;
+
+    if (template == null) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            orderState.errorMessage ??
+                'Reprise impossible — le formulaire s\'ouvre vide.',
+          ),
+        ),
+      );
+    }
+
+    router.push('/commercant/nouvelle', extra: template);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -155,6 +184,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       _favouriteCard(order),
                     ],
                     const SizedBox(height: 24),
+                    // Reprendre passe avant annuler : c'est l'action courante
+                    // (une boulangerie livre le même client chaque semaine),
+                    // l'autre est exceptionnelle. Les ranger dans cet ordre
+                    // évite aussi de placer un bouton destructeur sous le
+                    // pouce, à l'endroit qu'on touche sans regarder.
+                    FilledButton.tonalIcon(
+                      onPressed:
+                          orderState.isLoading ? null : () => _duplicate(orderState),
+                      icon: const Icon(Icons.copy_all_outlined),
+                      label: const Text('Refaire cette livraison'),
+                    ),
+                    const SizedBox(height: 12),
                     if (order.canCancel)
                       OutlinedButton.icon(
                         onPressed:

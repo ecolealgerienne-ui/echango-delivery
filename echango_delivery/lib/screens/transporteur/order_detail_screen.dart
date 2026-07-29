@@ -220,6 +220,33 @@ class OrderDetailScreen extends StatelessWidget {
       );
     }
 
+    // Refus. Deux situations, un seul geste :
+    //
+    // — une opportunité diffusée qu'on écarte : elle quitte la liste, et rien
+    //   d'autre ne se passe ;
+    // — une course assignée (favori sollicité) qu'on rend : elle repart au
+    //   réseau et le commerçant est prévenu.
+    //
+    // Rendre n'est plus possible une fois la course démarrée : à ce stade le
+    // transporteur est engagé, et la sortie est le signalement d'échec, qui
+    // laisse une trace. Le libellé change donc avec l'enjeu, plutôt que de
+    // présenter deux actions différentes sous un même mot.
+    final returnable = !order.isFinished && !claimable && order.isPending;
+    if (claimable || returnable) {
+      buttons.add(const SizedBox(height: 12));
+      buttons.add(
+        OutlinedButton.icon(
+          onPressed: busy
+              ? null
+              : () => _declineOrder(context, order.id, orderState,
+                  assigned: returnable),
+          icon: const Icon(Icons.do_not_disturb_on_outlined),
+          label: Text(claimable ? 'Refuser cette course' : 'Rendre cette course'),
+          style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+        ),
+      );
+    }
+
     // Signalement d'échec : pertinent tant que la commande n'est pas close.
     if (!order.isFinished && !claimable) {
       buttons.add(const SizedBox(height: 12));
@@ -306,6 +333,62 @@ class OrderDetailScreen extends StatelessWidget {
     }
   }
 
+  /// Demande le motif, puis refuse.
+  ///
+  /// Le motif n'est pas décoratif : c'est la seule donnée qui dise pourquoi le
+  /// réseau ne prend pas une course. `PricingService` enregistre ce qu'elle
+  /// valait, le refus dit ce que le marché en pense — et l'appariement des deux
+  /// est ce qui permettra d'écrire un barème sur des courses réelles plutôt
+  /// que sur une estimation de bureau. D'où la liste fermée : un champ libre
+  /// ne se compte pas.
+  Future<void> _declineOrder(
+    BuildContext context,
+    String orderId,
+    OrderState orderState, {
+    required bool assigned,
+  }) async {
+    final choice = await showModalBottomSheet<({String reason, String? notes})>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _DeclineSheet(assigned: assigned),
+    );
+
+    if (choice == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final success = await orderState.declineOrder(
+      orderId: orderId,
+      reason: choice.reason,
+      notes: choice.notes,
+    );
+    if (!context.mounted) return;
+
+    if (!success) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(orderState.errorMessage ?? 'Refus impossible'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          orderState.lastDeclineReleasedToPool == true
+              ? 'Course rendue au réseau. Le commerçant en a été informé.'
+              : 'Course écartée. Elle ne vous sera plus proposée.',
+        ),
+      ),
+    );
+
+    // Retour à la liste : la fiche d'une course qu'on vient d'écarter n'a plus
+    // de contenu, et la relire renverrait un 404 dès qu'elle a quitté le
+    // périmètre de ce transporteur.
+    if (context.mounted && context.canPop()) context.pop();
+  }
+
   Future<void> _acceptOrder(
     BuildContext context,
     String orderId,
@@ -338,6 +421,129 @@ class OrderDetailScreen extends StatelessWidget {
       default:
         return Colors.grey;
     }
+  }
+}
+
+/// Feuille de refus : motif obligatoire, précision facultative.
+///
+/// Les libellés sont écrits du point de vue du transporteur, pas de la base de
+/// données : « Le prix ne couvre pas le trajet » se choisit sans réfléchir,
+/// `prix_insuffisant` demande une traduction mentale. Le code part au serveur,
+/// la phrase reste à l'écran.
+class _DeclineSheet extends StatefulWidget {
+  /// La course est-elle assignée à ce transporteur ? Le texte d'avertissement
+  /// en dépend : rendre une course engage le commerçant, écarter une
+  /// proposition n'engage personne.
+  final bool assigned;
+
+  const _DeclineSheet({required this.assigned});
+
+  @override
+  State<_DeclineSheet> createState() => _DeclineSheetState();
+}
+
+class _DeclineSheetState extends State<_DeclineSheet> {
+  static const _reasons = <(String, String, IconData)>[
+    ('prix_insuffisant', 'Le prix ne couvre pas le trajet', Icons.payments_outlined),
+    ('trop_loin', 'Trop loin de ma position', Icons.route_outlined),
+    ('vehicule_inadapte', 'Mon véhicule n\'est pas adapté', Icons.two_wheeler_outlined),
+    ('creneau_impossible', 'Je ne suis pas libre à cet horaire', Icons.schedule_outlined),
+    ('colis_inadapte', 'Le colis ne me convient pas', Icons.inventory_2_outlined),
+    ('indisponible', 'Je ne suis pas disponible', Icons.do_not_disturb_on_outlined),
+    ('autre', 'Autre raison', Icons.more_horiz),
+  ];
+
+  String? _reason;
+  final _notes = TextEditingController();
+
+  @override
+  void dispose() {
+    _notes.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.assigned ? 'Rendre cette course' : 'Refuser cette course',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.assigned
+                  ? 'Elle sera proposée aux autres transporteurs du réseau, et '
+                      'le commerçant en sera informé.'
+                  : 'Elle ne vous sera plus proposée. Les autres transporteurs '
+                      'la voient toujours.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            // Des ListTile sélectionnables plutôt que des RadioListTile : le
+            // couple `groupValue`/`onChanged` est déprécié depuis Flutter 3.32
+            // au profit de RadioGroup, et cet écran doit compiler sans
+            // avertissement sur la version de l'utilisateur, que je ne peux
+            // pas éprouver ici. Un tri visuel par coche rend d'ailleurs la
+            // sélection plus lisible sur un téléphone tenu d'une main.
+            for (final (code, label, icon) in _reasons)
+              ListTile(
+                onTap: () => setState(() => _reason = code),
+                leading: Icon(icon),
+                title: Text(label),
+                trailing: _reason == code
+                    ? const Icon(Icons.check_circle, color: Colors.red)
+                    : null,
+                selected: _reason == code,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+              ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _notes,
+              maxLines: 2,
+              maxLength: 200,
+              decoration: const InputDecoration(
+                labelText: 'Précision (facultatif)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: _reason == null
+                  ? null
+                  : () => Navigator.pop(
+                        context,
+                        (
+                          reason: _reason!,
+                          notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+                        ),
+                      ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: Text(widget.assigned ? 'Rendre la course' : 'Refuser'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuler'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

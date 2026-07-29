@@ -8,6 +8,7 @@ import { GeocodeQueryDto, ReverseGeocodeQueryDto } from './dto/geocode.dto';
 import { AddFavouriteDto } from './dto/favourite.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
 // E4) : un jeton transporteur ou flotte y était structurellement valide.
@@ -17,7 +18,29 @@ export class CommerçantController {
   constructor(
     private commercantService: CommerçantService,
     private geocoding: GeocodingService,
+    private notifications: NotificationsService,
   ) {}
+
+  // ── Notifications ────────────────────────────────────────────────────────
+  //
+  // Relevées par interrogation périodique de l'application : l'envoi push vers
+  // un commerçant n'est pas branché (voir NotificationsService). Le journal
+  // reste la source de vérité, le push ne sera qu'un accélérateur.
+
+  @Get('notifications')
+  async listNotifications(@Request() req: any, @Query('nonLues') unreadOnly?: string) {
+    return this.notifications.list(req.user.id, unreadOnly === 'true');
+  }
+
+  @Post('notifications/tout-lu')
+  async markAllNotificationsRead(@Request() req: any) {
+    return this.notifications.markAllRead(req.user.id);
+  }
+
+  @Post('notifications/:id/lu')
+  async markNotificationRead(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.notifications.markRead(req.user.id, id);
+  }
 
   /**
    * Recherche d'adresse. Relayée par le BFF et non appelée depuis l'app :
@@ -82,6 +105,17 @@ export class CommerçantController {
   @Get('commandes/:id')
   async getOrderDetail(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.getOrderDetail(req.user.id, orderId);
+  }
+
+  /**
+   * Champs à reprendre pour recommencer une livraison identique.
+   *
+   * Ne crée rien : l'application rouvre le formulaire pré-rempli. L'enlèvement
+   * programmé n'est volontairement pas repris — celui d'hier est dans le passé.
+   */
+  @Get('commandes/:id/modele')
+  async getOrderTemplate(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
+    return this.commercantService.getOrderTemplate(req.user.id, orderId);
   }
 
   @Post('commandes')

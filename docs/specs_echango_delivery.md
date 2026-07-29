@@ -122,6 +122,23 @@ Détail complet : `01_securite.md`. Points structurants :
 
 Détail complet : `03_metier.md`. Tableau des 11 règles métier non tranchées, priorité haute sur : **modèle de tarification et de commission** (rien n'existe côté Fleetbase, entièrement à définir), **qui est posé en `Order.customer`** pour que la facturation automatique cible la bonne entité (jamais testé), cadence de paiement du transporteur, règles d'annulation/livraison ratée, existence d'un SLA de délai, propriété de la relation client final, parcours d'onboarding commerçant/sous-organisation. Voir le tableau complet en fin de `03_metier.md` §5.
 
+### 6.1 Contre-proposition de prix par le transporteur — proposition écartée (29/07/2026)
+
+**Statut : proposée, écartée pour l'instant sur décision explicite.** Consignée ici parce que la question se reposera dès que la tarification sera tranchée, et qu'il vaut mieux retrouver le raisonnement que le refaire.
+
+**L'idée.** Aujourd'hui le commerçant propose un montant (`meta.price`) et le transporteur ne peut que prendre ou laisser. Une contre-proposition lui permettrait de répondre « je le fais pour X », le commerçant acceptant ou non — une négociation en un aller-retour plutôt qu'un prix à prendre ou à laisser.
+
+**Ce qui la rend séduisante.** C'est le mécanisme qui produirait le plus vite un barème juste : chaque contre-proposition acceptée est un point de la courbe prix/distance/horaire, mesuré sur des courses réelles et non estimé. Le mécanisme *découvre* le tarif au lieu de le supposer.
+
+**Ce qui l'a fait écarter, et qu'il faudra trancher si on y revient :**
+
+- **Elle transforme une place de marché en négociation bilatérale.** La thèse du produit est l'effet réseau (`CLAUDE.md` § Positionnement) : un pool mutualisé où une course part au premier transporteur disponible. Une négociation introduit un délai entre l'offre et l'acceptation, pendant lequel la course n'est ni prise ni libre.
+- **Elle demande un arbitre.** Que se passe-t-il si trois transporteurs contre-proposent ? Le commerçant choisit-il, ou le moins-disant l'emporte-t-il ? Une enchère inversée est un tout autre produit, avec ses propres effets — dont la pression à la baisse sur les revenus des transporteurs, qui est exactement ce que le réseau doit éviter s'il veut en garder.
+- **Elle suppose que le commerçant soit joignable.** Une boulangerie à 6 h du matin ne consulte pas son téléphone. Sans délai d'acceptation automatique — encore une règle à trancher —, la course reste en suspens.
+- **Le refus motivé la remplace en grande partie.** Implémenté le 29/07/2026 : un transporteur qui trouve le prix insuffisant le dit (`prix_insuffisant`), et ce motif est enregistré avec les entrées tarifaires de la course (distance, horaire, véhicule). On obtient donc le signal — « ce trajet ne vaut pas ce prix » — sans le mécanisme de négociation. C'est moins précis (on sait que c'est trop bas, pas de combien) et **c'est le compromis assumé** : la donnée s'accumule sans changer la nature du produit.
+
+**Si on y revient**, l'ordre logique est : d'abord un barème calculé (`PricingService.computeQuote()`, aujourd'hui un talon), calibré sur les refus accumulés ; ensuite seulement, éventuellement, une marge de négociation autour de ce barème. Négocier sans référence de prix, c'est négocier dans le vide.
+
 ---
 
 ## 7. Logistique / Opérations — synthèse

@@ -7,6 +7,7 @@ import {
   ToggleOnlineDto,
   UpdateActivityDto,
   ReportDeliveryFailureDto,
+  DeclineOrderDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
@@ -91,6 +92,20 @@ export class TransporteurController {
   @Post('commandes/:id/accepter')
   async acceptOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
     return this.transporteurService.acceptOrder(this.driverId(req), id);
+  }
+
+  /**
+   * Refus motivé. Sur une course diffusée, elle disparaît de la liste de ce
+   * transporteur ; sur une course qui lui était assignée, elle repart au
+   * réseau et le commerçant en est informé.
+   */
+  @Post('commandes/:id/refuser')
+  async declineOrder(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: DeclineOrderDto,
+  ) {
+    return this.transporteurService.declineOrder(this.driverId(req), id, dto);
   }
 
   @Post('commandes/:id/demarrer')

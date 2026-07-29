@@ -115,6 +115,22 @@ class MerchantOrder extends Equatable {
   List<Object?> get props => [id, publicId, status, dispatched, createdAt];
 }
 
+/// Résumé lisible du contenu du colis, à partir de `meta.items`.
+///
+/// Une ligne, pas la liste : le détail sert au transporteur qui charge, le
+/// commerçant veut seulement reconnaître sa commande. Le nombre d'articles
+/// restants est dit plutôt que caché — « Gâteau » et « Gâteau (+3) » ne
+/// décrivent pas la même livraison.
+String? _firstItemDescription(dynamic items) {
+  if (items is! List || items.isEmpty) return null;
+
+  final first = items.first;
+  final description = first is Map ? first['description'] : null;
+  if (description is! String || description.isEmpty) return null;
+
+  return items.length > 1 ? '$description (+${items.length - 1})' : description;
+}
+
 class SavedAddress extends Equatable {
   final String id;
   final String name;
@@ -195,6 +211,74 @@ class GeocodedPlace extends Equatable {
 
   @override
   List<Object?> get props => [label, latitude, longitude, city, postalCode];
+}
+
+/// Évènement porté à la connaissance du commerçant.
+///
+/// Le serveur en est la mémoire : une notification non vue reste ici jusqu'à
+/// ce que le commerçant l'ouvre. C'est ce qui distingue ce journal d'un push,
+/// qui disparaît avec le téléphone éteint.
+class MerchantNotification extends Equatable {
+  final String id;
+  final String type;
+  final String title;
+  final String body;
+
+  /// Commande concernée, identifiant local — celui que le module commerçant
+  /// sait résoudre. `null` pour une notification qui n'en vise aucune.
+  final String? orderId;
+
+  final bool read;
+  final DateTime createdAt;
+
+  const MerchantNotification({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.body,
+    required this.read,
+    required this.createdAt,
+    this.orderId,
+  });
+
+  factory MerchantNotification.fromJson(Map<String, dynamic> json) =>
+      MerchantNotification(
+        id: (json['id'] ?? '') as String,
+        type: (json['type'] ?? '') as String,
+        title: (json['title'] ?? '') as String,
+        body: (json['body'] ?? '') as String,
+        orderId: json['order_id'] as String?,
+        read: json['read'] == true,
+        createdAt: readDate(json, 'created_at'),
+      );
+
+  @override
+  List<Object?> get props => [id, read];
+}
+
+/// Le journal et son compte de non-lues, tels que le serveur les renvoie.
+///
+/// Le compte vient du serveur plutôt que d'un `where(...).length` local : la
+/// liste est plafonnée, et compter sur une liste tronquée donnerait une
+/// pastille fausse dès que le commerçant accumule des notifications.
+class MerchantNotifications {
+  final List<MerchantNotification> items;
+  final int unread;
+
+  const MerchantNotifications({required this.items, required this.unread});
+
+  factory MerchantNotifications.fromJson(Map<String, dynamic> json) {
+    final raw = json['data'];
+    return MerchantNotifications(
+      items: raw is List
+          ? raw
+              .whereType<Map<String, dynamic>>()
+              .map(MerchantNotification.fromJson)
+              .toList()
+          : const [],
+      unread: (json['unread'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 /// Transporteur connu du commerçant — déjà vu sur une de ses livraisons.

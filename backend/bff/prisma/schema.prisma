@@ -46,6 +46,7 @@ model MerchantAccount {
   orders            Order[]
   commissions       Commission[]
   favouriteDrivers  DriverFavourite[]
+  notifications     MerchantNotification[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -150,6 +151,7 @@ model DriverAccount {
   // Relations
   deviceTokens          DriverDeviceToken[]
   deliveryFailures      DeliveryFailure[]
+  declines              OrderDecline[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -294,9 +296,35 @@ model Order {
   // Reference to Fleetbase
   fleetbaseOrderId  String   @unique
 
-  // Order details
-  status            String   // 'pending', 'active', 'completed', 'failed', 'cancelled'
+  /// Dernier statut Fleetbase **observé**, dans l'orthographe de Fleetbase
+  /// (`created`, `dispatched`, `started`, `enroute`, `completed`, `canceled` —
+  /// un seul « l »).
+  ///
+  /// Ce champ a longtemps été figé à `'pending'` : écrit à la création, jamais
+  /// resynchronisé. Il ne décrivait donc pas une commande mais l'instant de sa
+  /// création, et le suivi commerçant en héritait. `OrderReconcilerService` le
+  /// tient désormais à jour — et c'est cette mise à jour qui rend les
+  /// transitions détectables, donc les notifications possibles.
+  ///
+  /// ⚠️ Reste un **miroir**, jamais une autorité : toute décision (annulation
+  /// permise, course terminée) se prend sur l'état lu chez Fleetbase à
+  /// l'instant, pas sur cette colonne, qui peut avoir jusqu'à un cycle de
+  /// réconciliation de retard.
+  status            String
   trackingNumber    String?
+
+  /// Transporteur assigné au dernier passage du réconciliateur.
+  ///
+  /// Comparé à l'état courant, c'est lui qui révèle les deux évènements qui
+  /// intéressent le commerçant et qu'aucun changement de `status` ne signale :
+  /// la prise en charge (null → uuid) et le désistement (uuid → null).
+  driverAssignedUuid String?
+  driverName         String?
+
+  /// Dernier passage du réconciliateur, qu'il ait constaté un changement ou
+  /// non. Distingue « rien n'a bougé » de « personne ne regarde » — sans quoi
+  /// un réconciliateur arrêté est indiscernable d'une commande stable.
+  lastSyncedAt       DateTime?
 
   // Failure details
   failureReason     String?
@@ -421,4 +449,100 @@ model DriverFavourite {
 
   @@unique([merchantId, fleetbaseDriverUuid])
   @@index([merchantId])
+}
+
+
+/// Refus motivé d'une course par un transporteur.
+///
+/// ── Pourquoi enregistrer un refus, et pas seulement le subir ────────────────
+///
+/// Sans trace, un refus se manifeste par une absence : la course reste dans la
+/// liste, le transporteur la refait défiler à chaque rafraîchissement, et
+/// personne n'apprend rien. Deux besoins distincts sont servis ici.
+///
+/// **Pour le transporteur** : une course écartée disparaît de sa liste. C'est
+/// la seule façon de rendre une liste d'opportunités exploitable — sans cela,
+/// les courses qu'il ne veut pas noient celles qu'il voudrait.
+///
+/// **Pour la plateforme** : le motif est la donnée qui manque pour construire
+/// le barème. `PricingService` capture ce qu'une course *valait* (distance,
+/// horaire, véhicule) ; le refus dit ce que le marché en *pense*. Un « prix
+/// insuffisant » sur un trajet de 12 km à 22 h vaut mieux que n'importe quelle
+/// estimation faite au bureau — et il ne se reconstitue pas après coup, d'où
+/// la copie des entrées tarifaires ci-dessous plutôt qu'une simple référence
+/// à la commande, qui pourrait être modifiée ou supprimée.
+model OrderDecline {
+  id                  String   @id @default(cuid())
+
+  driverId            String
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  fleetbaseOrderUuid  String
+
+  /// Voir DECLINE_REASONS dans le DTO transporteur.
+  reason              String
+  notes               String?
+
+  /// La course était-elle assignée à ce transporteur (favori sollicité), ou
+  /// simplement diffusée ? Le premier cas la renvoie au pool et concerne le
+  /// commerçant ; le second n'engage que l'affichage.
+  wasAssigned         Boolean  @default(false)
+
+  /// Copie des entrées tarifaires de la commande refusée (`meta.pricing_inputs`)
+  /// et du montant proposé. Figées ici : c'est l'appariement « ce qui était
+  /// offert » / « refusé pour tel motif » qui a de la valeur, et il disparaît
+  /// dès que la commande change.
+  pricingInputs       Json?
+  offeredPrice        Float?
+  currency            String?
+
+  declinedAt          DateTime @default(now())
+
+  /// Un transporteur ne refuse une course qu'une fois — un second appel met à
+  /// jour le motif plutôt que d'empiler des lignes qui fausseraient les
+  /// statistiques de refus.
+  @@unique([driverId, fleetbaseOrderUuid])
+  @@index([fleetbaseOrderUuid])
+}
+
+
+/// Évènement porté à la connaissance d'un commerçant.
+///
+/// ── Un journal, pas un transport ────────────────────────────────────────────
+///
+/// Ce modèle est la **source de vérité** des notifications ; l'envoi push n'en
+/// est qu'un moyen de livraison parmi d'autres. La distinction est délibérée :
+/// un push perdu (téléphone éteint, jeton périmé, application réinstallée) ne
+/// doit pas effacer l'information. Le commerçant qui rouvre son application
+/// retrouve ici ce qu'il n'a pas vu passer.
+///
+/// ⚠️ **L'envoi push n'est pas branché** au 29/07/2026. Atteindre un commerçant
+/// suppose un credential serveur Firebase que ce déploiement n'a pas — et le
+/// commerçant n'étant volontairement pas un `User` Fleetbase, le push natif de
+/// Fleetbase (qui passe par `UserDevice`) ne peut pas le joindre non plus. Les
+/// jetons sont bien collectés (`DeviceToken`) : il ne manque que l'expéditeur.
+model MerchantNotification {
+  id                 String   @id @default(cuid())
+
+  merchantId         String
+  merchant           MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  /// Commande concernée, dans les deux identifiants : l'uuid Fleetbase pour
+  /// recouper avec l'amont, le cuid local pour que l'application puisse ouvrir
+  /// la fiche sans résolution supplémentaire.
+  fleetbaseOrderUuid String?
+  orderId            String?
+
+  /// Voir NOTIFICATION_TYPES dans notifications.service.ts.
+  type               String
+
+  title              String
+  body               String
+
+  readAt             DateTime?
+  createdAt          DateTime @default(now())
+
+  /// Trié par date, filtré sur les non lues : l'index porte les deux.
+  @@index([merchantId, readAt])
+  @@index([merchantId, createdAt])
 }

@@ -452,6 +452,71 @@ export class CommerçantService {
 
 
   /**
+   * Modèle de commande repris d'une livraison passée.
+   *
+   * ── Pourquoi un modèle, et non une commande créée directement ──────────────
+   *
+   * Une duplication silencieuse recopierait aussi ce qui ne se duplique pas :
+   * un enlèvement programmé la veille à 8 h, une fois recréé, est dans le
+   * passé. Le serveur renvoie donc les champs à reprendre, l'application
+   * rouvre le formulaire pré-rempli, et le commerçant valide en connaissance de
+   * cause. Un clic de plus, et aucune commande créée par accident — ce qui,
+   * pour une livraison réelle facturée à quelqu'un, n'est pas un détail.
+   *
+   * `scheduledAt` est délibérément **absent** du modèle : c'est le seul champ
+   * qu'on ne peut pas reprendre sans mentir, et le laisser vide fait retomber
+   * sur « dès que possible », qui est vrai.
+   */
+  async getOrderTemplate(merchantId: string, orderId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const cached = await this.resolveOwnedOrder(merchantId, orderId);
+
+    let live: any;
+    try {
+      const orders = await this.fleetbaseClient.fetchEveryOrder();
+      live = orders.find((o: any) => o?.uuid === cached.fleetbaseOrderId);
+    } catch (error) {
+      this.logger.warn(`Modèle de commande indisponible : ${error.message}`);
+      throw new BadRequestException('Impossible de relire cette commande pour l\'instant');
+    }
+
+    if (!live) {
+      throw new NotFoundException('Commande introuvable chez Fleetbase');
+    }
+
+    const meta = live.meta ?? {};
+    const place = (raw: any, prefix: 'pickup' | 'dropoff') => {
+      if (!raw) return {};
+      const coords = raw.location?.coordinates;
+      const [longitude, latitude] = Array.isArray(coords) ? coords : [];
+      return {
+        [`${prefix}LocationName`]: raw.name ?? raw.address ?? null,
+        [`${prefix}Latitude`]: typeof latitude === 'number' ? latitude : null,
+        [`${prefix}Longitude`]: typeof longitude === 'number' ? longitude : null,
+        [`${prefix}ContactName`]: raw.contact_name ?? raw.meta?.contact_name ?? null,
+        [`${prefix}ContactPhone`]: raw.phone ?? raw.contact_phone ?? null,
+      };
+    };
+
+    return {
+      ...place(live.payload?.pickup, 'pickup'),
+      ...place(live.payload?.dropoff, 'dropoff'),
+      pickupNotes: meta.pickup_notes ?? null,
+      dropoffNotes: meta.dropoff_notes ?? null,
+      deliveryInstructions: meta.instructions ?? null,
+      items: Array.isArray(meta.items) ? meta.items : null,
+      vehicleType: meta.vehicle_type ?? null,
+      podMethod: live.pod_method ?? null,
+      // Le prix est repris tel quel : c'est une proposition du commerçant, et
+      // reproposer ce qui avait trouvé preneur est le comportement utile. S'il
+      // avait été refusé pour insuffisance, l'écran de création reste
+      // modifiable.
+      price: typeof meta.price === 'number' ? meta.price : null,
+    };
+  }
+
+  /**
    * Create a new delivery order
    */
   async createOrder(merchantId: string, dto: CreateOrderDto) {
@@ -463,8 +528,21 @@ export class CommerçantService {
       // Fleetbase orders require pre-created Place records for pickup/dropoff,
       // referenced by UUID, plus a resolved order_config_uuid.
       const [pickupPlace, dropoffPlace, orderConfigUuid] = await Promise.all([
-        this.fleetbaseClient.createPlace(dto.pickupLocationName, dto.pickupLatitude, dto.pickupLongitude),
-        this.fleetbaseClient.createPlace(dto.dropoffLocationName, dto.dropoffLatitude, dto.dropoffLongitude),
+        // Les contacts sont bien transmis : ils étaient saisis, validés, puis
+        // jetés (voir createPlace). Un transporteur devant une porte sans
+        // numéro à appeler ne peut que constater l'échec.
+        this.fleetbaseClient.createPlace(
+          dto.pickupLocationName,
+          dto.pickupLatitude,
+          dto.pickupLongitude,
+          { name: dto.pickupContactName, phone: dto.pickupContactPhone },
+        ),
+        this.fleetbaseClient.createPlace(
+          dto.dropoffLocationName,
+          dto.dropoffLatitude,
+          dto.dropoffLongitude,
+          { name: dto.dropoffContactName, phone: dto.dropoffContactPhone },
+        ),
         this.fleetbaseClient.getDefaultOrderConfigUuid(),
       ]);
 
@@ -499,7 +577,12 @@ export class CommerçantService {
         data: {
           merchantId,
           fleetbaseOrderId,
-          status: 'pending',
+          // Le statut RÉEL renvoyé par Fleetbase, et non `'pending'` — un
+          // statut inventé qui n'appartient pas à son vocabulaire. Le
+          // réconciliateur y verrait un changement au premier passage et
+          // notifierait une transition qui n'a jamais eu lieu.
+          status: fleetbaseOrder?.status ?? 'created',
+          driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
           trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
         },
       });
@@ -561,7 +644,11 @@ export class CommerçantService {
 
       const updated = await this.prisma.order.update({
         where: { id: order.id },
-        data: { status: 'cancelled' },
+        // `canceled`, l'orthographe de Fleetbase (un seul « l ») et non
+        // `cancelled`. Le réconciliateur compare cette colonne à ce que dit
+        // l'amont : deux orthographes pour le même état lui feraient voir un
+        // changement à chaque passage, et notifier une annulation en boucle.
+        data: { status: 'canceled' },
       });
 
       this.logger.log(`Order cancelled: ${order.id}`);

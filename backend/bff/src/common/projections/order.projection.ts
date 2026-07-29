@@ -88,7 +88,20 @@ const PLACE_LOCALITY = ['uuid', 'public_id', 'id', 'city', 'postal_code', 'provi
 export function projectPlace(place: any, detail: PlaceDetail, anonymousName?: string) {
   if (!place) return undefined;
 
-  if (detail === 'full') return pick(place, PLACE_FULL);
+  if (detail === 'full') {
+    // `contact_name` n'existe pas sur le modèle `Place` de Fleetbase : le nom
+    // du contact est déposé dans `meta` à la création. Le remonter ici évite
+    // que chaque appelant ait à connaître ce détail de stockage — et il est
+    // remonté SEULEMENT dans la branche complète : sur une course non
+    // réclamée, ce nom est précisément ce que l'expurgation retire.
+    const fromMeta = place?.meta?.contact_name;
+    return {
+      ...pick(place, PLACE_FULL),
+      ...(place.contact_name === undefined && typeof fromMeta === 'string'
+        ? { contact_name: fromMeta }
+        : {}),
+    };
+  }
 
   return {
     ...pick(place, PLACE_LOCALITY),

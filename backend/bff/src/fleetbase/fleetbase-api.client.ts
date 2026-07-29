@@ -193,8 +193,23 @@ export class FleetbaseApiClient {
   /**
    * Create a Place (pickup/dropoff location) in Fleetbase.
    * Response shape: { place: { uuid, ... } }
+   *
+   * ⚠️ `contact` : le nom et le téléphone saisis par le commerçant étaient
+   * **jetés** jusqu'au 29/07/2026 — la signature ne prenait que le nom et les
+   * coordonnées. Le formulaire les demandait, les validait, les envoyait, et
+   * ils s'arrêtaient au DTO. Le transporteur arrivait donc devant une adresse
+   * sans savoir qui appeler, ce qui est précisément la situation que le
+   * signalement « client absent » constate.
+   *
+   * Le téléphone va sur la colonne native `phone` ; le nom passe par `meta`,
+   * le modèle `Place` n'ayant pas de champ dédié.
    */
-  async createPlace(name: string, latitude: number, longitude: number) {
+  async createPlace(
+    name: string,
+    latitude: number,
+    longitude: number,
+    contact?: { name?: string; phone?: string; address?: string },
+  ) {
     try {
       const response = await this.callFleetOps('POST', '/places', {
         name,
@@ -202,6 +217,9 @@ export class FleetbaseApiClient {
           type: 'Point',
           coordinates: [longitude, latitude],
         },
+        ...(contact?.address ? { address: contact.address } : {}),
+        ...(contact?.phone ? { phone: contact.phone } : {}),
+        ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
       });
       return response.data;
     } catch (error) {
@@ -446,6 +464,36 @@ export class FleetbaseApiClient {
       this.logger.error(`Assign order to driver failed: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Détache le transporteur d'une commande et la remet en diffusion.
+   *
+   * Utilisé quand un transporteur refuse une course qui lui avait été assignée
+   * — typiquement un favori sollicité en premier. Les deux écritures vont
+   * ensemble et ne se séparent pas : détacher sans rediffuser laisserait la
+   * commande en suspens, sans transporteur ni personne à qui la proposer, ce
+   * qui est un état pire que celui dont on part.
+   *
+   * `driver_assigned_uuid`, `adhoc` et `adhoc_distance` sont tous trois dans le
+   * `$fillable` du modèle `Order` (vérifié dans le source fleetops), et
+   * l'enveloppe `{ order: ... }` reprend celle de la création — même
+   * contrôleur, même lecture par `$request->input('order')`.
+   *
+   * ⚠️ **Non validé par un appel réel** : aucune instance Fleetbase n'est
+   * joignable depuis ce bac à sable. La forme repose sur l'analogie avec la
+   * création, qui a tenu jusqu'ici (journal §5.6), mais l'analogie n'est pas une
+   * preuve. À éprouver au premier refus d'une course assignée.
+   */
+  async releaseOrderToPool(orderUuid: string, adhocDistance: number) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: {
+        driver_assigned_uuid: null,
+        adhoc: true,
+        adhoc_distance: adhocDistance,
+      },
+    });
+    return response.data;
   }
 
   /**

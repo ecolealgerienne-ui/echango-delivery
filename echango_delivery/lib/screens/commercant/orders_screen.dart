@@ -18,7 +18,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<MerchantOrderState>().loadOrders();
+      if (!mounted) return;
+      final state = context.read<MerchantOrderState>();
+      state.loadOrders();
+      state.loadNotifications();
     });
   }
 
@@ -31,6 +34,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
       appBar: AppBar(
         title: Text(authState.displayName ?? 'Mes livraisons'),
         actions: [
+          // La pastille est le seul signal d'un évènement, l'envoi push
+          // n'étant pas branché : elle doit donc être visible depuis l'écran
+          // d'accueil, et non enfouie dans un menu.
+          IconButton(
+            tooltip: 'Notifications',
+            icon: Badge(
+              isLabelVisible: orderState.unreadNotifications > 0,
+              label: Text('${orderState.unreadNotifications}'),
+              child: const Icon(Icons.notifications_none),
+            ),
+            onPressed: () => context.push('/commercant/notifications'),
+          ),
           IconButton(
             tooltip: 'Carnet d\'adresses',
             icon: const Icon(Icons.bookmark_border),
@@ -117,7 +132,15 @@ class _OrderList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Future<void> refresh() => context.read<MerchantOrderState>().loadOrders();
+    // Le tirer-pour-rafraîchir relève aussi les notifications : sans envoi
+    // push, c'est le geste par lequel un commerçant vient chercher les
+    // nouvelles, et ne rafraîchir que la liste laisserait la pastille périmée
+    // à côté de commandes fraîches.
+    Future<void> refresh() async {
+      final state = context.read<MerchantOrderState>();
+      await state.loadOrders();
+      await state.loadNotifications();
+    }
 
     if (orders.isEmpty) {
       // Le tirer-pour-rafraîchir doit marcher sur liste vide — c'est

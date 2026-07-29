@@ -1250,3 +1250,87 @@ Poser la couture avant la formule évite le scénario habituel : un barème déc
 **Le calcul est centralisé côté serveur, sans exception.** L'app ne connaît aucun barème et n'en appliquera jamais : un calcul dupliqué côté client dériverait au premier changement de tarif, et corriger un prix demanderait alors une mise à jour d'application — sur des téléphones qu'on ne contrôle pas. Deux entrées mènent au même `PricingService` : la création de commande et le devis.
 
 Quand le barème sera tranché : implémenter `computeQuote()` et basculer `PRICING_MODE=computed`. Aucun appelant ne change, ni serveur ni client. Et le barème pourra être éprouvé rétroactivement sur les vraies courses du pilote avant d'être activé.
+
+---
+
+## 14. Refus motivé, duplication, notifications commerçant (29/07/2026)
+
+Trois fonctionnalités retenues parmi quatre proposées la veille — la quatrième, la contre-proposition de prix par le transporteur, est écartée sur décision explicite et documentée comme piste dans `docs/specs_echango_delivery.md` §6.1.
+
+### 14.1 Le refus motivé sert deux besoins qui n'ont rien en commun
+
+Sans trace, un refus se manifeste par une absence : la course reste dans la liste, le transporteur la fait défiler à chaque rafraîchissement, et personne n'apprend rien.
+
+**Pour le transporteur**, une course écartée disparaît. C'est la seule façon de rendre une liste d'opportunités exploitable : sans ce filtre, ce qu'il ne veut pas noie ce qu'il voudrait. Et c'est aussi le seul retour visible du geste — un refus sans effet à l'écran est indiscernable d'une fonctionnalité en panne.
+
+**Pour la plateforme**, le motif est la donnée manquante du barème. `PricingService` capture ce qu'une course *valait* (distance, horaire, véhicule) ; le refus dit ce que le marché en *pense*. Un « prix insuffisant » sur 12 km à 22 h vaut mieux que n'importe quelle estimation faite au bureau.
+
+**Les entrées tarifaires sont copiées sur le refus, pas référencées.** Une référence à la commande suffirait si la commande était immuable : elle ne l'est pas, elle peut être modifiée ou supprimée. C'est l'appariement « ce qui était offert » / « refusé pour tel motif » qui a de la valeur, et il disparaît avec l'original.
+
+**`indisponible` est une soupape, pas un motif.** Sans elle, un transporteur qui refuse simplement parce qu'il finit sa journée choisirait un motif au hasard et empoisonnerait les six autres. Une catégorie « aucune information » qu'on sait ignorer vaut mieux qu'une donnée fausse qu'on croit lire.
+
+### 14.2 Rendre une course assignée n'est pas refuser une proposition
+
+Deux situations passent par le même endpoint, avec des conséquences opposées :
+
+- **course diffusée non réclamée** → elle quitte la liste de ce transporteur, et de lui seul. Rien ne change pour les autres ni pour le commerçant : refuser une proposition n'est pas un évènement ;
+- **course assignée à lui** (favori sollicité en premier) → elle est détachée, remise en diffusion, et le commerçant est prévenu.
+
+Le second cas lève une partie d'une limite signalée de longue date par `pickAvailableFavourite()` : une course confiée à un favori indisponible restait bloquée jusqu'à intervention manuelle. Le refus traite le cas où le transporteur *sait* qu'il ne la prendra pas. Il ne traite toujours pas celui du favori qui ignore la course sans rien dire — ce repli-là demande une tâche de fond, et le délai est une décision produit.
+
+**Le détachement passe AVANT l'enregistrement du refus.** Si Fleetbase refuse l'écriture, la course reste assignée : enregistrer quand même un refus produirait un écran qui affiche « rendue » et une course toujours là. On échoue bruyamment plutôt que d'inscrire un refus sans effet.
+
+**Une course démarrée n'est pas refusable.** À ce stade le transporteur est engagé, souvent en route ; la sortie est le signalement d'échec, qui laisse une trace et une preuve. Rendre la course par un simple refus effacerait cette obligation.
+
+⚠️ `releaseOrderToPool()` (`PUT /int/v1/orders/{uuid}`, enveloppe `{ order: ... }`) **n'est pas validé par un appel réel** — aucune instance Fleetbase joignable depuis ce bac à sable. La forme repose sur l'analogie avec la création, qui a tenu jusqu'ici (§5.6), mais l'analogie n'est pas une preuve. C'est le premier point à éprouver.
+
+### 14.3 Duplication : un modèle, pas une commande
+
+`GET /commercant/commandes/:id/modele` renvoie les champs à reprendre ; l'application rouvre le formulaire pré-rempli. Elle ne crée rien.
+
+**Pourquoi ne pas créer directement.** Une duplication silencieuse recopierait aussi ce qui ne se duplique pas : un enlèvement programmé la veille à 8 h, recréé aujourd'hui, est dans le passé. `scheduledAt` est donc délibérément **absent** du modèle — c'est le seul champ qu'on ne peut pas reprendre sans mentir, et le laisser vide fait retomber sur « dès que possible », qui est vrai. Accessoirement, une livraison réelle facturée à quelqu'un ne doit pas pouvoir naître d'un tapotement.
+
+**Défaut trouvé en construisant le modèle : les contacts étaient jetés.** `createPlace()` ne prenait qu'un nom et des coordonnées. Le formulaire demandait le nom et le téléphone du contact d'enlèvement et de livraison, les validait, les envoyait — et ils s'arrêtaient au DTO. Le transporteur arrivait donc devant une adresse sans savoir qui appeler, ce qui est *exactement* la situation que constate le signalement « client absent ». Le téléphone va désormais sur la colonne native `phone`, le nom dans `meta.contact_name` (le modèle `Place` n'a pas de champ dédié), et la projection le remonte — uniquement dans la branche complète, ce nom étant précisément ce que l'expurgation d'une course non réclamée retire.
+
+C'est encore le motif récurrent de la veille, inversé : l'app envoyait, le serveur jetait.
+
+### 14.4 Notifier suppose d'abord de savoir que quelque chose a changé
+
+Fleetbase n'appelle pas le BFF. Rien, dans le flux normal, ne nous prévient qu'un transporteur a pris une course — et l'évènement survient parfois **hors de nos routes** : un driver peut accepter depuis l'application, mais un opérateur peut aussi assigner depuis la console Fleetbase, et ce second cas ne traverse aucun endpoint du BFF. Un déclenchement posé dans nos services n'en verrait qu'un ; l'autre disparaîtrait en silence, soit le pire mode de panne, puisqu'il ressemble à « rien ne s'est passé ».
+
+D'où `OrderReconcilerService` : un passage périodique qui compare l'état amont au cache local. Les webhooks Fleetbase sont la bonne cible à l'échelle — ils supposent une URL joignable, une vérification de signature et un déploiement configuré, prérequis de mise en production et non de développement. Le journal de notifications qu'alimente le scrutateur ne changera pas quand la source deviendra un webhook.
+
+**Ce que le scrutateur corrige au passage.** `Order.status` était figé à sa valeur de création, jamais resynchronisé — il ne décrivait pas une commande mais l'instant de sa création. Le tenir à jour en fait la mémoire qu'il prétendait être, et **c'est de cette mémoire que viennent les transitions** : sans un « avant », il n'y a pas d'évènement, seulement un état.
+
+**Deux corrections de vocabulaire s'imposaient d'un coup.** La création écrivait `'pending'`, un statut qui n'appartient pas au vocabulaire de Fleetbase ; l'annulation écrivait `'cancelled'` là où Fleetbase dit `'canceled'`. Tant que personne ne comparait cette colonne à l'amont, l'écart était invisible. Dès qu'on la compare, il produit une transition fantôme à chaque passage — donc une notification d'annulation en boucle.
+
+**La mémorisation vient après les notifications.** Si l'écriture échoue, le passage suivant reverra la même transition et renotifiera : un doublon visible, préférable à un évènement perdu, qui ne se rattrape jamais.
+
+**Une commande absente de Fleetbase n'est pas conclue terminée.** Un appel manqué la ferait disparaître définitivement du suivi. On passe.
+
+### 14.5 Le journal est la source de vérité, le push ne serait qu'un accélérateur
+
+Un push est un message sans accusé de réception utile : téléphone éteint, jeton périmé après réinstallation, notification balayée sans être lue. S'il était le seul support, l'information disparaîtrait avec lui — et c'est précisément celle qu'un commerçant vient chercher en rouvrant l'application.
+
+⚠️ **L'envoi push n'est pas branché**, et ce n'est pas un oubli. Le commerçant n'est volontairement pas un `User` Fleetbase (`docs/specs_bff.md`), donc le push natif de Fleetbase, qui route par `UserDevice`, ne peut pas l'atteindre ; et aucun credential serveur Firebase n'est configuré dans ce déploiement. Les jetons d'appareil sont bien collectés (`DeviceToken`, endpoint existant) : **il ne manque que l'expéditeur.** L'application relève donc le journal par interrogation, et la pastille de l'écran d'accueil est aujourd'hui le seul signal.
+
+**Le compte de non-lues vient du serveur**, pas d'un `where(...).length` local : la liste est plafonnée, et compter sur une liste tronquée donnerait une pastille fausse dès qu'un commerçant accumule des évènements.
+
+**Cinq types, pas plus.** Une notification qui n'appelle aucune décision est du bruit, et le bruit fait désactiver les notifications — après quoi les trois qui comptaient ne passent plus non plus. Les états intermédiaires du dispatch (`dispatched`, `enroute`) sont délibérément exclus : ils changent souvent, n'appellent aucune action, et le suivi de la commande les montre déjà à qui les cherche.
+
+**Deux notifications ne passent pas par le scrutateur** et sont émises directement, parce qu'aucun changement d'état Fleetbase ne les trahirait : l'échec de livraison (pas de statut « failed » natif confirmé, §6.5) et le désistement d'un favori.
+
+### 14.6 Défauts trouvés en chemin
+
+- **`_firstItemDescription` n'existait pas.** Appelée par `MerchantOrder.fromJson`, jamais définie : l'application ne compilait pas. Introduite la veille en ajoutant l'affichage du contenu du colis, invisible faute de toolchain Flutter ici — et confirmée par le `flutter analyze` de l'utilisateur pendant cette session.
+- **`'Order #$widget.orderId'`** interpolait l'objet `widget` puis affichait « .orderId » en littéral. L'écran de signalement montrait donc le nom de la classe suivi d'un fragment de code. Accolades ajoutées, libellé passé en français au passage (le reste de cet écran est encore en anglais — reste à faire).
+- **`RadioListTile` évité.** Le couple `groupValue`/`onChanged` est déprécié depuis Flutter 3.32 au profit de `RadioGroup`. Des `ListTile` sélectionnables font le même travail sans pari sur la version installée — la leçon de la veille sur `initialValue` : une précaution prise sans vérifier le fait qu'elle suppose est un pari.
+- **`Color.withValues` retiré.** Il exige Flutter 3.27 alors que le pubspec déclare `>=3.20`. La couleur de l'icône portait déjà la distinction ; la pastille teintée n'apportait rien qui justifie une contrainte de version.
+
+### 14.7 État de vérification
+
+BFF : `tsc --noEmit` passe. **Le client Prisma n'a pas pu être régénéré** — le proxy sortant bloque `binaries.prisma.sh` en 403, même avec `PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1`. Les trois nouveaux modèles sont donc typés `any` à la compilation ici : la vérification de types sur `OrderDecline`, `MerchantNotification` et les colonnes ajoutées à `Order` reste à faire côté utilisateur, après `prisma generate`.
+
+App : **jamais compilée** (pas de toolchain Flutter dans ce bac à sable). `flutter analyze` reste la vérification manquante.
+
+⚠️ **Prérequis** : `npm run prisma:migrate` (deux modèles, quatre colonnes sur `Order`), puis `prisma generate`. Nouvelles variables d'environnement facultatives : `RECONCILER_ENABLED`, `RECONCILER_INTERVAL_MS`.

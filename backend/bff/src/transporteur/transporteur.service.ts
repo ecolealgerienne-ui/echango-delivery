@@ -5,8 +5,10 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { projectOrderForDriver } from '../common/projections/order.projection';
 import {
@@ -14,6 +16,7 @@ import {
   ToggleOnlineDto,
   UpdateActivityDto,
   ReportDeliveryFailureDto,
+  DeclineOrderDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
 } from './dto/transporteur.dto';
@@ -26,6 +29,8 @@ export class TransporteurService {
     private readonly prisma: PrismaService,
     private readonly fleetbaseClient: FleetbaseApiClient,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -437,11 +442,25 @@ export class TransporteurService {
       return required < 0 || required <= mine;
     };
 
+    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
+    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
+    // reviendrait au rafraîchissement suivant, et l'écran serait
+    // indiscernable d'une fonctionnalité en panne.
+    const declined = new Set(
+      (
+        await this.prisma.orderDecline.findMany({
+          where: { driverId: driver.id },
+          select: { fleetbaseOrderUuid: true },
+        })
+      ).map((d: any) => d.fleetbaseOrderUuid),
+    );
+
     const adhoc = orders.filter(
       (o) =>
         o?.adhoc === true &&
         !o?.driver_assigned_uuid &&
         o?.status !== 'canceled' &&
+        !declined.has(o?.uuid) &&
         suits(o),
     );
 
@@ -507,6 +526,155 @@ export class TransporteurService {
 
     const [withFailure] = await this.attachFailures(driver.id, [order]);
     return withFailure;
+  }
+
+  /**
+   * Refuse une course, avec un motif.
+   *
+   * ── Deux effets, selon d'où vient la course ────────────────────────────────
+   *
+   * **Diffusée et non réclamée** : elle disparaît de la liste de ce
+   * transporteur, et de lui seul. Rien ne change pour les autres, ni pour le
+   * commerçant — refuser une proposition n'est pas un évènement.
+   *
+   * **Assignée à lui** (favori sollicité en premier) : elle est détachée et
+   * remise en diffusion, et le commerçant est prévenu. Sans ce chemin, une
+   * course confiée à un favori indisponible restait bloquée jusqu'à
+   * intervention manuelle — la limite explicitement signalée par
+   * `pickAvailableFavourite()`. Le refus ne la lève pas entièrement (un favori
+   * qui ignore la course sans rien dire la bloque toujours), mais il traite le
+   * cas où le transporteur, lui, sait qu'il ne la prendra pas.
+   *
+   * ── Ce qui n'est pas refusable ─────────────────────────────────────────────
+   *
+   * Une course déjà démarrée. À ce stade le transporteur est engagé, souvent en
+   * route : la sortie est le signalement d'échec (`/echec`), qui laisse une
+   * trace et une preuve. Rendre une course en cours par un simple refus
+   * effacerait cette obligation.
+   */
+  async declineOrder(driverId: string, orderId: string, dto: DeclineOrderDto) {
+    const driver = await this.getDriverOrFail(driverId);
+    const order = await this.resolveOrder(orderId);
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
+    const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
+
+    if (!mine && !claimableAdhoc) {
+      this.audit.denied({
+        actorType: 'transporteur',
+        actorId: driverId,
+        action: 'order.decline',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
+      });
+      throw new NotFoundException('Order not found');
+    }
+
+    if (mine && !['created', 'dispatched'].includes(order?.status)) {
+      throw new BadRequestException(
+        'Cette course est déjà démarrée : signalez un échec de livraison plutôt que de la refuser.',
+      );
+    }
+
+    // Le détachement AVANT l'enregistrement : si Fleetbase refuse, la course
+    // reste assignée, et prétendre l'avoir refusée serait un mensonge visible
+    // à l'écran suivant. On échoue bruyamment plutôt que d'enregistrer un
+    // refus sans effet.
+    if (mine) {
+      try {
+        await this.fleetbaseClient.releaseOrderToPool(
+          order.uuid,
+          this.adhocRadiusMetres(),
+        );
+      } catch (error: any) {
+        this.logger.error(`Remise au pool impossible (${orderId}) : ${error.message}`);
+        throw new BadRequestException(
+          error.response?.data?.errors?.[0] ||
+            "Impossible de rendre cette course pour l'instant",
+        );
+      }
+    }
+
+    // Entrées tarifaires copiées, pas référencées : c'est l'appariement « ce
+    // qui était offert » / « refusé pour tel motif » qui a de la valeur, et il
+    // disparaît dès que la commande change ou est supprimée.
+    const meta = order?.meta ?? {};
+
+    const decline = await this.prisma.orderDecline.upsert({
+      where: {
+        driverId_fleetbaseOrderUuid: {
+          driverId: driver.id,
+          fleetbaseOrderUuid: order.uuid,
+        },
+      },
+      create: {
+        driverId: driver.id,
+        fleetbaseOrderUuid: order.uuid,
+        reason: dto.reason,
+        notes: dto.notes,
+        wasAssigned: mine,
+        pricingInputs: meta.pricing_inputs ?? undefined,
+        offeredPrice: typeof meta.price === 'number' ? meta.price : undefined,
+        currency: typeof meta.currency === 'string' ? meta.currency : undefined,
+      },
+      update: { reason: dto.reason, notes: dto.notes, declinedAt: new Date() },
+    });
+
+    if (mine) {
+      // Le cache est aligné AVANT de notifier, et c'est ce qui évite un
+      // doublon : le réconciliateur détecte le désistement en comparant le
+      // transporteur assigné qu'il a mémorisé à celui de Fleetbase. Laisser
+      // l'ancien en place lui ferait voir la même transition au passage
+      // suivant, et le commerçant recevrait deux fois le même message — une
+      // fois d'ici, une fois de là.
+      //
+      // `updateMany` et non `update` : la commande peut ne pas être dans le
+      // cache (créée depuis la console par un opérateur), auquel cas il n'y a
+      // rien à aligner et rien à signaler.
+      await this.prisma.order
+        .updateMany({
+          where: { fleetbaseOrderId: order.uuid },
+          data: { driverAssignedUuid: null, driverName: null },
+        })
+        .catch((error: any) =>
+          this.logger.warn(`Cache non aligné après refus (${orderId}) : ${error.message}`),
+        );
+
+      await this.notifications.notifyOrderOwner(order.uuid, {
+        type: 'order.released',
+        title: 'Transporteur désisté',
+        body: 'Votre livraison a été proposée à nouveau aux transporteurs du réseau.',
+      });
+    }
+
+    this.logger.log(
+      `Course ${orderId} refusée par ${driverId} (${dto.reason}${mine ? ', remise au pool' : ''})`,
+    );
+
+    return {
+      id: decline.id,
+      reason: decline.reason,
+      /** La course est-elle repartie au réseau, ou seulement masquée ? */
+      releasedToPool: mine,
+    };
+  }
+
+  /**
+   * Rayon de rediffusion d'une course rendue.
+   *
+   * Même valeur que celle appliquée à la création (`CommerçantService`) : une
+   * course rendue doit être proposée exactement comme elle l'aurait été si le
+   * favori n'avait pas été sollicité, sans quoi le refus changerait
+   * silencieusement sa portée.
+   */
+  private adhocRadiusMetres(): number {
+    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
+    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
   }
 
   /**
@@ -739,6 +907,17 @@ export class TransporteurService {
     });
 
     this.logger.log(`Delivery failure reported: order ${orderId}, reason ${dto.reason}`);
+
+    // Le commerçant est prévenu tout de suite, sans attendre le
+    // réconciliateur : un échec de livraison ne change pas le statut Fleetbase
+    // de la commande (§6.5 — pas de statut « failed » natif confirmé), donc
+    // rien d'observable ne le trahirait. C'est aussi la notification la plus
+    // urgente des cinq : c'est la seule qui demande au commerçant d'agir.
+    await this.notifications.notifyOrderOwner(order.uuid || orderId, {
+      type: 'order.failed',
+      title: 'Échec de livraison',
+      body: `Le transporteur n'a pas pu livrer : ${dto.reason.replace(/_/g, ' ')}.`,
+    });
 
     return {
       id: failure.id,

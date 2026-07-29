@@ -160,6 +160,58 @@ class OrderState extends ChangeNotifier {
         'Impossible de démarrer cette livraison',
       );
 
+  /// Refus de la dernière course écartée : la course est-elle repartie au
+  /// réseau, ou seulement masquée pour ce transporteur ?
+  ///
+  /// Distinction visible à l'écran : rendre une course assignée engage le
+  /// commerçant, écarter une proposition n'engage personne. Confondre les deux
+  /// ferait hésiter à refuser — ou refuser sans mesurer.
+  bool? _lastDeclineReleasedToPool;
+  bool? get lastDeclineReleasedToPool => _lastDeclineReleasedToPool;
+
+  /// Refuse une course, avec un motif.
+  ///
+  /// Le rechargement qui suit fait disparaître la course de la liste : c'est
+  /// le seul retour visible d'un refus sur une opportunité diffusée, et sans
+  /// lui l'action serait indiscernable d'une panne.
+  Future<bool> declineOrder({
+    required String orderId,
+    required String reason,
+    String? notes,
+  }) async {
+    _lastDeclineReleasedToPool = null;
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await _apiClient.declineOrder(
+        orderId,
+        reason: reason,
+        notes: notes,
+      );
+      _lastDeclineReleasedToPool = response['releasedToPool'] == true;
+
+      // Les transitions disparaissent — la course n'est plus au transporteur —
+      // mais la fiche reste affichée le temps que l'écran se retire de
+      // lui-même. La vider ici ferait clignoter « Commande introuvable »
+      // pendant la trame qui précède le retour à la liste. Le nettoyage
+      // définitif est fait par `clearSelection()` au retour.
+      _nextActivities = [];
+      await loadOrders();
+      return true;
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      return false;
+    } catch (e) {
+      _errorMessage = 'Impossible de refuser cette course';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Envoie une preuve de livraison, sans appliquer de transition.
   ///
   /// Séparé de [completeOrder] parce que le serveur exige une preuve sur des

@@ -6,6 +6,7 @@ import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
+import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
 import '../screens/flotte/flotte_placeholder_screen.dart';
 import '../screens/splash_screen.dart';
@@ -80,9 +81,17 @@ GoRouter buildAppRouter(AuthState authState) {
         path: '/commercant',
         builder: (_, __) => const OrdersScreen(),
         routes: [
+          // `extra` porte le modèle d'une commande reprise, quand il y en a un.
+          // Passé par l'objet et non par l'URL : ce sont des données de
+          // formulaire, parfois nominatives, qui n'ont rien à faire dans une
+          // adresse — laquelle est journalisée, partagée et remise en cache.
           GoRoute(
             path: 'nouvelle',
-            builder: (_, __) => const CreateOrderScreen(),
+            builder: (_, s) => CreateOrderScreen(
+              template: s.extra is Map<String, dynamic>
+                  ? s.extra as Map<String, dynamic>
+                  : null,
+            ),
           ),
           GoRoute(
             path: 'adresses',
@@ -91,6 +100,10 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'transporteurs',
             builder: (_, __) => const FavouriteDriversScreen(),
+          ),
+          GoRoute(
+            path: 'notifications',
+            builder: (_, __) => const NotificationsScreen(),
           ),
           GoRoute(
             path: 'commandes/:id',

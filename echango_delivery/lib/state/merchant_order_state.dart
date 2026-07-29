@@ -111,6 +111,87 @@ class MerchantOrderState extends ChangeNotifier {
     _tracking = null;
   }
 
+  /// Champs à reprendre pour recommencer une livraison identique.
+  ///
+  /// Renvoie `null` en cas d'échec plutôt que de lever : l'appelant ouvre alors
+  /// le formulaire vide plutôt que rien du tout. Une duplication qui échoue
+  /// doit dégrader vers la création manuelle, pas vers une impasse.
+  Future<Map<String, dynamic>?> loadOrderTemplate(String id) async {
+    try {
+      return await _apiClient.getMerchantOrderTemplate(id);
+    } on AppException catch (e) {
+      _errorMessage = e.message;
+      notifyListeners();
+      return null;
+    } catch (_) {
+      _errorMessage = 'Impossible de reprendre cette commande';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  // ── Notifications ────────────────────────────────────────────────────────
+
+  List<MerchantNotification> _notifications = [];
+  int _unreadNotifications = 0;
+
+  List<MerchantNotification> get notifications => _notifications;
+
+  /// Compté par le serveur, pas dérivé de [notifications] : la liste est
+  /// plafonnée côté serveur, et la compter ici donnerait une pastille fausse
+  /// dès qu'un commerçant accumule les évènements.
+  int get unreadNotifications => _unreadNotifications;
+
+  /// Relève le journal. Silencieux en cas d'échec : les notifications sont un
+  /// complément, et une erreur réseau ne doit pas masquer la liste des
+  /// commandes, qui est la raison d'être de l'écran.
+  Future<void> loadNotifications() async {
+    try {
+      final result = await _apiClient.getNotifications();
+      _notifications = result.items;
+      _unreadNotifications = result.unread;
+      notifyListeners();
+    } catch (_) {
+      // On garde ce qu'on avait.
+    }
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    // Marquage local immédiat : le compte de non-lues est l'unique retour
+    // visible du geste, et l'attendre du réseau donnerait l'impression que le
+    // tapotement n'a pas été pris en compte.
+    final index = _notifications.indexWhere((n) => n.id == id);
+    if (index >= 0 && !_notifications[index].read) {
+      final n = _notifications[index];
+      _notifications[index] = MerchantNotification(
+        id: n.id,
+        type: n.type,
+        title: n.title,
+        body: n.body,
+        orderId: n.orderId,
+        read: true,
+        createdAt: n.createdAt,
+      );
+      if (_unreadNotifications > 0) _unreadNotifications--;
+      notifyListeners();
+    }
+
+    try {
+      await _apiClient.markNotificationRead(id);
+    } catch (_) {
+      // L'écart local/serveur se résorbe au prochain relevé.
+    }
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    try {
+      await _apiClient.markAllNotificationsRead();
+      await loadNotifications();
+    } catch (_) {
+      // Idem.
+    }
+  }
+
   Future<bool> createOrder(Map<String, dynamic> body) async {
     _isLoading = true;
     _errorMessage = null;
