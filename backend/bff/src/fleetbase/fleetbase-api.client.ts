@@ -186,18 +186,68 @@ export class FleetbaseApiClient {
   /**
    * Create a Fleetbase Vendor for a merchant
    */
-  async createVendor(name: string, email: string, phone?: string) {
+  /**
+   * Crée un Vendor.
+   *
+   * ⚠️ `status` doit être transmis explicitement quand on ne veut PAS `active`.
+   * Le modèle Fleetbase applique `$this->attributes['status'] = $status ?? 'active'`
+   * — un vendor créé sans statut est donc **actif d'emblée**, ce qui rendrait
+   * toute validation par un admin purement décorative.
+   *
+   * Le vocabulaire est celui de la console, et lui seul : `active`, `inactive`,
+   * `suspended`. Le modèle accepte une chaîne libre, mais une valeur hors liste
+   * s'afficherait vide dans le formulaire — un admin verrait un champ à
+   * remplir sans savoir ce qu'il efface.
+   */
+  async createVendor(
+    name: string,
+    email: string,
+    phone?: string,
+    status?: 'active' | 'inactive' | 'suspended',
+  ) {
     try {
       const response = await this.callFleetOps('POST', '/vendors', {
         name,
         email,
         phone,
+        ...(status ? { status } : {}),
       });
       return response.data;
     } catch (error) {
       this.logger.error(`Vendor creation failed: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Un Vendor par son uuid, ou `null`.
+   *
+   * ⚠️ **`GET /vendors/{uuid}` ignore son paramètre de chemin** et renvoie la
+   * collection complète (journal §2.13, constaté par test réel). Contrairement
+   * à `/drivers/{uuid}`, vérifié bon depuis. Cette méthode encaisse donc les
+   * deux comportements : elle cherche l'uuid demandé dans ce qui revient, que
+   * ce soit un objet unique ou une liste.
+   *
+   * L'uuid renvoyé est comparé au demandé dans les deux cas — sans quoi la
+   * variante « liste » rendrait le premier vendor venu, et le statut d'un
+   * commerçant serait lu sur celui de quelqu'un d'autre.
+   */
+  async getVendorByUuid(vendorUuid: string): Promise<any | null> {
+    let data: any;
+    try {
+      data = (await this.callFleetOps('GET', `/vendors/${encodeURIComponent(vendorUuid)}`)).data;
+    } catch (error: any) {
+      if (error.response?.status === 404) return null;
+      this.logger.error(`Lecture du vendor ${vendorUuid} échouée : ${error.message}`);
+      throw error;
+    }
+
+    const single = data?.vendor ?? (data?.uuid ? data : null);
+    if (single) return single.uuid === vendorUuid ? single : null;
+
+    return (
+      this.extractCollection(data, 'vendors').find((v: any) => v?.uuid === vendorUuid) ?? null
+    );
   }
 
   /**

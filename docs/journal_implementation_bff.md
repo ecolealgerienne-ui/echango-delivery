@@ -2301,3 +2301,124 @@ Le plan faisait passer le Lot 5 avant le Lot 3, au motif que c'est lui qui libè
 `status`. Le report inverse les deux, et ça tombe bien : le Lot 3 n'a retiré que
 les colonnes dont il pouvait se passer seul. `status` et `driverAssignedUuid`
 sont restées exactement pour la raison prévue.
+
+---
+
+## 26. Lot 4 — la validation du commerçant, et le défaut qui l'aurait vidée (29/07/2026)
+
+### 26.1 Ce que la console a répondu
+
+**Fleet-Ops → Fournisseurs → Modifier → Statut** : liste déroulante à **trois
+valeurs**, avec leurs descriptions Fleetbase —
+
+| Valeur | Description |
+|---|---|
+| `active` | *Vendor is active and available* |
+| `inactive` | *Vendor is inactive or on hold* |
+| `suspended` | *Vendor is temporarily suspended* |
+
+Modifiable, donc le porteur est bien là. **Pas de `pending`** : le modèle accepte
+une chaîne libre, mais une quatrième valeur s'afficherait comme un champ vide
+dans ce formulaire — un admin verrait un statut à remplir sans savoir ce qu'il
+écrase. On reste dans leur vocabulaire, et `inactive` porte l'attente.
+
+**IAM → Customers** : les commerçants y sont, en rôle *Fleet-Ops Customer*, avec
+un statut `Pending` pour la plupart. C'est celui du `User` Fleetbase, lié à
+l'activation d'un compte de connexion — que nos commerçants n'ont
+délibérément pas (Option A). Ce statut ne bouge donc jamais, et **s'en servir
+aurait été un garde-fou branché sur une valeur figée**. Le `Vendor` est le bon
+porteur.
+
+### 26.2 Le défaut trouvé avant d'écrire la moindre ligne
+
+Le modèle `Vendor` applique :
+
+```php
+$this->attributes['status'] = $status ?? 'active';
+```
+
+Et `createVendor()` n'envoyait que `name`, `email`, `phone`.
+
+**Chaque commerçant naissait donc validé.** La fonctionnalité aurait été livrée,
+testée « je m'inscris, je me connecte, ça marche », et n'aurait rien empêché —
+le pire genre de garde-fou, celui qui rassure sans protéger. Trouvé en lisant le
+modèle amont avant d'implémenter, pas après.
+
+### 26.3 L'inscription ne délivre plus de jeton
+
+C'était le second trou, et le plus gros : `registerMerchant()` renvoyait un JWT.
+Un nouveau commerçant entrait donc immédiatement, quel que soit le statut de son
+`Vendor`, et le garde de connexion n'aurait servi qu'à sa *deuxième* visite.
+
+L'inscription enregistre désormais une **demande** : les trois objets sont créés,
+aucun jeton n'est émis, et la réponse est un refus explicite.
+
+⚠️ **Le refus est levé hors du `try`**, et ce n'est pas un détail de style. À
+l'intérieur, il aurait été attrapé par le filet d'erreur qui appelle
+`rollbackVendor()` — donc **supprimé le commerçant qu'on venait d'enregistrer**.
+La compensation ne doit défaire que les échecs, jamais un succès qui se termine
+par un refus d'entrer.
+
+### 26.4 Deux messages qui se contredisaient
+
+Une seconde tentative d'inscription avec le même email répondait « Email already
+registered » après un premier « compte en cours de validation ». Deux messages
+sur le même fait, dont aucun ne dit quoi faire. Le contrôle d'unicité vérifie
+maintenant l'approbation d'abord et répète le premier message.
+
+### 26.5 Message explicite, contrairement à tous les autres refus
+
+Tous les échecs de connexion partagent `INVALID_CREDENTIALS`, pour ne pas révéler
+qu'un compte existe. Ce refus-ci fait exception, et c'est raisonné : **l'appelant
+vient de prouver qu'il connaît le mot de passe**, il n'y a plus rien à lui
+cacher. Lui répondre « identifiants invalides » l'enverrait réinitialiser un mot
+de passe parfaitement bon.
+
+### 26.6 Fleetbase injoignable : on laisse passer
+
+Refuser serait plus strict et plus faux — une coupure réseau déconnecterait
+**tous** les commerçants, y compris ceux validés depuis des mois, et l'incident
+ressemblerait à une panne d'authentification, la plus pénible à diagnostiquer.
+
+Le risque accepté est étroit : un commerçant non validé pourrait entrer pendant
+une indisponibilité de Fleetbase. Il n'y verrait presque rien, puisque tout ce
+qui l'intéresse vient de Fleetbase, justement indisponible. **Ce garde protège
+d'un abus à l'inscription, pas d'un accès aux données d'autrui** — celui-là est
+assuré ailleurs, et sans dépendance réseau.
+
+Même raisonnement pour un `Vendor` introuvable : on journalise et on laisse
+passer, plutôt que de priver quelqu'un de son compte parce qu'un enregistrement
+a disparu côté Fleetbase.
+
+### 26.7 Aucun écran Flutter modifié — le lot n'en avait pas besoin
+
+Le plan annonçait « seul écran ajouté du chantier ». Il n'y en a aucun.
+
+La chaîne existait déjà : `_parseResponse` extrait `code` et `message` de toute
+réponse non-2xx, `_run` place le message dans `errorMessage`, et les écrans de
+connexion et d'inscription l'affichent. Le commerçant lit donc « Votre demande a
+bien été enregistrée… » à l'endroit exact où il l'attend.
+
+L'invariant « on ne touche pas aux écrans » est tenu intégralement.
+
+### 26.8 Conséquence sur les scripts de test
+
+`scripts/test-commercant-module.sh` inscrit un commerçant puis utilise le jeton
+renvoyé. **Il ne peut plus fonctionner d'un trait** : il faut désormais activer
+le `Vendor` dans la console entre l'inscription et la connexion.
+
+C'est le coût assumé de la fonctionnalité. L'alternative — un drapeau
+d'environnement désactivant la validation — serait un interrupteur capable
+d'éteindre un contrôle de sécurité, et ce genre d'interrupteur finit en
+production.
+
+### 26.9 Non vérifié
+
+Aucun test réel : `tsc`, `npm run build` et le chargement du module racine
+passent, mais la lecture de `Vendor.status` par `GET /vendors/{uuid}` **repose
+sur une méthode tolérante et non sur une observation**. §2.13 a montré que cet
+endpoint renvoie la collection entière ; `getVendorByUuid()` encaisse les deux
+formes et compare l'uuid, mais laquelle des deux se produit reste inconnue.
+
+Premier scénario à jouer : inscrire un commerçant, tenter de se connecter
+(refus attendu), passer le `Vendor` à `active` dans la console, réessayer.

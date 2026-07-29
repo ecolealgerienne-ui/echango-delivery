@@ -1,4 +1,11 @@
-import { Injectable, BadRequestException, UnauthorizedException, Logger, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+  Logger,
+  ConflictException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -60,6 +67,12 @@ export class AuthService {
     });
 
     if (existing) {
+      // Une seconde tentative après une inscription en attente doit dire la
+      // même chose que la première. Sans ce contrôle, le commerçant lisait
+      // « compte en cours de validation », réessayait, et s'entendait répondre
+      // « email déjà utilisé » — deux messages qui se contredisent sur le même
+      // fait, et dont aucun ne dit quoi faire.
+      await this.assertMerchantApproved(existing.fleetbaseVendorUuid);
       throw new ConflictException('Email already registered');
     }
 
@@ -73,10 +86,20 @@ export class AuthService {
     try {
       // 1. Create Vendor in Fleetbase
       this.logger.log(`Creating Vendor in Fleetbase for ${dto.businessName}`);
+      // `inactive` et non le défaut : sans ce paramètre, le modèle Fleetbase
+      // applique `$status ?? 'active'` et le commerçant serait validé à la
+      // seconde de son inscription. La validation par un admin deviendrait
+      // décorative — le pire des garde-fous, celui qui rassure sans protéger.
+      //
+      // `inactive` plutôt qu'un `pending` inventé : la console n'offre que
+      // trois valeurs (active / inactive / suspended), et une quatrième
+      // s'afficherait comme un champ vide dans son formulaire. Un admin verrait
+      // un statut à remplir sans savoir ce qu'il écrase.
       const vendorResponse = await this.fleetbaseClient.createVendor(
         dto.businessName,
         dto.email,
         dto.businessPhone,
+        'inactive',
       );
 
       const vendorUuid = vendorResponse.vendor?.uuid || vendorResponse.vendor?.id;
@@ -117,19 +140,9 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`Merchant registered: ${merchant.id}`);
-
-      // 4. Generate JWT token
-      const token = this.generateToken(merchant.id, merchant.email, 'merchant', merchant.tokenVersion);
-
-      return {
-        token,
-        user: {
-          id: merchant.id,
-          email: merchant.email,
-          businessName: merchant.businessName,
-        },
-      };
+      this.logger.log(
+        `Demande d'inscription enregistrée : ${merchant.id} (en attente de validation)`,
+      );
     } catch (error) {
       this.logger.error(`Merchant registration failed: ${error.message}`, error);
       await this.rollbackVendor(createdVendorUuid);
@@ -141,6 +154,23 @@ export class AuthService {
           : 'Failed to register merchant',
       );
     }
+
+    // ⚠️ HORS du `try`, et ce n'est pas un détail de style : levée à
+    // l'intérieur, cette exception serait attrapée par le filet ci-dessus, qui
+    // appellerait `rollbackVendor()` et **supprimerait le commerçant qu'on
+    // vient d'enregistrer**. La compensation ne doit défaire que les échecs,
+    // jamais un succès qui se termine par un refus d'entrer.
+    //
+    // L'inscription ne délivre plus de jeton : le compte existe, l'accès n'est
+    // pas encore ouvert. C'est exactement ce que « validation par un admin »
+    // veut dire — sans quoi le nouveau commerçant entrait aussitôt, et la
+    // validation ne portait sur rien.
+    throw new ForbiddenException({
+      code: 'merchant_pending',
+      message:
+        'Votre demande a bien été enregistrée. Un administrateur Echango doit la valider ' +
+        'avant votre première connexion.',
+    });
   }
 
   /**
@@ -169,6 +199,76 @@ export class AuthService {
           'À supprimer manuellement depuis la console Fleet-Ops.',
       );
     }
+  }
+
+  /**
+   * Refuse la connexion tant qu'un admin n'a pas validé le commerçant.
+   *
+   * ── Où vit la décision ──────────────────────────────────────────────────
+   *
+   * Sur `Vendor.status` chez Fleetbase, et nulle part ailleurs. L'admin la
+   * prend dans la console (Fleet-Ops → Fournisseurs → Statut), conformément à
+   * la décision d'architecture : Fleetbase fait autorité, le BFF lit. Aucune
+   * colonne locale ne recopie ce statut — ce serait précisément le miroir qu'on
+   * vient de passer la journée à retirer.
+   *
+   * ── Le choix qui compte : que faire quand Fleetbase ne répond pas ────────
+   *
+   * On laisse passer, et on le journalise.
+   *
+   * Refuser serait plus strict et plus faux : une coupure réseau
+   * déconnecterait **tous** les commerçants du réseau, y compris ceux validés
+   * depuis des mois, et l'incident ressemblerait à une panne d'authentification
+   * — la plus difficile à diagnostiquer sous pression.
+   *
+   * Le risque accepté est étroit : un commerçant non validé pourrait se
+   * connecter pendant une indisponibilité de Fleetbase. Il n'y verrait pas
+   * grand-chose, puisque toutes les données qui l'intéressent viennent de
+   * Fleetbase, justement indisponible. Ce garde protège d'un abus à
+   * l'inscription, pas d'un accès non autorisé aux données d'autrui — ce
+   * dernier est assuré ailleurs, et sans dépendance réseau.
+   */
+  private async assertMerchantApproved(vendorUuid: string): Promise<void> {
+    let vendor: any;
+    try {
+      vendor = await this.fleetbaseClient.getVendorByUuid(vendorUuid);
+    } catch (error: any) {
+      this.logger.warn(
+        `Statut du vendor ${vendorUuid} illisible (${error.message}) — connexion autorisée ` +
+          'par défaut : refuser déconnecterait aussi les commerçants déjà validés.',
+      );
+      return;
+    }
+
+    // Vendor introuvable : ne pas conclure d'une absence qu'il faut refuser.
+    // Un vendor supprimé à la main côté Fleetbase priverait le commerçant de
+    // son compte sans que personne ne l'ait décidé.
+    if (!vendor) {
+      this.logger.warn(
+        `Vendor ${vendorUuid} introuvable chez Fleetbase — connexion autorisée, mais ce ` +
+          'commerçant est orphelin et doit être rattaché ou supprimé.',
+      );
+      return;
+    }
+
+    if (vendor.status === 'active') return;
+
+    this.logger.log(
+      `Connexion refusée : vendor ${vendorUuid} au statut « ${vendor.status ?? 'non renseigné'} »`,
+    );
+
+    // Message explicite, et c'est délibéré alors que tous les autres refus de
+    // connexion partagent `INVALID_CREDENTIALS`. La raison de l'uniformité est
+    // de ne pas révéler qu'un compte existe ; ici l'appelant vient de prouver
+    // qu'il connaît le mot de passe, donc il n'y a plus rien à lui cacher. Lui
+    // renvoyer « identifiants invalides » l'enverrait réinitialiser un mot de
+    // passe parfaitement bon.
+    throw new ForbiddenException({
+      code: 'merchant_pending',
+      message:
+        'Votre compte est en cours de validation par Echango. Vous recevrez un accès dès ' +
+        "qu'il sera approuvé.",
+    });
   }
 
   /**
@@ -262,6 +362,8 @@ export class AuthService {
     if (!merchant.active) {
       throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
+
+    await this.assertMerchantApproved(merchant.fleetbaseVendorUuid);
 
     // Update last login
     await this.prisma.merchantAccount.update({
