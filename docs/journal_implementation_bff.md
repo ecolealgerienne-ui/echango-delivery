@@ -2422,3 +2422,54 @@ formes et compare l'uuid, mais laquelle des deux se produit reste inconnue.
 
 Premier scénario à jouer : inscrire un commerçant, tenter de se connecter
 (refus attendu), passer le `Vendor` à `active` dans la console, réessayer.
+
+---
+
+## 27. Le filtre d'exception mangeait les codes d'erreur (29/07/2026)
+
+Trouvé en lançant le script d'inscription : la réponse au refus ne contenait pas
+le `code` que `assertMerchantApproved()` y avait mis.
+
+```json
+{"statusCode":403,"timestamp":"…","path":"/auth/merchant/register",
+ "message":"Votre demande a bien été enregistrée. …"}
+```
+
+`HttpExceptionFilter` reconstruisait un objet à quatre champs — `statusCode`,
+`timestamp`, `path`, `message`, `error` — et **jetait tout le reste, en
+silence**. Une exception levée avec `{ code, message }` perdait donc son `code`
+en chemin.
+
+### 27.1 La conséquence dépasse le script
+
+Côté application, `_parseResponse` traite à part les seuls 401 et 404, puis lit
+`data['code'] ?? AppError.unknown`.
+
+**Toute autre erreur serveur arrivait donc en `unknown`.** La taxonomie de codes
+du client — `AppError`, ses constantes, les branches qui les testent — n'a jamais
+reçu autre chose à distinguer que ces deux statuts. Le mécanisme paraissait en
+place des deux côtés, et le maillon qui les relie n'a jamais rien transmis.
+
+Personne ne l'avait vu parce que **rien n'échouait** : le message, lui, passait
+bien, et c'est le message qui s'affiche à l'écran. Un dispositif inutilisé ne se
+signale pas.
+
+### 27.2 Le correctif est dans le filtre, pas dans l'exception
+
+`code` est relayé quand l'exception en porte un, et omis sinon.
+
+Le corriger à la source — poser le champ dans chaque exception — aurait marché
+pour celles qu'on pense à traiter. Le filtre est le seul endroit qui voit passer
+**toutes** les erreurs : un oubli y devient global au lieu d'être ponctuel, et
+c'est justement ce qu'on veut d'un contrat de réponse.
+
+Ajout purement additif : aucune réponse existante ne perd de champ, et un client
+qui ignore `code` continue de lire `message` comme avant.
+
+### 27.3 Le script reconnaît les deux formes, et le dit
+
+`is_pending()` teste le `code`, puis se rabat sur le message. Un `code` absent
+signifie « BFF antérieur à ce correctif », pas « mauvaise réponse » — le script
+l'affiche en avertissement et poursuit, au lieu d'échouer sans expliquer.
+
+Vérifié contre deux faux serveurs, l'un renvoyant `code`, l'autre pas.

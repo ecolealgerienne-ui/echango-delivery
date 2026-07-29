@@ -53,6 +53,24 @@ post() {
 code() { tail -n1 <<<"$1"; }
 body() { sed '$d' <<<"$1"; }
 
+# Reconnaît le refus « commerçant en attente ».
+#
+# Par `code` d'abord, c'est le contrat. Par le message ensuite : le filtre
+# d'exception du BFF a longtemps **jeté tout champ hors de sa liste**, donc un
+# `code` absent signifie « BFF antérieur au correctif », pas « mauvaise
+# réponse ». Le dire vaut mieux que d'échouer sans expliquer.
+is_pending() { # body
+  local c
+  c=$(jq -r '.code // empty' <<<"$1" 2>/dev/null)
+  if [ "$c" = "merchant_pending" ]; then return 0; fi
+  if grep -qi 'valider\|validation' <<<"$1"; then
+    echo "   ⚠️  refus reconnu au message : le champ 'code' est absent de la"
+    echo "      réponse. Le filtre d'exception du BFF ne le relaie pas encore."
+    return 0
+  fi
+  return 1
+}
+
 CREDS=$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')
 
 echo "════════════════════════════════════════════════════════════════"
@@ -72,9 +90,8 @@ REG=$(post /auth/merchant/register "$(jq -n \
 
 REG_CODE=$(code "$REG")
 REG_BODY=$(body "$REG")
-REG_ERR=$(jq -r '.code // empty' <<<"$REG_BODY" 2>/dev/null)
 
-if [ "$REG_CODE" = "403" ] && [ "$REG_ERR" = "merchant_pending" ]; then
+if [ "$REG_CODE" = "403" ] && is_pending "$REG_BODY"; then
   pass "demande enregistrée, accès refusé — c'est le comportement attendu"
   info "$(jq -r '.message' <<<"$REG_BODY")"
 elif [ -n "$(jq -r '.token // empty' <<<"$REG_BODY" 2>/dev/null)" ]; then
@@ -94,7 +111,7 @@ LOGIN1=$(post /auth/login "$CREDS")
 L1_CODE=$(code "$LOGIN1")
 L1_BODY=$(body "$LOGIN1")
 
-if [ "$L1_CODE" = "403" ] && [ "$(jq -r '.code // empty' <<<"$L1_BODY")" = "merchant_pending" ]; then
+if [ "$L1_CODE" = "403" ] && is_pending "$L1_BODY"; then
   pass "connexion refusée — le garde fonctionne"
   info "$(jq -r '.message' <<<"$L1_BODY")"
 elif [ -n "$(jq -r '.token // empty' <<<"$L1_BODY" 2>/dev/null)" ]; then
