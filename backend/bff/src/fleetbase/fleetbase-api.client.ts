@@ -364,14 +364,40 @@ export class FleetbaseApiClient {
   /**
    * Met à jour un lieu du carnet d'adresses.
    *
-   * ⚠️ `owner_uuid` n'est **jamais** renvoyé dans la charge : le transmettre
-   * permettrait, si un appelant oubliait le contrôle d'appartenance en amont,
-   * de faire changer un lieu de propriétaire. L'appartenance se vérifie avant,
-   * dans le service, contre la liste des lieux du commerçant.
+   * ⚠️ **Correction du 30/07/2026, par test réel** : `owner_uuid` était
+   * délibérément omis (voir l'historique git), au motif qu'un appelant qui
+   * oublierait le contrôle d'appartenance en amont ne devait pas pouvoir
+   * changer un lieu de propriétaire en le transmettant. Le raisonnement
+   * sécurité tenait, mais supposait à tort que `PUT /places/{uuid}` **fusionne**
+   * la charge avec l'existant. Un commerçant a modifié une adresse et l'a vue
+   * disparaître du carnet ensuite — même famille de piège que `meta`
+   * (`docs/architecture_bff_fleetbase.md`) : Fleetbase remplace l'objet
+   * entier, et un `owner_uuid` absent de la charge repart vide, désolidarisant
+   * le lieu du Vendor qui le filtre (`GET /places?owner_uuid=`).
+   *
+   * `ownerUuid` est réintroduit ici, mais reste sûr : l'appelant
+   * (`commercant.service.ts`) le prend sur le `place` déjà vérifié par
+   * `assertOwnsPlace`, jamais sur une valeur fournie par le client — la
+   * propriété de sécurité originale (ne jamais faire confiance à un
+   * `owner_uuid` non vérifié) est donc préservée, pas contournée.
+   *
+   * ⚠️ **Hypothèse, pas une certitude établie** : aucune instance Fleetbase
+   * n'est joignable depuis ce bac à sable pour confirmer que c'est bien
+   * l'absence d'`owner_uuid`, et non un autre champ silencieusement réinitialisé
+   * de la même façon, qui causait la disparition. À revalider par un nouveau
+   * test réel de modification d'adresse.
    */
   async updateOwnedPlace(
     placeUuid: string,
-    data: { name: string; latitude: number; longitude: number; address?: string; phone?: string; meta?: Record<string, any> },
+    data: {
+      name: string;
+      latitude: number;
+      longitude: number;
+      address?: string;
+      phone?: string;
+      meta?: Record<string, any>;
+      ownerUuid?: string;
+    },
   ) {
     const response = await this.callFleetOps('PUT', `/places/${this.seg(placeUuid)}`, {
       name: data.name,
@@ -382,6 +408,7 @@ export class FleetbaseApiClient {
       address: data.address,
       phone: data.phone,
       meta: data.meta,
+      ...(data.ownerUuid ? { owner_uuid: data.ownerUuid, owner_type: 'fleet-ops:vendor' } : {}),
     });
     return response.data;
   }

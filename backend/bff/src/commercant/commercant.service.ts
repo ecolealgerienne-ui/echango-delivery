@@ -1496,6 +1496,7 @@ export class CommerçantService {
           address: place.address,
           phone: place.phone,
           meta: { ...place.meta, is_default: false },
+          ownerUuid: vendorUuid,
         });
       }
     } catch (error: any) {
@@ -1547,6 +1548,7 @@ export class CommerçantService {
    * était d'accumuler des doublons.
    */
   async updateAddress(merchantId: string, placeId: string, dto: SaveAddressDto) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
     const place = await this.assertOwnsPlace(merchantId, placeId);
 
     try {
@@ -1562,10 +1564,16 @@ export class CommerçantService {
           notes: dto.notes,
           is_default: dto.isDefault === true,
         },
+        // Réintroduit après un bug réel : `PUT /places` remplace l'objet
+        // entier, un `owner_uuid` absent désolidarisait le lieu du carnet
+        // (voir le commentaire de `updateOwnedPlace`). Vient de `merchant`,
+        // jamais de `dto` — l'appartenance est déjà vérifiée par
+        // `assertOwnsPlace`, ce n'est pas une valeur cliente à laquelle faire
+        // confiance.
+        ownerUuid: merchant.fleetbaseVendorUuid,
       });
 
       if (dto.isDefault === true) {
-        const merchant = await this.getMerchantWithValidation(merchantId);
         await this.clearOtherDefaults(merchant.fleetbaseVendorUuid, place.uuid);
       }
 
