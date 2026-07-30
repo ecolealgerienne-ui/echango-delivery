@@ -23,11 +23,6 @@ class MerchantOrder extends Equatable {
   final String status;
   final String? trackingNumber;
   final bool dispatched;
-
-  /// Brouillon : créée sans dispatch, en attente d'être publiée. Dérivé côté
-  /// BFF (`is_draft`), jamais stocké — voir `commercant.service.ts`
-  /// `publishOrder`.
-  final bool isDraft;
   /// L'état Fleetbase n'a pas pu être récupéré : afficher « indisponible »
   /// plutôt qu'un statut faux.
   final bool degraded;
@@ -96,7 +91,6 @@ class MerchantOrder extends Equatable {
     required this.createdAt,
     this.trackingNumber,
     this.dispatched = false,
-    this.isDraft = false,
     this.degraded = false,
     this.pickup,
     this.dropoff,
@@ -120,10 +114,35 @@ class MerchantOrder extends Equatable {
   bool get isCancelled => status == 'canceled';
   bool get isFinished => isCompleted || isCancelled;
 
-  /// Une commande non dispatchée attend qu'un opérateur la diffuse : le
-  /// commerçant peut encore l'annuler sans conséquence.
-  bool get isWaitingDispatch => !dispatched && !isFinished;
+  /// Brouillon : enregistrée, pas encore publiée.
+  ///
+  /// **Déduit du seul statut Fleetbase**, jamais d'un drapeau que le BFF
+  /// aurait calculé et renvoyé à côté. Toute commande naît `created` chez
+  /// Fleetbase et n'en sort que par un dispatch réel — un second état
+  /// mémorisé quelque part finirait par diverger du premier, ce qui est
+  /// arrivé (commande `created` chez Fleetbase mais « déjà publiée » côté
+  /// app, donc plus republiable).
+  bool get isDraft => status == 'created';
+
+  /// Publiée, en attente qu'un transporteur la prenne.
+  bool get isWaitingDispatch => status == 'dispatched';
+
   bool get canCancel => !isFinished;
+
+  /// Libellé métier du statut, **seule** traduction de la langue Fleetbase
+  /// vers celle du commerçant.
+  ///
+  /// Les écrans lisent ce getter plutôt que de refaire leur propre table :
+  /// la fiche affichait `created` brut là où la liste affichait « En
+  /// attente », pour la même commande.
+  String get statusLabel => switch (status) {
+        'created' => 'Brouillon',
+        'dispatched' => 'Recherche transporteur',
+        'started' || 'enroute' => 'En cours',
+        'completed' => 'Livrée',
+        'canceled' || 'cancelled' => 'Annulée',
+        _ => status,
+      };
 
   /// ⚠️ Le BFF fusionne son cache local avec l'état Fleetbase : la réponse a
   /// donc la forme d'une commande Fleetbase, plus `bff_order_id`. Deux cas
@@ -147,7 +166,6 @@ class MerchantOrder extends Equatable {
       status: readStatus(json),
       trackingNumber: readTrackingNumber(json),
       dispatched: json['dispatched'] == true,
-      isDraft: json['is_draft'] == true,
       degraded: json['stale'] == true || json['missing'] == true,
       createdAt: readDate(json, 'created_at'),
       pickup: place('pickup'),
@@ -180,7 +198,7 @@ class MerchantOrder extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, publicId, status, dispatched, isDraft, createdAt];
+  List<Object?> get props => [id, publicId, status, dispatched, createdAt];
 }
 
 /// Résumé lisible du contenu du colis, à partir de `meta.items`.

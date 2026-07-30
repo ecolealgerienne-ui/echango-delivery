@@ -286,8 +286,10 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Libellés métier plutôt que les codes Fleetbase bruts : un commerçant
-    // n'a pas à savoir ce que signifie « enroute ».
+    // Le libellé vient de `MerchantOrder.statusLabel`, jamais d'une table
+    // recopiée ici : la fiche et la liste affichaient deux textes différents
+    // pour la même commande, faute d'une source commune. Seule la couleur
+    // reste locale — c'est de la présentation, pas du vocabulaire métier.
     if (order.degraded) {
       return const Chip(
         label: Text('État indisponible',
@@ -299,31 +301,21 @@ class _StatusChip extends StatelessWidget {
       );
     }
 
-    // Avant le statut : un brouillon partage le même `status` Fleetbase
-    // (« created ») qu'une commande déjà publiée et pas encore prise — sans
-    // ce cas à part, la puce afficherait « En attente », qui ferait croire
-    // qu'un transporteur est déjà sollicité.
-    if (order.isDraft) {
-      return const Chip(
-        label: Text('Brouillon', style: TextStyle(fontSize: 11, color: Colors.white)),
-        backgroundColor: Colors.blueGrey,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      );
-    }
-
-    final (label, color) = switch (order.status) {
-      'completed' => ('Livrée', Colors.green),
-      'canceled' => ('Annulée', Colors.grey),
-      'created' => ('En attente', Colors.orange),
-      'dispatched' => ('Recherche transporteur', Colors.blue),
-      'started' || 'enroute' => ('En cours', Colors.blue),
-      _ => (order.status, Colors.blueGrey),
+    final color = switch (order.status) {
+      'completed' => Colors.green,
+      'canceled' || 'cancelled' => Colors.grey,
+      // Gris-bleu comme « indisponible » : un brouillon n'est pas une
+      // livraison en cours, l'orange l'aurait fait passer pour une attente
+      // active alors que rien n'a démarré.
+      'created' => Colors.blueGrey,
+      'dispatched' => Colors.orange,
+      'started' || 'enroute' => Colors.blue,
+      _ => Colors.blueGrey,
     };
 
     return Chip(
-      label: Text(label, style: const TextStyle(fontSize: 11, color: Colors.white)),
+      label: Text(order.statusLabel,
+          style: const TextStyle(fontSize: 11, color: Colors.white)),
       backgroundColor: color,
       padding: EdgeInsets.zero,
       visualDensity: VisualDensity.compact,

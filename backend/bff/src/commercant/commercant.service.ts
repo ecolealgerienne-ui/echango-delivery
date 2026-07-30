@@ -1227,12 +1227,20 @@ export class CommerçantService {
       notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
     }
 
-    if (['completed', 'canceled', 'cancelled'].includes(live.status)) {
-      badRequest('order.already_terminal', `Commande déjà ${live.status}, publication impossible`);
-    }
-
-    if (live.adhoc === true || live.dispatched === true || live.driver_assigned_uuid) {
-      badRequest('order.already_published', 'Cette commande a déjà été publiée');
+    // Le statut Fleetbase, et lui seul.
+    //
+    // ⚠️ La version précédente regardait `adhoc`/`dispatched`/
+    // `driver_assigned_uuid` : une publication interrompue entre ses deux
+    // étapes (assignation faite, dispatch échoué) laissait la commande
+    // `created` chez Fleetbase mais « déjà publiée » pour ce garde — donc
+    // définitivement bloquée, sans aucun moyen de la relancer. Sur le statut,
+    // une publication ratée reste `created`, donc reste republiable : le
+    // réessai est possible précisément parce qu'on ne mémorise rien à côté.
+    if (live.status !== 'created') {
+      badRequest(
+        'order.already_published',
+        `Cette commande n'est plus un brouillon (statut : ${live.status}).`,
+      );
     }
 
     // ⚠️ Résolu AVANT le `try`, délibérément. Un `badRequest()` levé à

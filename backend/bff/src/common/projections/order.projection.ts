@@ -243,21 +243,19 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
 
   return {
     ...pick(order, ORDER_FIELDS),
-    // Brouillon (30/07/2026) : dérivé, jamais stocké — Fleetbase n'a pas de
-    // statut « draft », donc l'absence de dispatch (ni adhoc, ni transporteur
-    // assigné, ni passage par `dispatched`) EST le brouillon. `dispatched` est
-    // le signal le plus direct : capture réseau de la console (30/07/2026), une
-    // commande qui reste « Created » y porte `dispatched: false` explicite, et
-    // l'activité « Order Dispatched » n'apparaît que sur celles qui ne le sont
-    // plus. `driver_assigned_uuid` est lu directement sur `order` : il n'est
-    // pas dans `ORDER_FIELDS` (le commerçant ne voit que `driver_assigned`,
-    // jamais l'identifiant Fleetbase brut), mais rien n'empêche de le LIRE ici
-    // pour une décision purement interne à la projection.
-    is_draft:
-      order.adhoc !== true &&
-      order.dispatched !== true &&
-      !order.driver_assigned_uuid &&
-      !['completed', 'canceled', 'cancelled'].includes(order.status),
+    // ⚠️ **Aucun `is_draft` ici, délibérément.** Une version précédente
+    // projetait ce drapeau, dérivé de trois colonnes à la fois (`adhoc`,
+    // `dispatched`, `driver_assigned_uuid`) : c'était un second état, parallèle
+    // au statut Fleetbase, et il a immédiatement divergé — une publication dont
+    // la première étape réussit (`adhoc = true`) et la seconde échoue laissait
+    // une commande **encore `created` chez Fleetbase** mais « déjà publiée »
+    // selon cette dérivation, donc ni republiable, ni affichée pareil d'un
+    // écran à l'autre.
+    //
+    // Le statut Fleetbase fait foi (règle projet,
+    // `docs/architecture_bff_fleetbase.md`) : il est déjà dans `ORDER_FIELDS`,
+    // l'application en déduit ce qu'elle a besoin d'afficher. Un état de plus
+    // ici, c'est un état de plus à garder synchronisé pour toujours.
     meta: projectMeta(order.meta),
     payload: payload
       ? {

@@ -161,7 +161,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                Text(order.status),
+                                // Le libellé, pas le code Fleetbase brut :
+                                // cet écran affichait « created » quand la
+                                // liste affichait « En attente », pour la
+                                // même commande.
+                                Text(order.statusLabel),
                               ],
                             ),
                             if (order.trackingNumber != null) ...[
