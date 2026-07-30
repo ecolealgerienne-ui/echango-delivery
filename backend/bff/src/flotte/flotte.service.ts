@@ -1,15 +1,16 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+import {
+  projectOrderForFleet,
+  projectDriverForFleet,
+} from '../common/projections/order.projection';
+import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 
 @Injectable()
 export class FlotteService {
@@ -19,22 +20,30 @@ export class FlotteService {
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
+    private audit: AuditService,
   ) {}
 
   /**
    * List orders belonging to this fleet's Vendor.
    *
-   * Fleetbase's `facilitator_uuid` query filter on GET /orders is silently
-   * ignored server-side (confirmed by direct testing, see
-   * docs/journal_implementation_bff.md §2.8) - it returns the full
-   * company-wide dataset regardless of the value passed. We therefore fetch
-   * everything and filter/paginate in memory; the query param is never sent.
+   * Le filtrage est demandé à Fleetbase depuis le 29/07/2026 (`?facilitator=`,
+   * vérifié par appel réel — 2 commandes sur 29 renvoyées, 0 pour un uuid
+   * inventé). L'ancienne version rapatriait toute la compagnie pour n'en garder
+   * que celles-ci.
+   *
+   * ⚠️ **Le contrôle en mémoire qui suit est conservé, et doit l'être.** Il ne
+   * fait pas doublon avec le filtre serveur : le filtre sert à ne pas
+   * télécharger la compagnie, la vérification sert à décider qui a le droit de
+   * voir. Un paramètre d'URL exprime une demande, pas une garantie — et comme
+   * Fleetbase abandonne en silence un filtre qu'il ne reconnaît pas, une
+   * régression de nom rendrait le filtre inopérant **sans aucun signal**. Ici,
+   * elle produirait une liste vide plutôt qu'une fuite.
    */
   async getOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const allOrders = await this.fetchAllOrders();
+      const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
 
       let owned = allOrders.filter(
         (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
@@ -50,7 +59,9 @@ export class FlotteService {
       const paged = owned.slice((page - 1) * limit, (page - 1) * limit + limit);
 
       return {
-        data: paged,
+        // Projection en liste d'autorisation : le BFF décide de ce qui sort,
+        // et non Fleetbase (revue M10).
+        data: paged.map((o: any) => projectOrderForFleet(o)),
         pagination: {
           page,
           limit,
@@ -60,7 +71,7 @@ export class FlotteService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet orders: ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
@@ -76,20 +87,28 @@ export class FlotteService {
       const order = response?.order || response;
 
       if (!order || !order.uuid) {
-        throw new NotFoundException('Order not found');
+        notFound('order.not_found', 'Order not found');
       }
 
       if (order.facilitator_uuid !== fleet.fleetbaseVendorUuid) {
-        throw new ForbiddenException('You do not have access to this order');
+        this.audit.denied({
+          actorType: 'fleet',
+          actorId: fleetId,
+          action: 'order.access',
+          resourceType: 'Order',
+          resourceId: orderId,
+          reason: 'Commande rattachée à une autre flotte',
+        });
+        forbidden('order.forbidden', 'You do not have access to this order');
       }
 
-      return order;
+      return projectOrderForFleet(order);
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
       this.logger.error(`Failed to fetch order ${orderId}: ${error.message}`);
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
   }
 
@@ -105,54 +124,74 @@ export class FlotteService {
 
     try {
       const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-      return { data: owned };
+      return { data: owned.map((d: any) => projectDriverForFleet(d)) };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet drivers: ${error.message}`);
-      throw new BadRequestException('Failed to fetch drivers');
+      badRequest('driver.fetch_failed', 'Failed to fetch drivers');
     }
   }
 
   /**
-   * Get positions for this fleet's drivers only.
+   * Dernière position connue des conducteurs de cette flotte.
    *
-   * Fleetbase's /positions endpoint has no per-driver query filter at all
-   * (confirmed by reading PositionFilter.php, see
-   * docs/journal_implementation_bff.md §2.9) - only free-text `query` and
-   * `createdAt` are supported, plus automatic company-wide scoping. So we
-   * fetch every company Position and filter in memory, same pattern as
-   * orders/drivers: first by this fleet's owned driver UUIDs, then further
-   * by the caller's requested subset if any.
+   * ── Où vit cette donnée, et où je l'ai longtemps cherchée ────────────────
+   *
+   * Sur le **conducteur lui-même** : `Driver.location`, mis à jour par l'appel
+   * `track` que le BFF fait déjà à chaque remontée GPS. La table `Position` est
+   * l'**historique**, pas l'état courant — et c'est là que je cherchais.
+   *
+   * L'absence de filtre par conducteur sur `/positions` (journal §2.11) est
+   * bien réelle, mais elle ne concernait pas ce besoin. C'est ce contresens qui
+   * a justifié trois colonnes de miroir pendant deux jours.
+   *
+   * Un conducteur sans position exploitable est absent du résultat, comme
+   * avant : `[0,0]` signifie « n'a jamais émis », pas « au large de la Guinée »
+   * (voir `readDriverPosition`).
    */
   async getDriverPositions(fleetId: string, requestedDriverIds: string[]) {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
       const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-      const ownedUuids = new Set(owned.map((d: any) => d.uuid));
+      const ownedUuids = new Set<string>(owned.map((d: any) => d.uuid));
 
       const targetIds =
         requestedDriverIds && requestedDriverIds.length > 0
           ? requestedDriverIds.filter((id) => ownedUuids.has(id))
-          : (Array.from(ownedUuids) as string[]);
+          : Array.from(ownedUuids);
 
       if (targetIds.length === 0) {
         return [];
       }
 
-      const response = await this.fleetbaseClient.getAllPositions();
-      const positions = response?.positions || response?.data || [];
-      const targetSet = new Set(targetIds);
+      // ── La position vient des conducteurs déjà rapatriés (Lot 6) ─────────
+      //
+      // `fetchOwnedDrivers()` ci-dessus renvoie déjà `location` : la version
+      // précédente téléchargeait donc la donnée, la jetait, puis allait la
+      // relire dans un miroir local. Le miroir a été supprimé, pas remplacé par
+      // un second appel.
+      //
+      // Un conducteur sans position exploitable est simplement absent de la
+      // liste, comme avant — c'est ce que faisait `lastPositionAt: { not: null }`.
+      const targets = new Set(targetIds);
 
-      // Field name (subject_uuid vs driver_uuid) is a best-effort guess: the
-      // company has zero Position rows in this dev instance, so there is no
-      // real record to check the shape against yet. Re-verify once a driver
-      // has actually sent a location ping.
-      return (Array.isArray(positions) ? positions : []).filter((p: any) =>
-        targetSet.has(p?.subject_uuid || p?.driver_uuid),
-      );
+      return owned
+        .filter((driver: any) => targets.has(driver?.uuid))
+        .map((driver: any) => ({ driver, position: readDriverPosition(driver) }))
+        .filter((entry) => entry.position !== null)
+        .map(({ driver, position }) => ({
+          driver_uuid: driver.uuid,
+          // Le nom vient de Fleetbase, où l'opérateur l'a saisi, et non des
+          // champs facultatifs que le transporteur remplit à l'inscription —
+          // souvent vides (§19.3).
+          name: driver.name ?? null,
+          latitude: position!.latitude,
+          longitude: position!.longitude,
+          recorded_at: readPositionSeenAt(driver),
+        }));
     } catch (error) {
       this.logger.error(`Failed to fetch driver positions: ${error.message}`);
-      throw new BadRequestException('Failed to fetch driver positions');
+      badRequest('driver.positions_fetch_failed', 'Failed to fetch driver positions');
     }
   }
 
@@ -182,7 +221,8 @@ export class FlotteService {
     } catch (error) {
       this.logger.error(`Failed to add driver: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'driver.create_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to add driver: ${detail}`
           : 'Failed to add driver',
@@ -206,7 +246,7 @@ export class FlotteService {
     const ownsDriver = owned.some((d: any) => d.uuid === driverId);
 
     if (!ownsDriver) {
-      throw new ForbiddenException('You do not have access to this driver');
+      forbidden('driver.forbidden', 'You do not have access to this driver');
     }
 
     try {
@@ -215,46 +255,68 @@ export class FlotteService {
       return response;
     } catch (error) {
       this.logger.error(`Failed to assign driver: ${error.message}`);
-      throw new BadRequestException('Failed to assign driver');
+      badRequest('order.assign_failed', 'Failed to assign driver');
     }
   }
 
   /**
-   * Fetch every order in the company, across pages, since the
-   * facilitator_uuid filter cannot be trusted server-side. Capped to avoid
-   * an unbounded loop against a much larger dataset than expected today.
+   * Commandes de cette flotte, paginées jusqu'au bout.
+   *
+   * La pagination reste nécessaire malgré le filtre serveur : une flotte active
+   * peut dépasser 100 commandes, et une page unique tronquerait la liste en
+   * silence — le défaut que cette méthode évitait déjà quand elle balayait
+   * toute la compagnie.
    */
-  private async fetchAllOrders(): Promise<any[]> {
-    const pageSize = 100;
-    const maxPages = 50;
-    const all: any[] = [];
+  private fetchAllOrders(vendorUuid: string): Promise<any[]> {
+    return this.fleetbaseClient.fetchEveryOrder(100, 50, { facilitator: vendorUuid });
+  }
 
-    for (let page = 1; page <= maxPages; page++) {
-      const response = await this.fleetbaseClient.getAllOrders(page, pageSize);
-      const orders = response?.orders || response?.data || (Array.isArray(response) ? response : []);
+  /**
+   * Conducteurs de cette flotte, avec un cache mémoire de courte durée.
+   *
+   * `?vendor=` est le nom réel du filtre — `vendor_uuid`, essayé en §2.8,
+   * n'existe pas et était abandonné en silence. La vérification en mémoire qui
+   * suit est conservée pour la même raison que dans `getOrders` : c'est elle
+   * qui autorise, le filtre ne fait qu'alléger.
+   *
+   * ── Pourquoi un cache, et pourquoi celui-ci est légitime ─────────────────
+   *
+   * La charge utile d'un conducteur Fleetbase est **très lourde** : elle
+   * embarque `user.role.policies[].permissions[]`, soit plusieurs centaines
+   * d'entrées répétées pour chaque conducteur. Constaté sur les données réelles
+   * le 29/07/2026, pas supposé.
+   *
+   * Depuis le Lot 6, la carte de flotte lit les positions ici même : cet appel
+   * passe donc de « une fois par écran » à « à chaque rafraîchissement ».
+   *
+   * C'est l'exception §3.1 de `architecture_bff_fleetbase.md` dans son usage
+   * prévu : **jetable sans perte** — le vider ne fait que provoquer un appel de
+   * plus — et motivé par un coût mesuré, non par une préférence. Sa durée de vie
+   * est délibérément plus courte que la cadence d'émission GPS de l'app, pour
+   * qu'une position fraîche ne puisse pas attendre derrière lui.
+   *
+   * Cloisonné par `vendorUuid` : deux flottes ne partagent jamais une entrée.
+   */
+  private readonly driverCache = new Map<string, { at: number; drivers: any[] }>();
 
-      if (!orders || orders.length === 0) {
-        break;
-      }
-
-      all.push(...orders);
-
-      if (orders.length < pageSize) {
-        break;
-      }
-
-      if (page === maxPages) {
-        this.logger.warn(`fetchAllOrders hit the ${maxPages}-page safety cap - results may be incomplete`);
-      }
-    }
-
-    return all;
+  private driverCacheTtlMs(): number {
+    const configured = Number(this.configService.get('FLEET_DRIVER_CACHE_MS'));
+    return Number.isFinite(configured) && configured >= 0 ? configured : 5_000;
   }
 
   private async fetchOwnedDrivers(vendorUuid: string): Promise<any[]> {
-    const response = await this.fleetbaseClient.getAllDrivers();
+    const ttl = this.driverCacheTtlMs();
+    const cached = this.driverCache.get(vendorUuid);
+    if (cached && ttl > 0 && Date.now() - cached.at < ttl) {
+      return cached.drivers;
+    }
+
+    const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
     const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
-    return (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
+    const owned = (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
+
+    this.driverCache.set(vendorUuid, { at: Date.now(), drivers: owned });
+    return owned;
   }
 
   private async getFleetWithValidation(fleetId: string) {
@@ -263,11 +325,11 @@ export class FlotteService {
     });
 
     if (!fleet) {
-      throw new NotFoundException('Fleet account not found');
+      notFound('fleet.not_found', 'Fleet account not found');
     }
 
     if (!fleet.active) {
-      throw new ForbiddenException('Fleet account is inactive');
+      forbidden('fleet.inactive', 'Fleet account is inactive');
     }
 
     return fleet;

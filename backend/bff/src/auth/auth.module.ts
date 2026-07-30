@@ -1,21 +1,15 @@
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
-import { JwtStrategy } from './strategies/jwt.strategy';
 import { FleetbaseModule } from '../fleetbase/fleetbase.module';
 
+// Pas de JwtModule local ici : le JwtModule d'AppModule est déclaré `global`.
+// En enregistrer un second créait un JwtService distinct, avec son propre
+// repli de secret — c'est ce qui faisait diverger signature et vérification
+// (revue C1).
 @Module({
-  imports: [
-    PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'dev-secret',
-      signOptions: { expiresIn: parseInt(process.env.JWT_EXPIRATION || '86400', 10) },
-    }),
-    FleetbaseModule,
-  ],
-  providers: [AuthService, JwtStrategy],
+  imports: [FleetbaseModule],
+  providers: [AuthService],
   controllers: [AuthController],
   exports: [AuthService],
 })

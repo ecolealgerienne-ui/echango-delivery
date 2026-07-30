@@ -54,14 +54,85 @@ docker-compose up
 docker exec echango_bff_app npm run prisma:migrate
 ```
 
+
+## Ajouter une dépendance npm en environnement Docker
+
+`docker-compose.yml` monte `/app/node_modules` comme **volume anonyme** : il
+masque le dossier de l'image et survit aux redémarrages. Ajouter une
+dépendance à `package.json` ne suffit donc pas — le conteneur continue de voir
+l'ancien arbre de dépendances et échoue en `Cannot find module`.
+
+```bash
+# Le plus rapide : installer dans le conteneur qui tourne
+docker exec echango_bff_app npm install
+docker restart echango_bff_app
+
+# Ou reconstruire proprement (recrée le volume anonyme)
+docker compose up -d --build --force-recreate bff
+```
+
+Le `start:dev` en watch recompile ensuite tout seul.
+
+### Même cause : le client Prisma après un changement de schéma
+
+Les types générés par Prisma vivent dans `node_modules/.prisma/client`, donc
+dans ce même volume. Modifier `schema.prisma` et lancer la migration ne suffit
+pas : les colonnes existent en base, mais TypeScript ne les connaît pas encore.
+
+```
+error TS2353: 'lastPositionAt' does not exist in type 'DriverAccountWhereInput'
+```
+
+C'est le symptôme, pas une erreur de code :
+
+```bash
+docker exec echango_bff_app npx prisma generate
+```
+
+**L'ordre compte, et l'oubli inverse est plus déroutant.** Générer le client
+sans avoir joué la migration produit un client qui réclame des colonnes que la
+base n'a pas :
+
+```
+The column `DriverAccount.lastLatitude` does not exist in the current database
+```
+
+Et ça casse **toutes** les requêtes sur le modèle, y compris celles qui n'ont
+rien à voir avec la colonne ajoutée — le client sélectionne toutes les
+colonnes. Donc migration d'abord, génération ensuite :
+
+```bash
+docker exec -it echango_bff_app npx prisma migrate dev --name <nom>
+docker exec    echango_bff_app npx prisma generate
+```
+
+Le `-it` est nécessaire : sans lui, `migrate dev` reste bloqué sur son prompt
+de nom et **ne joue jamais la migration**, sans le dire clairement. Passer
+`--name` évite complètement la question.
+
 ## API Endpoints
 
 ### Auth (Public)
 - `POST /auth/merchant/register` - Register merchant account
 - `POST /auth/merchant/login` - Login merchant
+- `POST /auth/flotte/register` - Register fleet manager account
+- `POST /auth/flotte/login` - Login fleet manager
+- `POST /auth/transporteur/register` - Link an Echango account to an already-provisioned Fleetbase Driver (manual provisioning - see docs/specs_app_transporteur.md §2.1)
+- `POST /auth/transporteur/login` - Login driver
 - `POST /auth/verify` - Verify current token
 
+### Auth (Requires Auth)
+- `POST /auth/revoquer-sessions` - Invalidate every token issued for this account (tokenVersion)
+- `POST /auth/device-token` - Register push token (merchant)
+- `POST /auth/transporteur/device-token` - Register push token (driver) - mirrored to a Fleetbase `UserDevice` record so native FCM/APN dispatch can reach it, see `docs/journal_implementation_bff.md`
+
 ### Merchant (`/commercant/*`, Requires Auth)
+- `GET /commercant/geocodage?q=` - Address search (relayed to Nominatim, never called from the app)
+- `GET /commercant/geocodage/inverse?lat=&lon=` - Address for a point picked on the map
+- `GET /commercant/transporteurs` - Drivers who already delivered for this merchant
+- `GET /commercant/transporteurs/favoris` - Favourite drivers
+- `POST /commercant/transporteurs/favoris` - Add a favourite
+- `DELETE /commercant/transporteurs/favoris/:id` - Remove a favourite
 - `POST /commercant/commandes` - Create order
 - `GET /commercant/commandes` - List orders
 - `GET /commercant/commandes/:id` - Get order detail
@@ -84,7 +155,9 @@ docker exec echango_bff_app npm run prisma:migrate
 Key models in `prisma/schema.prisma`:
 - **MerchantAccount** - Echango merchant user (not Fleetbase User)
 - **FleetAccount** - Fleet manager account
-- **DeviceToken** - FCM tokens for push notifications
+- **DriverAccount** - Echango driver ("transporteur") account, linked to an already-provisioned Fleetbase Driver
+- **DeviceToken** - FCM tokens for push notifications (merchant)
+- **DriverDeviceToken** - FCM tokens for push notifications (driver), mirrored to Fleetbase `UserDevice`
 - **Order** - Order cache from Fleetbase
 - **Commission** - Commission ledger
 - **AuditLog** - Audit trail for security

@@ -1,0 +1,3 @@
+# Emplacement des tests e2e (jest.config.js le liste dans `roots`).
+# Sans ce fichier le dossier disparaît du dépôt et `npm test` refuse de
+# démarrer : « Directory .../test in the roots[1] option was not found ».

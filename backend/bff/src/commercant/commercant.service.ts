@@ -1,15 +1,23 @@
-import {
-  Injectable,
-  Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, Logger, HttpException, BadRequestException } from '@nestjs/common';
+import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
+import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
+import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
+import { QuoteRequestDto } from './dto/quote.dto';
+import {
+  effectiveOrderMeta,
+  projectOrderForMerchant,
+  projectPlace,
+} from '../common/projections/order.projection';
+import { PricingService } from '../common/pricing/pricing.service';
+import { CashService } from '../cash/cash.service';
+import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
+import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
 
 @Injectable()
 export class CommerçantService {
@@ -19,11 +27,162 @@ export class CommerçantService {
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
+    private audit: AuditService,
+    private pricing: PricingService,
+    private cash: CashService,
+    private orderCustomFields: OrderCustomFieldsService,
   ) {}
 
   /**
    * Get merchant's orders from Fleetbase via customer-portal-api
    */
+  /**
+   * Merge the merchant's cached order rows with their live Fleetbase state.
+   *
+   * The cache alone is not enough to show anything useful: it stores an id, a
+   * tracking number and a status frozen at 'pending' on creation that nothing
+   * ever resynchronises — so a merchant would watch a delivery that never
+   * appears to progress, and would see neither addresses nor courier.
+   *
+   * The cache keeps the job it is actually good at: recording which orders
+   * belong to which merchant. That mapping is what makes the anti-IDOR check
+   * trustworthy.
+   *
+   * ⚠️ **Correction du 29/07/2026** : la justification qui suivait — « §2.8 a
+   * établi que Fleetbase ignore les filtres, donc lui demander à qui sont ces
+   * commandes renverrait toute la compagnie » — était fausse. Le paramètre
+   * envoyé, `facilitator_uuid`, n'était pas un nom de filtre ; `customer` en
+   * est un, et il fait le `where` attendu. Fleetbase **sait** répondre à « à
+   * qui appartient cette commande », ce qui remet en cause l'existence même de
+   * ce cache (`docs/architecture_bff_fleetbase.md` §4.4). Rien n'est supprimé
+   * avant les vérifications du §9 de ce document.
+   */
+  private async mergeWithFleetbase(
+    cached: { id: string; fleetbaseOrderId: string; specMeta?: any }[],
+    vendorUuid?: string,
+  ) {
+    if (!cached.length) return [];
+
+    let live: any[] = [];
+    try {
+      live = await this.fetchLiveOrders(cached, vendorUuid);
+    } catch (error) {
+      // Degrade rather than fail: without Fleetbase the merchant still sees
+      // that the order exists, just not how far along it is.
+      this.logger.warn(`Fleetbase unreachable, serving cached orders only: ${error.message}`);
+      // Repli dégradé : seuls l'identifiant et le drapeau sortent. Étendre la
+      // ligne Prisma exposait `merchantId` et les colonnes internes du cache.
+      return cached.map((c) => ({
+        uuid: c.fleetbaseOrderId,
+        bff_order_id: c.id,
+        stale: true,
+      }));
+    }
+
+    const byId = new Map(live.map((o: any) => [o?.uuid, o]));
+
+    return cached.map((c) => {
+      const order = byId.get(c.fleetbaseOrderId);
+      if (!order) {
+        // Order vanished from Fleetbase (deleted, or another organization).
+        return { uuid: c.fleetbaseOrderId, bff_order_id: c.id, missing: true };
+      }
+      // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
+      // non Fleetbase (revue M10). L'identifiant local est conservé pour que
+      // l'app puisse encore adresser la ligne dont il provient.
+      //
+      // `meta` est complété par la spécification locale : une affectation
+      // depuis la console l'efface chez Fleetbase, et sans ce complément la
+      // liste perdrait prix et montant à encaisser dès qu'un transporteur est
+      // désigné.
+      return projectOrderForMerchant(this.withSpecMeta(order, c), { bff_order_id: c.id });
+    });
+  }
+
+  /**
+   * Va chercher chez Fleetbase l'état des commandes que le cache dit être à ce
+   * commerçant.
+   *
+   * ── Pourquoi un repli, et pourquoi il n'est pas de la prudence gratuite ────
+   *
+   * `?customer=<vendorUuid>` est vérifié et fonctionne. Mais il repose sur
+   * `orders.customer_uuid`, **et cette colonne est restée nulle sur toutes les
+   * commandes créées avant le 28/07/2026** : le BFF envoyait `customer` en
+   * chaîne plate là où `normalizeCustomerType()` n'accepte que
+   * `customer_uuid`/`customer_type` (journal §2.10). Ces commandes existent, le
+   * commerçant les voit aujourd'hui, et le filtre serveur ne les renverra
+   * jamais.
+   *
+   * Passer au filtre sans repli les ferait donc disparaître de son historique —
+   * une régression métier invisible en test sur des données récentes, et
+   * exactement ce que le plan interdit.
+   *
+   * Le repli ne coûte rien dans le cas normal : il ne se déclenche que s'il
+   * manque quelque chose. Et son avertissement est utile en soi, puisqu'il
+   * dénombre les commandes héritées qu'une reprise de données devrait corriger.
+   */
+  private async fetchLiveOrders(
+    cached: { fleetbaseOrderId: string }[],
+    vendorUuid?: string,
+  ): Promise<any[]> {
+    if (!vendorUuid) {
+      return this.fleetbaseClient.fetchEveryOrder();
+    }
+
+    const scoped = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
+      customer: vendorUuid,
+    });
+
+    const found = new Set(scoped.map((o: any) => o?.uuid));
+    const missing = cached.filter((c) => !found.has(c.fleetbaseOrderId));
+    if (!missing.length) return scoped;
+
+    this.logger.warn(
+      `${missing.length} commande(s) absente(s) du filtre customer=${vendorUuid} — ` +
+        'probablement créées avant le correctif customer_uuid (journal §2.10). ' +
+        'Repli sur la lecture complète.',
+    );
+
+    const everything = await this.fleetbaseClient.fetchEveryOrder();
+    const missingIds = new Set(missing.map((c) => c.fleetbaseOrderId));
+    return [...scoped, ...everything.filter((o: any) => missingIds.has(o?.uuid))];
+  }
+
+  /**
+   * État Fleetbase d'**une** commande dont l'appartenance est déjà établie.
+   *
+   * Trois écrans faisaient exactement la même chose : télécharger toute la
+   * compagnie pour y retrouver un seul objet. La lecture est maintenant bornée
+   * au commerçant, avec le même repli hérité que `fetchLiveOrders`.
+   *
+   * La lecture unitaire `GET /orders/{uuid}` serait plus directe encore, et
+   * elle n'est délibérément pas utilisée ici : rien ne garantit qu'elle charge
+   * les mêmes relations que la liste (`queryForInternal` en précharge une
+   * dizaine), et une projection qui perdrait des champs changerait le contrat
+   * avec l'application — ce que le plan interdit. À comparer par test réel
+   * avant de basculer.
+   */
+  private async liveOrderFor(
+    vendorUuid: string,
+    order: { fleetbaseOrderId: string },
+  ): Promise<any> {
+    const orders = await this.fetchLiveOrders([order], vendorUuid);
+    return orders.find((o: any) => o?.uuid === order.fleetbaseOrderId);
+  }
+
+  /**
+   * Numéro de suivi, quelle que soit la forme sous laquelle Fleetbase le sert.
+   *
+   * `tracking_number` est tantôt une chaîne, tantôt l'objet complet — le client
+   * Dart applique déjà la même tolérance (`readTrackingNumber`), preuve que les
+   * deux formes se rencontrent en vrai.
+   */
+  private trackingNumberOf(order: any): string | null {
+    const raw = order?.tracking_number;
+    if (typeof raw === 'string') return raw;
+    return raw?.tracking_number ?? null;
+  }
+
   async getOrders(merchantId: string, query: ListOrdersQueryDto) {
     this.logger.log(`Fetching orders for merchant ${merchantId}`);
 
@@ -33,65 +192,1010 @@ export class CommerçantService {
       const page = query.page || 1;
       const limit = query.limit || 25;
 
-      // Call customer-portal-api if merchant has a token
-      // For now, return cached orders from BFF database
-      const orders = await this.prisma.order.findMany({
-        where: {
-          merchantId,
-          ...(query.status && { status: query.status }),
-        },
+      const cached = await this.prisma.order.findMany({
+        where: { merchantId },
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
       });
 
-      const total = await this.prisma.order.count({
-        where: {
-          merchantId,
-          ...(query.status && { status: query.status }),
-        },
-      });
+      const orders = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
+      const total = await this.prisma.order.count({ where: { merchantId } });
+
+      // `status` is filtered here rather than in the query: the cached status
+      // is stale, so only the merged result knows the real one.
+      const filtered = query.status
+        ? orders.filter((o: any) => o?.status === query.status)
+        : orders;
 
       return {
-        data: orders,
-        pagination: {
-          page,
-          limit,
-          total,
-          pages: Math.ceil(total / limit),
-        },
+        orders: filtered,
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       };
     } catch (error) {
       this.logger.error(`Failed to fetch orders: ${error.message}`);
-      throw new BadRequestException('Failed to fetch orders');
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
   /**
-   * Get single order detail with full information
+   * Rayon de diffusion d'une course adhoc, en mètres.
+   *
+   * Fleetbase porte nativement `adhoc_distance` : inutile de reconstruire un
+   * filtre de proximité côté BFF, c'est son dispatch géospatial qui l'applique.
+   *
+   * ⚠️ La valeur par défaut est un **repli, pas une décision produit** : 15 km
+   * couvre une agglomération sans noyer les transporteurs de courses hors de
+   * portée. À régler au pilote, avec de vraies distances.
    */
-  async getOrderDetail(merchantId: string, orderId: string) {
-    this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
+  private adhocRadiusMetres(): number {
+    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
+    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+  }
 
+  /**
+   * Métadonnées transmises à Fleetbase.
+   *
+   * `vehicle_type` y vit plutôt que dans une colonne native : Fleetbase n'a pas
+   * de notion de *catégorie* de véhicule — `vehicle_assigned_uuid` désigne un
+   * véhicule précis. Le filtrage est donc appliqué par le BFF au moment de
+   * lister les opportunités d'un transporteur.
+   */
+  private buildOrderMeta(dto: CreateOrderDto): Record<string, any> | undefined {
+    const meta: Record<string, any> = {};
+    if (dto.deliveryInstructions) meta.instructions = dto.deliveryInstructions;
+    if (dto.vehicleType) meta.vehicle_type = dto.vehicleType;
+    if (dto.items?.length) meta.items = dto.items;
+    if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
+    if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
+    // Reproduit à l'identique par « refaire cette livraison » — sans lui, la
+    // duplication retombait systématiquement sur la valeur par défaut du
+    // formulaire (`true`), jamais sur le choix réel de la commande d'origine.
+    meta.prefer_favourites = dto.preferFavourites === true;
+
+    // Le devis est demandé sur TOUTE commande, même quand le commerçant a
+    // saisi son montant : ce qui est enregistré au passage — distance, horaire,
+    // catégorie de véhicule — sont les entrées de la future formule de calcul.
+    // Elles ne sont pas rattrapables après coup : la distance dépend du
+    // géocodage et du réseau routier du moment, et une commande rejouée plus
+    // tard ne donnerait pas le même chiffre. Sans elles, les courses du pilote
+    // ne serviront pas à calibrer le barème.
+    //
+    // Calculé AVANT le bloc d'encaissement, et pas seulement par commodité :
+    // quand la livraison n'est pas comprise dans le prix de la marchandise,
+    // c'est la rémunération qui s'ajoute au montant réclamé à la porte. Le
+    // second dépend donc du premier.
+    const quote = this.pricing.quote(
+      {
+        pickupLatitude: dto.pickupLatitude,
+        pickupLongitude: dto.pickupLongitude,
+        dropoffLatitude: dto.dropoffLatitude,
+        dropoffLongitude: dto.dropoffLongitude,
+        scheduledAt: dto.scheduledAt,
+        vehicleType: dto.vehicleType,
+      },
+      dto.price,
+    );
+
+    meta.pricing_inputs = quote.inputs;
+
+    if (quote.amount !== null) {
+      meta.price = quote.amount;
+      meta.currency = quote.currency;
+      // L'origine du montant est enregistrée AVEC lui. Sans elle, l'historique
+      // mélangerait prix proposés et prix calculés, et la calibration de la
+      // future formule se ferait sur ses propres résultats.
+      meta.price_source = quote.source;
+    }
+
+    // ── Paiement à la livraison ───────────────────────────────────────────
+    //
+    // Deux montants distincts, et les confondre serait l'erreur fondatrice :
+    // `price` va du commerçant au transporteur, `cod_amount` va du
+    // destinataire au commerçant. Sens inverses.
+    //
+    // ⚠️ **`cod_amount` est ce que le destinataire remet à la porte**, et
+    // rien d'autre. C'est le sens que lui donnent déjà tous ses lecteurs : le
+    // montant annoncé au transporteur avant qu'il accepte, `expectedAmount`
+    // figé dans le registre de caisse, le refus de percevoir plus que dû, et
+    // le plafond de dette. Un seul sens, tenu au point d'écriture, plutôt
+    // qu'un champ que chaque lecteur interprète.
+    //
+    // Le commerçant, lui, saisit le **prix de sa marchandise**. Quand il
+    // décide que la livraison est à la charge du destinataire, la
+    // rémunération s'ajoute : marchandise 1300 + course 650 = 1950 réclamés à
+    // la porte, dont 650 que le transporteur retient et 1300 qu'il remet.
+    // Avant cette addition, le transporteur se voyait annoncer 1300 et le
+    // commerçant n'en récupérait que 650 — il payait la livraison qu'il avait
+    // explicitement mise à la charge de son client.
+    if (dto.codAmount) {
+      const goods = dto.codAmount;
+      const includesDelivery = dto.codIncludesDelivery === true;
+      const fee = includesDelivery ? 0 : (meta.price ?? null);
+
+      // Refus explicite plutôt qu'un repli silencieux : sans rémunération
+      // connue, « la livraison est à la charge du destinataire » n'a pas de
+      // montant, et retomber sur la marchandise seule ferait payer le
+      // commerçant à son insu — exactement ce que ce choix voulait éviter.
+      if (fee === null) {
+        badRequest(
+          'order.cod_requires_price',
+          'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
+        );
+      }
+
+      meta.cod_amount = goods + fee;
+      // Ce que le commerçant a saisi, conservé tel quel. Recalculer
+      // `cod_amount − price` fonctionnerait aujourd'hui, mais « refaire cette
+      // livraison » repartirait alors du total et y rajouterait la course à
+      // chaque duplication — l'erreur se composerait à chaque copie.
+      meta.cod_goods_amount = goods;
+      meta.cod_currency = this.pricing.currency;
+      // Décrit désormais **comment le commerçant a saisi son montant**, et
+      // non ce que contient `cod_amount` : la livraison est comprise dans le
+      // montant réclamé à la porte dans les deux cas.
+      meta.cod_includes_delivery = includesDelivery;
+    }
+
+    return Object.keys(meta).length ? meta : undefined;
+  }
+
+  /**
+   * Premier transporteur favori actuellement en ligne, ou `null`.
+   *
+   * ── Ce que fait ce repli, et ce qu'il ne fait pas ──────────────────────────
+   *
+   * Il choisit **au moment de la création** : si aucun favori n'est en ligne,
+   * la course part immédiatement au pool commun. C'est ce qui préserve l'effet
+   * réseau (voir DriverFavourite dans le schéma).
+   *
+   * Ce qu'il ne fait PAS : reprendre la course si le favori ne l'accepte
+   * jamais. Ce second repli, différé dans le temps, demande une tâche de fond
+   * surveillant les courses assignées et non démarrées — à construire, avec le
+   * délai comme décision produit. En attendant, une course confiée à un favori
+   * qui l'ignore reste bloquée : c'est la limite à connaître avant d'activer
+   * l'option en production.
+   */
+  private async pickAvailableFavourite(
+    merchantId: string,
+    vehicleType?: string,
+    codAmount?: number,
+  ) {
+    const favourites = await this.prisma.driverFavourite.findMany({
+      where: { merchantId },
+    });
+    if (!favourites.length) return null;
+
+    const uuids = favourites.map((f: any) => f.fleetbaseDriverUuid);
+
+    // Le compte Echango porte la catégorie de véhicule et sert de garde : un
+    // favori sans compte applicatif ne peut de toute façon pas recevoir la
+    // course, faute de jeton push et d'application.
+    const accounts = await this.prisma.driverAccount.findMany({
+      where: {
+        fleetbaseDriverUuid: { in: uuids },
+        active: true,
+        // Non déclaré = compatible : un transporteur ne doit pas être écarté
+        // du réseau par un champ qu'il n'a pas rempli.
+        ...(vehicleType
+          ? {
+              OR: [
+                { vehicleType: null },
+                { vehicleType: this.compatibleVehicleTypes(vehicleType) },
+              ],
+            }
+          : {}),
+      },
+    });
+    if (!accounts.length) return null;
+
+    // La disponibilité fait foi côté Fleetbase, pas côté BFF : c'est lui qui
+    // décide à qui le dispatch parle.
+    //
+    // Une lecture par favori, en parallèle, plutôt qu'un parcours de tout
+    // l'annuaire (journal §24) : le coût suit le nombre de favoris de ce
+    // commerçant — un ou deux en pratique — au lieu de la taille du réseau.
+    //
+    // ⚠️ `online` doit rester **strictement** `true`. Un favori dont la lecture
+    // échoue ou qui a disparu n'est pas « peut-être disponible » : le laisser
+    // passer enverrait la course à quelqu'un qui ne la verra jamais, et elle
+    // resterait bloquée là. Mieux vaut le repli sur le pool.
+    let online: Set<string>;
+    try {
+      const resolved = await Promise.all(
+        accounts.map((a: any) => this.fleetbaseClient.getDriverByUuid(a.fleetbaseDriverUuid)),
+      );
+      online = new Set(
+        resolved.filter((d: any) => d?.online === true).map((d: any) => d.uuid),
+      );
+    } catch (error) {
+      this.logger.warn(`Favoris non résolus, repli sur le pool : ${error.message}`);
+      return null;
+    }
+
+    const available = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
+
+    if (!codAmount) return available[0] ?? null;
+
+    // Course encaissée : on écarte en plus ceux dont la dette atteindrait le
+    // plafond. Le premier garde-fou du modèle — sans dépôt physique, cesser de
+    // confier des espèces à qui en doit déjà trop est le seul instrument de
+    // limitation du risque dont nous disposions.
+    for (const account of available) {
+      const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+        account.id,
+        merchantId,
+        codAmount,
+      );
+      if (allowed) return account;
+      this.logger.log(
+        `Favori ${account.id} écarté d'une course encaissée : dette ${debt} + ${codAmount} > ${ceiling}`,
+      );
+    }
+
+    return null;
+  }
+
+  /**
+   * Catégories acceptables pour une exigence donnée.
+   *
+   * Une exigence est un **minimum**, pas une égalité : demander une voiture
+   * n'exclut pas un utilitaire. Traiter le champ comme une égalité stricte
+   * écarterait des transporteurs parfaitement capables.
+   */
+  private compatibleVehicleTypes(required: string): { in: string[] } {
+    const ladder = ['moto', 'voiture', 'utilitaire'];
+    const index = ladder.indexOf(required);
+    return { in: index < 0 ? ladder : ladder.slice(index) };
+  }
+
+  /**
+   * Devis d'une course, avant sa création.
+   *
+   * ── Pourquoi cet endpoint existe alors qu'aucune formule n'est écrite ───────
+   *
+   * Pour que l'appel soit **déjà en place** le jour où le barème sera tranché :
+   * l'app interroge, affiche ce qu'on lui répond, et n'aura pas à changer.
+   * Aujourd'hui `amount` vaut `null` et l'app garde sa saisie manuelle ; demain
+   * il portera un montant calculé et la saisie s'effacera d'elle-même.
+   *
+   * Poser la couture avant la formule évite le scénario habituel : un barème
+   * décidé, puis trois semaines à recâbler les écrans pour l'afficher.
+   *
+   * Les entrées retenues sont renvoyées avec le devis — distance, horaire — pour
+   * que le commerçant voie sur quoi le montant repose, et pas seulement le
+   * montant.
+   */
+  async quoteOrder(merchantId: string, dto: QuoteRequestDto) {
     await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        commissions: true,
-      },
+    const quote = this.pricing.quote({
+      pickupLatitude: dto.pickupLatitude,
+      pickupLongitude: dto.pickupLongitude,
+      dropoffLatitude: dto.dropoffLatitude,
+      dropoffLongitude: dto.dropoffLongitude,
+      scheduledAt: dto.scheduledAt,
+      vehicleType: dto.vehicleType,
+    });
+
+    return {
+      amount: quote.amount,
+      currency: quote.currency,
+      source: quote.source,
+      distanceMetres: quote.inputs.distance_metres,
+      distanceMethod: quote.inputs.distance_method,
+    };
+  }
+
+  // ── Transporteurs favoris ─────────────────────────────────────────────────
+
+  async listFavourites(merchantId: string) {
+    await this.getMerchantWithValidation(merchantId);
+    const favourites = await this.prisma.driverFavourite.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
+      data: favourites.map((f: any) => ({
+        id: f.id,
+        driver_uuid: f.fleetbaseDriverUuid,
+        name: f.driverName,
+      })),
+    };
+  }
+
+  /**
+   * Transporteurs proposables en favori : ceux qui ont déjà livré pour ce
+   * commerçant.
+   *
+   * Volontairement restreint à l'historique plutôt qu'à l'annuaire complet de
+   * l'organisation. Exposer tous les transporteurs à tous les commerçants
+   * livrerait la composition du réseau à quiconque crée un compte, et n'a
+   * aucune utilité : on ne met en favori que quelqu'un qu'on a vu travailler.
+   */
+  async listKnownDrivers(merchantId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const cached = await this.prisma.order.findMany({
+      where: { merchantId },
+      select: { fleetbaseOrderId: true },
+    });
+    const owned = new Set(cached.map((c: any) => c.fleetbaseOrderId));
+    if (!owned.size) return { data: [] };
+
+    let orders: any[] = [];
+    try {
+      orders = await this.fetchLiveOrders(cached, merchant.fleetbaseVendorUuid);
+    } catch (error) {
+      this.logger.warn(`Historique transporteurs indisponible : ${error.message}`);
+      return { data: [] };
+    }
+
+    const seen = new Map<string, string | null>();
+    for (const order of orders) {
+      if (!owned.has(order?.uuid)) continue;
+      const uuid = order?.driver_assigned_uuid ?? order?.driver_assigned?.uuid;
+      if (uuid && !seen.has(uuid)) {
+        seen.set(uuid, order?.driver_assigned?.name ?? null);
+      }
+    }
+
+    return {
+      data: Array.from(seen.entries()).map(([uuid, name]) => ({
+        driver_uuid: uuid,
+        name,
+      })),
+    };
+  }
+
+  /**
+   * Cherche un transporteur du réseau par nom ou téléphone.
+   *
+   * ── Ce qui n'est pas renvoyé, et pourquoi ───────────────────────────────────
+   *
+   * **Pas le téléphone.** Le commerçant qui cherche le connaît déjà — c'est par
+   * là qu'il cherche. Le renvoyer transformerait la recherche en moyen de
+   * récupérer les coordonnées de prestataires indépendants qu'on n'a jamais
+   * fait travailler.
+   *
+   * **Pas de liste tronquée.** Au-delà de dix correspondances, on demande de
+   * préciser plutôt que d'en montrer dix : une liste tronquée qu'on peut
+   * balayer en changeant une lettre est exactement l'annuaire qu'on refuse
+   * d'ouvrir. « Précisez » ferme ce chemin sans gêner personne — celui qui
+   * connaît la personne tape un nom, pas une lettre.
+   */
+  async searchDrivers(merchantId: string, query: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    // Envoyé tel quel : c'est Fleetbase qui cherche désormais, et son
+    // `searchWhere` est un LIKE SQL — le forcer en minuscules ne servait que la
+    // comparaison en mémoire, qui n'existe plus.
+    const q = query.trim();
+    // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
+    // espaces ou un indicatif que l'enregistrement n'a pas.
+    const digits = q.replace(/\D/g, '');
+
+    // ⚠️ La recherche porte sur l'annuaire FLEETBASE, pas sur les comptes
+    // applicatifs.
+    //
+    // La première version interrogeait `DriverAccount`, et ne trouvait presque
+    // rien : cette table ne contient que les transporteurs **ayant déjà créé
+    // leur compte dans l'application**, avec un nom qu'ils ont saisi eux-mêmes
+    // à l'inscription — souvent vide, et sans rapport garanti avec celui que
+    // l'opérateur voit dans la console. Deux critères cachés, donc, dont aucun
+    // n'était visible du commerçant.
+    //
+    // L'annuaire qui fait autorité est celui de Fleetbase : c'est là que
+    // l'opérateur crée les transporteurs, c'est ce nom qu'il communique, et
+    // c'est l'uuid Fleetbase que `DriverFavourite` référence de toute façon.
+    // ── La recherche est déléguée à Fleetbase (Lot 1) ────────────────────────
+    //
+    // `?query=` fait un `searchWhere(['name','email','phone'])` à travers la
+    // relation `user` — le téléphone est donc couvert, sans passer par le
+    // filtre `phone` qui, lui, renvoie 500 (bug amont, §5.1).
+    //
+    // Ce n'est pas qu'une économie. La version précédente appelait
+    // `getAllDrivers()` **sans pagination** : au-delà de la taille de page par
+    // défaut de Fleetbase, des transporteurs devenaient introuvables sans
+    // qu'aucune erreur ne le signale — un commerçant aurait cherché quelqu'un
+    // d'existant et conclu qu'il n'était pas sur le réseau. Même famille que le
+    // plafond de 100 sur les commandes.
+    //
+    // On demande 11 résultats pour une limite de 10 : le onzième ne sert qu'à
+    // savoir qu'il y en a trop, et n'est jamais renvoyé.
+    let matches: any[] = [];
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers({ query: q, limit: 11 });
+      matches = this.fleetbaseClient.extractCollection(response, 'drivers');
+    } catch (error) {
+      this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
+      badRequest('driver.search_unavailable', 'Recherche indisponible pour le moment');
+    }
+
+    // Repli sur les chiffres seuls : une saisie comme « 0555 12 34 » ne trouve
+    // rien côté serveur si l'enregistrement est écrit « +2135551234 ». Le
+    // rapatriement reste borné et ne se déclenche que sur un échec.
+    if (matches.length === 0 && digits.length >= 4) {
+      try {
+        const response = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
+        matches = this.fleetbaseClient
+          .extractCollection(response, 'drivers')
+          .filter((d: any) => {
+            const phone = String(d?.phone ?? '').replace(/\D/g, '');
+            return phone.length > 0 && phone.includes(digits);
+          });
+      } catch {
+        // Le repli est un bonus : son échec ne doit pas casser la recherche.
+      }
+    }
+
+    if (matches.length > 10) {
+      return { data: [], too_many: true };
+    }
+
+    // Le compte applicatif, quand il existe, apporte la catégorie de véhicule
+    // — et surtout son absence est une information : un transporteur sans
+    // compte ne recevra aucune course, et le taire ferait d'une mise en favori
+    // un geste sans effet.
+    const accounts = await this.prisma.driverAccount.findMany({
+      where: { fleetbaseDriverUuid: { in: matches.map((d: any) => d.uuid) } },
+      select: { fleetbaseDriverUuid: true, vehicleType: true, active: true },
+    });
+    const byUuid = new Map<string, any>(
+      accounts.map((a: any) => [a.fleetbaseDriverUuid, a]),
+    );
+
+    return {
+      data: matches.map((d: any) => {
+        const account = byUuid.get(d.uuid);
+        return {
+          driver_uuid: d.uuid,
+          name: d.name ?? null,
+          vehicle_type: account?.vehicleType ?? null,
+          // Le téléphone n'est jamais renvoyé : celui qui cherche le connaît
+          // déjà, c'est par là qu'il cherche.
+          has_account: Boolean(account?.active),
+        };
+      }),
+      too_many: false,
+    };
+  }
+
+  async addFavourite(merchantId: string, fleetbaseDriverUuid: string, driverName?: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    // Le transporteur doit exister dans le réseau et y être actif.
+    //
+    // La règle précédente — « il doit avoir déjà livré pour vous » — a été
+    // levée le 29/07 : elle rendait les favoris inaccessibles à tout nouveau
+    // commerçant, et supposait que la seule façon de connaître un transporteur
+    // soit de l'avoir vu travailler. On peut aussi l'avoir croisé, ou se l'être
+    // fait recommander.
+    //
+    // Ce contrôle-ci demeure, sous une autre forme : il empêche de sonder
+    // l'existence d'un uuid arbitraire, et de mettre en favori quelqu'un qui a
+    // quitté le réseau.
+    // Contrôlé contre l'annuaire Fleetbase, comme la recherche : viser
+    // `DriverAccount` ici aurait refusé tout transporteur qui n'a pas encore
+    // installé l'application — c'est-à-dire précisément ceux que la recherche
+    // vient de proposer.
+    //
+    // Lecture unitaire (journal §24) : un seul appel, et l'uuid renvoyé est
+    // vérifié côté client Fleetbase.
+    let driver: any = null;
+    try {
+      driver = await this.fleetbaseClient.getDriverByUuid(fleetbaseDriverUuid);
+    } catch (error) {
+      this.logger.warn(`Annuaire transporteurs indisponible : ${error.message}`);
+      badRequest('merchant.favourite_add_unavailable', 'Ajout impossible pour le moment');
+    }
+
+    if (!driver) {
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'favourite.add',
+        resourceType: 'Driver',
+        resourceId: fleetbaseDriverUuid,
+        reason: 'Transporteur inexistant ou inactif dans le réseau',
+      });
+      badRequest('merchant.driver_not_in_network', 'Ce transporteur n\'existe pas dans le réseau Echango');
+    }
+
+    // Le nom vient du serveur, jamais de la requête : sinon un commerçant
+    // pourrait enregistrer n'importe quelle étiquette sur n'importe qui, et sa
+    // liste de favoris cesserait de décrire des personnes réelles.
+    const resolvedName = driver.name ?? driverName;
+
+    return this.prisma.driverFavourite.upsert({
+      where: { merchantId_fleetbaseDriverUuid: { merchantId, fleetbaseDriverUuid } },
+      create: { merchantId, fleetbaseDriverUuid, driverName: resolvedName },
+      update: { driverName: resolvedName },
+    });
+  }
+
+  async removeFavourite(merchantId: string, favouriteId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    // `deleteMany` avec le merchantId dans le filtre : un `delete` par id seul
+    // permettrait de supprimer le favori d'un autre commerçant.
+    const { count } = await this.prisma.driverFavourite.deleteMany({
+      where: { id: favouriteId, merchantId },
+    });
+
+    if (count === 0) {
+      notFound('merchant.favourite_not_found', 'Favori introuvable');
+    }
+    return { removed: true };
+  }
+
+  /**
+   * Résout une commande du commerçant par l'un OU l'autre de ses identifiants,
+   * et vérifie l'appartenance.
+   *
+   * ⚠️ Deux identifiants coexistent : le `cuid` local (renvoyé à la création)
+   * et l'`uuid` Fleetbase (présent partout ailleurs). L'app envoie l'uuid, or
+   * `cancelOrder` et `getOrderTracking` cherchaient le cuid — les deux
+   * répondaient donc **404 systématiquement**, et le suivi échouait en
+   * silence côté client (revue archi #3). `getOrderDetail` faisait déjà la
+   * bonne chose ; ce helper évite que les trois divergent à nouveau.
+   *
+   * L'appartenance est décidée **ici**, sur la table locale. Le motif invoqué
+   * (§2.8, « Fleetbase ignore les filtres ») est faux depuis le 29/07/2026 —
+   * mais décider l'appartenance localement reste juste : un paramètre d'URL
+   * n'est pas une frontière de sécurité. Voir
+   * `docs/architecture_bff_fleetbase.md` §4.3.
+   */
+  private async resolveOwnedOrder(merchantId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { OR: [{ id: orderId }, { fleetbaseOrderId: orderId }] },
     });
 
     if (!order) {
-      throw new NotFoundException('Order not found');
+      notFound('order.not_found', 'Order not found');
     }
 
-    // Anti-IDOR: Verify merchant owns this order
     if (order.merchantId !== merchantId) {
-      throw new ForbiddenException('You do not have access to this order');
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'order.access',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande appartenant à un autre commerçant',
+      });
+      forbidden('order.forbidden', 'You do not have access to this order');
     }
 
     return order;
+  }
+
+  async getOrderDetail(merchantId: string, orderId: string) {
+    this.logger.log(`Fetching order ${orderId} for merchant ${merchantId}`);
+
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    const merged = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
+
+    // Aucune donnée de facturation interne ne sort ici : la rémunération du
+    // transporteur et la commission Echango vivent dans `DriverEarning`, et
+    // n'ont pas d'usage dans l'app commerçant.
+    return {
+      ...(merged as any),
+      ...(await this.failuresFor(order.fleetbaseOrderId)),
+      ...(await this.collectionFor(order.fleetbaseOrderId)),
+    };
+  }
+
+  /**
+   * La commande Fleetbase, `meta` complété par la spécification locale.
+   *
+   * Un seul point de fusion pour tous les chemins de lecture : la liste, la
+   * fiche, le modèle de duplication et la publication. Les disperser aurait
+   * garanti qu'un chemin soit oublié — et celui qu'on oublie est toujours
+   * celui qui décide d'un montant.
+   */
+  private withSpecMeta(live: any, cached?: { specMeta?: any } | null): any {
+    if (!live) return live;
+    return { ...live, meta: effectiveOrderMeta(live, cached?.specMeta) };
+  }
+
+  /**
+   * La commande telle qu'une fiche de détail a besoin de la voir.
+   *
+   * ── Lecture unitaire : désigner la commande, pas la chercher ───────────────
+   *
+   * La console interroge la commande à l'unité (`GET /int/v1/orders/{id}` avec
+   * ses relations) ; le BFF la prenait dans la liste paginée, en parcourant
+   * jusqu'à cinquante pages pour retrouver celle qu'il connaît déjà par son
+   * uuid. Désigner coûte un appel, chercher en coûte autant que l'organisation
+   * a de commandes — et un parcours peut manquer sa cible, ce qu'une lecture
+   * unitaire ne peut pas faire.
+   *
+   * ⚠️ **Ce n'est PAS ce qui a vidé la fiche du 30/07/2026**, et il faut le
+   * dire ici pour que personne ne recycle l'explication. L'hypothèse était que
+   * la liste n'aurait pas servi `meta` ; le source Fleetbase l'invalide —
+   * `OrderResource::toArray()` renvoie `meta` et `payload` (avec `pickup`,
+   * `dropoff`, `entities`) **sans condition**, et la même classe sert les deux
+   * routes. La fiche était incomplète parce que l'écran ne lisait pas ces
+   * champs, corrigé côté Flutter (`548087c`) et constaté à l'écran.
+   *
+   * ── Le repli n'est pas de la prudence gratuite ─────────────────────────────
+   *
+   * `mergeWithFleetbase` porte deux comportements que la lecture unitaire n'a
+   * pas : le drapeau `stale` quand Fleetbase est injoignable, et `missing`
+   * quand la commande a disparu. Les deux se voient à l'écran (« État
+   * indisponible ») au lieu de faire échouer la fiche. Y retomber garantit
+   * qu'un défaut de la lecture unitaire dégrade l'affichage au lieu de le
+   * casser.
+   */
+  private async detailedOrder(
+    order: { id: string; fleetbaseOrderId: string; specMeta?: any },
+    vendorUuid: string,
+  ): Promise<any> {
+    const live = await this.liveOrderDetailed(order, vendorUuid);
+    if (live) return projectOrderForMerchant(live, { bff_order_id: order.id });
+
+    const [merged] = await this.mergeWithFleetbase([order], vendorUuid);
+    return merged;
+  }
+
+  /**
+   * La commande Fleetbase **brute et complète**, ou `null`.
+   *
+   * Partagée par les usages qui ont besoin de la commande entière : la fiche
+   * de détail, le modèle de duplication, et la publication — cette dernière
+   * lisant `prefer_favourites`, `vehicle_type` et `cod_amount` pour décider à
+   * quel favori confier la course. Un `meta` manquant y serait plus qu'un
+   * affichage incomplet : il changerait l'attribution.
+   *
+   * La garde sur l'uuid n'est pas décorative : cet objet décide de qui reçoit
+   * la course. Même principe que `getDriverByUuid` — sur un doute d'enveloppe
+   * ou une régression amont, le pire cas doit être « introuvable », jamais
+   * « la commande de quelqu'un d'autre ».
+   *
+   * `null` plutôt qu'une exception : chaque appelant a son propre repli, et
+   * aucun ne doit échouer sur une lecture d'agrément.
+   */
+  private async liveOrderDetailed(
+    order: { fleetbaseOrderId: string; specMeta?: any },
+    vendorUuid: string,
+  ): Promise<any | null> {
+    try {
+      const response = await this.fleetbaseClient.getOrderWithRelations(order.fleetbaseOrderId);
+      // Fleetbase enveloppe tantôt sous `order`, tantôt à plat — même
+      // tolérance qu'ailleurs dans ce fichier.
+      const live = response?.order ?? response;
+
+      // Uuid absent ou différent : on ne sert pas la commande de quelqu'un
+      // d'autre sur un doute. Même garde que `getDriverByUuid`.
+      //
+      // La fusion a lieu ici, et non chez chaque appelant : c'est le point de
+      // passage unique des cinq lectures unitaires (fiche, preuve, position,
+      // duplication, publication). Une fusion recopiée cinq fois aurait fini
+      // par en manquer une.
+      if (live?.uuid === order.fleetbaseOrderId) return this.withSpecMeta(live, order);
+
+      this.logger.warn(
+        `Lecture unitaire inexploitable pour ${order.fleetbaseOrderId} — repli sur la liste`,
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `Lecture unitaire échouée pour ${order.fleetbaseOrderId} (${error.message}) — repli sur la liste`,
+      );
+    }
+
+    // Repli sur la liste. Elle porte en principe les mêmes champs (le même
+    // `OrderResource` sert les deux routes), mais elle est parcourue page par
+    // page et peut manquer une commande là où la lecture unitaire la désigne :
+    // mieux vaut une fiche éventuellement partielle qu'un écran en erreur.
+    return this.liveOrderFor(vendorUuid, order)
+      .then((live) => this.withSpecMeta(live, order))
+      .catch((): any => null);
+  }
+
+  /**
+   * Encaissement enregistré sur cette livraison, s'il y en a un.
+   *
+   * Sans lui, le commerçant voit ce qu'il a *demandé* d'encaisser et jamais ce
+   * qui l'a réellement été : le montant annoncé resterait affiché sur une
+   * livraison où le client n'a payé que la moitié. C'est exactement l'écart que
+   * le registre existe pour rendre visible, et le cacher sur la fiche de la
+   * commande concernée le rendrait introuvable là où on le cherche.
+   */
+  private async collectionFor(fleetbaseOrderUuid: string) {
+    const collection = await this.prisma.cashCollection.findUnique({
+      where: { fleetbaseOrderUuid },
+    });
+
+    if (!collection) return {};
+
+    return {
+      cash_collection: {
+        id: collection.id,
+        expected_amount: collection.expectedAmount,
+        collected_amount: collection.collectedAmount,
+        discrepancy_reason: collection.discrepancyReason,
+        notes: collection.notes,
+        currency: collection.currency,
+        collected_at: collection.collectedAt.toISOString(),
+      },
+    };
+  }
+
+  /**
+   * Signalements d'échec attachés à une commande, du plus récent au plus
+   * ancien.
+   *
+   * ── Pourquoi le commerçant doit les voir ────────────────────────────────────
+   *
+   * Il recevait « Échec de livraison : client absent » en notification, et rien
+   * de plus : ni la précision écrite par le transporteur, ni la photo. Or c'est
+   * lui qui devra répondre à son propre client, et éventuellement le
+   * rembourser. Le seul destinataire du justificatif était jusqu'ici celui qui
+   * l'avait produit.
+   *
+   * Le filtre porte sur la commande et non sur un transporteur : plusieurs
+   * peuvent s'y être succédé, et le commerçant a droit à la série complète —
+   * une livraison tentée trois fois n'est pas celle tentée une fois.
+   *
+   * La photo n'est jamais servie par son URL Fleetbase : celle-ci n'est
+   * protégée par rien. Le chemin renvoyé pointe sur le BFF, qui vérifie
+   * l'appartenance avant de relayer les octets.
+   */
+  private async failuresFor(fleetbaseOrderUuid: string) {
+    const failures = await this.prisma.deliveryFailure.findMany({
+      where: { fleetbaseOrderUuid },
+      orderBy: { reportedAt: 'desc' },
+    });
+
+    if (!failures.length) return {};
+
+    const project = (f: any) => ({
+      id: f.id,
+      reason: f.reason,
+      notes: f.notes,
+      photo_url: f.proofUrl ? `/commercant/preuves/${f.id}` : null,
+      created_at: f.reportedAt.toISOString(),
+    });
+
+    return {
+      delivery_failure: project(failures[0]),
+      delivery_failures: failures.map(project),
+    };
+  }
+
+  /**
+   * Photo d'un signalement d'échec, servie au commerçant propriétaire.
+   *
+   * L'appartenance se vérifie en deux temps — le signalement porte l'uuid de la
+   * commande, et c'est le cache local qui dit à quel commerçant elle est.
+   * L'appartenance ne se demande jamais à Fleetbase — non parce qu'il ne
+   * saurait pas répondre (l'affirmation §2.8 est corrigée depuis le
+   * 29/07/2026), mais parce qu'un contrôle d'accès ne se délègue pas à un
+   * paramètre de requête.
+   */
+  async getFailureProof(merchantId: string, failureId: string) {
+    await this.getMerchantWithValidation(merchantId);
+
+    const failure = await this.prisma.deliveryFailure.findUnique({
+      where: { id: failureId },
+    });
+
+    const owned = failure
+      ? await this.prisma.order.findFirst({
+          where: { fleetbaseOrderId: failure.fleetbaseOrderUuid, merchantId },
+          select: { id: true },
+        })
+      : null;
+
+    if (!failure || !owned) {
+      // Un signalement inexistant et celui d'un autre commerçant donnent la
+      // même réponse ; seul le second est journalisé.
+      if (failure) {
+        this.audit.denied({
+          actorType: 'merchant',
+          actorId: merchantId,
+          action: 'proof.access',
+          resourceType: 'DeliveryFailure',
+          resourceId: failureId,
+          reason: 'Signalement portant sur la commande d\'un autre commerçant',
+        });
+      }
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
+    }
+
+    if (!failure.proofUrl) {
+      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
+    }
+
+    try {
+      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
+    } catch (error) {
+      this.logger.warn(`Preuve ${failureId} illisible : ${error.message}`);
+      notFound('order.proof_not_found', 'Preuve indisponible');
+    }
+  }
+
+  /**
+   * Preuve de livraison de la commande, servie au commerçant.
+   *
+   * ⚠️ Dépend de `proof_url` sur la commande Fleetbase, **dont le
+   * renseignement n'est pas vérifié** : la preuve capturée par le transporteur
+   * crée bien une ressource `Proof`, mais que Fleetbase reporte son URL sur la
+   * commande elle-même reste à confirmer sur une livraison réelle. Si ce champ
+   * reste vide, la route répond « pas de preuve » — ce qui est indiscernable,
+   * pour l'appelant, d'une livraison sans preuve exigée. C'est le premier point
+   * à observer sur une vraie livraison avec `pod_required`.
+   */
+  async getOrderProof(merchantId: string, orderId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
+
+    if (!live?.proof_url) {
+      notFound('order.proof_not_found', 'Aucune preuve enregistrée pour cette livraison');
+    }
+
+    try {
+      return await this.fleetbaseClient.fetchStoredFile(live.proof_url);
+    } catch (error) {
+      this.logger.warn(`Preuve de ${orderId} illisible : ${error.message}`);
+      notFound('order.proof_not_found', 'Preuve indisponible');
+    }
+  }
+
+  /**
+   * Dernière position connue du transporteur affecté à cette commande.
+   *
+   * ── Ce que cette route est, et n'est pas ────────────────────────────────────
+   *
+   * C'est un **point**, pas un suivi : la position que le transporteur a
+   * remontée en dernier, avec sa date. Pas d'itinéraire, pas d'heure d'arrivée
+   * estimée — celle-ci demande un moteur de routage (OSRM), non auto-hébergé à
+   * ce stade. Attendre OSRM pour montrer quoi que ce soit reviendrait à laisser
+   * le commerçant devant un statut textuel alors que la donnée est là.
+   *
+   * La fraîcheur est renvoyée avec le point, et ce n'est pas cosmétique : une
+   * position vieille d'une heure affichée comme actuelle est pire qu'aucune
+   * position. Le transporteur peut être hors ligne, en tunnel, ou avoir fermé
+   * l'application.
+   *
+   * `null` plutôt qu'une erreur quand personne n'est encore affecté : c'est
+   * l'état normal d'une course en attente, pas un échec.
+   */
+  async getOrderDriverPosition(merchantId: string, orderId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
+
+    const driverUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid;
+    if (!driverUuid) return { position: null };
+
+    // La position vit sur le conducteur Fleetbase, pas dans un miroir local
+    // (Lot 6). `Position` est l'historique ; `Driver.location` est l'état
+    // courant, mis à jour par le `track` que le BFF émet à chaque remontée GPS.
+    let driver: any;
+    try {
+      driver = await this.fleetbaseClient.getDriverByUuid(driverUuid);
+    } catch (error) {
+      this.logger.warn(`Position du transporteur indisponible : ${error.message}`);
+      return { position: null };
+    }
+
+    const position = readDriverPosition(driver);
+    if (!position) return { position: null };
+
+    return {
+      position: {
+        latitude: position.latitude,
+        longitude: position.longitude,
+        // Jamais omise : c'est elle qui dit si le point vaut quelque chose.
+        // ⚠️ C'est un « vu le », pas un « positionné le » — voir
+        // `readPositionSeenAt`.
+        recorded_at: readPositionSeenAt(driver),
+      },
+    };
+  }
+
+
+
+  /**
+   * Modèle de commande repris d'une livraison passée.
+   *
+   * ── Pourquoi un modèle, et non une commande créée directement ──────────────
+   *
+   * Une duplication silencieuse recopierait aussi ce qui ne se duplique pas :
+   * un enlèvement programmé la veille à 8 h, une fois recréé, est dans le
+   * passé. Le serveur renvoie donc les champs à reprendre, l'application
+   * rouvre le formulaire pré-rempli, et le commerçant valide en connaissance de
+   * cause. Un clic de plus, et aucune commande créée par accident — ce qui,
+   * pour une livraison réelle facturée à quelqu'un, n'est pas un détail.
+   *
+   * `scheduledAt` est délibérément **absent** du modèle : c'est le seul champ
+   * qu'on ne peut pas reprendre sans mentir, et le laisser vide fait retomber
+   * sur « dès que possible », qui est vrai.
+   */
+  async getOrderTemplate(merchantId: string, orderId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const cached = await this.resolveOwnedOrder(merchantId, orderId);
+
+    // Lecture unitaire : la duplication reprend tout `meta` (catégorie de
+    // véhicule, montant à encaisser, préférence de favoris, articles), et
+    // désigner la commande vaut mieux que la chercher dans une liste paginée
+    // qui peut la manquer.
+    const live = await this.liveOrderDetailed(cached, merchant.fleetbaseVendorUuid);
+
+    if (!live) {
+      notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
+    }
+
+    const meta = live.meta ?? {};
+    const place = (raw: any, prefix: 'pickup' | 'dropoff') => {
+      if (!raw) return {};
+      const coords = raw.location?.coordinates;
+      const [longitude, latitude] = Array.isArray(coords) ? coords : [];
+      return {
+        [`${prefix}LocationName`]: raw.name ?? raw.address ?? null,
+        [`${prefix}Latitude`]: typeof latitude === 'number' ? latitude : null,
+        [`${prefix}Longitude`]: typeof longitude === 'number' ? longitude : null,
+        [`${prefix}ContactName`]: raw.contact_name ?? raw.meta?.contact_name ?? null,
+        [`${prefix}ContactPhone`]: raw.phone ?? raw.contact_phone ?? null,
+      };
+    };
+
+    return {
+      ...place(live.payload?.pickup, 'pickup'),
+      ...place(live.payload?.dropoff, 'dropoff'),
+      pickupNotes: meta.pickup_notes ?? null,
+      dropoffNotes: meta.dropoff_notes ?? null,
+      deliveryInstructions: meta.instructions ?? null,
+      items: Array.isArray(meta.items) ? meta.items : null,
+      vehicleType: meta.vehicle_type ?? null,
+      // `?? 'aucune'`, pas `?? null` : l'app envoie toujours l'un des deux
+      // valeurs à la création (jamais de troisième état), et `pod_method`
+      // n'est écrit chez Fleetbase QUE quand une preuve est exigée — son
+      // absence est donc le signal fiable que « aucune » avait été choisi, pas
+      // une valeur inconnue. Sans ce repli, la duplication d'une commande sans
+      // preuve exigée faisait réapparaître « Photo à la livraison », le
+      // défaut du formulaire de création, jamais le choix d'origine.
+      podMethod: live.pod_method ?? 'aucune',
+      // Reproduit tel quel : sans lui, une commande dupliquée sollicitait
+      // toujours les favoris en premier, même quand la commande d'origine
+      // avait délibérément visé le pool commun.
+      preferFavourites: meta.prefer_favourites !== false,
+      // Le prix est repris tel quel : c'est une proposition du commerçant, et
+      // reproposer ce qui avait trouvé preneur est le comportement utile. S'il
+      // avait été refusé pour insuffisance, l'écran de création reste
+      // modifiable.
+      price: typeof meta.price === 'number' ? meta.price : null,
+      // Repris comme le reste : une boulangerie qui livre le même client
+      // encaisse en général le même montant. Modifiable à l'écran.
+      //
+      // ⚠️ On rend le **prix de la marchandise**, jamais `cod_amount` : ce
+      // dernier contient déjà la rémunération du transporteur quand le
+      // commerçant l'a mise à la charge du destinataire. Le reprendre tel quel
+      // le ferait ré-additionner à la création suivante — 1300 devient 1950,
+      // puis 2600 —, et l'erreur se composerait à chaque duplication sans
+      // jamais lever d'exception.
+      //
+      // Le repli sur `cod_amount` couvre les commandes d'avant ce champ, où
+      // les deux montants étaient confondus.
+      codAmount:
+        typeof meta.cod_goods_amount === 'number'
+          ? meta.cod_goods_amount
+          : typeof meta.cod_amount === 'number'
+            ? meta.cod_amount
+            : null,
+      codIncludesDelivery: meta.cod_includes_delivery === true,
+    };
   }
 
   /**
@@ -102,16 +1206,97 @@ export class CommerçantService {
 
     const merchant = await this.getMerchantWithValidation(merchantId);
 
+    // Calculé AVANT le `try`, et ce n'est pas un détail de style. Cette
+    // fonction peut refuser (encaissement de la marchandise seule sans
+    // rémunération connue), et à l'intérieur du `try` les deux `Place`
+    // d'enlèvement et de livraison sont **déjà créés chez Fleetbase** : le
+    // refus les laisserait orphelins, sans rien pour les reprendre. Refuser
+    // avant la première écriture est la seule compensation qui ne coûte rien
+    // (règles §2 et §3).
+    const meta = this.buildOrderMeta(dto);
+
     try {
       // Fleetbase orders require pre-created Place records for pickup/dropoff,
       // referenced by UUID, plus a resolved order_config_uuid.
-      const [pickupPlace, dropoffPlace, orderConfigUuid] = await Promise.all([
-        this.fleetbaseClient.createPlace(dto.pickupLocationName, dto.pickupLatitude, dto.pickupLongitude),
-        this.fleetbaseClient.createPlace(dto.dropoffLocationName, dto.dropoffLatitude, dto.dropoffLongitude),
-        this.fleetbaseClient.getDefaultOrderConfigUuid(),
+      //
+      // ── L'ordre compte, et il est imposé par une décision produit ──────────
+      //
+      // **Pas de livraison enregistrée si ses données métier ne le sont pas.**
+      // Prix, montant à encaisser et colis doivent vivre dans le stockage
+      // durable, sinon la commande n'a pas lieu d'être : le commerçant la
+      // croirait protégée, le transporteur agirait sur des montants qui
+      // peuvent disparaître à la première action console.
+      //
+      // La configuration et ses définitions sont donc résolues **d'abord**, et
+      // le refus tombe **avant** la création des deux `Place` — sans quoi il
+      // les laisserait orphelins chez Fleetbase (règle §2).
+      const orderConfigUuid = await this.fleetbaseClient.getDefaultOrderConfigUuid();
+      const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
+      this.assertCustomFieldsComplete(meta, customFieldValues);
+
+      const metaWithoutCustomFields = this.metaOutsideCatalogue(meta);
+
+      const [pickupPlace, dropoffPlace] = await Promise.all([
+        // Les contacts sont bien transmis : ils étaient saisis, validés, puis
+        // jetés (voir createPlace). Un transporteur devant une porte sans
+        // numéro à appeler ne peut que constater l'échec.
+        this.fleetbaseClient.createPlace(
+          dto.pickupLocationName,
+          dto.pickupLatitude,
+          dto.pickupLongitude,
+          { name: dto.pickupContactName, phone: dto.pickupContactPhone },
+        ),
+        this.fleetbaseClient.createPlace(
+          dto.dropoffLocationName,
+          dto.dropoffLatitude,
+          dto.dropoffLongitude,
+          { name: dto.dropoffContactName, phone: dto.dropoffContactPhone },
+        ),
       ]);
 
-      const response = await this.fleetbaseClient.createOrder({
+      // Favori disponible ? On le sollicite ; sinon la course part au pool,
+      // **y compris quand elle est encaissée**.
+      //
+      // Une version précédente réservait les courses encaissées aux favoris, au
+      // motif qu'on ne confie pas d'espèces à quelqu'un qu'on n'a jamais vu
+      // travailler. Le raisonnement supposait un pool anonyme — il ne l'est
+      // pas : **les transporteurs sont sélectionnés et provisionnés par
+      // Echango**, sur invitation nominative (voir `DriverInvitation`), et
+      // aucun ne s'inscrit de lui-même. Le contrôle a donc déjà eu lieu, à
+      // l'entrée dans le réseau, et le refaire par commerçant ne protégeait de
+      // rien tout en interdisant l'encaissement à tout commerçant sans favori —
+      // c'est-à-dire à tout nouveau commerçant.
+      //
+      // Le plafond de dette reste, lui : il ne présume rien de la personne, il
+      // borne l'exposition. C'est le garde-fou qui fait le travail.
+      //
+      // ⚠️ Un brouillon (`dto.draft`) ne sollicite aucun favori à la création :
+      // la décision de dispatch est tout entière différée à la publication
+      // (`publishOrder`), au moment où elle a une chance de refléter une
+      // disponibilité à jour plutôt que celle de l'instant de la saisie.
+      //
+      // ⚠️ Le plafond de dette est vérifié sur `meta.cod_amount` — le montant
+      // réclamé à la porte — et non sur `dto.codAmount`, qui n'est que le prix
+      // de la marchandise. C'est l'espèce que le transporteur portera qui
+      // fonde l'exposition, livraison comprise. Prendre la saisie ici aurait
+      // sous-estimé le plafond sur ce chemin et pas sur celui de
+      // `publishOrder`, qui lit déjà `meta` : deux réponses différentes pour
+      // la même course selon qu'elle passe ou non par un brouillon.
+      const favourite = dto.preferFavourites && !dto.draft
+        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, meta?.cod_amount)
+        : null;
+
+      // Les données métier partent DEUX fois, et ce n'est pas une duplication
+      // gratuite (règle 1) : ce sont deux stockages aux propriétés opposées.
+      //
+      // - `custom_field_values` est le stockage **durable** : table séparée,
+      //   synchronisée seulement si la requête la porte, donc intacte après
+      //   n'importe quelle mise à jour de la commande. C'est la source servie
+      //   aux applications.
+      // - `meta` reste écrit pour les lecteurs qui l'attendent — l'historique
+      //   des commandes d'avant cette migration, et tout intégrateur tiers.
+      //   Il est fragile par construction, d'où sa place derrière.
+      const response = await this.createOrderOrCleanUp({
         order_config_uuid: orderConfigUuid,
         customer_uuid: merchant.fleetbaseVendorUuid,
         customer_type: 'vendor',
@@ -120,29 +1305,108 @@ export class CommerçantService {
           pickup_uuid: pickupPlace.place.uuid,
           dropoff_uuid: dropoffPlace.place.uuid,
         },
-        meta: dto.deliveryInstructions ? { instructions: dto.deliveryInstructions } : undefined,
-      });
+        // ⚠️ `meta` ne porte plus que ce qui n'a PAS de champ personnalisé —
+        // aujourd'hui `pricing_inputs` seul.
+        //
+        // Écrire les deux était juste tant que les champs personnalisés
+        // pouvaient manquer. Depuis qu'une commande sans eux est **refusée**,
+        // `meta` n'est plus un filet mais un doublon — et un doublon qui
+        // diverge : le jour où un admin corrige un prix dans les champs
+        // personnalisés, le panneau `METADATA` de la console continue
+        // d'afficher l'ancien. Deux valeurs pour le même montant, sans que rien
+        // ne dise laquelle fait foi. C'est le second vocabulaire que la règle 1
+        // interdit, réintroduit par prudence mal placée.
+        //
+        // `Order.specMeta` garde tout, lui : il n'est ni affiché ni modifiable,
+        // donc il ne peut pas contredire l'écran.
+        meta: metaWithoutCustomFields,
+        custom_field_values: customFieldValues,
+        scheduled_at: dto.scheduledAt,
+        // Un brouillon envoie `adhoc: false` ET `dispatched: false`
+        // EXPLICITEMENT, pas seulement leur absence.
+        //
+        // ⚠️ **Corrige une hypothèse fausse** (30/07/2026) : omettre `adhoc` et
+        // `driver_assigned_uuid` ne suffisait pas — la commande passait quand
+        // même en `Dispatched` dès la création, et `status: 'created'` forcé
+        // n'a rien changé non plus. Capture réseau de la console : son
+        // formulaire de création envoie `status: null` (jamais une chaîne) et
+        // surtout `dispatched: false`/`adhoc: false` explicites, deux champs
+        // que ce chemin omettait purement et simplement. Fleetbase semble
+        // traiter leur absence comme un défaut permissif.
+        ...(dto.draft
+          ? { adhoc: false, dispatched: false }
+          : favourite
+            ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
+            : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
+        pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
+        pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
+      }, [pickupPlace.place.uuid, dropoffPlace.place.uuid]);
 
       const fleetbaseOrder = response.order;
       const fleetbaseOrderId = fleetbaseOrder?.uuid || fleetbaseOrder?.id;
 
-      // Cache order in BFF database
-      const order = await this.prisma.order.create({
-        data: {
+      // ── Ce qui suit est la seconde moitié d'une écriture en deux systèmes ──
+      //
+      // La commande existe désormais chez Fleetbase. La ligne locale qui dit
+      // **à qui elle appartient** n'existe pas encore, et sans elle la commande
+      // serait orpheline : invisible au commerçant, absente de ses
+      // notifications, et son encaissement refusé faute de savoir à qui
+      // l'imputer — alors qu'un transporteur la verrait et la livrerait.
+      //
+      // Il n'y a pas de transaction commune aux deux systèmes. À défaut, on
+      // compense : si l'écriture locale échoue, la commande Fleetbase est
+      // annulée, comme le `Vendor` l'est déjà quand une inscription commerçant
+      // échoue à mi-chemin.
+      const order = await this.createOrderCache(
+        {
           merchantId,
           fleetbaseOrderId,
-          status: 'pending',
-          trackingNumber: fleetbaseOrder?.tracking_number?.tracking_number,
+          // Le statut RÉEL renvoyé par Fleetbase, et non `'pending'` — un
+          // statut inventé qui n'appartient pas à son vocabulaire. Le
+          // réconciliateur y verrait un changement au premier passage et
+          // notifierait une transition qui n'a jamais eu lieu.
+          status: fleetbaseOrder?.status ?? 'created',
+          driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
+          // ⚠️ **Ce que le commerçant a demandé, conservé ici.**
+          //
+          // Le Lot 2 avait retiré `codAmount` de ce cache au motif que
+          // `meta.cod_amount` chez Fleetbase suffisait. Le raisonnement était
+          // juste sur les faits connus alors, et il est démenti depuis :
+          // affecter un transporteur depuis la console **écrase `meta`** — il
+          // ne reste que `{_index_resource: true}`. Prix, montant à encaisser,
+          // colis et précisions d'adresse disparaissent d'une commande en
+          // cours, au moment même où quelqu'un la prend en charge.
+          //
+          // Ce n'est pas un miroir d'état mais une **spécification** figée :
+          // écrite une fois, jamais recalculée, et jamais autoritaire face à
+          // Fleetbase — `effectiveMeta()` la fait passer *derrière*, clé par
+          // clé. Elle ne répare que l'effacement.
+          specMeta: meta ?? undefined,
         },
-      });
+        fleetbaseOrderId,
+      );
+
+      if (favourite) {
+        this.logger.log(
+          `Commande ${order.id} confiée au favori ${favourite.fleetbaseDriverUuid}`,
+        );
+      }
 
       this.logger.log(`Order created: ${order.id}`);
 
       return order;
     } catch (error) {
+      // Une erreur métier délibérée traverse intacte. Sans cette ligne, le
+      // filet générique la réemballait en « Failed to create order » : le
+      // commerçant recevait, en production, un message qui ne disait ni ce qui
+      // n'allait pas ni quoi faire — alors que le refus avait précisément été
+      // écrit pour le lui expliquer.
+      if (error instanceof HttpException) throw error;
+
       this.logger.error(`Failed to create order: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-      throw new BadRequestException(
+      badRequest(
+        'order.create_failed',
         this.configService.get('NODE_ENV') === 'development'
           ? `Failed to create order: ${detail}`
           : 'Failed to create order',
@@ -151,46 +1415,659 @@ export class CommerçantService {
   }
 
   /**
+   * Publie un brouillon : déclenche le dispatch qu'une création en mode
+   * `draft` a délibérément omis.
+   *
+   * ── Ce qui fait qu'une commande EST un brouillon ─────────────────────────
+   *
+   * Aucun champ dédié, aucun statut Fleetbase « draft » — l'absence de
+   * `adhoc` et de `driver_assigned_uuid` est le seul signal, exactement celui
+   * que `createOrder` a laissé vide. Le vérifier ici, à nouveau, est ce qui
+   * empêche de publier deux fois une commande déjà partie (au pool ou chez un
+   * favori) : la republier écraserait une assignation en cours avec une
+   * nouvelle décision de dispatch, potentiellement différente.
+   *
+   * ── Comment la décision de dispatch est reprise ─────────────────────────
+   *
+   * `meta.prefer_favourites` porte le choix fait à la création (Task #38) :
+   * c'est lui qui décide, pas un nouveau réglage demandé au commerçant au
+   * moment de publier — publier doit rester un geste, pas un second
+   * formulaire. `vehicle_type` et `cod_amount` viennent du même `meta`, pour
+   * que `pickAvailableFavourite` applique exactement les mêmes filtres qu'à
+   * la création (catégorie de véhicule, plafond de dette).
+   *
+   * ── Deux appels, dans cet ordre, imposé par le source Fleetbase ──────────
+   *
+   * 1. **Qui peut prendre la commande** — un favori assigné
+   *    (`POST /drivers/{uuid}/assign-order`), ou la diffusion au pool
+   *    (`adhoc: true`).
+   * 2. **Dispatcher** — `POST /v1/orders/{id}/dispatch`, l'endpoint dédié.
+   *
+   * L'ordre n'est pas un choix de style : `dispatchOrder` refuse avec « No
+   * driver assigned to dispatch! » tant qu'il n'y a ni transporteur assigné
+   * ni `adhoc`. Et le second appel est irremplaçable — trois tentatives ont
+   * échoué avant de trouver cet endpoint dans `server/src/routes.php` (détail
+   * dans `dispatchOrder()` côté client Fleetbase).
+   */
+  async publishOrder(merchantId: string, orderId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const cached = await this.resolveOwnedOrder(merchantId, orderId);
+
+    // Lecture unitaire, et ici l'enjeu n'est pas l'affichage :
+    // `prefer_favourites`, `vehicle_type` et `cod_amount` vivent dans `meta`,
+    // et c'est sur eux que se décide **à qui la course est confiée**. Une
+    // commande manquée par le parcours de la liste ferait échouer la
+    // publication ; un `meta` incomplet la publierait de travers, sans erreur.
+    const live = await this.liveOrderDetailed(cached, merchant.fleetbaseVendorUuid);
+
+    if (!live) {
+      notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
+    }
+
+    // Le statut Fleetbase, et lui seul.
+    //
+    // ⚠️ La version précédente regardait `adhoc`/`dispatched`/
+    // `driver_assigned_uuid` : une publication interrompue entre ses deux
+    // étapes (assignation faite, dispatch échoué) laissait la commande
+    // `created` chez Fleetbase mais « déjà publiée » pour ce garde — donc
+    // définitivement bloquée, sans aucun moyen de la relancer. Sur le statut,
+    // une publication ratée reste `created`, donc reste republiable : le
+    // réessai est possible précisément parce qu'on ne mémorise rien à côté.
+    if (live.status !== 'created') {
+      badRequest(
+        'order.already_published',
+        `Cette commande n'est plus un brouillon (statut : ${live.status}).`,
+      );
+    }
+
+    const meta = live.meta ?? {};
+    const preferFavourites = meta.prefer_favourites !== false;
+    const favourite = preferFavourites
+      ? await this.pickAvailableFavourite(merchantId, meta.vehicle_type, meta.cod_amount)
+      : null;
+
+    try {
+      // Étape 1 — qui peut prendre la commande.
+      if (favourite) {
+        // Même route que le persona flotte (`flotte.service.ts`), déjà en
+        // usage réel : `POST /drivers/{uuid}/assign-order` — int/v1
+        // uniquement, cette route n'existe pas sur `v1` (vérifié dans
+        // `server/src/routes.php`), d'où `callFleetOps` et l'uuid.
+        await this.fleetbaseClient.assignOrderToDriver(
+          favourite.fleetbaseDriverUuid,
+          cached.fleetbaseOrderId,
+        );
+      } else {
+        await this.fleetbaseClient.releaseOrderToPool(
+          cached.fleetbaseOrderId,
+          this.adhocRadiusMetres(),
+        );
+      }
+
+      // Étape 2 — dispatcher, par la route de la console.
+      //
+      // `dispatchWithActivity()` pose le drapeau ET l'activité qui écrit le
+      // statut, d'un seul bloc. C'est ce que fait la console, et c'est ce qui
+      // distingue cette route de sa jumelle `v1`, qui sépare les deux et
+      // refuse dès que le drapeau est posé — laissant alors le statut bloqué
+      // à `created` pour toujours. Détail complet dans `dispatchOrder()`.
+      //
+      // ⚠️ **Compensée si elle échoue.** Les deux étapes ne sont pas
+      // atomiques — aucune transaction ne couvre notre Postgres et le MySQL de
+      // Fleetbase joint en HTTP — et l'étape 1 a déjà rendu la course
+      // réclamable par un transporteur (`transporteur.service.ts` filtre sur
+      // `adhoc === true` sans exiger `dispatched`). Sans compensation, un
+      // échec ici laisse une course en circulation que le commerçant croit
+      // encore en brouillon.
+      try {
+        await this.fleetbaseClient.dispatchOrder(cached.fleetbaseOrderId);
+      } catch (dispatchError) {
+        await this.withdrawAfterFailedDispatch(cached.fleetbaseOrderId);
+        throw dispatchError;
+      }
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+
+      // Le message de Fleetbase est remonté tel quel quand il existe : ses
+      // deux refus de dispatch sont explicites et actionnables (« No driver
+      // assigned to dispatch! », « Order has already been dispatched! »).
+      // Les remplacer par une phrase générique reviendrait à jeter la seule
+      // information qui dit quoi corriger.
+      const detail =
+        error.response?.data?.errors?.[0] ||
+        error.response?.data?.error ||
+        error.response?.data?.message;
+
+      this.logger.error(
+        `Publication échouée (${orderId}) : ${detail ?? error.message}`,
+      );
+      badRequest(
+        'order.publish_failed',
+        detail || 'Impossible de publier cette commande pour le moment',
+      );
+    }
+
+    // Troisième écriture, locale — et **délibérément non bloquante**.
+    //
+    // La publication a réussi côté Fleetbase à ce point : lever ici ferait
+    // remonter un échec au commerçant pour une course pourtant partie, qui
+    // réessaierait alors une publication désormais refusée. Le cache n'est
+    // qu'un cache, et `OrderReconcilerService` le remet d'aplomb au passage
+    // suivant — c'est exactement le rôle qu'on lui a donné.
+    try {
+      await this.prisma.order.update({
+        where: { id: cached.id },
+        data: { driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null },
+      });
+    } catch (error: any) {
+      this.logger.warn(
+        `Cache non mis à jour après publication de ${cached.id} : ${error.message} — ` +
+          'le réconciliateur corrigera',
+      );
+    }
+
+    if (favourite) {
+      this.logger.log(`Brouillon ${cached.id} publié vers le favori ${favourite.fleetbaseDriverUuid}`);
+    } else {
+      this.logger.log(`Brouillon ${cached.id} publié vers le pool commun`);
+    }
+
+    const [merged] = await this.mergeWithFleetbase([cached], merchant.fleetbaseVendorUuid);
+    return merged;
+  }
+
+  /**
+   * Défait l'étape 1 quand le dispatch a échoué.
+   *
+   * ── Pourquoi ça compte, et ce que ça ne garantit pas ────────────────────────
+   *
+   * L'étape 1 rend la course réclamable (`adhoc: true` suffit à la faire
+   * apparaître aux transporteurs). Un échec de l'étape 2 sans compensation
+   * laisse donc une course en circulation que le commerçant croit encore en
+   * brouillon — la pire des deux issues, parce qu'elle est invisible de son
+   * côté.
+   *
+   * Best-effort, et l'aveu est important : si la compensation échoue à son
+   * tour, la course **reste** réclamable, et seul ce journal en garde trace.
+   * Il n'y a pas de transaction possible entre deux systèmes joints en HTTP ;
+   * ce filet réduit la fenêtre, il ne la ferme pas. Une course prise dans
+   * l'intervalle par un transporteur ne serait de toute façon plus retirable
+   * sans le prévenir.
+   */
+  private async withdrawAfterFailedDispatch(fleetbaseOrderId: string): Promise<void> {
+    try {
+      await this.fleetbaseClient.withdrawFromDispatch(fleetbaseOrderId);
+      this.logger.log(
+        `Dispatch échoué sur ${fleetbaseOrderId} — course retirée de la diffusion`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `COMPENSATION ÉCHOUÉE — la commande Fleetbase ${fleetbaseOrderId} reste ` +
+          `réclamable par un transporteur alors qu'elle n'a pas été publiée. ` +
+          `À retirer à la main depuis la console : ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Écrit la ligne de cache, ou annule la commande amont.
+   *
+   * ── Pourquoi une compensation, et non une simple journalisation ─────────────
+   *
+   * Cette ligne porte le rattachement commerçant ↔ commande, c'est-à-dire la
+   * seule chose que Fleetbase ne sait pas exprimer (§2.8 : ses filtres de
+   * requête sont ignorés en silence). Sans elle, la commande est **orpheline** :
+   * elle part au dispatch, un transporteur la voit et la livre, mais elle
+   * n'appartient à personne — le commerçant ne la voit pas, ses notifications
+   * ne l'atteignent pas, et son encaissement est refusé.
+   *
+   * Une commande orpheline est donc pire qu'une commande non créée. La
+   * compensation est best-effort — si l'annulation échoue à son tour, on
+   * journalise en `error` avec l'identifiant, seule trace permettant à un
+   * opérateur de la retrouver dans la console.
+   */
+  /**
+   * Refuse la création si une donnée métier n'a pas de champ durable où aller.
+   *
+   * ── Décision produit, 30/07/2026 : pas de livraison sans ses montants ──────
+   *
+   * La tentation était de créer la commande quand même et de se rabattre sur
+   * `meta`. C'est le mauvais arbitrage : une livraison dont le prix et le
+   * montant à encaisser ne sont pas stockés durablement **paraît normale**. Le
+   * commerçant la croit protégée, le transporteur voit un montant à réclamer —
+   * et tout disparaît à la première affectation depuis la console. Le défaut ne
+   * se révèle qu'au moment où il coûte de l'argent, à la porte du destinataire.
+   *
+   * Un refus, lui, se voit tout de suite, se corrige tout de suite, et ne
+   * laisse personne agir sur une donnée fantôme.
+   *
+   * Le refus est levé **avant** toute écriture chez Fleetbase — d'où sa place
+   * en tête de `createOrder`, avant même les deux `Place`.
+   */
+  /**
+   * Ce qui reste à `meta` : les clés sans champ personnalisé correspondant.
+   *
+   * Renvoie `undefined` s'il ne reste rien, pour ne pas écrire un objet vide là
+   * où l'absence est plus lisible.
+   */
+  private metaOutsideCatalogue(
+    meta: Record<string, any> | undefined,
+  ): Record<string, any> | undefined {
+    if (!meta) return undefined;
+
+    const rest: Record<string, any> = {};
+    for (const [key, value] of Object.entries(meta)) {
+      if (!ORDER_CUSTOM_FIELD_KEYS.includes(key)) rest[key] = value;
+    }
+
+    return Object.keys(rest).length ? rest : undefined;
+  }
+
+  private assertCustomFieldsComplete(
+    meta: Record<string, any> | undefined,
+    values: { custom_field_uuid: string }[],
+  ): void {
+    const expected = ORDER_CUSTOM_FIELD_KEYS.filter(
+      (key) => meta?.[key] !== undefined && meta?.[key] !== null,
+    );
+
+    if (values.length >= expected.length) return;
+
+    this.logger.error(
+      `Champs personnalisés incomplets : ${values.length}/${expected.length} déclarés. `
+        + 'Création refusée — une commande dont les montants ne sont pas stockés '
+        + 'durablement serait indiscernable d\'une commande saine.',
+    );
+
+    badRequest(
+      'order.custom_fields_unavailable',
+      'Enregistrement impossible pour le moment : réessayez dans un instant.',
+    );
+  }
+
+  /**
+   * Crée la commande, et **supprime les deux lieux** si Fleetbase la refuse.
+   *
+   * Les `Place` d'enlèvement et de livraison sont créés avant la commande — ils
+   * sont référencés par elle. Un échec après leur création les laisse orphelins
+   * dans l'organisation, invisibles et jamais nettoyés : c'est ce qui s'est
+   * accumulé pendant les essais du 30/07/2026, où la liste des lieux comptait
+   * autant de doublons que de tentatives.
+   *
+   * La compensation est best-effort, comme toutes celles de ce projet : si elle
+   * échoue à son tour, un log `error` nomme les lieux à reprendre à la main.
+   */
+  private async createOrderOrCleanUp(order: any, placeUuids: string[]) {
+    try {
+      return await this.fleetbaseClient.createOrder(order);
+    } catch (error: any) {
+      for (const uuid of placeUuids) {
+        await this.fleetbaseClient.deletePlace(uuid).catch((cleanupError: any) =>
+          this.logger.error(
+            `Lieu ${uuid} laissé orphelin après un échec de création : ${cleanupError.message}`,
+          ),
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async createOrderCache(data: any, fleetbaseOrderId: string) {
+    try {
+      return await this.prisma.order.create({ data });
+    } catch (error: any) {
+      this.logger.error(
+        `Cache de commande non écrit (${fleetbaseOrderId}) : ${error.message} — ` +
+          'annulation de la commande Fleetbase pour ne pas la laisser orpheline',
+      );
+
+      try {
+        await this.fleetbaseClient.cancelOrder(fleetbaseOrderId);
+      } catch (cancelError: any) {
+        this.logger.error(
+          `ANNULATION DE COMPENSATION ÉCHOUÉE — la commande Fleetbase ` +
+            `${fleetbaseOrderId} existe sans propriétaire et doit être annulée ` +
+            `à la main : ${cancelError.message}`,
+        );
+      }
+
+      badRequest('order.create_failed', 'La livraison n\'a pas pu être enregistrée. Réessayez.');
+    }
+  }
+
+  /**
    * Cancel an order
    */
+  /**
+   * L'argent qui n'est pas encore encaissé mais qui est attendu à une porte.
+   *
+   * ── Pourquoi cette lecture existe ───────────────────────────────────────────
+   *
+   * Le registre de caisse ne connaît que les espèces **déjà perçues** : une
+   * `CashCollection` naît à la clôture d'une livraison. Un commerçant dont les
+   * courses sont en route lisait donc « 0 DZD » et « aucune somme en attente »
+   * alors que 1950 DZD étaient réclamés à des portes ce jour-là.
+   *
+   * Ce n'était pas un écran vide, c'était un écran **faux dans le sens qui
+   * rassure** — le mode d'échec dont ce projet a déjà payé le prix plusieurs
+   * fois. Le registre restait juste : il répondait exactement à la question
+   * qu'on lui posait, et personne ne posait l'autre.
+   *
+   * ── Ce que ça n'est pas ─────────────────────────────────────────────────────
+   *
+   * Aucun état n'est stocké, aucune écriture comptable n'est créée : c'est une
+   * lecture, recalculée à chaque appel depuis Fleetbase et le registre. Une
+   * somme *attendue* n'est due par personne — le transporteur ne tient pas
+   * encore l'argent — et l'inscrire au registre créerait une dette pour une
+   * livraison qui peut encore échouer.
+   *
+   * ── La troisième catégorie : livrée, et pourtant absente du registre ────────
+   *
+   * `CashCollection` n'a **qu'un seul chemin d'écriture** : `settleCashIfDue()`,
+   * appelée par les deux routes de clôture du transporteur. Une commande qui
+   * atteint `completed` autrement — et le cas normal est *un admin qui la
+   * clôture depuis la console Fleetbase* — n'en laisse aucune trace.
+   *
+   * Ce n'est pas un défaut du registre : la console est une interface de
+   * production légitime (règle 1 du projet), et elle ne connaît pas nos gardes.
+   * Mais le résultat, lui, est inacceptable — deux colis livrés à plus de 5000
+   * DZD, et un écran qui affiche 0 sans rien signaler.
+   *
+   * On ne peut pas **inventer** l'encaissement : personne ne nous a dit ce qui
+   * a été perçu, et écrire un montant supposé au registre serait bien pire que
+   * de n'en écrire aucun. Ce qu'on peut faire, et qu'on doit, c'est **montrer
+   * le trou** : ces livraisons sont listées à part, avec le montant qui était
+   * annoncé, pour que le commerçant sache quoi réclamer à qui.
+   */
+  async pendingCollections(merchantId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const empty = {
+      currency: this.cash.currency,
+      expected_total: 0,
+      orders: [] as any[],
+      unrecorded_total: 0,
+      unrecorded: [] as any[],
+    };
+
+    const cached = await this.prisma.order.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!cached.length) return empty;
+
+    const live = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
+
+    // Déjà au registre : leur montant est un fait enregistré, il n'appartient
+    // ni à l'attente ni au trou.
+    const collected = new Set(
+      (
+        await this.prisma.cashCollection.findMany({
+          where: { merchantId },
+          select: { fleetbaseOrderUuid: true },
+        })
+      ).map((c: { fleetbaseOrderUuid: string }) => c.fleetbaseOrderUuid),
+    );
+
+    const describe = (o: any) => ({
+      uuid: o.uuid,
+      bff_order_id: o.bff_order_id ?? null,
+      status: o.status ?? null,
+      driver_name: o.driver_assigned?.name ?? null,
+      driver_phone: o.driver_assigned?.phone ?? null,
+      dropoff_name: o.payload?.dropoff?.name ?? null,
+      expected_amount: Number(o.meta.cod_amount),
+      scheduled_at: o.scheduled_at ?? null,
+      completed_at: o.updated_at ?? null,
+    });
+
+    // Candidates communes aux deux listes : un montant à encaisser était
+    // annoncé, et le registre n'en sait rien.
+    //
+    // `stale`/`missing` écartés : Fleetbase injoignable ou commande disparue.
+    // On ne parle pas d'argent sur une commande dont on ignore l'état —
+    // s'appuyer sur le cache serait annoncer un montant sans savoir s'il est
+    // encore d'actualité.
+    const candidates = live.filter(
+      (o: any) =>
+        o?.uuid
+        && !collected.has(o.uuid)
+        && !o.stale
+        && !o.missing
+        && Number(o.meta?.cod_amount) > 0,
+    );
+
+    const orders = candidates
+      .filter((o: any) => EXPECTS_CASH_AT_DOOR.includes(o.status))
+      .map(describe);
+
+    // Livrées sans qu'aucun encaissement n'ait été déclaré. Le montant affiché
+    // est celui qui était **annoncé**, jamais un montant perçu : nous ignorons
+    // ce qui a réellement changé de mains, et le présenter comme une somme due
+    // serait inventer une dette.
+    const unrecorded = candidates
+      .filter((o: any) => o.status === 'completed')
+      .map(describe);
+
+    if (unrecorded.length) {
+      // Trace serveur : c'est le symptôme d'une clôture hors application, et
+      // l'écran seul ne le dirait qu'au commerçant qui regarde.
+      this.logger.warn(
+        `${unrecorded.length} livraison(s) du commerçant ${merchantId} sont terminées `
+          + 'avec un montant à encaisser et sans encaissement enregistré — '
+          + 'clôture probablement faite hors application (console Fleetbase).',
+      );
+    }
+
+    return {
+      currency: this.cash.currency,
+      expected_total: orders.reduce((sum, o) => sum + o.expected_amount, 0),
+      orders,
+      unrecorded_total: unrecorded.reduce((sum, o) => sum + o.expected_amount, 0),
+      unrecorded,
+    };
+  }
+
+  /**
+   * Le commerçant régularise une livraison close hors application.
+   *
+   * ── Ce que ce geste peut et ne peut pas faire ───────────────────────────────
+   *
+   * Il **enregistre une affirmation**, pas un fait : le montant déclaré ne
+   * compte dans aucune dette tant que le transporteur ne l'a pas confirmé
+   * (`CashCollection.confirmedAt`). C'est la même règle que les remises, et
+   * pour la même raison — ici le déclarant engage quelqu'un d'autre.
+   *
+   * ── Pourquoi le transporteur peut devoir être nommé à la main ───────────────
+   *
+   * Une livraison close depuis la console peut n'avoir **aucun**
+   * `driver_assigned_uuid` : observé en réel le 30/07/2026 sur une course
+   * livrée de 3750 DZD. Le commerçant sait qui est venu ; Fleetbase l'ignore.
+   * Refuser la régularisation dans ce cas laisserait sans recours précisément
+   * la livraison la plus mal enregistrée des deux.
+   */
+  async declareMissingCollection(
+    merchantId: string,
+    orderId: string,
+    input: {
+      collectedAmount: number;
+      fleetbaseDriverUuid?: string;
+      discrepancyReason?: string;
+      notes?: string;
+    },
+  ) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
+    if (!live) {
+      notFound('order.not_found', 'Livraison introuvable');
+    }
+
+    // ⚠️ Résolus AVANT toute écriture, et les refus levés hors de tout `try` :
+    // un refus attrapé par un filet d'erreur ressortirait en « opération
+    // impossible », sans le code qui dit quoi corriger (règle 3).
+    if (live.status !== 'completed') {
+      badRequest(
+        'cash.order_not_delivered',
+        'Seule une livraison terminée peut être régularisée',
+      );
+    }
+
+    const expected = Number(live.meta?.cod_amount) || 0;
+    if (expected <= 0) {
+      badRequest(
+        'cash.order_has_no_cod',
+        'Cette livraison n\'était pas payée à la réception',
+      );
+    }
+
+    const driverAccount = await this.resolveDriverForRegularisation(
+      live,
+      input.fleetbaseDriverUuid,
+    );
+
+    const result = await this.cash.declareCollectionByMerchant(
+      merchantId,
+      driverAccount.id,
+      order.fleetbaseOrderId,
+      expected,
+      {
+        collectedAmount: input.collectedAmount,
+        discrepancyReason: input.discrepancyReason,
+        notes: input.notes,
+      },
+    );
+
+    // ⚠️ **Le transporteur n'est pas notifié**, et c'est une limite, pas un
+    // oubli : `MerchantNotification` est la seule table de notification du
+    // projet, et elle vise le commerçant. La déclaration apparaît dans sa
+    // caisse à sa prochaine ouverture — donc la régularisation aboutit quand il
+    // regarde, pas quand elle est faite.
+    //
+    // En inventer une ici donnerait l'illusion d'un signal qui n'existe pas.
+    // Le push driver est possible (FCM via `UserDevice`, validé §5.1), c'est un
+    // lot à part.
+    this.logger.log(
+      `Régularisation déclarée par ${merchant.businessName} pour le transporteur `
+        + `${driverAccount.id} — en attente de sa confirmation (aucune notification poussée)`,
+    );
+
+    return { ...result, driver_name: driverAccount.name };
+  }
+
+  /**
+   * Qui est le transporteur d'une livraison qu'on régularise.
+   *
+   * Fleetbase d'abord, saisie du commerçant ensuite — et jamais l'inverse : si
+   * la course porte un transporteur, c'est lui qui fait foi, et accepter une
+   * autre désignation permettrait d'imputer un encaissement à un tiers.
+   */
+  private async resolveDriverForRegularisation(
+    live: any,
+    suppliedUuid?: string,
+  ): Promise<{ id: string; name: string }> {
+    const assignedUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid ?? null;
+    const assignedName = live?.driver_assigned?.name ?? null;
+
+    // Fleetbase d'abord, saisie ensuite — jamais l'inverse. Si la course
+    // désigne un transporteur, accepter une autre désignation permettrait
+    // d'imputer un encaissement à un tiers.
+    const uuid = assignedUuid ?? suppliedUuid;
+
+    if (!uuid) {
+      badRequest(
+        'cash.driver_required',
+        'Cette livraison ne porte aucun transporteur : indiquez qui l\'a effectuée',
+      );
+    }
+
+    const account = await this.prisma.driverAccount.findFirst({
+      where: { fleetbaseDriverUuid: uuid },
+      select: { id: true, firstName: true, lastName: true },
+    });
+
+    if (account) {
+      return {
+        id: account.id,
+        name:
+          [account.firstName, account.lastName].filter(Boolean).join(' ')
+          || assignedName
+          || 'Transporteur',
+      };
+    }
+
+    // ⚠️ Deux situations, deux messages — la version précédente les confondait
+    // et affirmait « aucun transporteur » sur une course qui en portait un,
+    // constaté en réel.
+    //
+    // Un transporteur existe dans l'annuaire Fleetbase (créé par un opérateur
+    // en console) **sans avoir de compte Echango** tant qu'il ne s'est pas
+    // inscrit sur invitation. La régularisation lui est alors impossible, et
+    // ce n'est pas au commerçant de la contourner en désignant quelqu'un
+    // d'autre : sans compte, personne ne peut confirmer, et l'encaissement
+    // resterait une affirmation pour toujours.
+    //
+    // Le message nomme donc l'obstacle réel et l'action qui le lève —
+    // provisionner l'accès — qui est un geste d'opérateur, pas de commerçant.
+    badRequest(
+      'cash.driver_no_account',
+      `${assignedName ?? 'Ce transporteur'} n'a pas encore de compte dans l'application : `
+        + 'il ne peut donc rien confirmer. Demandez à Echango de lui créer un accès.',
+    );
+  }
+
   async cancelOrder(merchantId: string, orderId: string) {
     this.logger.log(`Cancelling order ${orderId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-    });
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    if (!order) {
-      throw new NotFoundException('Order not found');
+    // Le garde de transition lit l'état RÉEL chez Fleetbase, pas le champ
+    // `status` du cache — celui-ci est figé à 'pending' depuis la création et
+    // n'est jamais resynchronisé (revue archi #15). S'y fier laissait annuler
+    // une commande déjà livrée.
+    const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
+    const liveStatus = (live as any)?.status ?? null;
+
+    if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
+      badRequest('order.already_terminal', `Commande déjà ${liveStatus}, annulation impossible`);
     }
 
-    if (order.merchantId !== merchantId) {
-      throw new ForbiddenException('You do not have access to this order');
-    }
-
-    if (['completed', 'cancelled', 'failed'].includes(order.status)) {
-      throw new BadRequestException(`Cannot cancel order with status: ${order.status}`);
+    // Annuler pendant qu'un transporteur est en route est une décision qui
+    // engage : le driver peut être devant la porte. Le refus par défaut protège
+    // les deux parties tant que la règle métier n'est pas tranchée
+    // (specs_echango_delivery.md §6) ; l'opérateur, lui, peut toujours annuler
+    // depuis la console Fleetbase.
+    if (liveStatus && ['started', 'enroute'].includes(liveStatus)) {
+      badRequest(
+        'order.cancel_not_allowed',
+        'Le transporteur est déjà en route. Contactez Echango pour annuler cette livraison.',
+      );
     }
 
     try {
-      // Cancel in Fleetbase
       await this.fleetbaseClient.cancelOrder(order.fleetbaseOrderId);
 
-      // Update local cache
       const updated = await this.prisma.order.update({
-        where: { id: orderId },
-        data: { status: 'cancelled' },
+        where: { id: order.id },
+        // `canceled`, l'orthographe de Fleetbase (un seul « l ») et non
+        // `cancelled`. Le réconciliateur compare cette colonne à ce que dit
+        // l'amont : deux orthographes pour le même état lui feraient voir un
+        // changement à chaque passage, et notifier une annulation en boucle.
+        data: { status: 'canceled' },
       });
 
-      this.logger.log(`Order cancelled: ${orderId}`);
+      this.logger.log(`Order cancelled: ${order.id}`);
       return updated;
     } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       this.logger.error(`Failed to cancel order: ${error.message}`);
-      throw new BadRequestException('Failed to cancel order');
+      badRequest('order.cancel_failed', 'Failed to cancel order');
     }
   }
+
 
   /**
    * Get secure tracking info for an order
@@ -198,38 +2075,33 @@ export class CommerçantService {
   async getOrderTracking(merchantId: string, orderId: string) {
     this.logger.log(`Fetching tracking for order ${orderId}`);
 
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-    });
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
-    if (order.merchantId !== merchantId) {
-      throw new ForbiddenException('You do not have access to this order');
-    }
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
 
     try {
-      // Fetch latest data from Fleetbase
-      const response = await this.fleetbaseClient.callFleetOps(
-        'GET',
-        `/orders/${order.fleetbaseOrderId}`,
-      );
-
+      const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
       return {
         id: order.id,
-        status: order.status,
-        trackingNumber: order.trackingNumber,
-        fleetbaseData: response.data,
+        // Statut issu de Fleetbase, pas du cache : c'est tout l'objet du suivi.
+        status: (live as any)?.status ?? null,
+        // Servi depuis Fleetbase : la colonne de cache portait le numéro tel
+        // qu'il était à la création, et le suivi est précisément l'écran où
+        // servir une valeur figée n'a aucun sens.
+        //
+        // ⚠️ Déplié explicitement. Fleetbase expose `tracking_number` tantôt en
+        // chaîne, tantôt en objet — relayer la valeur brute aurait changé le
+        // **type** d'un champ de la réponse, c'est-à-dire cassé le contrat sans
+        // qu'aucune erreur ne le dise.
+        trackingNumber: this.trackingNumberOf(live),
+        fleetbaseData: live,
       };
     } catch (error) {
       this.logger.error(`Failed to fetch tracking: ${error.message}`);
-      throw new BadRequestException('Failed to fetch tracking information');
+      badRequest('order.tracking_failed', 'Failed to fetch tracking information');
     }
   }
+
 
   /**
    * Get merchant's saved addresses, stored as Fleetbase Places owned by
@@ -242,11 +2114,44 @@ export class CommerçantService {
 
     try {
       const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
-      return { data: response?.places || [] };
+      // Projeté comme partout ailleurs (revue M10) : cette route servait les
+      // objets `Place` Fleetbase **bruts**, seul reliquat de la fuite corrigée
+      // le 28/07. Ce qui sortait était donc décidé par Fleetbase — dont
+      // `owner_uuid`, `company_uuid` et toute relation qu'une mise à jour
+      // amont y ajouterait.
+      const places = this.fleetbaseClient.extractCollection(response, 'places');
+      return { data: places.map((p: any) => projectPlace(p, 'full')) };
     } catch (error) {
       this.logger.error(`Failed to fetch addresses: ${error.message}`);
       return { data: [] };
     }
+  }
+
+  /**
+   * Les composantes d'adresse, rangées dans les colonnes de `Place`.
+   *
+   * Elles viennent du géocodage inverse et **jamais d'une saisie** : le
+   * commerçant tape une rue, pas une wilaya. C'est ce qui justifie de les
+   * omettre quand elles sont absentes plutôt que de les envoyer vides —
+   * `PUT /places` ne touche pas aux clés absentes, donc une modification sans
+   * passage par la carte conserve ce qu'un passage précédent avait établi,
+   * alors qu'une valeur vide l'effacerait.
+   *
+   * `street1` n'est pas ici : c'est le seul champ que le commerçant saisit
+   * lui-même, et il doit rester effaçable.
+   */
+  private addressComponents(dto: SaveAddressDto): Record<string, any> {
+    const components: Record<string, any> = {};
+    if (dto.neighborhood) components.neighborhood = dto.neighborhood;
+    if (dto.city) components.city = dto.city;
+    if (dto.district) components.district = dto.district;
+    if (dto.province) components.province = dto.province;
+    if (dto.postalCode) components.postal_code = dto.postalCode;
+    // Code ISO-2 : la colonne `country` stocke un code, que l'accesseur
+    // `country_name` résout ensuite. Un nom de pays y laisserait `country_name`
+    // vide, sans erreur.
+    if (dto.country) components.country = dto.country.toUpperCase();
+    return components;
   }
 
   /**
@@ -260,22 +2165,200 @@ export class CommerçantService {
     try {
       const response = await this.fleetbaseClient.createOwnedPlace(merchant.fleetbaseVendorUuid, {
         name: dto.name,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        address: dto.address,
+        // `?? 0` : absence de position, pas une position au large du golfe de
+        // Guinée — même convention que `readDriverPosition()`. Seuls `name` et
+        // `contactPhone` sont exigés du commerçant (§ SaveAddressDto).
+        latitude: dto.latitude ?? 0,
+        longitude: dto.longitude ?? 0,
+        // `street1`, et non `address` : `address` n'est PAS une colonne du
+        // modèle `Place` — c'est un accesseur (`$appends`) qui recompose
+        // name + street1 + street2 + city + province + code postal + pays.
+        // L'envoyer était donc ignoré en silence par `fill()`, et l'adresse
+        // saisie n'atteignait jamais la base : la console affichait « RUE 1 : -»
+        // et la relecture retombait sur le nom du lieu.
+        street1: dto.address,
+        ...this.addressComponents(dto),
         phone: dto.contactPhone,
         meta: {
-          label: dto.label,
-          contactName: dto.contactName,
+          label: dto.label ?? 'commerce',
+          // `contact_name`, et non `contactName` : c'est la clé que
+          // `projectPlace` relit, et que la création de commande dépose. Deux
+          // orthographes pour la même donnée faisaient disparaître le contact
+          // d'une adresse enregistrée dès sa relecture.
+          contact_name: dto.contactName,
           notes: dto.notes,
+          is_default: dto.isDefault === true,
         },
       });
 
-      this.logger.log(`Address saved: ${response?.place?.uuid}`);
-      return response.place;
+      const uuid = response?.place?.uuid;
+      // Une seule adresse principale à la fois : sans ce nettoyage, une
+      // ancienne resterait marquée et le préremplissage du retrait
+      // deviendrait ambigu. Fait après coup, sur le nouvel enregistrement
+      // déjà réussi — un échec ici ne doit pas annuler la création.
+      if (dto.isDefault === true) {
+        await this.clearOtherDefaults(merchant.fleetbaseVendorUuid, uuid);
+      }
+
+      this.logger.log(`Address saved: ${uuid}`);
+      return projectPlace(response.place, 'full');
     } catch (error) {
       this.logger.error(`Failed to save address: ${error.message}`);
-      throw new BadRequestException('Failed to save address');
+      badRequest('merchant.address_save_failed', 'Failed to save address');
+    }
+  }
+
+  /**
+   * Retire le drapeau « adresse principale » de toute autre entrée du carnet.
+   *
+   * ⚠️ `meta` est remplacé en entier à chaque écriture Fleetbase, jamais
+   * fusionné côté serveur : réécrire l'ancien défaut exige donc de reprendre
+   * tout son `meta` existant (label, contact, notes), pas seulement
+   * `is_default` — sans quoi le nettoyage effacerait au passage le reste de
+   * sa fiche.
+   *
+   * Best-effort : une ancienne adresse principale qui reste marquée en double
+   * n'est pas grave au point de bloquer l'enregistrement de la nouvelle.
+   */
+  private async clearOtherDefaults(vendorUuid: string, exceptPlaceUuid?: string): Promise<void> {
+    try {
+      const response = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
+      const places = this.fleetbaseClient.extractCollection(response, 'places');
+      const others = places.filter(
+        (p: any) => p?.meta?.is_default === true && p?.uuid !== exceptPlaceUuid,
+      );
+
+      for (const place of others) {
+        const position = readDriverPosition(place);
+        await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
+          name: place.name,
+          latitude: position?.latitude ?? 0,
+          longitude: position?.longitude ?? 0,
+          // ⚠️ `place.street1`, pas `place.address` : `PUT /places` remplace
+          // l'objet entier, et `address` est un accesseur non enregistrable.
+          // Le relire pour le renvoyer aurait effacé la rue de toutes les
+          // autres adresses à chaque changement d'adresse principale.
+          street1: place.street1,
+          neighborhood: place.neighborhood,
+          city: place.city,
+          district: place.district,
+          province: place.province,
+          postal_code: place.postal_code,
+          country: place.country,
+          phone: place.phone,
+          meta: { ...place.meta, is_default: false },
+          ownerUuid: vendorUuid,
+        });
+      }
+    } catch (error: any) {
+      this.logger.warn(`Nettoyage de l'ancienne adresse principale échoué : ${error.message}`);
+    }
+  }
+
+  /**
+   * Vérifie qu'un lieu appartient bien au carnet de ce commerçant.
+   *
+   * Le contrôle passe par `owner_uuid`, seul filtre que Fleetbase honore
+   * réellement sur `/places` (vérifié par test direct : interroger un
+   * propriétaire sans lieu renvoie une liste vide, pas la collection entière).
+   * Sans lui, un identifiant deviné suffirait à modifier ou supprimer l'adresse
+   * d'un autre commerçant — les lieux vivent tous dans la même organisation.
+   */
+  private async assertOwnsPlace(merchantId: string, placeId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
+    const places = this.fleetbaseClient.extractCollection(response, 'places');
+    const place = places.find(
+      (p: any) => p?.uuid === placeId || p?.public_id === placeId || p?.id === placeId,
+    );
+
+    if (!place) {
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'address.access',
+        resourceType: 'Place',
+        resourceId: placeId,
+        reason: "Adresse inexistante ou appartenant au carnet d'un autre commerçant",
+      });
+      notFound('merchant.address_not_found', 'Adresse introuvable');
+    }
+
+    return place;
+  }
+
+  /**
+   * Modifie une adresse du carnet.
+   *
+   * ── Pourquoi la modification importe plus qu'il n'y paraît ──────────────────
+   *
+   * Une adresse enregistrée est **réutilisée** : elle pré-remplit chaque
+   * livraison qui la choisit. Un point mal placé ou un téléphone erroné ne gêne
+   * donc pas une fois, il se répète — et sans moyen de corriger, la seule issue
+   * était d'accumuler des doublons.
+   */
+  async updateAddress(merchantId: string, placeId: string, dto: SaveAddressDto) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const place = await this.assertOwnsPlace(merchantId, placeId);
+
+    try {
+      const response = await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
+        name: dto.name,
+        latitude: dto.latitude ?? 0,
+        longitude: dto.longitude ?? 0,
+        // Voir `saveAddress` : `address` est un accesseur, seul `street1` est
+        // enregistrable.
+        street1: dto.address,
+        ...this.addressComponents(dto),
+        phone: dto.contactPhone,
+        meta: {
+          label: dto.label ?? 'commerce',
+          contact_name: dto.contactName,
+          notes: dto.notes,
+          is_default: dto.isDefault === true,
+        },
+        // Réintroduit après un bug réel : `PUT /places` remplace l'objet
+        // entier, un `owner_uuid` absent désolidarisait le lieu du carnet
+        // (voir le commentaire de `updateOwnedPlace`). Vient de `merchant`,
+        // jamais de `dto` — l'appartenance est déjà vérifiée par
+        // `assertOwnsPlace`, ce n'est pas une valeur cliente à laquelle faire
+        // confiance.
+        ownerUuid: merchant.fleetbaseVendorUuid,
+      });
+
+      if (dto.isDefault === true) {
+        await this.clearOtherDefaults(merchant.fleetbaseVendorUuid, place.uuid);
+      }
+
+      this.logger.log(`Adresse ${place.uuid} modifiée`);
+      return projectPlace(response?.place ?? response, 'full');
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`Modification d'adresse impossible : ${error.message}`);
+      badRequest('merchant.address_update_failed', "Modification de l'adresse impossible");
+    }
+  }
+
+  /**
+   * Retire une adresse du carnet.
+   *
+   * ⚠️ Ne touche **pas** les livraisons passées : chaque commande a créé son
+   * propre `Place`, distinct de l'entrée du carnet. Supprimer une adresse
+   * n'efface donc aucun historique — ce qui est précisément la raison pour
+   * laquelle on peut se permettre de la supprimer sans confirmation lourde.
+   */
+  async deleteAddress(merchantId: string, placeId: string) {
+    const place = await this.assertOwnsPlace(merchantId, placeId);
+
+    try {
+      await this.fleetbaseClient.deletePlace(place.uuid);
+      this.logger.log(`Adresse ${place.uuid} supprimée`);
+      return { removed: true };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`Suppression d'adresse impossible : ${error.message}`);
+      badRequest('merchant.address_delete_failed', "Suppression de l'adresse impossible");
     }
   }
 
@@ -288,11 +2371,11 @@ export class CommerçantService {
     });
 
     if (!merchant) {
-      throw new NotFoundException('Merchant not found');
+      notFound('merchant.not_found', 'Merchant not found');
     }
 
     if (!merchant.active) {
-      throw new ForbiddenException('Merchant account is inactive');
+      forbidden('merchant.inactive', 'Merchant account is inactive');
     }
 
     return merchant;

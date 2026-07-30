@@ -106,6 +106,17 @@ En interne, le BFF détient/gère le token Sanctum `customer-portal` du compte. 
 
 **Ce qui fuiterait en cas de compromission de ce compte** (à garder à l'esprit pour dimensionner l'effort de protection) : accès complet en lecture/écriture à toute l'Organization — commandes de tous les commerçants (PII clients), tous les drivers/véhicules, l'historique de position à haute fréquence de la table `Position`, tous les Vendors — un rayon d'action équivalent à un accès admin complet de la console.
 
+> **🛑 CORRECTION DU 29/07/2026 — le paragraphe ci-dessous est faux dans sa
+> conclusion.** `facilitator_uuid` et `vendor_uuid` **ne sont pas des noms de
+> filtre** : les méthodes de `OrderFilter`/`DriverFilter` s'appellent
+> `facilitator` et `vendor`. Un paramètre inconnu est abandonné en silence, d'où
+> le résultat observé. **Fleetbase filtre bien côté serveur**, la console s'en
+> sert à chaque requête. L'hypothèse initiale de ce document était donc la bonne,
+> à un nom de paramètre près. Détail et vérifications restantes :
+> `docs/architecture_bff_fleetbase.md` §4 et §9. Le « fetch-all puis filtrage
+> mémoire » reste en place tant que ces vérifications ne sont pas faites — il est
+> correct, seulement coûteux.
+
 **⚠️ Hypothèse ci-dessus invalidée par test réel (28/07/2026)** : contrairement à ce qui était supposé, `GET /orders?facilitator_uuid=...` et `GET /drivers?vendor_uuid=...` sont **ignorés côté serveur** — vérifié empiriquement en comparant les résultats avec un filtre valide vs un filtre inexistant/aléatoire : les deux renvoient exactement le même jeu de données, celui de toute la compagnie. Il n'y a **aucun filtrage serveur** à pousser en base sur ces deux paramètres ; le "fetch-all puis filtrer en mémoire" écarté ci-dessus est en réalité la **seule** option sûre. Détail complet du test et de l'implication de sécurité : `docs/journal_implementation_bff.md` §2.8. **Le fetch-all + filtrage applicatif strict côté BFF (jamais de confiance dans un paramètre de query Fleetbase) est donc la méthode retenue et implémentée dans `flotte.service.ts`**, avec la même revalidation d'appartenance en défense en profondeur déjà prévue ici pour chaque ligne renvoyée au client.
 
 ### 5.3 Exigences transversales ajoutées suite à la revue sécurité

@@ -1,8 +1,11 @@
-import { Controller, Get, Post, Param, Body, Query, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Query, Request } from '@nestjs/common';
+import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { FlotteService } from './flotte.service';
+import { Persona } from '../common/decorators/persona.decorator';
 import { ListFleetOrdersQueryDto, AssignDriverDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 
+@Persona('fleet')
 @Controller('flotte')
 export class FlotteController {
   constructor(private flotteService: FlotteService) {}
@@ -13,7 +16,7 @@ export class FlotteController {
   }
 
   @Get('commandes/:id')
-  async getOrderDetail(@Request() req: any, @Param('id') orderId: string) {
+  async getOrderDetail(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.flotteService.getOrderDetail(this.fleetId(req), orderId);
   }
 
@@ -34,7 +37,7 @@ export class FlotteController {
   }
 
   @Post('commandes/:id/assigner')
-  async assignDriver(@Request() req: any, @Param('id') orderId: string, @Body() body: AssignDriverDto) {
+  async assignDriver(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string, @Body() body: AssignDriverDto) {
     return this.flotteService.assignDriver(this.fleetId(req), orderId, body.driverId);
   }
 
@@ -44,9 +47,6 @@ export class FlotteController {
    * commerçant account can never call flotte endpoints with its own JWT.
    */
   private fleetId(req: any): string {
-    if (req.user?.type !== 'fleet') {
-      throw new ForbiddenException('This endpoint requires a fleet account');
-    }
     return req.user.id;
   }
 }
