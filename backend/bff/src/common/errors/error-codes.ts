@@ -94,6 +94,9 @@ export const ErrorCode = {
   /** Encaissement de la marchandise seule sans rémunération connue :
    *  impossible de savoir combien réclamer à la porte. */
   ORDER_COD_REQUIRES_PRICE: 'order.cod_requires_price',
+  /** Les champs personnalisés durables n'ont pas pu être déclarés :
+   *  refuser plutôt que d'enregistrer une livraison aux montants fragiles. */
+  ORDER_CUSTOM_FIELDS_UNAVAILABLE: 'order.custom_fields_unavailable',
   ORDER_ALREADY_PUBLISHED: 'order.already_published',
   ORDER_PUBLISH_FAILED: 'order.publish_failed',
   ORDER_ACCEPT_FAILED: 'order.accept_failed',

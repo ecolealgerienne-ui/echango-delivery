@@ -98,6 +98,8 @@ const Map<String, String> _fr = {
   'order.already_taken': 'Cette course vient d\'être prise par un autre transporteur.',
   'order.cod_requires_price':
       'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
+  'order.custom_fields_unavailable':
+      'Enregistrement impossible pour le moment. Réessayez dans un instant.',
   'order.already_published': 'Cette commande a déjà été publiée.',
   'order.publish_failed': 'Impossible de publier cette commande pour le moment.',
   'order.accept_failed': 'Impossible d\'accepter cette course.',
@@ -244,6 +246,8 @@ const Map<String, String> _ar = {
   'order.already_taken': 'تم أخذ هذه الرحلة من قبل سائق آخر.',
   'order.cod_requires_price':
       'حدّد أجرة الناقل: ستُطلب من المستلم إضافةً إلى ثمن البضاعة.',
+  'order.custom_fields_unavailable':
+      'تعذّر الحفظ في الوقت الحالي. أعد المحاولة بعد قليل.',
   'order.already_published': 'تم نشر هذه الطلبية بالفعل.',
   'order.publish_failed': 'تعذر نشر هذه الطلبية حالياً.',
   'order.accept_failed': 'تعذر قبول هذه الرحلة.',

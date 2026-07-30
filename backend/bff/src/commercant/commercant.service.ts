@@ -5,6 +5,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
+import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
@@ -1216,7 +1217,23 @@ export class CommerçantService {
     try {
       // Fleetbase orders require pre-created Place records for pickup/dropoff,
       // referenced by UUID, plus a resolved order_config_uuid.
-      const [pickupPlace, dropoffPlace, orderConfigUuid] = await Promise.all([
+      //
+      // ── L'ordre compte, et il est imposé par une décision produit ──────────
+      //
+      // **Pas de livraison enregistrée si ses données métier ne le sont pas.**
+      // Prix, montant à encaisser et colis doivent vivre dans le stockage
+      // durable, sinon la commande n'a pas lieu d'être : le commerçant la
+      // croirait protégée, le transporteur agirait sur des montants qui
+      // peuvent disparaître à la première action console.
+      //
+      // La configuration et ses définitions sont donc résolues **d'abord**, et
+      // le refus tombe **avant** la création des deux `Place` — sans quoi il
+      // les laisserait orphelins chez Fleetbase (règle §2).
+      const orderConfigUuid = await this.fleetbaseClient.getDefaultOrderConfigUuid();
+      const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
+      this.assertCustomFieldsComplete(meta, customFieldValues);
+
+      const [pickupPlace, dropoffPlace] = await Promise.all([
         // Les contacts sont bien transmis : ils étaient saisis, validés, puis
         // jetés (voir createPlace). Un transporteur devant une porte sans
         // numéro à appeler ne peut que constater l'échec.
@@ -1232,7 +1249,6 @@ export class CommerçantService {
           dto.dropoffLongitude,
           { name: dto.dropoffContactName, phone: dto.dropoffContactPhone },
         ),
-        this.fleetbaseClient.getDefaultOrderConfigUuid(),
       ]);
 
       // Favori disponible ? On le sollicite ; sinon la course part au pool,
@@ -1277,13 +1293,7 @@ export class CommerçantService {
       // - `meta` reste écrit pour les lecteurs qui l'attendent — l'historique
       //   des commandes d'avant cette migration, et tout intégrateur tiers.
       //   Il est fragile par construction, d'où sa place derrière.
-      //
-      // Si le provisionnement des définitions a échoué, la liste est vide et
-      // la commande se crée quand même : on retombe sur le comportement
-      // d'avant, dégradé mais pas cassé.
-      const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
-
-      const response = await this.createOrderWithFallback({
+      const response = await this.createOrderOrCleanUp({
         order_config_uuid: orderConfigUuid,
         customer_uuid: merchant.fleetbaseVendorUuid,
         customer_type: 'vendor',
@@ -1313,7 +1323,7 @@ export class CommerçantService {
             : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
         pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
         pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
-      });
+      }, [pickupPlace.place.uuid, dropoffPlace.place.uuid]);
 
       const fleetbaseOrder = response.order;
       const fleetbaseOrderId = fleetbaseOrder?.uuid || fleetbaseOrder?.id;
@@ -1600,47 +1610,69 @@ export class CommerçantService {
    * opérateur de la retrouver dans la console.
    */
   /**
-   * Crée la commande, et réessaie **sans les champs personnalisés** si Fleetbase
-   * les refuse.
+   * Refuse la création si une donnée métier n'a pas de champ durable où aller.
    *
-   * ── Pourquoi ce filet existe ────────────────────────────────────────────────
+   * ── Décision produit, 30/07/2026 : pas de livraison sans ses montants ──────
    *
-   * Les valeurs partent dans le même appel que la commande. Une valeur que
-   * Fleetbase n'accepte pas fait donc échouer **la livraison elle-même**, et pas
-   * seulement son stockage durable. C'est arrivé au premier essai réel : un
-   * tableau envoyé pour le colis a produit
-   * `Unknown column '0' in 'field list'` et la commande n'a pas été créée.
+   * La tentation était de créer la commande quand même et de se rabattre sur
+   * `meta`. C'est le mauvais arbitrage : une livraison dont le prix et le
+   * montant à encaisser ne sont pas stockés durablement **paraît normale**. Le
+   * commerçant la croit protégée, le transporteur voit un montant à réclamer —
+   * et tout disparaît à la première affectation depuis la console. Le défaut ne
+   * se révèle qu'au moment où il coûte de l'argent, à la porte du destinataire.
    *
-   * Le compromis est assumé et va dans un seul sens : une commande sans stockage
-   * durable reste servie par `meta` et `specMeta` — dégradée, réparable. Une
-   * commande jamais créée, elle, est une livraison qui n'a pas lieu.
+   * Un refus, lui, se voit tout de suite, se corrige tout de suite, et ne
+   * laisse personne agir sur une donnée fantôme.
    *
-   * Le repli est **bruyant** : un log `error` nomme la commande et la cause. Un
-   * repli silencieux ferait passer une régression du catalogue pour un
-   * fonctionnement normal, et on ne s'en apercevrait qu'au premier `meta`
-   * effacé — c'est-à-dire trop tard.
+   * Le refus est levé **avant** toute écriture chez Fleetbase — d'où sa place
+   * en tête de `createOrder`, avant même les deux `Place`.
    */
-  private async createOrderWithFallback(order: any) {
-    if (!order.custom_field_values?.length) {
-      return this.fleetbaseClient.createOrder(order);
-    }
+  private assertCustomFieldsComplete(
+    meta: Record<string, any> | undefined,
+    values: { custom_field_uuid: string }[],
+  ): void {
+    const expected = ORDER_CUSTOM_FIELD_KEYS.filter(
+      (key) => meta?.[key] !== undefined && meta?.[key] !== null,
+    );
 
+    if (values.length >= expected.length) return;
+
+    this.logger.error(
+      `Champs personnalisés incomplets : ${values.length}/${expected.length} déclarés. `
+        + 'Création refusée — une commande dont les montants ne sont pas stockés '
+        + 'durablement serait indiscernable d\'une commande saine.',
+    );
+
+    badRequest(
+      'order.custom_fields_unavailable',
+      'Enregistrement impossible pour le moment : réessayez dans un instant.',
+    );
+  }
+
+  /**
+   * Crée la commande, et **supprime les deux lieux** si Fleetbase la refuse.
+   *
+   * Les `Place` d'enlèvement et de livraison sont créés avant la commande — ils
+   * sont référencés par elle. Un échec après leur création les laisse orphelins
+   * dans l'organisation, invisibles et jamais nettoyés : c'est ce qui s'est
+   * accumulé pendant les essais du 30/07/2026, où la liste des lieux comptait
+   * autant de doublons que de tentatives.
+   *
+   * La compensation est best-effort, comme toutes celles de ce projet : si elle
+   * échoue à son tour, un log `error` nomme les lieux à reprendre à la main.
+   */
+  private async createOrderOrCleanUp(order: any, placeUuids: string[]) {
     try {
       return await this.fleetbaseClient.createOrder(order);
     } catch (error: any) {
-      const detail =
-        error.response?.data?.errors?.[0]
-        || error.response?.data?.error
-        || error.message;
-
-      this.logger.error(
-        `Champs personnalisés refusés par Fleetbase (${detail}) — nouvelle tentative `
-          + 'sans eux. Les données métier ne seront protégées que par meta et specMeta '
-          + 'sur cette commande : à corriger, le catalogue est en cause.',
-      );
-
-      const { custom_field_values, ...withoutCustomFields } = order;
-      return this.fleetbaseClient.createOrder(withoutCustomFields);
+      for (const uuid of placeUuids) {
+        await this.fleetbaseClient.deletePlace(uuid).catch((cleanupError: any) =>
+          this.logger.error(
+            `Lieu ${uuid} laissé orphelin après un échec de création : ${cleanupError.message}`,
+          ),
+        );
+      }
+      throw error;
     }
   }
 
