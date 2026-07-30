@@ -1198,25 +1198,18 @@ export class CommerçantService {
    * que `pickAvailableFavourite` applique exactement les mêmes filtres qu'à
    * la création (catégorie de véhicule, plafond de dette).
    *
-   * ── Deux mécanismes distincts, découverts par capture réseau (30/07/2026) ──
+   * ── Deux appels, dans cet ordre, imposé par le source Fleetbase ──────────
    *
-   * Un essai précédent se contentait d'un `PUT /orders` posant `adhoc`/
-   * `driver_assigned_uuid` (`assignOrderDirectly`/`releaseOrderToPool`) — la
-   * commande restait « Created » malgré tout. Capture réseau de la console :
-   * dispatcher une commande y est **une action à part**, « Update activity »
-   * → « Order Dispatched », qui rejoue exactement le mécanisme déjà validé
-   * côté transporteur (`getNextActivities` + `updateOrderActivity`,
-   * `GET/POST .../next-activity` et `.../update-activity`). `adhoc`/
-   * `driver_assigned_uuid` décident **qui** peut prendre la commande ; cette
-   * activité fait progresser **son propre suivi** (`dispatched`, `status`) —
-   * deux axes indépendants, l'un ne déclenche pas l'autre via un simple `PUT`.
-   * D'où les deux étapes ci-dessous : régler l'éligibilité, puis faire
-   * progresser l'activité — dans cet ordre, pour que l'activité voie déjà
-   * l'assignation si elle en dépend.
+   * 1. **Qui peut prendre la commande** — un favori assigné
+   *    (`POST /drivers/{uuid}/assign-order`), ou la diffusion au pool
+   *    (`adhoc: true`).
+   * 2. **Dispatcher** — `POST /v1/orders/{id}/dispatch`, l'endpoint dédié.
    *
-   * ⚠️ **Partiellement éprouvé** : `getNextActivities`/`updateOrderActivity`
-   * sont validés de bout en bout côté transporteur (journal §6.19), mais pas
-   * encore rejoués depuis ce chemin commerçant précis.
+   * L'ordre n'est pas un choix de style : `dispatchOrder` refuse avec « No
+   * driver assigned to dispatch! » tant qu'il n'y a ni transporteur assigné
+   * ni `adhoc`. Et le second appel est irremplaçable — trois tentatives ont
+   * échoué avant de trouver cet endpoint dans `server/src/routes.php` (détail
+   * dans `dispatchOrder()` côté client Fleetbase).
    */
   async publishOrder(merchantId: string, orderId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
@@ -1264,38 +1257,20 @@ export class CommerçantService {
         );
       }
 
-      // Étape 2 — faire progresser le suivi de la commande elle-même.
+      // Étape 2 — dispatcher, par l'endpoint dédié.
       //
-      // Sans elle, la commande reste au statut « Created » quels que soient
-      // `adhoc`/`driver_assigned_uuid` — c'est ce qu'un premier essai a
-      // montré. `getNextActivities` renvoie l'activité « dispatched » telle
-      // que Fleetbase l'attend, `updateOrderActivity` la soumet — jamais un
-      // statut inventé de notre côté.
+      // Ni un `PUT` sur les colonnes, ni une activité soumise : le dispatch
+      // est une opération à part (`POST /v1/orders/{id}/dispatch` →
+      // `OrderController@dispatchOrder`). C'est LUI qui écrit l'activité
+      // « Order Dispatched », pas l'inverse. Voir `dispatchOrder()` côté
+      // client Fleetbase pour le détail et les trois essais qui ont échoué
+      // avant de le trouver.
       const publicId = live.public_id;
       if (!publicId) {
         badRequest('order.missing_public_id', 'Commande mal formée côté serveur');
       }
 
-      const nextActivities = await this.fleetbaseClient.getNextActivities(publicId);
-      const activities: any[] = Array.isArray(nextActivities)
-        ? nextActivities
-        : Array.isArray(nextActivities?.activities)
-          ? nextActivities.activities
-          : [];
-      const dispatchActivity = activities.find(
-        (a: any) => a?.code === 'dispatched' || a?.key === 'dispatched',
-      );
-
-      if (dispatchActivity) {
-        await this.fleetbaseClient.updateOrderActivity(publicId, dispatchActivity);
-      } else {
-        // Rare, mais pas bloquant : l'éligibilité (étape 1) est déjà posée,
-        // et un opérateur peut terminer la transition depuis la console.
-        this.logger.warn(
-          `Aucune activité « dispatched » proposée pour ${orderId} — ` +
-            `assignation faite, mais le statut peut rester « Created ».`,
-        );
-      }
+      await this.fleetbaseClient.dispatchOrder(publicId);
     } catch (error: any) {
       this.logger.error(`Publication échouée (${orderId}) : ${error.message}`);
       badRequest('order.publish_failed', 'Impossible de publier cette commande pour le moment');

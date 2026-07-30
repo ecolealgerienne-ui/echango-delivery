@@ -684,6 +684,48 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Dispatche une commande — la rend visible aux transporteurs et pose son
+   * statut `dispatched`.
+   *
+   * ── Il existe un endpoint dédié, et rien d'autre ne le remplace ───────────
+   *
+   * Trouvé dans le source `fleetops` (`server/src/routes.php` →
+   * `OrderController@dispatchOrder`), après **trois** tentatives infructueuses
+   * qui supposaient toutes qu'un autre mécanisme suffirait : omettre
+   * `adhoc`/`driver_assigned_uuid` à la création, puis forcer
+   * `status: 'created'`, puis passer par `next-activity`/`update-activity`.
+   * Aucune ne dispatchait, parce que le dispatch n'est ni un statut ni une
+   * activité — c'est une opération à part :
+   *
+   *   public function dispatchOrder(string $id) {
+   *       if (!$order->hasDriverAssigned && !$order->adhoc) {
+   *           return response()->apiError('No driver assigned to dispatch!');
+   *       }
+   *       if ($order->dispatched) {
+   *           return response()->apiError('Order has already been dispatched!');
+   *       }
+   *       $order->dispatch();
+   *       $order->insertDispatchActivity();
+   *   }
+   *
+   * `insertDispatchActivity()` explique au passage pourquoi rejouer
+   * `update-activity` semblait plausible : l'activité « Order Dispatched » est
+   * une **conséquence** du dispatch, écrite par lui, pas sa cause.
+   *
+   * ⚠️ **L'ordre des appels n'est pas négociable** : la garde exige un
+   * transporteur assigné OU `adhoc` déjà posé. Assigner (ou diffuser) d'abord,
+   * dispatcher ensuite — l'inverse échoue avec « No driver assigned to
+   * dispatch! ».
+   */
+  async dispatchOrder(orderPublicId: string) {
+    const response = await this.callFleetOpsPublic(
+      'POST',
+      `/orders/${this.seg(orderPublicId)}/dispatch`,
+    );
+    return response.data;
+  }
+
+  /**
    * Conducteurs de la compagnie, filtrés côté serveur.
    *
    * ⚠️ **`phone` est absent de `DriverFilters`, et ce n'est pas un oubli** :
