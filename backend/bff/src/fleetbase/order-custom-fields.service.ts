@@ -48,10 +48,15 @@ export class OrderCustomFieldsService {
   /**
    * Les définitions du catalogue, créées si besoin.
    *
-   * Renvoie une carte vide en cas d'échec plutôt que de lever : une commande
-   * doit pouvoir se créer même si le provisionnement échoue. Elle retombera
-   * alors sur `meta` et `specMeta`, c'est-à-dire sur le comportement d'avant
-   * cette migration — dégradé, pas cassé.
+   * Renvoie une carte **vide** en cas d'échec plutôt que de lever, et ce n'est
+   * pas une tolérance : c'est l'appelant qui décide. `assertCustomFieldsComplete()`
+   * refusera la création, parce qu'une livraison dont les montants ne sont pas
+   * stockés durablement paraît normale et ne se révèle qu'à la porte du
+   * destinataire (décision produit, 30/07/2026).
+   *
+   * Lever ici mélangerait « Fleetbase est injoignable » et « le catalogue est
+   * incomplet » dans une seule exception, alors que le refus doit nommer la
+   * seconde.
    */
   async definitionsFor(orderConfigUuid: string): Promise<Map<string, string>> {
     const cached = this.cache.get(orderConfigUuid);
@@ -71,7 +76,7 @@ export class OrderCustomFieldsService {
       .catch((error: any) => {
         this.logger.error(
           `Champs personnalisés indisponibles pour ${orderConfigUuid} : ${error.message} — `
-            + 'la commande sera créée sans eux (repli sur meta)',
+            + 'les créations de commande seront refusées tant que ce point n\'est pas rétabli',
         );
         return new Map<string, string>();
       })
@@ -134,8 +139,12 @@ export class OrderCustomFieldsService {
         const uuid = created?.custom_field?.uuid ?? created?.uuid;
         if (uuid) byName.set(customFieldName(field.key), uuid);
       } catch (error: any) {
-        // Un champ manquant n'empêche pas les autres : mieux vaut douze
-        // valeurs protégées et une qui retombe sur `meta` que rien du tout.
+        // On continue la boucle malgré l'échec : le log doit nommer TOUS les
+        // champs fautifs, pas seulement le premier. Sans ça, un catalogue
+        // cassé se corrige à l'aveugle, un champ par redémarrage.
+        //
+        // La commande sera refusée de toute façon — `assertCustomFieldsComplete()`
+        // compare ce qui devait être écrit à ce qui a une définition.
         const detail =
           error.response?.data?.errors?.[0]
           || error.response?.data?.error
