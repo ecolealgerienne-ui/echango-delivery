@@ -1283,7 +1283,7 @@ export class CommerçantService {
       // d'avant, dégradé mais pas cassé.
       const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
 
-      const response = await this.fleetbaseClient.createOrder({
+      const response = await this.createOrderWithFallback({
         order_config_uuid: orderConfigUuid,
         customer_uuid: merchant.fleetbaseVendorUuid,
         customer_type: 'vendor',
@@ -1599,6 +1599,51 @@ export class CommerçantService {
    * journalise en `error` avec l'identifiant, seule trace permettant à un
    * opérateur de la retrouver dans la console.
    */
+  /**
+   * Crée la commande, et réessaie **sans les champs personnalisés** si Fleetbase
+   * les refuse.
+   *
+   * ── Pourquoi ce filet existe ────────────────────────────────────────────────
+   *
+   * Les valeurs partent dans le même appel que la commande. Une valeur que
+   * Fleetbase n'accepte pas fait donc échouer **la livraison elle-même**, et pas
+   * seulement son stockage durable. C'est arrivé au premier essai réel : un
+   * tableau envoyé pour le colis a produit
+   * `Unknown column '0' in 'field list'` et la commande n'a pas été créée.
+   *
+   * Le compromis est assumé et va dans un seul sens : une commande sans stockage
+   * durable reste servie par `meta` et `specMeta` — dégradée, réparable. Une
+   * commande jamais créée, elle, est une livraison qui n'a pas lieu.
+   *
+   * Le repli est **bruyant** : un log `error` nomme la commande et la cause. Un
+   * repli silencieux ferait passer une régression du catalogue pour un
+   * fonctionnement normal, et on ne s'en apercevrait qu'au premier `meta`
+   * effacé — c'est-à-dire trop tard.
+   */
+  private async createOrderWithFallback(order: any) {
+    if (!order.custom_field_values?.length) {
+      return this.fleetbaseClient.createOrder(order);
+    }
+
+    try {
+      return await this.fleetbaseClient.createOrder(order);
+    } catch (error: any) {
+      const detail =
+        error.response?.data?.errors?.[0]
+        || error.response?.data?.error
+        || error.message;
+
+      this.logger.error(
+        `Champs personnalisés refusés par Fleetbase (${detail}) — nouvelle tentative `
+          + 'sans eux. Les données métier ne seront protégées que par meta et specMeta '
+          + 'sur cette commande : à corriger, le catalogue est en cause.',
+      );
+
+      const { custom_field_values, ...withoutCustomFields } = order;
+      return this.fleetbaseClient.createOrder(withoutCustomFields);
+    }
+  }
+
   private async createOrderCache(data: any, fleetbaseOrderId: string) {
     try {
       return await this.prisma.order.create({ data });

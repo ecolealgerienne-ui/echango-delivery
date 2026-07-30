@@ -74,15 +74,22 @@ const asText = (raw: any): string | undefined => {
 
 const asList = (raw: any): any[] | undefined => {
   if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string' && raw.trim().length) {
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : undefined;
-    } catch {
-      return undefined;
+  if (typeof raw !== 'string' || !raw.trim().length) return undefined;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    // Double encodage : arrive si l'amont corrige un jour l'ordre
+    // d'affectation de `syncCustomFieldValues()` et ré-encode la chaîne que
+    // nous envoyons déjà encodée. Une passe de plus suffit.
+    if (typeof parsed === 'string') {
+      const inner = JSON.parse(parsed);
+      return Array.isArray(inner) ? inner : undefined;
     }
+    return undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 };
 
 /**
@@ -213,16 +220,47 @@ export function decodeCustomFieldValue(key: string, raw: any): any {
 /**
  * Prépare la valeur pour Fleetbase.
  *
- * Les tableaux partent tels quels (`value_type: 'array'`, le cast les encode) ;
- * tout le reste part en chaîne, parce que c'est ainsi que ce sera stocké de
- * toute façon — autant que ce qu'on envoie ressemble à ce qui sera relu.
+ * **Tout part en chaîne, y compris les tableaux** — et c'est un contournement,
+ * pas une préférence.
+ *
+ * ── Le bug amont, et pourquoi il impose ceci ────────────────────────────────
+ *
+ * `syncCustomFieldValues()` crée la ligne ainsi :
+ *
+ *     $this->customFieldValues()->make([
+ *         ...
+ *         'value'      => $value,        // rempli EN PREMIER
+ *         'value_type' => $valueType,    // rempli APRÈS
+ *     ]);
+ *
+ * `fill()` respecte l'ordre du tableau, donc le cast `CustomValue::set()`
+ * s'exécute alors que `value_type` n'est pas encore posé. Il lit
+ * `data_get($attributes, 'value_type', 'text')`, croit à du texte, et renvoie
+ * le tableau **tel quel**. Laravel fusionne alors un tableau dans les
+ * attributs du modèle, et tente d'écrire une colonne nommée `0` :
+ *
+ *     SQLSTATE[42S22]: Unknown column '0' in 'field list'
+ *
+ * Constaté en réel le 30/07/2026, sur le premier envoi du colis.
+ *
+ * ── Pourquoi encoder nous-mêmes règle le problème dans les deux sens ────────
+ *
+ * En envoyant déjà une chaîne JSON, le cast — qui croit à du texte — la
+ * laisse passer intacte, et c'est exactement ce qu'il faut en base. À la
+ * relecture, `value_type` vaut cette fois `array` (il est en base) et
+ * `CustomValue::get()` fait le `Json::decode()` : on récupère un tableau.
+ *
+ * Et si l'amont corrige un jour l'ordre d'affectation, la valeur sera
+ * doublement encodée — une chaîne JSON contenant une chaîne JSON. `asList()`
+ * s'en sort : il accepte une chaîne et la désérialise. Le contournement ne
+ * deviendra donc pas un piège le jour où il cessera d'être nécessaire.
  */
 export function encodeCustomFieldValue(
   definition: OrderCustomFieldDefinition,
   value: any,
-): { value: any; value_type: CustomFieldValueType } {
+): { value: string; value_type: CustomFieldValueType } {
   if (definition.valueType === 'array' || definition.valueType === 'object') {
-    return { value, value_type: definition.valueType };
+    return { value: JSON.stringify(value), value_type: definition.valueType };
   }
   return { value: typeof value === 'string' ? value : String(value), value_type: 'text' };
 }

@@ -32,9 +32,30 @@ const simulateFleetbaseRoundTrip = (meta: Record<string, any>) => {
 
     const encoded = encodeCustomFieldValue(definition, raw);
 
-    // Ce que fait `CustomValue::set()` puis `::get()`.
+    // ── Ce que fait RÉELLEMENT Fleetbase, bug compris ────────────────────
+    //
+    // `syncCustomFieldValues()` remplit `value` AVANT `value_type`, donc
+    // `CustomValue::set()` ne voit pas encore le type et se rabat sur
+    // `'text'` : il renvoie la valeur telle quelle, sans jamais l'encoder.
+    //
+    // La première version de ce test simulait le cast « comme il devrait
+    // fonctionner » — elle passait au vert, et la première vraie commande a
+    // échoué en base sur une colonne nommée `0`. Simuler le comportement
+    // souhaité plutôt que le comportement réel, c'est écrire un test qui
+    // valide l'hypothèse au lieu de l'éprouver.
+    if (typeof encoded.value !== 'string') {
+      throw new Error(
+        `encodeCustomFieldValue doit toujours rendre une chaîne : `
+          + `${definition.key} a rendu ${typeof encoded.value}. `
+          + `Un tableau serait fusionné dans les attributs du modèle Laravel.`,
+      );
+    }
+
+    const stored = encoded.value;
+
+    // `CustomValue::get()`, lui, voit bien `value_type` puisqu'il vient de la
+    // base : il désérialise pour `array`/`object`, laisse le reste en chaîne.
     const isJson = encoded.value_type === 'array' || encoded.value_type === 'object';
-    const stored = isJson ? JSON.stringify(encoded.value) : String(encoded.value);
     const returned = isJson ? JSON.parse(stored) : stored;
 
     rows.push({
@@ -124,6 +145,19 @@ describe('champs personnalisés de commande', () => {
     const effective = effectiveOrderMeta({ meta: { _index_resource: true } }, { cod_amount: 1200 });
 
     expect(effective?.cod_amount).toBe(1200);
+  });
+
+  it('survit à un double encodage, si l\'amont corrige son ordre d\'affectation', () => {
+    // Le jour où `syncCustomFieldValues()` remplira `value_type` en premier,
+    // le cast ré-encodera la chaîne que nous envoyons déjà encodée. Le
+    // contournement ne doit pas devenir un piège à ce moment-là.
+    const doublyEncoded = JSON.stringify(JSON.stringify([{ description: 'colis', weight: 25 }]));
+    const read = readOrderCustomFields({
+      custom_field_values: [{ custom_field: { name: 'items' }, value: JSON.parse(doublyEncoded) }],
+    });
+
+    expect(Array.isArray(read.items)).toBe(true);
+    expect(read.items[0].weight).toBe(25);
   });
 
   it('sait lire les valeurs insérées à plat par `withCustomFields()`', () => {
