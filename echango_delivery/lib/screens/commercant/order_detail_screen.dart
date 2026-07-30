@@ -513,14 +513,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       // celle-ci ne parle que de ce qui a été RÉELLEMENT perçu, et n'apparaît
       // qu'après la livraison. Le commerçant doit pouvoir relire ce qu'il a
       // demandé, avant.
+      // ⚠️ Le suffixe ne décrit plus la composition du montant — la livraison
+      // est réclamée à la porte dans les deux cas —, mais **qui la paie**.
+      // « (marchandise seule) » sur un montant qui contient la livraison
+      // aurait été un contresens : le commerçant aurait lu 1950 en croyant
+      // que son client ne paie que la marchandise.
       if (order.codAmount != null)
         (
           Icons.account_balance_wallet_outlined,
           'À encaisser',
           '${order.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'.trim() +
               (order.codIncludesDelivery
-                  ? ' (livraison incluse)'
-                  : ' (marchandise seule)'),
+                  ? ' (livraison à votre charge)'
+                  : ' (livraison payée par le client)'),
         ),
       // Une ligne par article : le poids et la mention fragile étaient saisis
       // puis invisibles, alors que ce sont eux qui fondent un refus pour

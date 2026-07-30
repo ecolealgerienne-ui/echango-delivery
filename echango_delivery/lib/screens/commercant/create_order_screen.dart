@@ -472,6 +472,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     IconData icon, {
     TextInputType? keyboard,
     int maxLines = 1,
+    ValueChanged<String>? onChanged,
   }) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 12),
@@ -479,6 +480,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           controller: controller,
           keyboardType: keyboard,
           maxLines: maxLines,
+          onChanged: onChanged,
           decoration: InputDecoration(
             labelText: label,
             border: const OutlineInputBorder(),
@@ -620,8 +622,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // `onChanged` : la rémunération entre dans le montant réclamé à la
+        // porte quand la livraison n'est pas comprise dans le prix de la
+        // marchandise. Sans reconstruction, l'aperçu plus bas afficherait un
+        // total périmé — le seul endroit où le commerçant peut vérifier
+        // l'addition avant de l'imposer à son client.
         _field(_price, 'Rémunération proposée (DZD)', Icons.payments_outlined,
-            keyboard: TextInputType.number),
+            keyboard: TextInputType.number,
+            onChanged: (_) => setState(() {})),
         Row(
           children: [
             if (_quoting)
@@ -662,6 +670,57 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// Tous les transporteurs du réseau peuvent prendre une course encaissée :
   /// ils sont sélectionnés et provisionnés par Echango, le contrôle a lieu à
   /// l'entrée du réseau et non commerçant par commerçant.
+  /// L'addition, montrée avant qu'elle soit réclamée à quelqu'un.
+  ///
+  /// Quand la livraison n'est pas comprise dans le prix de la marchandise,
+  /// c'est le serveur qui additionne — et le commerçant ne verrait le total
+  /// qu'après coup, sur la fiche, alors que le transporteur est déjà parti
+  /// avec la consigne d'encaisser ce montant. Le montrer ici est le seul
+  /// moment où il peut encore le corriger.
+  ///
+  /// Rien n'est affiché tant que l'addition n'a pas de sens (marchandise
+  /// vide, rémunération inconnue) : un total incomplet serait plus trompeur
+  /// que pas de total du tout. Le cas « rémunération manquante » est signalé
+  /// séparément, parce que le serveur refusera la création.
+  Widget _codTotalPreview(ThemeData theme) {
+    final goods = double.tryParse(_codAmount.text.trim());
+    if (goods == null || goods <= 0) return const SizedBox.shrink();
+
+    if (_codIncludesDelivery) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          'Le destinataire remettra ${goods.toStringAsFixed(0)} DZD.',
+          style: theme.textTheme.bodySmall,
+        ),
+      );
+    }
+
+    final fee = double.tryParse(_price.text.trim());
+    if (fee == null || fee <= 0) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          'Indiquez la rémunération du transporteur : elle sera réclamée au '
+          'destinataire en plus de la marchandise.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.error),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        'Le destinataire remettra ${(goods + fee).toStringAsFixed(0)} DZD '
+        '(${goods.toStringAsFixed(0)} de marchandise + '
+        '${fee.toStringAsFixed(0)} de livraison).',
+        style: theme.textTheme.bodySmall
+            ?.copyWith(fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
   Widget _codSection() {
     final theme = Theme.of(context);
 
@@ -680,13 +739,25 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           ),
         ),
         if (_cashOnDelivery) ...[
-          _field(_codAmount, 'Montant à encaisser (DZD)',
-              Icons.account_balance_wallet_outlined,
-              keyboard: TextInputType.number),
+          // L'intitulé suit la case ci-dessous, et ce n'est pas cosmétique :
+          // « Montant à encaisser » et « Prix de la marchandise » ne
+          // désignent le même nombre que lorsque la livraison est comprise
+          // dedans. Un intitulé fixe aurait laissé le commerçant saisir un
+          // total là où le serveur attend la marchandise seule — l'écart se
+          // serait vu à la porte, en espèces.
+          _field(
+            _codAmount,
+            _codIncludesDelivery
+                ? 'Montant à encaisser (DZD)'
+                : 'Prix de la marchandise (DZD)',
+            Icons.account_balance_wallet_outlined,
+            keyboard: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+          ),
           // Ce choix ne change pas le règlement — le transporteur retient sa
-          // rémunération dans les deux cas — mais il change le montant que le
-          // commerçant doit saisir juste au-dessus. D'où sa place ici, et non
-          // dans un écran de réglages.
+          // rémunération dans les deux cas — mais il change **qui paie la
+          // livraison**, donc le montant réclamé à la porte. D'où sa place
+          // ici, et non dans un écran de réglages.
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             value: _codIncludesDelivery,
@@ -695,11 +766,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             subtitle: Text(
               _codIncludesDelivery
                   ? 'Le client règle la marchandise et la livraison en une fois.'
-                  : 'Le client ne règle que la marchandise ; la livraison reste '
-                      'à votre charge.',
+                  : 'Les frais de livraison sont réclamés au client en plus '
+                      'de la marchandise.',
               style: theme.textTheme.bodySmall,
             ),
           ),
+          _codTotalPreview(theme),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(

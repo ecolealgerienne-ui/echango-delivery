@@ -91,6 +91,9 @@ export const ErrorCode = {
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
+  /** Encaissement de la marchandise seule sans rémunération connue :
+   *  impossible de savoir combien réclamer à la porte. */
+  ORDER_COD_REQUIRES_PRICE: 'order.cod_requires_price',
   ORDER_ALREADY_PUBLISHED: 'order.already_published',
   ORDER_PUBLISH_FAILED: 'order.publish_failed',
   ORDER_ACCEPT_FAILED: 'order.accept_failed',

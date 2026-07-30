@@ -240,15 +240,6 @@ export class CommerçantService {
     // formulaire (`true`), jamais sur le choix réel de la commande d'origine.
     meta.prefer_favourites = dto.preferFavourites === true;
 
-    // Montant à encaisser. Porté dans `meta` et non confondu avec `price` :
-    // c'est ce que le destinataire doit au commerçant, tandis que `price` est
-    // ce que le commerçant doit au transporteur. Sens inverses.
-    if (dto.codAmount) {
-      meta.cod_amount = dto.codAmount;
-      meta.cod_currency = this.pricing.currency;
-      meta.cod_includes_delivery = dto.codIncludesDelivery === true;
-    }
-
     // Le devis est demandé sur TOUTE commande, même quand le commerçant a
     // saisi son montant : ce qui est enregistré au passage — distance, horaire,
     // catégorie de véhicule — sont les entrées de la future formule de calcul.
@@ -256,6 +247,11 @@ export class CommerçantService {
     // géocodage et du réseau routier du moment, et une commande rejouée plus
     // tard ne donnerait pas le même chiffre. Sans elles, les courses du pilote
     // ne serviront pas à calibrer le barème.
+    //
+    // Calculé AVANT le bloc d'encaissement, et pas seulement par commodité :
+    // quand la livraison n'est pas comprise dans le prix de la marchandise,
+    // c'est la rémunération qui s'ajoute au montant réclamé à la porte. Le
+    // second dépend donc du premier.
     const quote = this.pricing.quote(
       {
         pickupLatitude: dto.pickupLatitude,
@@ -277,6 +273,55 @@ export class CommerçantService {
       // mélangerait prix proposés et prix calculés, et la calibration de la
       // future formule se ferait sur ses propres résultats.
       meta.price_source = quote.source;
+    }
+
+    // ── Paiement à la livraison ───────────────────────────────────────────
+    //
+    // Deux montants distincts, et les confondre serait l'erreur fondatrice :
+    // `price` va du commerçant au transporteur, `cod_amount` va du
+    // destinataire au commerçant. Sens inverses.
+    //
+    // ⚠️ **`cod_amount` est ce que le destinataire remet à la porte**, et
+    // rien d'autre. C'est le sens que lui donnent déjà tous ses lecteurs : le
+    // montant annoncé au transporteur avant qu'il accepte, `expectedAmount`
+    // figé dans le registre de caisse, le refus de percevoir plus que dû, et
+    // le plafond de dette. Un seul sens, tenu au point d'écriture, plutôt
+    // qu'un champ que chaque lecteur interprète.
+    //
+    // Le commerçant, lui, saisit le **prix de sa marchandise**. Quand il
+    // décide que la livraison est à la charge du destinataire, la
+    // rémunération s'ajoute : marchandise 1300 + course 650 = 1950 réclamés à
+    // la porte, dont 650 que le transporteur retient et 1300 qu'il remet.
+    // Avant cette addition, le transporteur se voyait annoncer 1300 et le
+    // commerçant n'en récupérait que 650 — il payait la livraison qu'il avait
+    // explicitement mise à la charge de son client.
+    if (dto.codAmount) {
+      const goods = dto.codAmount;
+      const includesDelivery = dto.codIncludesDelivery === true;
+      const fee = includesDelivery ? 0 : (meta.price ?? null);
+
+      // Refus explicite plutôt qu'un repli silencieux : sans rémunération
+      // connue, « la livraison est à la charge du destinataire » n'a pas de
+      // montant, et retomber sur la marchandise seule ferait payer le
+      // commerçant à son insu — exactement ce que ce choix voulait éviter.
+      if (fee === null) {
+        badRequest(
+          'order.cod_requires_price',
+          'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
+        );
+      }
+
+      meta.cod_amount = goods + fee;
+      // Ce que le commerçant a saisi, conservé tel quel. Recalculer
+      // `cod_amount − price` fonctionnerait aujourd'hui, mais « refaire cette
+      // livraison » repartirait alors du total et y rajouterait la course à
+      // chaque duplication — l'erreur se composerait à chaque copie.
+      meta.cod_goods_amount = goods;
+      meta.cod_currency = this.pricing.currency;
+      // Décrit désormais **comment le commerçant a saisi son montant**, et
+      // non ce que contient `cod_amount` : la livraison est comprise dans le
+      // montant réclamé à la porte dans les deux cas.
+      meta.cod_includes_delivery = includesDelivery;
     }
 
     return Object.keys(meta).length ? meta : undefined;
@@ -1100,7 +1145,22 @@ export class CommerçantService {
       price: typeof meta.price === 'number' ? meta.price : null,
       // Repris comme le reste : une boulangerie qui livre le même client
       // encaisse en général le même montant. Modifiable à l'écran.
-      codAmount: typeof meta.cod_amount === 'number' ? meta.cod_amount : null,
+      //
+      // ⚠️ On rend le **prix de la marchandise**, jamais `cod_amount` : ce
+      // dernier contient déjà la rémunération du transporteur quand le
+      // commerçant l'a mise à la charge du destinataire. Le reprendre tel quel
+      // le ferait ré-additionner à la création suivante — 1300 devient 1950,
+      // puis 2600 —, et l'erreur se composerait à chaque duplication sans
+      // jamais lever d'exception.
+      //
+      // Le repli sur `cod_amount` couvre les commandes d'avant ce champ, où
+      // les deux montants étaient confondus.
+      codAmount:
+        typeof meta.cod_goods_amount === 'number'
+          ? meta.cod_goods_amount
+          : typeof meta.cod_amount === 'number'
+            ? meta.cod_amount
+            : null,
       codIncludesDelivery: meta.cod_includes_delivery === true,
     };
   }
@@ -1112,6 +1172,15 @@ export class CommerçantService {
     this.logger.log(`Creating order for merchant ${merchantId}`);
 
     const merchant = await this.getMerchantWithValidation(merchantId);
+
+    // Calculé AVANT le `try`, et ce n'est pas un détail de style. Cette
+    // fonction peut refuser (encaissement de la marchandise seule sans
+    // rémunération connue), et à l'intérieur du `try` les deux `Place`
+    // d'enlèvement et de livraison sont **déjà créés chez Fleetbase** : le
+    // refus les laisserait orphelins, sans rien pour les reprendre. Refuser
+    // avant la première écriture est la seule compensation qui ne coûte rien
+    // (règles §2 et §3).
+    const meta = this.buildOrderMeta(dto);
 
     try {
       // Fleetbase orders require pre-created Place records for pickup/dropoff,
@@ -1155,8 +1224,16 @@ export class CommerçantService {
       // la décision de dispatch est tout entière différée à la publication
       // (`publishOrder`), au moment où elle a une chance de refléter une
       // disponibilité à jour plutôt que celle de l'instant de la saisie.
+      //
+      // ⚠️ Le plafond de dette est vérifié sur `meta.cod_amount` — le montant
+      // réclamé à la porte — et non sur `dto.codAmount`, qui n'est que le prix
+      // de la marchandise. C'est l'espèce que le transporteur portera qui
+      // fonde l'exposition, livraison comprise. Prendre la saisie ici aurait
+      // sous-estimé le plafond sur ce chemin et pas sur celui de
+      // `publishOrder`, qui lit déjà `meta` : deux réponses différentes pour
+      // la même course selon qu'elle passe ou non par un brouillon.
       const favourite = dto.preferFavourites && !dto.draft
-        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, dto.codAmount)
+        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, meta?.cod_amount)
         : null;
 
       const response = await this.fleetbaseClient.createOrder({
@@ -1168,7 +1245,7 @@ export class CommerçantService {
           pickup_uuid: pickupPlace.place.uuid,
           dropoff_uuid: dropoffPlace.place.uuid,
         },
-        meta: this.buildOrderMeta(dto),
+        meta,
         scheduled_at: dto.scheduledAt,
         // Un brouillon envoie `adhoc: false` ET `dispatched: false`
         // EXPLICITEMENT, pas seulement leur absence.

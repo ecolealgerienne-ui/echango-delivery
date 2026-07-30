@@ -164,16 +164,26 @@ const META_FIELDS = [
   // proposé par le commerçant d'un tarif de la plateforme, ils ne se négocient
   // pas de la même façon.
   'price_source',
-  // Somme à encaisser auprès du destinataire. Rien à voir avec `price` : elle
-  // circule en sens inverse, du destinataire vers le commerçant. Le
-  // transporteur doit la connaître avant d'accepter — porter des espèces
-  // n'engage pas comme porter un colis — et l'avoir sous les yeux au moment de
-  // la remise, qui est là où se produit l'erreur de montant.
+  // Somme réclamée au destinataire **à la porte**, livraison comprise. Rien à
+  // voir avec `price` : elle circule en sens inverse, du destinataire vers le
+  // commerçant. Le transporteur doit la connaître avant d'accepter — porter
+  // des espèces n'engage pas comme porter un colis — et l'avoir sous les yeux
+  // au moment de la remise, qui est là où se produit l'erreur de montant.
+  //
+  // Un seul sens, et tous ses lecteurs l'ont déjà : montant annoncé avant
+  // acceptation, `expectedAmount` figé au registre, refus de percevoir plus
+  // que dû, plafond de dette. Il est tenu au point d'écriture
+  // (`buildOrderMeta`) plutôt que réinterprété par chaque lecteur.
   'cod_amount',
+  // Le prix de la marchandise, tel que le commerçant l'a saisi. Sert à
+  // reproduire la commande à l'identique et à lui montrer la décomposition du
+  // montant réclamé — jamais à décider d'un encaissement.
+  'cod_goods_amount',
   'cod_currency',
-  // Purement informatif : le règlement est le même dans les deux cas. Exposé
-  // pour que le commerçant sache lire son chiffre d'affaires, et pour que le
-  // transporteur sache expliquer au destinataire ce qu'il paie.
+  // Décrit **comment le commerçant a saisi son montant**, pas ce que contient
+  // `cod_amount` : la livraison est réclamée à la porte dans les deux cas.
+  // Sert à reproduire la commande et à expliquer la décomposition ; le
+  // règlement avec le transporteur, lui, ne change pas (journal §17).
   'cod_includes_delivery',
   // Choix du commerçant à la création. Écrit depuis le début (il sert à
   // reproduire une commande dupliquée) mais jamais projeté : la fiche ne
