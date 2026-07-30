@@ -51,8 +51,30 @@ fi
 
 command -v jq >/dev/null || { echo "jq requis." >&2; exit 1; }
 
-response="$(curl -sS -H "Authorization: Bearer $API_KEY" \
-  "$API_URL/int/v1/places?limit=200")"
+# `host.docker.internal` est l'adresse de la machine hôte **vue depuis un
+# conteneur**. C'est la bonne valeur dans le .env, que le BFF lit depuis son
+# conteneur, et elle ne résout pas depuis un shell de l'hôte. Plutôt que
+# d'exiger une variable à chaque appel, on retombe sur `localhost` : c'est la
+# même machine, désignée depuis l'autre côté.
+fetch() {
+  # `--fail` et non `--fail-with-body` : ce dernier n'existe qu'à partir de
+  # curl 7.76, et le corps d'une réponse en erreur ne nous sert à rien ici.
+  curl -sS --fail -H "Authorization: Bearer $API_KEY" \
+    "$1/int/v1/places?limit=200"
+}
+
+if ! response="$(fetch "$API_URL" 2>/dev/null)"; then
+  fallback="${API_URL/host.docker.internal/localhost}"
+  if [[ "$fallback" != "$API_URL" ]]; then
+    echo "== $API_URL injoignable depuis ce shell, essai sur $fallback ==" >&2
+    API_URL="$fallback"
+    response="$(fetch "$API_URL")"
+  else
+    # Rejoué sans masquer la sortie : l'erreur de curl dit quoi corriger.
+    fetch "$API_URL" >/dev/null
+    exit 1
+  fi
+fi
 
 # Fleetbase enveloppe tantôt sous `places`, tantôt sous `data`.
 places="$(echo "$response" | jq '.places // .data // []')"
