@@ -1894,7 +1894,7 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    const live = await this.liveOrderDetailed(merchant.fleetbaseVendorUuid, order);
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
     if (!live) {
       notFound('order.not_found', 'Livraison introuvable');
     }

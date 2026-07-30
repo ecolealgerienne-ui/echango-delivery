@@ -605,10 +605,25 @@ export class TransporteurService {
 
     let price = 0;
     try {
-      const order = await this.resolveOrder(collection.fleetbaseOrderUuid);
-      if (order) {
+      // Lecture unitaire, et non `resolveOrder()` : celle-ci télécharge toutes
+      // les commandes de l'organisation pour en retrouver une dont on connaît
+      // déjà l'uuid.
+      const response = await this.fleetbaseClient.getOrderWithRelations(
+        collection.fleetbaseOrderUuid,
+      );
+      const order = response?.order ?? response;
+
+      // L'uuid renvoyé est comparé à celui demandé, comme partout ailleurs sur
+      // les lectures unitaires : lire la rémunération d'une AUTRE course
+      // fixerait ici ce que le transporteur retient sur son encaissement.
+      if (order?.uuid === collection.fleetbaseOrderUuid) {
         const [hydrated] = await this.withSpecMeta([order]);
         price = Number(hydrated?.meta?.price ?? order?.meta?.price) || 0;
+      } else {
+        this.logger.warn(
+          `Lecture unitaire inexploitable pour ${collection.fleetbaseOrderUuid} — `
+            + 'confirmation sans rémunération',
+        );
       }
     } catch (error: any) {
       this.logger.warn(

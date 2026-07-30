@@ -12,6 +12,8 @@ Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse central
 
 Quatre règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
 
+⚠️ **Ce qu'un `tsc` vert vaut dans le sandbox Claude Code — et ce qu'il ne vaut pas (30/07/2026).** Le client Prisma n'y est **jamais généré** (le proxy sortant refuse `binaries.prisma.sh` par politique, y compris avec `--no-engine`), donc `@prisma/client` s'y résout sur un fichier de 4 ko où tout est `any`. Conséquence : **rien de ce qui traverse un type Prisma n'est vérifié ici**, et un `npx tsc --noEmit` vert ne dit rien de ces chemins-là. Constaté : `liveOrderDetailed(merchant.fleetbaseVendorUuid, order)` — arguments inversés — passait ici parce que `merchant` était `any`, et échouait à la compilation chez l'utilisateur, où le client est généré. La vérification a fonctionné, simplement pas de mon côté. À l'écriture : relire à la main toute signature dont un argument vient d'une ligne Prisma, et annoncer un `tsc` vert pour ce qu'il est — une vérification **partielle**.
+
 ### 1. Le statut Fleetbase fait foi — aucun état parallèle
 
 **Fleetbase est la source de vérité** (`docs/architecture_bff_fleetbase.md`). Le BFF ne conserve que ce que Fleetbase ne peut structurellement pas porter, et fait le lien par identifiant. Trois exceptions nommées, et seulement trois : un **cache éphémère** (jetable sans perte), un **curseur** (une date, pas la donnée), une **valeur figée dans une écriture comptable** (`CashCollection.expectedAmount` ne doit pas bouger si un admin corrige la commande demain).
