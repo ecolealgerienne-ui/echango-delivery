@@ -196,12 +196,29 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         'Brouillon : aucun transporteur n\'est sollicité tant '
                         'que vous ne publiez pas cette livraison.',
                       )
-                    else if (order.isWaitingDispatch)
+                    // ⚠️ `isWaitingDispatch` ne suffit pas. Le statut Fleetbase
+                    // reste `dispatched` **après** l'affectation d'un
+                    // transporteur — il ne bouge qu'au démarrage de la course.
+                    // L'écran affichait donc « Echango recherche un
+                    // transporteur » juste au-dessus de « Pris en charge par
+                    // Driver Alice1 », deux affirmations contradictoires dont
+                    // la première est fausse.
+                    //
+                    // Rien n'est dérivé ni mémorisé ici : deux champs servis
+                    // par Fleetbase, lus ensemble pour choisir une phrase.
+                    else if (order.isWaitingDispatch && order.driverName == null)
                       _banner(
                         Colors.orange.shade50,
                         Icons.hourglass_empty,
                         'En attente d\'attribution. Echango recherche un '
                         'transporteur disponible.',
+                      )
+                    else if (order.isWaitingDispatch)
+                      _banner(
+                        Colors.blue.shade50,
+                        Icons.assignment_turned_in_outlined,
+                        'Transporteur affecté. La course démarrera à '
+                        'l\'enlèvement.',
                       ),
                     if (order.driverName != null) _driverCard(order),
                     if (order.isCompleted)

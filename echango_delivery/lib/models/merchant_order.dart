@@ -164,9 +164,19 @@ class MerchantOrder extends Equatable {
   /// Les écrans lisent ce getter plutôt que de refaire leur propre table : la
   /// fiche affichait `created` brut là où la liste affichait « En attente »,
   /// pour la même commande.
+  /// ⚠️ `dispatched` recouvre deux situations que le commerçant vit
+  /// différemment : personne n'a encore pris la course, ou un transporteur est
+  /// affecté et n'a pas encore démarré. Le statut Fleetbase ne bouge qu'au
+  /// démarrage, donc lui seul afficherait « Recherche transporteur » à côté de
+  /// « Pris en charge par Alice ».
+  ///
+  /// Deux champs servis par le serveur, lus ensemble pour choisir un mot.
+  /// Rien n'est mémorisé ni dérivé : c'est de l'affichage, et il vit à un seul
+  /// endroit pour que deux écrans ne racontent pas deux histoires.
   String get statusLabel => switch (status) {
         'created' => 'Brouillon',
-        'dispatched' => 'Recherche transporteur',
+        'dispatched' =>
+          driverName == null ? 'Recherche transporteur' : 'Transporteur affecté',
         'started' || 'enroute' => 'En cours',
         'completed' => 'Livrée',
         'canceled' || 'cancelled' => 'Annulée',
