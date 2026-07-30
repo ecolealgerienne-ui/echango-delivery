@@ -87,6 +87,18 @@ export class OrderCustomFieldsService {
 
     const byName = new Map<string, string>();
     for (const field of existing) {
+      // ⚠️ Le sujet est revérifié en mémoire, alors que `?subject_uuid=` est un
+      // filtre réel (`subject_uuid` est dans le `$fillable` de `CustomField`,
+      // et `applyOptimizedFilters()` applique tout filtre fillable).
+      //
+      // La garde reste, parce que le mode d'échec sans elle est le pire
+      // possible : un filtre qui cesserait d'être honoré — renommage amont,
+      // régression — renverrait les champs de **toutes** les configurations, et
+      // un champ nommé `price` sur une autre configuration serait pris pour le
+      // nôtre. On écrirait alors des montants sur les définitions de quelqu'un
+      // d'autre, sans la moindre erreur. Avec la garde, le pire cas est une
+      // carte vide, donc un repli sur `meta`.
+      if (field?.subject_uuid && field.subject_uuid !== orderConfigUuid) continue;
       if (field?.name && field?.uuid) byName.set(field.name, field.uuid);
     }
 
@@ -141,7 +153,10 @@ export class OrderCustomFieldsService {
       const response = await this.fleetbaseClient.listCustomFieldGroups(orderConfigUuid);
       const groups = this.fleetbaseClient.extractCollection(response, 'categories');
 
-      const existing = groups.find((g: any) => g?.name === 'Echango');
+      const existing = groups.find(
+        (g: any) =>
+          g?.name === 'Echango' && (!g?.owner_uuid || g.owner_uuid === orderConfigUuid),
+      );
       if (existing?.uuid) return existing.uuid;
 
       const created = await this.fleetbaseClient.createCustomFieldGroup(orderConfigUuid, 'Echango');

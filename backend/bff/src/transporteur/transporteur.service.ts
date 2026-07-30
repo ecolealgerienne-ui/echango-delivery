@@ -502,6 +502,11 @@ export class TransporteurService {
     // champ non rempli serait le pire des défauts silencieux.
     const ladder = ['moto', 'voiture', 'utilitaire'];
     const mine = ladder.indexOf(driver.vehicleType ?? '');
+    // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
+    // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
+    // passerait pour « sans exigence » : un transporteur en moto se verrait
+    // proposer une course qui demande un utilitaire, et le découvrirait devant
+    // le colis.
     const suits = (order: any) => {
       if (mine < 0) return true;
       const required = ladder.indexOf(order?.meta?.vehicle_type ?? '');
@@ -521,25 +526,29 @@ export class TransporteurService {
       ).map((d: any) => d.fleetbaseOrderUuid),
     );
 
-    const adhoc = adhocRaw.filter(
-      (o) =>
-        o?.adhoc === true &&
-        !o?.driver_assigned_uuid &&
-        o?.status !== 'canceled' &&
-        !declined.has(o?.uuid) &&
-        suits(o),
+    // Recomplété AVANT le filtre, pas après : `suits()` lit
+    // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
+    // traiter la course comme sans exigence.
+    const adhocHydrated = await this.withSpecMeta(
+      adhocRaw.filter(
+        (o) =>
+          o?.adhoc === true &&
+          !o?.driver_assigned_uuid &&
+          o?.status !== 'canceled' &&
+          !declined.has(o?.uuid),
+      ),
     );
+
+    const adhoc = adhocHydrated.filter(suits);
 
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
     // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
     // non Fleetbase (revue M10). `unclaimed` réduit le point de livraison à sa
     // commune ; l'enlèvement, qui est un commerce, passe en entier.
-    // Complété comme les courses assignées : une opportunité dont `meta` a été
-    // effacé n'annoncerait ni prix ni montant à encaisser, donc rien sur quoi
-    // décider de la prendre.
-    const publicAdhoc = (await this.withSpecMeta(adhoc)).map((o) =>
-      projectOrderForDriver(o, { unclaimed: true }),
-    );
+    // Déjà complété ci-dessus — une opportunité dont `meta` a été effacé
+    // n'annoncerait ni prix ni montant à encaisser, donc rien sur quoi décider
+    // de la prendre.
+    const publicAdhoc = adhoc.map((o) => projectOrderForDriver(o, { unclaimed: true }));
 
     if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
@@ -677,7 +686,12 @@ export class TransporteurService {
     // Entrées tarifaires copiées, pas référencées : c'est l'appariement « ce
     // qui était offert » / « refusé pour tel motif » qui a de la valeur, et il
     // disparaît dès que la commande change ou est supprimée.
-    const meta = order?.meta ?? {};
+    //
+    // Recomplété d'abord : sans ça, un refus sur une commande dont `meta` a été
+    // écrasé enregistrerait un motif sans le prix qui l'explique — c'est-à-dire
+    // précisément la moitié inutile de la paire.
+    const [hydratedForDecline] = await this.withSpecMeta([order]);
+    const meta = hydratedForDecline?.meta ?? order?.meta ?? {};
 
     const decline = await this.prisma.orderDecline.upsert({
       where: {
