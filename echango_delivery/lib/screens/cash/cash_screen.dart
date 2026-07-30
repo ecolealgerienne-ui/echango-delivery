@@ -98,6 +98,25 @@ class _CashScreenState extends State<CashScreen> {
                   onDeclare: () => _declare(state, balance),
                 ),
 
+            // Le détail vient APRÈS les soldes, et c'est délibéré : on lit
+            // d'abord combien, ensuite d'où ça vient. L'inverse noierait le
+            // chiffre qui intéresse dans une liste de lignes.
+            if (state.collections.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _sectionTitle('Détail des encaissements'),
+              for (final c in state.collections.take(20))
+                _CollectionCard(entry: c, isDriver: _isDriver),
+              if (state.collections.length > 20)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '20 dernières livraisons encaissées sur '
+                    '${state.collections.length}.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+            ],
+
             if (state.awaitingOther.isNotEmpty) ...[
               const SizedBox(height: 16),
               _sectionTitle('En attente de l\'autre partie'),
@@ -523,4 +542,99 @@ class _AmountDialogState extends State<_AmountDialog> {
       ],
     );
   }
+}
+
+/// Une livraison encaissée, décomposée.
+///
+/// ── Pourquoi les trois montants et pas seulement le solde ──────────────────
+///
+/// Depuis que le montant réclamé à la porte comprend la livraison, « perçu »
+/// et « ce qui vous revient » ne sont plus le même nombre. Un commerçant qui
+/// ne voit que le total ne peut ni le vérifier, ni expliquer un écart à son
+/// client — alors que c'est exactement ce qu'il contrôle avant de confirmer une
+/// remise, geste qui éteint une dette.
+///
+/// La retenue est celle **réellement prélevée**, plafonnée à ce qui a été
+/// perçu : sur une livraison payée en partie, elle diffère du prix de la
+/// course, et afficher le prix théorique ferait mentir la soustraction.
+class _CollectionCard extends StatelessWidget {
+  final CashCollectionEntry entry;
+  final bool isDriver;
+
+  const _CollectionCard({required this.entry, required this.isDriver});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    String money(double amount) =>
+        '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  entry.collectedAt.toLocal().toString().split(' ')[0],
+                  style: theme.textTheme.bodySmall,
+                ),
+                Text(
+                  money(entry.collectedAmount),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _line(theme, 'Perçu du destinataire', money(entry.collectedAmount)),
+            if (entry.retainedAmount > 0)
+              _line(
+                theme,
+                isDriver ? 'Votre rémunération retenue' : 'Retenu par le transporteur',
+                '− ${money(entry.retainedAmount)}',
+              ),
+            _line(
+              theme,
+              isDriver ? 'Reste à remettre' : 'Vous revient',
+              money(entry.netAmount),
+              strong: true,
+            ),
+            // ⚠️ L'écart n'est signalé QUE s'il existe : un motif affiché sur
+            // une ligne conforme se lirait comme un incident.
+            if (entry.hasDiscrepancy) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? 'Écart signalé'}'
+                ' — ${money(entry.expectedAmount)} étaient attendus.',
+                style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
+              ),
+              if (entry.notes != null && entry.notes!.isNotEmpty)
+                Text(entry.notes!, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _line(ThemeData theme, String label, String value, {bool strong = false}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: theme.textTheme.bodySmall),
+            Text(
+              value,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: strong ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      );
 }

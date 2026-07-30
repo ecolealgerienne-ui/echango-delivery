@@ -573,6 +573,29 @@ class BffApiClient {
     return _ledgerFrom(data, CashBalance.fromMerchantJson);
   }
 
+  /// Le détail des encaissements, livraison par livraison.
+  ///
+  /// Le total dû est une somme de différences : sans ce détail, un commerçant
+  /// ne peut pas vérifier d'où viennent les espèces qu'on lui doit — et c'est
+  /// pourtant ce qu'il contrôle avant de confirmer une remise, geste qui éteint
+  /// une dette.
+  Future<List<CashCollectionEntry>> getMerchantCollections() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/encaissements/details'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
+  }
+
+  /// Idem côté transporteur : ce qu'il détient, course par course.
+  Future<List<CashCollectionEntry>> getDriverCollections() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/transporteur/caisse/encaissements'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
+  }
+
   Future<List<CashRemittance>> getMerchantRemittances() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/encaissements/remises'),

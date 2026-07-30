@@ -700,6 +700,25 @@ export class CashService {
   }
 
   /** Encaissements d'un compte, du plus récent au plus ancien. */
+  /**
+   * Le détail des encaissements, livraison par livraison.
+   *
+   * ── Pourquoi la retenue y figure ────────────────────────────────────────────
+   *
+   * Le total dû ne se vérifie pas : c'est une somme de différences. Depuis que
+   * le montant réclamé à la porte comprend la livraison, un commerçant qui lit
+   * « 4 200 DZD détenues par Alice » ne peut plus reconstituer d'où ça vient —
+   * il faudrait qu'il connaisse, pour chaque course, ce qui a été perçu **et**
+   * ce qu'Alice a retenu.
+   *
+   * Or c'est exactement ce qu'il doit contrôler **avant de confirmer une
+   * remise**, puisqu'une confirmation éteint une dette. Un solde qu'on ne peut
+   * pas décomposer se confirme sur la seule parole de l'autre.
+   *
+   * `retainedFromCash` vient de `DriverEarning` : c'est ce que le transporteur
+   * a réellement pu prélever, plafonné à ce qu'il a perçu — et non la
+   * rémunération théorique, qui différerait sur une course payée en partie.
+   */
   async listCollections(persona: 'driver' | 'merchant', actorId: string) {
     const collections = await this.prisma.cashCollection.findMany({
       where: persona === 'driver' ? { driverId: actorId } : { merchantId: actorId },
@@ -707,17 +726,43 @@ export class CashService {
       take: 100,
     });
 
+    if (!collections.length) return { data: [] };
+
+    // Une requête pour toute la page, jamais une par ligne.
+    const earnings = await this.prisma.driverEarning.findMany({
+      where: { fleetbaseOrderUuid: { in: collections.map((c: any) => c.fleetbaseOrderUuid) } },
+      select: { fleetbaseOrderUuid: true, retainedFromCash: true, grossAmount: true },
+    });
+    const byOrder = new Map<string, any>(
+      earnings.map((e: any) => [e.fleetbaseOrderUuid, e]),
+    );
+
     return {
-      data: collections.map((c: any) => ({
-        id: c.id,
-        order_uuid: c.fleetbaseOrderUuid,
-        expected_amount: c.expectedAmount,
-        collected_amount: c.collectedAmount,
-        discrepancy_reason: c.discrepancyReason,
-        notes: c.notes,
-        currency: c.currency,
-        collected_at: c.collectedAt.toISOString(),
-      })),
+      data: collections.map((c: any) => {
+        const earning = byOrder.get(c.fleetbaseOrderUuid);
+        const retained = earning?.retainedFromCash ?? 0;
+
+        return {
+          id: c.id,
+          order_uuid: c.fleetbaseOrderUuid,
+          expected_amount: c.expectedAmount,
+          collected_amount: c.collectedAmount,
+          /** Ce que le transporteur a prélevé sur ces espèces. */
+          retained_amount: retained,
+          /**
+           * Ce qui revient au commerçant sur cette course.
+           *
+           * Calculé sur le montant **perçu** et non sur celui qui était
+           * attendu : sur un écart à la porte, promettre la somme demandée
+           * annoncerait de l'argent qui ne viendra pas.
+           */
+          net_amount: c.collectedAmount - retained,
+          discrepancy_reason: c.discrepancyReason,
+          notes: c.notes,
+          currency: c.currency,
+          collected_at: c.collectedAt.toISOString(),
+        };
+      }),
     };
   }
 

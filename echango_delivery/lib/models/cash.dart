@@ -176,12 +176,32 @@ class CashCollectionEntry extends Equatable {
   final String? notes;
   final DateTime collectedAt;
 
+  /// Ce que le transporteur a prélevé sur ces espèces.
+  ///
+  /// Sa rémunération **réellement retenue**, plafonnée à ce qu'il a perçu — et
+  /// non le montant théorique de la course, qui différerait sur une livraison
+  /// payée en partie.
+  final double retainedAmount;
+
+  /// Ce qui revient au commerçant sur cette livraison.
+  ///
+  /// Calculé par le serveur sur le montant **perçu**, jamais sur celui qui
+  /// était attendu : sur un écart à la porte, annoncer la somme demandée
+  /// promettrait de l'argent qui ne viendra pas.
+  final double netAmount;
+
+  /// Identifiant Fleetbase de la livraison, pour retrouver la fiche.
+  final String orderUuid;
+
   const CashCollectionEntry({
     required this.id,
     required this.expectedAmount,
     required this.collectedAmount,
     required this.currency,
     required this.collectedAt,
+    this.retainedAmount = 0,
+    this.netAmount = 0,
+    this.orderUuid = '',
     this.discrepancyReason,
     this.notes,
   });
@@ -194,6 +214,14 @@ class CashCollectionEntry extends Equatable {
         currency: (json['currency'] ?? '') as String,
         discrepancyReason: json['discrepancy_reason'] as String?,
         notes: json['notes'] as String?,
+        retainedAmount: (json['retained_amount'] as num?)?.toDouble() ?? 0,
+        // Repli sur la soustraction pour les lignes servies avant que le
+        // serveur ne calcule le net : mieux vaut un chiffre juste calculé ici
+        // qu'un zéro affiché comme un fait.
+        netAmount: (json['net_amount'] as num?)?.toDouble() ??
+            ((json['collected_amount'] as num?)?.toDouble() ?? 0) -
+                ((json['retained_amount'] as num?)?.toDouble() ?? 0),
+        orderUuid: (json['order_uuid'] ?? '') as String,
         collectedAt:
             DateTime.tryParse((json['collected_at'] ?? '') as String) ?? DateTime.now(),
       );

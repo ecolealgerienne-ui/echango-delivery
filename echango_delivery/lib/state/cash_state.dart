@@ -29,6 +29,14 @@ class CashState extends ChangeNotifier {
 
   CashLedger? _ledger;
   List<CashRemittance> _remittances = [];
+
+  /// Les encaissements, livraison par livraison.
+  ///
+  /// Le solde affiché en tête est une **somme de différences** : perçu moins
+  /// retenu, moins les remises confirmées. Sans le détail, il ne se vérifie
+  /// pas — et c'est pourtant ce qu'on contrôle avant de confirmer une remise,
+  /// geste qui éteint une dette.
+  List<CashCollectionEntry> _collections = [];
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -42,6 +50,7 @@ class CashState extends ChangeNotifier {
 
   CashLedger? get ledger => _ledger;
   List<CashRemittance> get remittances => _remittances;
+  List<CashCollectionEntry> get collections => _collections;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -72,6 +81,7 @@ class CashState extends ChangeNotifier {
     // afficher les dettes de quelqu'un d'autre le temps d'un chargement.
     _ledger = null;
     _remittances = [];
+    _collections = [];
     notifyListeners();
   }
 
@@ -88,6 +98,14 @@ class CashState extends ChangeNotifier {
       _remittances = isDriver
           ? await _apiClient.getDriverRemittances()
           : await _apiClient.getMerchantRemittances();
+      // Le détail ne conditionne pas l'écran : un total sans son détail reste
+      // lisible, alors qu'une page en erreur ne l'est pas. On l'affiche donc
+      // s'il arrive, et on se tait s'il manque.
+      _collections = isDriver
+          ? await _apiClient.getDriverCollections().catchError(
+              (_) => <CashCollectionEntry>[])
+          : await _apiClient.getMerchantCollections().catchError(
+              (_) => <CashCollectionEntry>[]);
     } on AppException catch (e) {
       _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
