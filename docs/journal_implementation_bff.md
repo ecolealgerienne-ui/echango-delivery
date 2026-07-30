@@ -2590,3 +2590,118 @@ migration. Ici, il y en avait un — il était juste ailleurs.
 `tsc`, `npm run build`, chargement du module racine. **Aucun test d'intégration**
 : la carte de flotte et la position transporteur côté commerçant sont à rejouer.
 ⚠️ `npm run prisma:migrate` puis `prisma generate`.
+
+## 29. Le parcours de l'argent joué en réel (30/07/2026)
+
+Deux chaînes portaient de l'argent et n'avaient **jamais tourné une seule
+fois** : la publication d'un brouillon, et le registre de caisse entier —
+encaissement, dette, remise, confirmation. Écrites sur trois jours, relues,
+jamais exécutées. `scripts/test-parcours-argent.sh` les joue de bout en bout ;
+il passe intégralement. Ce qui suit est ce que quatre exécutions ont appris, et
+c'est presque entièrement du défaut d'outillage — le code métier, lui, était
+juste.
+
+### 29.1 Le résultat
+
+    Marchandise 1300 + course 650 = 1950 réclamés à la porte
+    Perçu 1950, retenu 650, dette 1300 — vue identique des deux côtés
+    Remise déclarée → dette INCHANGÉE → confirmée → soldée
+
+Le contrôle qui compte est celui du milieu. Une remise déclarée d'un seul côté
+n'est qu'une affirmation ; si la dette baissait à la déclaration, n'importe qui
+effacerait sa dette sur sa propre parole. C'était le principe fondateur du
+registre (§16) et c'est la première fois qu'il est constaté plutôt que raisonné.
+
+`PATCH /int/v1/orders/dispatch` — la route trouvée par lecture du source après
+cinq tentatives infructueuses — écrit bien le dispatch **et** son activité, et
+le brouillon reste `created` avant. Tâche #41 close.
+
+### 29.2 Le flux se parcourt, il ne se saute pas
+
+Juste après `demarrer`, la seule transition proposée est `enroute`, dont
+`activities: ["completed"]` annonce la suivante. La clôture n'est jamais offerte
+d'emblée : il faut avancer d'un cran, redemander, recommencer.
+
+C'est ce que fait l'application. Le script devait donc le faire aussi — poser
+directement une activité `completed` fabriquée l'aurait rendu vert **sans rien
+prouver**, puisque `updateActivity()` commence par
+`if (!Utils::isActivity($activity)) return $this` et répond 2xx sans effet
+(découverte n°3 du lot brouillon/publier, ici confirmée par l'usage).
+
+### 29.3 Pourquoi une seconde commande, et pas une assertion de plus
+
+`POST /terminer` **n'est pas le chemin de l'application** : elle suit les
+transitions du serveur, et la clôture passe par `POST /activite`. C'est
+exactement le défaut du §16 — la garde « pas de clôture sans déclaration
+d'encaissement » ne vivait que sur `/terminer`, donc elle était décorative.
+
+Un script d'argent qui ne teste que `/terminer` recrée l'angle mort qui a
+produit le défaut. Une commande ne se clôturant qu'une fois, le §6 en crée une
+seconde et vérifie les deux moitiés sur ce chemin : refus sans déclaration
+(`cash.cod_declaration_required`), puis dette créée avec. La dette venant d'être
+soldée au §5, elle doit valoir exactement une course — c'est ce qui prouve que
+l'écriture vient de ce chemin-là et n'est pas héritée du précédent.
+
+### 29.4 Quatre défauts d'outillage, tous du même genre
+
+Aucun n'était dans le code métier. Tous rendaient le test menteur.
+
+1. **Mauvaise route** (`/auth/commercant/register`) : le module métier s'appelle
+   `commercant`, l'endpoint d'authentification `merchant`. J'ai écrit celui des
+   deux qui n'existait pas.
+
+2. **Contrôle de succès inversé** : depuis le Lot 4, une inscription *réussie*
+   répond `403 merchant_pending` sans jeton. Le script cherchait un `.id`
+   qu'aucune réponse ne porte plus — même avec la bonne route, il aurait cru
+   échouer.
+
+3. **Un succès annoncé sans avoir été obtenu.** L'échec n'était qu'un `echo`
+   entre parenthèses, suivi de « Commerçant créé » et de l'instruction d'aller
+   activer dans la console un fournisseur qui n'existait pas. C'est le motif
+   récurrent du projet — *une valeur par défaut détruit l'information
+   d'absence*, cette fois dans un script de test, où il produit la pire des
+   choses : un test qui rassure.
+
+4. **Détecteur d'erreur piégeux** : il testait la présence d'un champ `code`,
+   ce qui ne tient que tant qu'aucune réponse de succès n'en porte — or **un
+   objet activité en porte un** (`{"code":"enroute",…}`). Sur le chemin ajouté
+   au §6, une réponse valide aurait été lue comme un échec ; symétriquement,
+   une erreur sans `code` métier serait passée pour un succès. `is_error()`
+   teste `statusCode`, seul champ que `HttpExceptionFilter` pose sur toutes les
+   erreurs, et il a été éprouvé sur les sept formes de réponse réelles.
+
+### 29.5 Deux frictions supprimées, du même raisonnement
+
+**L'uuid du conducteur** était exigé par tous les scripts — la seule valeur que
+la console n'affiche **nulle part**. Elle montre le nom, l'email, le téléphone,
+l'ID public ; l'uuid ne se lit qu'en ouvrant l'onglet réseau ou la base.
+`test-transporteur-module.sh` allait jusqu'à rejeter un `public_id` en renvoyant
+vers un `php artisan tinker`. `scripts/lib/resolve-driver.sh` accepte n'importe
+lequel des identifiants, et **liste ce qui existe** en cas d'échec plutôt que de
+refuser sèchement.
+
+**L'activation du fournisseur** imposait un aller-retour dans la console entre
+deux exécutions. Le script la fait avec la clé de service. Le garde du Lot 4
+reste entier : c'est le rôle d'admin qui est tenu, pas le garde qui est
+contourné — `register-merchant.sh` continue de jouer ce parcours à la main, et
+c'est lui qui prouve le garde. Le statut est **relu après le PUT** plutôt que
+déduit du 200 : `status` n'est pas garanti `fillable`, et un `PUT` qui l'ignore
+répond 200 sans rien changer ; le refus de connexion suivant aurait alors été
+mis sur le compte du garde.
+
+### 29.6 Ce que ce script vaut pour la suite
+
+Le lot « entreprise de transport » change **la contrepartie** du registre : la
+dette devient celle de l'entreprise et non plus du conducteur
+(`docs/specs_flux_argent_quatre_acteurs.md` §4.1). Ce script fige le
+comportement à trois acteurs, et devra continuer de passer **à l'identique**
+après la généralisation — c'est ce qui prouvera qu'elle est bien à contrat
+constant. Sans lui, on modifierait une mécanique qui n'a jamais tourné, sur des
+montants.
+
+### 29.7 Ce qui reste non éprouvé
+
+L'**écart à la porte** (percevoir moins, ou plus, que le montant annoncé), le
+**plafond de dette**, et la **dette négative** (course prépayée). Trois chemins
+du registre que ce parcours ne traverse pas — délibérément : mélanger l'écart au
+scénario nominal rendrait un échec ambigu. Ils méritent leur propre scénario.
