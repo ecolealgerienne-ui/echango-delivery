@@ -254,6 +254,14 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     super.dispose();
   }
 
+  /// Place le point, puis propose de reprendre son libellé dans le champ
+  /// Adresse.
+  ///
+  /// Rempli sans demander seulement si le champ est vide — sinon, écraser
+  /// silencieusement effacerait un texte saisi à la main, parfois plus
+  /// précis que le géocodage inverse (numéro de porte, étage). La question
+  /// ne se pose que si la position choisie a un libellé : sans lui, il n'y a
+  /// rien à proposer.
   Future<void> _pickOnMap() async {
     final result = await Navigator.of(context).push<PickedLocation>(
       MaterialPageRoute(
@@ -265,10 +273,40 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     );
     if (result == null || !mounted) return;
 
-    setState(() {
-      _point = result.point;
-      if (_address.text.trim().isEmpty) _address.text = result.label;
-    });
+    setState(() => _point = result.point);
+
+    final label = result.label.trim();
+    if (label.isEmpty) return;
+
+    if (_address.text.trim().isEmpty) {
+      setState(() => _address.text = label);
+      return;
+    }
+
+    final replace = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remplacer l\'adresse ?'),
+        content: Text(
+          'Préremplir le champ Adresse avec « $label », la position que vous '
+          'venez de sélectionner sur la carte ?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Garder mon texte'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remplacer'),
+          ),
+        ],
+      ),
+    );
+
+    if (replace == true && mounted) {
+      setState(() => _address.text = label);
+    }
   }
 
   /// Seuls le nom et le téléphone sont obligatoires (décision produit,
