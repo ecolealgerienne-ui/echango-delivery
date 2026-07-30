@@ -7,7 +7,11 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
-import { projectOrderForMerchant, projectPlace } from '../common/projections/order.projection';
+import {
+  effectiveMeta,
+  projectOrderForMerchant,
+  projectPlace,
+} from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
 import { CashService } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
@@ -50,7 +54,7 @@ export class CommerçantService {
    * avant les vérifications du §9 de ce document.
    */
   private async mergeWithFleetbase(
-    cached: { id: string; fleetbaseOrderId: string }[],
+    cached: { id: string; fleetbaseOrderId: string; specMeta?: any }[],
     vendorUuid?: string,
   ) {
     if (!cached.length) return [];
@@ -82,7 +86,12 @@ export class CommerçantService {
       // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
       // non Fleetbase (revue M10). L'identifiant local est conservé pour que
       // l'app puisse encore adresser la ligne dont il provient.
-      return projectOrderForMerchant(order, { bff_order_id: c.id });
+      //
+      // `meta` est complété par la spécification locale : une affectation
+      // depuis la console l'efface chez Fleetbase, et sans ce complément la
+      // liste perdrait prix et montant à encaisser dès qu'un transporteur est
+      // désigné.
+      return projectOrderForMerchant(this.withSpecMeta(order, c), { bff_order_id: c.id });
     });
   }
 
@@ -777,6 +786,19 @@ export class CommerçantService {
   }
 
   /**
+   * La commande Fleetbase, `meta` complété par la spécification locale.
+   *
+   * Un seul point de fusion pour tous les chemins de lecture : la liste, la
+   * fiche, le modèle de duplication et la publication. Les disperser aurait
+   * garanti qu'un chemin soit oublié — et celui qu'on oublie est toujours
+   * celui qui décide d'un montant.
+   */
+  private withSpecMeta(live: any, cached?: { specMeta?: any } | null): any {
+    if (!live) return live;
+    return { ...live, meta: effectiveMeta(live.meta, cached?.specMeta) };
+  }
+
+  /**
    * La commande telle qu'une fiche de détail a besoin de la voir.
    *
    * ── Lecture unitaire : désigner la commande, pas la chercher ───────────────
@@ -806,7 +828,7 @@ export class CommerçantService {
    * casser.
    */
   private async detailedOrder(
-    order: { id: string; fleetbaseOrderId: string },
+    order: { id: string; fleetbaseOrderId: string; specMeta?: any },
     vendorUuid: string,
   ): Promise<any> {
     const live = await this.liveOrderDetailed(order, vendorUuid);
@@ -834,7 +856,7 @@ export class CommerçantService {
    * aucun ne doit échouer sur une lecture d'agrément.
    */
   private async liveOrderDetailed(
-    order: { fleetbaseOrderId: string },
+    order: { fleetbaseOrderId: string; specMeta?: any },
     vendorUuid: string,
   ): Promise<any | null> {
     try {
@@ -845,7 +867,12 @@ export class CommerçantService {
 
       // Uuid absent ou différent : on ne sert pas la commande de quelqu'un
       // d'autre sur un doute. Même garde que `getDriverByUuid`.
-      if (live?.uuid === order.fleetbaseOrderId) return live;
+      //
+      // La fusion a lieu ici, et non chez chaque appelant : c'est le point de
+      // passage unique des cinq lectures unitaires (fiche, preuve, position,
+      // duplication, publication). Une fusion recopiée cinq fois aurait fini
+      // par en manquer une.
+      if (live?.uuid === order.fleetbaseOrderId) return this.withSpecMeta(live, order);
 
       this.logger.warn(
         `Lecture unitaire inexploitable pour ${order.fleetbaseOrderId} — repli sur la liste`,
@@ -860,7 +887,9 @@ export class CommerçantService {
     // `OrderResource` sert les deux routes), mais elle est parcourue page par
     // page et peut manquer une commande là où la lecture unitaire la désigne :
     // mieux vaut une fiche éventuellement partielle qu'un écran en erreur.
-    return this.liveOrderFor(vendorUuid, order).catch((): any => null);
+    return this.liveOrderFor(vendorUuid, order)
+      .then((live) => this.withSpecMeta(live, order))
+      .catch((): any => null);
   }
 
   /**
@@ -1292,10 +1321,21 @@ export class CommerçantService {
           // notifierait une transition qui n'a jamais eu lieu.
           status: fleetbaseOrder?.status ?? 'created',
           driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
-          // Le montant à encaisser n'est plus recopié ici (Lot 2) : il vit dans
-          // `meta.cod_amount` chez Fleetbase, où tous ses lecteurs allaient déjà
-          // le chercher, et il est figé dans `CashCollection` au moment où il
-          // devient un fait comptable.
+          // ⚠️ **Ce que le commerçant a demandé, conservé ici.**
+          //
+          // Le Lot 2 avait retiré `codAmount` de ce cache au motif que
+          // `meta.cod_amount` chez Fleetbase suffisait. Le raisonnement était
+          // juste sur les faits connus alors, et il est démenti depuis :
+          // affecter un transporteur depuis la console **écrase `meta`** — il
+          // ne reste que `{_index_resource: true}`. Prix, montant à encaisser,
+          // colis et précisions d'adresse disparaissent d'une commande en
+          // cours, au moment même où quelqu'un la prend en charge.
+          //
+          // Ce n'est pas un miroir d'état mais une **spécification** figée :
+          // écrite une fois, jamais recalculée, et jamais autoritaire face à
+          // Fleetbase — `effectiveMeta()` la fait passer *derrière*, clé par
+          // clé. Elle ne répare que l'effacement.
+          specMeta: meta ?? undefined,
         },
         fleetbaseOrderId,
       );

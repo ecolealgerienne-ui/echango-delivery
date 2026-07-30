@@ -157,6 +157,74 @@ const ORDER_FIELDS = [
 ];
 
 /**
+ * Clés que Fleetbase dépose lui-même dans `meta` et qui ne sont pas des
+ * données métier.
+ *
+ * `_index_resource` est le marqueur observé le 30/07/2026 sur une commande dont
+ * `meta` avait été écrasé par une affectation depuis la console : il valait
+ * `{_index_resource: true}` et rien d'autre. Le reconnaître permet de
+ * distinguer « meta absent » de « meta remplacé par un artefact ».
+ */
+const FLEETBASE_INTERNAL_META_KEYS = ['_index_resource'];
+
+/**
+ * Le `meta` effectif d'une commande : celui de Fleetbase, complété par la
+ * spécification figée à la création.
+ *
+ * ── Pourquoi cette fonction existe ──────────────────────────────────────────
+ *
+ * Affecter un transporteur depuis la console Fleetbase **efface `meta`**. Pas
+ * partiellement : il est remplacé par `{_index_resource: true}`. Prix, montant
+ * à encaisser, colis, précisions d'adresse — tout disparaît d'une commande en
+ * cours, au moment précis où un transporteur en prend la charge.
+ *
+ * Nous ne pouvons pas l'empêcher : la console est une interface d'admin
+ * légitime, et l'écriture vient d'elle. Ce qui est en notre pouvoir, c'est de
+ * ne pas dépendre d'un stockage qu'un tiers peut vider.
+ *
+ * ── L'ordre de préséance, et pourquoi il est dans ce sens ───────────────────
+ *
+ * Fleetbase gagne **clé par clé**. Une valeur modifiée en amont — par un admin
+ * qui corrige un montant, par une évolution du produit — reste donc
+ * autoritaire, conformément à la règle du projet. La copie locale ne comble
+ * que les trous. Le seul cas qu'elle répare est l'effacement, qui n'est jamais
+ * une intention.
+ *
+ * L'inverse aurait fait de la copie locale la vraie source, et rendu toute
+ * correction amont invisible : exactement le second vocabulaire que la règle 1
+ * interdit.
+ */
+export function effectiveMeta(liveMeta: any, specMeta: any): Record<string, any> | undefined {
+  const parse = (value: any): Record<string, any> | undefined => {
+    let source = value;
+    if (typeof source === 'string') {
+      try {
+        source = JSON.parse(source);
+      } catch {
+        return undefined;
+      }
+    }
+    return source && typeof source === 'object' && !Array.isArray(source) ? source : undefined;
+  };
+
+  const live = parse(liveMeta);
+  const spec = parse(specMeta);
+
+  if (!spec) return live;
+
+  // Les clés internes de Fleetbase ne masquent rien : sans ça, un `meta`
+  // réduit à `{_index_resource: true}` compterait comme « présent » pour cette
+  // clé, ce qui est vrai mais sans intérêt — et surtout, l'objet fusionné la
+  // relaierait aux apps.
+  const meaningful: Record<string, any> = {};
+  for (const [key, value] of Object.entries(live ?? {})) {
+    if (!FLEETBASE_INTERNAL_META_KEYS.includes(key)) meaningful[key] = value;
+  }
+
+  return { ...spec, ...meaningful };
+}
+
+/**
  * Champs de `meta` exposés aux clients.
  *
  * `meta` est un fourre-tout JSON : le relayer entier ferait sortir tout ce

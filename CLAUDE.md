@@ -20,6 +20,8 @@ Corollaire, et c'est celui qu'on oublie : **ne pas dériver un état métier de 
 
 **En pratique** : si l'information existe déjà dans un champ Fleetbase, on sert ce champ et l'app en déduit ce qu'elle affiche. On n'invente pas un second vocabulaire.
 
+**Quatrième exception, découverte à l'usage (30/07/2026) : ce que Fleetbase ne peut pas *protéger*.** Affecter un transporteur depuis la console **écrase le `meta` de la commande** — constaté sur une commande réelle, où il ne restait que `{_index_resource: true}`, une clé interne à Fleetbase. Prix, montant à encaisser, colis et précisions d'adresse disparaissent au moment précis où quelqu'un prend la course en charge. Pour le transporteur, `cod_amount` effacé veut dire aucun montant annoncé, plafond de dette vérifié contre zéro, et clôture sans encaissement enregistré alors qu'il tient l'argent. La console étant une interface d'admin légitime, on ne peut pas l'empêcher. `Order.specMeta` conserve donc **ce qui a été demandé**, figé à la création — une spécification, pas un état — et `effectiveMeta()` la fait passer **derrière** Fleetbase, clé par clé : une valeur corrigée en amont reste autoritaire, seul l'effacement est réparé.
+
 ### 2. Aucune transaction entre systèmes — compenser explicitement
 
 Il n'y a **aucun `$transaction` dans le BFF, et c'est inévitable** : Fleetbase est joint en HTTP avec sa propre base MySQL, un `$transaction` Prisma ne couvre que notre Postgres et ne peut rien y annuler. Toute opération qui écrit dans les deux systèmes, ou deux fois chez Fleetbase, est donc **non atomique par construction**.

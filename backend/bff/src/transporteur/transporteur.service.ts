@@ -6,7 +6,10 @@ import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CashService } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
-import { projectOrderForDriver } from '../common/projections/order.projection';
+import {
+  effectiveMeta,
+  projectOrderForDriver,
+} from '../common/projections/order.projection';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -137,8 +140,48 @@ export class TransporteurService {
    * Exposed as `delivery_failure` because that is the key the app's model
    * already reads.
    */
+  /**
+   * Recomplète `meta` depuis la spécification figée à la création.
+   *
+   * ⚠️ Nécessaire parce qu'une affectation de transporteur **depuis la console
+   * Fleetbase efface `meta`** (constaté le 30/07/2026 : il ne restait que
+   * `{_index_resource: true}`). Pour le transporteur, ce n'est pas un
+   * affichage dégradé — `cod_amount` disparu signifie qu'aucun montant ne lui
+   * est annoncé, et `price` disparu qu'il ne sait pas ce que la course
+   * rapporte. Il accepterait à l'aveugle une course encaissée.
+   *
+   * Une seule requête pour toute la liste : la fusion doit être invisible en
+   * coût, sans quoi elle finirait par être retirée d'un chemin « chaud ».
+   */
+  private async withSpecMeta(orders: any[]): Promise<any[]> {
+    if (!orders.length) return orders;
+
+    const uuids = orders.map((o) => o?.uuid).filter(Boolean);
+    if (!uuids.length) return orders;
+
+    const rows = await this.prisma.order
+      .findMany({
+        where: { fleetbaseOrderId: { in: uuids } },
+        select: { fleetbaseOrderId: true, specMeta: true },
+      })
+      // La spécification est un filet, pas une dépendance : si la lecture
+      // échoue, on sert ce que Fleetbase a donné plutôt que de faire échouer
+      // la liste entière.
+      .catch((error: any) => {
+        this.logger.warn(`Spécifications de commande illisibles : ${error.message}`);
+        return [] as { fleetbaseOrderId: string; specMeta: any }[];
+      });
+
+    if (!rows.length) return orders;
+
+    const spec = new Map(rows.map((r: any) => [r.fleetbaseOrderId, r.specMeta]));
+    return orders.map((o) => ({ ...o, meta: effectiveMeta(o?.meta, spec.get(o?.uuid)) }));
+  }
+
   private async attachFailures(driverId: string, orders: any[]) {
     if (!orders.length) return orders;
+
+    orders = await this.withSpecMeta(orders);
 
     const failures = await this.prisma.deliveryFailure.findMany({
       where: {
@@ -491,7 +534,12 @@ export class TransporteurService {
     // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
     // non Fleetbase (revue M10). `unclaimed` réduit le point de livraison à sa
     // commune ; l'enlèvement, qui est un commerce, passe en entier.
-    const publicAdhoc = adhoc.map((o) => projectOrderForDriver(o, { unclaimed: true }));
+    // Complété comme les courses assignées : une opportunité dont `meta` a été
+    // effacé n'annoncerait ni prix ni montant à encaisser, donc rien sur quoi
+    // décider de la prendre.
+    const publicAdhoc = (await this.withSpecMeta(adhoc)).map((o) =>
+      projectOrderForDriver(o, { unclaimed: true }),
+    );
 
     if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
@@ -544,7 +592,8 @@ export class TransporteurService {
     // seconde : il suffirait d'ouvrir la fiche pour obtenir le nom, l'adresse
     // exacte et le téléphone que la liste venait de retirer.
     if (!mine) {
-      return projectOrderForDriver(order, { unclaimed: true });
+      const [hydrated] = await this.withSpecMeta([order]);
+      return projectOrderForDriver(hydrated ?? order, { unclaimed: true });
     }
 
     const [withFailure] = await this.attachFailures(driver.id, [order]);
@@ -846,8 +895,16 @@ export class TransporteurService {
     order: any,
     cash?: CashCollectionDto,
   ): Promise<void> {
-    const codAmount = Number(order?.meta?.cod_amount) || 0;
-    const price = Number(order?.meta?.price) || 0;
+    // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
+    // depuis la console l'efface, et lire le `meta` brut donnerait ici
+    // `codAmount = 0` : la course se clôturerait sans qu'aucun encaissement
+    // ne soit enregistré, alors que le transporteur tient l'argent. La dette
+    // n'existerait nulle part.
+    const [hydrated] = await this.withSpecMeta([order]);
+    const meta = hydrated?.meta ?? order?.meta;
+
+    const codAmount = Number(meta?.cod_amount) || 0;
+    const price = Number(meta?.price) || 0;
 
     // Rien à enregistrer : ni encaissement, ni rémunération annoncée.
     if (codAmount <= 0 && price <= 0) return;
@@ -916,7 +973,12 @@ export class TransporteurService {
    * le transporteur sans moyen de savoir combien remettre pour repartir.
    */
   private async assertCashCeiling(driverId: string, order: any): Promise<void> {
-    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    // Même raison que dans `settleCashIfDue` : sur un `meta` effacé, le plafond
+    // de dette serait vérifié contre 0 et laisserait passer n'importe quel
+    // montant — le seul garde-fou du paiement à la livraison, désarmé
+    // silencieusement.
+    const [hydrated] = await this.withSpecMeta([order]);
+    const codAmount = Number(hydrated?.meta?.cod_amount ?? order?.meta?.cod_amount) || 0;
     if (codAmount <= 0) return;
 
     const cached = await this.prisma.order.findFirst({
