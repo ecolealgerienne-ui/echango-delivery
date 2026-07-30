@@ -159,7 +159,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          [a.address, a.contactName, a.contactPhone]
+                          [a.composedAddress, a.contactName, a.contactPhone]
                               .where((e) => e != null && e.isNotEmpty)
                               .join(' · '),
                           maxLines: 2,
@@ -219,12 +219,17 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   /// Nulle tant que le commerçant n'a pas placé le point. L'enregistrement est
   /// refusé dans ce cas plutôt que d'inventer une position.
   LatLng? _point;
-  /// Commune issue du géocodage inverse, jamais saisie à la main.
+  /// Composantes issues du géocodage inverse, **jamais saisies à la main**.
   ///
-  /// Reste `null` sur une adresse modifiée sans repasser par la carte : la
-  /// commune enregistrée côté serveur n'est alors pas renvoyée par la
-  /// projection, et la réécrire depuis une valeur vide l'effacerait.
+  /// Restent nulles sur une adresse modifiée sans repasser par la carte, et
+  /// c'est voulu : le serveur ne touche pas aux clés absentes, donc ce qu'un
+  /// passage précédent avait établi survit. Les envoyer vides l'effacerait.
+  String? _neighborhood;
   String? _city;
+  String? _district;
+  String? _province;
+  String? _postalCode;
+  String? _country;
   bool _saving = false;
 
   /// Adresse principale : préremplit le retrait à la création d'une nouvelle
@@ -293,7 +298,12 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     // livraison à sa commune sur une course encore non réclamée.
     setState(() {
       _point = result.point;
+      _neighborhood = result.neighborhood;
       _city = result.city;
+      _district = result.district;
+      _province = result.province;
+      _postalCode = result.postalCode;
+      _country = result.country;
     });
 
     final label = result.label.trim();
@@ -356,7 +366,12 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
             label: 'commerce',
             name: _name.text.trim(),
             address: _address.text.trim(),
+            neighborhood: _neighborhood,
             city: _city,
+            district: _district,
+            province: _province,
+            postalCode: _postalCode,
+            country: _country,
             latitude: _point?.latitude,
             longitude: _point?.longitude,
             contactName: _contact.text.trim(),
@@ -367,7 +382,12 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
             label: 'commerce',
             name: _name.text.trim(),
             address: _address.text.trim(),
+            neighborhood: _neighborhood,
             city: _city,
+            district: _district,
+            province: _province,
+            postalCode: _postalCode,
+            country: _country,
             latitude: _point?.latitude,
             longitude: _point?.longitude,
             contactName: _contact.text.trim(),

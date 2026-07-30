@@ -1677,6 +1677,33 @@ export class CommerçantService {
   }
 
   /**
+   * Les composantes d'adresse, rangées dans les colonnes de `Place`.
+   *
+   * Elles viennent du géocodage inverse et **jamais d'une saisie** : le
+   * commerçant tape une rue, pas une wilaya. C'est ce qui justifie de les
+   * omettre quand elles sont absentes plutôt que de les envoyer vides —
+   * `PUT /places` ne touche pas aux clés absentes, donc une modification sans
+   * passage par la carte conserve ce qu'un passage précédent avait établi,
+   * alors qu'une valeur vide l'effacerait.
+   *
+   * `street1` n'est pas ici : c'est le seul champ que le commerçant saisit
+   * lui-même, et il doit rester effaçable.
+   */
+  private addressComponents(dto: SaveAddressDto): Record<string, any> {
+    const components: Record<string, any> = {};
+    if (dto.neighborhood) components.neighborhood = dto.neighborhood;
+    if (dto.city) components.city = dto.city;
+    if (dto.district) components.district = dto.district;
+    if (dto.province) components.province = dto.province;
+    if (dto.postalCode) components.postal_code = dto.postalCode;
+    // Code ISO-2 : la colonne `country` stocke un code, que l'accesseur
+    // `country_name` résout ensuite. Un nom de pays y laisserait `country_name`
+    // vide, sans erreur.
+    if (dto.country) components.country = dto.country.toUpperCase();
+    return components;
+  }
+
+  /**
    * Save a new address as a Fleetbase Place owned by the merchant's Vendor.
    */
   async saveAddress(merchantId: string, dto: SaveAddressDto) {
@@ -1699,7 +1726,7 @@ export class CommerçantService {
         // saisie n'atteignait jamais la base : la console affichait « RUE 1 : -»
         // et la relecture retombait sur le nom du lieu.
         street1: dto.address,
-        city: dto.city,
+        ...this.addressComponents(dto),
         phone: dto.contactPhone,
         meta: {
           label: dto.label ?? 'commerce',
@@ -1761,7 +1788,12 @@ export class CommerçantService {
           // Le relire pour le renvoyer aurait effacé la rue de toutes les
           // autres adresses à chaque changement d'adresse principale.
           street1: place.street1,
+          neighborhood: place.neighborhood,
           city: place.city,
+          district: place.district,
+          province: place.province,
+          postal_code: place.postal_code,
+          country: place.country,
           phone: place.phone,
           meta: { ...place.meta, is_default: false },
           ownerUuid: vendorUuid,
@@ -1827,7 +1859,7 @@ export class CommerçantService {
         // Voir `saveAddress` : `address` est un accesseur, seul `street1` est
         // enregistrable.
         street1: dto.address,
-        city: dto.city,
+        ...this.addressComponents(dto),
         phone: dto.contactPhone,
         meta: {
           label: dto.label ?? 'commerce',

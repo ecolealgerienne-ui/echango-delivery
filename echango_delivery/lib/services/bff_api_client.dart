@@ -1133,7 +1133,12 @@ class BffApiClient {
     required String label,
     required String name,
     String? address,
+    String? neighborhood,
     String? city,
+    String? district,
+    String? province,
+    String? postalCode,
+    String? country,
     double? latitude,
     double? longitude,
     String? contactName,
@@ -1154,7 +1159,13 @@ class BffApiClient {
         // La commune, elle, reste omise quand elle est absente : elle ne vient
         // que du géocodage, et l'envoyer vide effacerait celle enregistrée lors
         // d'un passage précédent par la carte.
+        if (neighborhood != null && neighborhood.isNotEmpty)
+          'neighborhood': neighborhood,
         if (city != null && city.isNotEmpty) 'city': city,
+        if (district != null && district.isNotEmpty) 'district': district,
+        if (province != null && province.isNotEmpty) 'province': province,
+        if (postalCode != null && postalCode.isNotEmpty) 'postalCode': postalCode,
+        if (country != null && country.isNotEmpty) 'country': country,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
@@ -1179,7 +1190,12 @@ class BffApiClient {
     required String label,
     required String name,
     String? address,
+    String? neighborhood,
     String? city,
+    String? district,
+    String? province,
+    String? postalCode,
+    String? country,
     double? latitude,
     double? longitude,
     String? contactName,
@@ -1200,7 +1216,13 @@ class BffApiClient {
         // La commune, elle, reste omise quand elle est absente : elle ne vient
         // que du géocodage, et l'envoyer vide effacerait celle enregistrée lors
         // d'un passage précédent par la carte.
+        if (neighborhood != null && neighborhood.isNotEmpty)
+          'neighborhood': neighborhood,
         if (city != null && city.isNotEmpty) 'city': city,
+        if (district != null && district.isNotEmpty) 'district': district,
+        if (province != null && province.isNotEmpty) 'province': province,
+        if (postalCode != null && postalCode.isNotEmpty) 'postalCode': postalCode,
+        if (country != null && country.isNotEmpty) 'country': country,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,

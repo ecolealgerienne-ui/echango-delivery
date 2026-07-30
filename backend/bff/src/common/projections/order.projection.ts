@@ -49,7 +49,10 @@ const pick = (source: any, keys: string[]): Record<string, any> => {
  * **rien** plutôt qu'un fragment qui pourrait encore identifier une porte.
  */
 export function coarseLocality(place: any): string {
-  const structured = [place?.city, place?.postal_code, place?.province, place?.country]
+  // Le pays est délibérément absent : la colonne `country` de Fleetbase stocke
+  // un **code ISO-2**, et « Alger, 16000, Alger, DZ » se lit comme une donnée
+  // mal formatée. Sur un service national, il n'apprend rien de toute façon.
+  const structured = [place?.city, place?.postal_code, place?.province]
     .filter((v) => typeof v === 'string' && v.trim().length > 0);
 
   if (structured.length) return structured.join(', ');
@@ -72,7 +75,14 @@ const PLACE_FULL = [
   'address',
   'street1',
   'street2',
+  // Composantes rendues par le géocodage inverse et rangées dans les colonnes
+  // de `Place` (30/07/2026). Projetées pour que le formulaire de modification
+  // puisse les remettre : sans elles, modifier un nom sans repasser par la
+  // carte les laisserait telles quelles côté serveur, mais l'app ne pourrait
+  // ni les afficher ni signaler leur absence.
+  'neighborhood',
   'city',
+  'district',
   'postal_code',
   'province',
   'country',
@@ -84,6 +94,9 @@ const PLACE_FULL = [
 
 /** Ce qui subsiste d'un lieu réduit à sa commune. */
 const PLACE_LOCALITY = ['uuid', 'public_id', 'id', 'city', 'postal_code', 'province', 'country'];
+// ⚠️ `neighborhood` et `district` en sont volontairement absents : le quartier
+// désigne un périmètre de quelques rues, ce qui rapproche trop de la porte sur
+// une course encore non réclamée.
 
 export function projectPlace(place: any, detail: PlaceDetail, anonymousName?: string) {
   if (!place) return undefined;

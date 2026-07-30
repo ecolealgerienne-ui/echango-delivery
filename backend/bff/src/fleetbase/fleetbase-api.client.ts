@@ -347,7 +347,13 @@ export class FleetbaseApiClient {
       latitude: number;
       longitude: number;
       street1?: string;
+      neighborhood?: string;
       city?: string;
+      district?: string;
+      province?: string;
+      postal_code?: string;
+      /** Code ISO-2 : la colonne stocke un code, pas un nom. */
+      country?: string;
       phone?: string;
       meta?: Record<string, any>;
     },
@@ -360,7 +366,12 @@ export class FleetbaseApiClient {
           coordinates: [data.longitude, data.latitude],
         },
         street1: data.street1,
+        neighborhood: data.neighborhood,
         city: data.city,
+        district: data.district,
+        province: data.province,
+        postal_code: data.postal_code,
+        country: data.country,
         phone: data.phone,
         owner_uuid: ownerUuid,
         owner_type: 'fleet-ops:vendor',
@@ -406,7 +417,13 @@ export class FleetbaseApiClient {
       latitude: number;
       longitude: number;
       street1?: string;
+      neighborhood?: string;
       city?: string;
+      district?: string;
+      province?: string;
+      postal_code?: string;
+      /** Code ISO-2 : la colonne stocke un code, pas un nom. */
+      country?: string;
       phone?: string;
       meta?: Record<string, any>;
       ownerUuid?: string;
@@ -419,7 +436,12 @@ export class FleetbaseApiClient {
         coordinates: [data.longitude, data.latitude],
       },
       street1: data.street1,
+      neighborhood: data.neighborhood,
       city: data.city,
+      district: data.district,
+      province: data.province,
+      postal_code: data.postal_code,
+      country: data.country,
       phone: data.phone,
       meta: data.meta,
       ...(data.ownerUuid ? { owner_uuid: data.ownerUuid, owner_type: 'fleet-ops:vendor' } : {}),

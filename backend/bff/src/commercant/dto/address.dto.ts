@@ -48,6 +48,35 @@ export class SaveAddressDto {
   @IsString()
   city?: string;
 
+  /** Wilaya. */
+  @IsOptional()
+  @IsString()
+  province?: string;
+
+  /** Daïra. */
+  @IsOptional()
+  @IsString()
+  district?: string;
+
+  /** Quartier. */
+  @IsOptional()
+  @IsString()
+  neighborhood?: string;
+
+  @IsOptional()
+  @IsString()
+  postalCode?: string;
+
+  /**
+   * Code ISO-2 en majuscules — `DZ`, pas « Algérie ».
+   *
+   * La colonne `country` de `Place` stocke un code, que l'accesseur
+   * `country_name` résout en nom. Y écrire le nom laisserait ce dernier vide.
+   */
+  @IsOptional()
+  @IsString()
+  country?: string;
+
   @IsOptional()
   @IsString()
   contactName?: string;

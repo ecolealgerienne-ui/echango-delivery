@@ -2,12 +2,60 @@ import { Injectable, Logger } from '@nestjs/common';
 import { badRequest } from '../errors/http-errors';
 import axios, { AxiosInstance } from 'axios';
 
+/**
+ * Une adresse décomposée, telle que Nominatim la rend.
+ *
+ * ── Pourquoi décomposer plutôt que garder une chaîne ────────────────────────
+ *
+ * Le `display_name` de Nominatim est une phrase :
+ * « Chemin Haddad Ali, Belcourt, Sidi M'Hamed, Alger, Daïra Sidi M'Hamed,
+ * Alger, 16000, Algérie ». Rangée entière dans `street1`, elle donnait une
+ * adresse où la wilaya apparaissait deux fois — l'accesseur `address` de
+ * Fleetbase y rajoutant le nom du lieu et la commune —, et surtout aucun champ
+ * exploitable : ni tri par commune, ni recherche par code postal, et
+ * `coarseLocality()` réduit à découper une chaîne pour retrouver ce que le
+ * géocodeur avait déjà séparé.
+ *
+ * Le modèle `Place` a exactement les colonnes qu'il faut. La correspondance
+ * est donc directe, et c'est la forme fidèle : chaque composante à sa place.
+ *
+ * ⚠️ **Les noms de champs de Nominatim varient selon le pays**, et sa
+ * documentation ne les énumère pas exhaustivement. Les chaînes de repli
+ * ci-dessous sont ordonnées du plus précis au plus large ; en Algérie, la
+ * commune (`Sidi M\'Hamed`) et l\'agglomération (`Alger`) ne sont pas au même
+ * niveau administratif, et laquelle porte quelle clé reste **à confirmer sur
+ * un appel réel** — `scripts/check-geocoding.sh`.
+ */
 export interface GeocodedPlace {
+  /** `display_name` entier, tel quel. */
   label: string;
+  /**
+   * Ce qui désigne la porte : numéro, rue, quartier.
+   *
+   * C'est ce qu'on propose au commerçant dans le champ « Adresse », puisque
+   * commune, wilaya, code postal et pays ont désormais leur propre colonne.
+   */
+  shortLabel: string;
   latitude: number;
   longitude: number;
+  /** Numéro et rue. */
+  street?: string;
+  /** Quartier. */
+  neighborhood?: string;
+  /** Daïra. */
+  district?: string;
+  /** Commune. */
   city?: string;
+  /** Wilaya. */
+  province?: string;
   postalCode?: string;
+  /**
+   * Code ISO-2 en majuscules, **et pas le nom du pays**.
+   *
+   * La colonne `country` de `Place` stocke un code : `country_name` est un
+   * accesseur qui le résout (`data_get($this, 'country_data.name.common')`).
+   * Y écrire « Algérie » laisserait donc `country_name` vide.
+   */
   country?: string;
 }
 
@@ -110,19 +158,52 @@ export class GeocodingService {
       };
     } catch (error) {
       this.logger.warn(`Géocodage inverse échoué (${latitude},${longitude}) : ${error.message}`);
-      return { label: '', latitude, longitude };
+      return { label: '', shortLabel: '', latitude, longitude };
     }
   }
 
   private toPlace(raw: any): GeocodedPlace {
-    const address = raw?.address ?? {};
+    const a = raw?.address ?? {};
+
+    const first = (...values: any[]): string | undefined =>
+      values.find((v) => typeof v === 'string' && v.trim().length > 0);
+
+    // « 12 Rue X » : le numéro précède la voie en français, l'inverse de
+    // l'usage anglo-saxon. Nominatim les rend séparés, à nous de les joindre
+    // dans le bon ordre.
+    const street =
+      [a.house_number, first(a.road, a.pedestrian, a.footway, a.path)]
+        .filter((v) => typeof v === 'string' && v.length > 0)
+        .join(' ') || undefined;
+
+    const neighborhood = first(a.neighbourhood, a.suburb, a.quarter, a.city_district);
+
+    // `municipality` d'abord : là où Nominatim l'émet, c'est la commune, plus
+    // précise que `city` qui désigne l'agglomération. À Alger, la différence
+    // est celle entre « Sidi M'Hamed » et « Alger ».
+    const city = first(a.municipality, a.city, a.town, a.village, a.city_district);
+
+    const district = first(a.county, a.state_district);
+    const province = first(a.state, a.region);
+
     return {
       label: raw?.display_name ?? '',
+      // Le quartier n'est repris que s'il n'est pas déjà dans la rue — sur un
+      // point sans voie nommée, Nominatim renvoie parfois le même mot deux
+      // fois, et « Belcourt, Belcourt » se lit comme un défaut.
+      shortLabel: [street, neighborhood === street ? undefined : neighborhood]
+        .filter(Boolean)
+        .join(', '),
       latitude: Number(raw?.lat) || 0,
       longitude: Number(raw?.lon) || 0,
-      city: address.city ?? address.town ?? address.village ?? address.municipality,
-      postalCode: address.postcode,
-      country: address.country,
+      street,
+      neighborhood,
+      district,
+      city,
+      province,
+      postalCode: first(a.postcode),
+      country:
+        typeof a.country_code === 'string' ? a.country_code.toUpperCase() : undefined,
     };
   }
 }

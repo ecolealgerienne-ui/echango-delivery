@@ -37,13 +37,35 @@ class MapPickerScreen extends StatefulWidget {
   State<MapPickerScreen> createState() => _MapPickerScreenState();
 }
 
-/// Ce que l'écran renvoie : un point ET son libellé, résolus ensemble.
+/// Ce que l'écran renvoie : un point, son libellé, ET ses composantes.
+///
+/// Les composantes ne s'affichent nulle part — elles vont directement dans les
+/// colonnes correspondantes de Fleetbase. Les transporter jusqu'ici évite au
+/// formulaire de redemander un géocodage qu'on vient de faire, et surtout de
+/// devoir redécouper une chaîne que le géocodeur avait déjà séparée.
 class PickedLocation {
   final LatLng point;
-  final String label;
-  final String? city;
 
-  const PickedLocation({required this.point, required this.label, this.city});
+  /// Ce qui désigne la porte, proposé au commerçant dans le champ « Adresse ».
+  /// Retombe sur le libellé complet quand le serveur n'a pas su l'isoler.
+  final String label;
+  final String? neighborhood;
+  final String? city;
+  final String? district;
+  final String? province;
+  final String? postalCode;
+  final String? country;
+
+  const PickedLocation({
+    required this.point,
+    required this.label,
+    this.neighborhood,
+    this.city,
+    this.district,
+    this.province,
+    this.postalCode,
+    this.country,
+  });
 }
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
@@ -57,7 +79,15 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
 
   late LatLng _selected;
   String _label = '';
-  String? _city;
+  GeocodedPlace? _resolved;
+
+  /// Le libellé proposé au formulaire : la rue seule quand le serveur a su
+  /// l'isoler, sinon le `display_name` entier. Mieux vaut une adresse trop
+  /// longue qu'un champ vide.
+  String get _streetLabel {
+    final short = _resolved?.streetLabel ?? '';
+    return short.isNotEmpty ? short : _label;
+  }
   bool _resolving = false;
   List<GeocodedPlace> _suggestions = [];
   Timer? _debounce;
@@ -91,12 +121,17 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       if (!mounted) return;
       setState(() {
         _label = place.label;
-        _city = place.city;
+        _resolved = place;
       });
     } catch (_) {
       // Le point reste parfaitement valide sans libellé : c'est lui que le
       // dispatch utilise. Échouer ici bloquerait la sélection pour un confort.
-      if (mounted) setState(() => _label = '');
+      if (mounted) {
+        setState(() {
+          _label = '';
+          _resolved = null;
+        });
+      }
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
@@ -127,7 +162,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     setState(() {
       _selected = point;
       _label = place.label;
-      _city = place.city;
+      _resolved = place;
       _suggestions = [];
       _searchController.clear();
     });
@@ -258,7 +293,16 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
               ElevatedButton.icon(
                 onPressed: () => Navigator.pop(
                   context,
-                  PickedLocation(point: _selected, label: _label, city: _city),
+                  PickedLocation(
+                    point: _selected,
+                    label: _streetLabel,
+                    neighborhood: _resolved?.neighborhood,
+                    city: _resolved?.city,
+                    district: _resolved?.district,
+                    province: _resolved?.province,
+                    postalCode: _resolved?.postalCode,
+                    country: _resolved?.country,
+                  ),
                 ),
                 icon: const Icon(Icons.check),
                 label: const Text('Valider ce point'),

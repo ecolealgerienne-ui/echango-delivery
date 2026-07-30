@@ -302,15 +302,23 @@ class SavedAddress extends Equatable {
   /// et impossible à réenregistrer.
   final String address;
 
-  /// La rue seule, telle qu'elle a été saisie — le seul champ réellement
-  /// enregistré, et donc le seul à remettre dans un formulaire de
-  /// modification.
+  /// La rue seule, telle qu'elle a été saisie — le seul champ que le
+  /// commerçant remplit lui-même, et donc le seul à remettre dans un
+  /// formulaire de modification.
   ///
   /// ⚠️ Préremplir le champ « Adresse » avec [address] et le réenregistrer
-  /// écrirait « BOULANGERIE TEST - Rue Larbi Tebessi » dans la rue, puis
-  /// « BOULANGERIE TEST - BOULANGERIE TEST - Rue… » au passage suivant : le
-  /// nom se réempilerait à chaque modification, sans jamais lever d'erreur.
+  /// empilerait le nom du lieu devant la rue à chaque passage.
   final String street1;
+
+  /// Composantes rendues par le géocodage inverse, chacune dans sa colonne.
+  final String? neighborhood;
+  final String? city;
+  final String? district;
+  final String? province;
+  final String? postalCode;
+
+  /// Code ISO-2 (`DZ`), pas un nom de pays.
+  final String? country;
   final double latitude;
   final double longitude;
   final String? contactName;
@@ -325,6 +333,12 @@ class SavedAddress extends Equatable {
     required this.name,
     required this.address,
     this.street1 = '',
+    this.neighborhood,
+    this.city,
+    this.district,
+    this.province,
+    this.postalCode,
+    this.country,
     required this.latitude,
     required this.longitude,
     this.contactName,
@@ -343,12 +357,40 @@ class SavedAddress extends Equatable {
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? json['street1'] ?? '') as String,
       street1: (json['street1'] ?? '') as String,
+      neighborhood: json['neighborhood'] as String?,
+      city: json['city'] as String?,
+      district: json['district'] as String?,
+      province: json['province'] as String?,
+      postalCode: json['postal_code'] as String?,
+      country: json['country'] as String?,
       latitude: coords?.latitude ?? 0,
       longitude: coords?.longitude ?? 0,
       contactName: json['contact_name'] as String?,
       contactPhone: json['phone'] as String? ?? json['contact_phone'] as String?,
       isDefault: json['is_default'] == true,
     );
+  }
+
+  /// L'adresse composée **par l'app**, à partir des colonnes réelles.
+  ///
+  /// ⚠️ Ne PAS utiliser [address] pour ça. C'est un accesseur calculé par
+  /// Fleetbase, et son comportement observé ne correspond pas à son code :
+  /// un lieu portant `street1: "test1"` renvoie `address: "BOULANGERIE
+  /// TEST"`, le nom seul. Dépendre de lui, c'est afficher une adresse dont
+  /// la composition est décidée en amont et peut changer à toute mise à jour.
+  ///
+  /// Ici chaque composante vient de sa colonne, sans redite : la wilaya n'est
+  /// reprise que si elle diffère de la commune — à Alger les deux portent le
+  /// même nom, et « Alger, Alger » se lit comme un défaut.
+  String get composedAddress {
+    final parts = <String>[
+      if (street1.isNotEmpty) street1,
+      if (neighborhood != null && neighborhood!.isNotEmpty) neighborhood!,
+      if (city != null && city!.isNotEmpty) city!,
+      if (province != null && province!.isNotEmpty && province != city) province!,
+      if (postalCode != null && postalCode!.isNotEmpty) postalCode!,
+    ];
+    return parts.join(', ');
   }
 
   /// `false` sur `(0, 0)` : depuis que la position est facultative à
@@ -368,25 +410,56 @@ class SavedAddress extends Equatable {
 /// que de refuser la sélection.
 class GeocodedPlace extends Equatable {
   final String label;
+
+  /// Ce qui désigne la porte : numéro, rue, quartier — calculé par le serveur.
+  ///
+  /// C'est ce qu'on propose dans le champ « Adresse », puisque commune,
+  /// wilaya, code postal et pays ont chacun leur colonne côté Fleetbase.
+  final String streetLabel;
   final double latitude;
   final double longitude;
+
+  /// Composantes de l'adresse, telles que le géocodeur les a séparées.
+  ///
+  /// Enregistrées chacune dans sa colonne plutôt que concaténées : c'est ce
+  /// qui rend une recherche par commune ou un tri par wilaya possibles, et ce
+  /// qui évite de voir « Alger » deux fois dans une adresse recomposée.
+  final String? street;
+  final String? neighborhood;
+  final String? district;
   final String? city;
+  final String? province;
   final String? postalCode;
+
+  /// Code ISO-2 en majuscules — `DZ`, jamais « Algérie ».
+  final String? country;
 
   const GeocodedPlace({
     required this.label,
     required this.latitude,
     required this.longitude,
+    this.streetLabel = '',
+    this.street,
+    this.neighborhood,
+    this.district,
     this.city,
+    this.province,
     this.postalCode,
+    this.country,
   });
 
   factory GeocodedPlace.fromJson(Map<String, dynamic> json) => GeocodedPlace(
         label: (json['label'] ?? '') as String,
+        streetLabel: (json['shortLabel'] ?? '') as String,
         latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
         longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+        street: json['street'] as String?,
+        neighborhood: json['neighborhood'] as String?,
+        district: json['district'] as String?,
         city: json['city'] as String?,
+        province: json['province'] as String?,
         postalCode: json['postalCode'] as String?,
+        country: json['country'] as String?,
       );
 
   /// Libellé court pour l'écran : la commune suffit à situer, alors que le
