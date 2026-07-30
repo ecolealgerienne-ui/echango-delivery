@@ -259,6 +259,9 @@ Les trois questions qui décidaient du modèle sont tranchées (§6.1, §6.2, §
 Le code peut être écrit, dans cet ordre — chaque lot rendant le suivant
 mécanique :
 
+0. **Poser le drapeau `answersForItsDrivers`** sur les comptes flotte (§8.3),
+   et créer le prestataire « Echango » avec ce drapeau à `false`. C'est ce qui
+   permet aux lots suivants de ne connaître qu'un seul cas.
 1. **Généraliser le couple de parties** (§4.1) dans les trois tables du
    registre **et dans les favoris** (§6.1). À contrat constant : le cas
    transporteur↔commerçant continue de fonctionner à l'identique, et le cas
@@ -287,3 +290,145 @@ migrer, pas après.
 - `docs/architecture_bff_fleetbase.md` — Fleetbase fait foi, exceptions nommées
 - `backend/bff/src/cash/cash.service.ts` — le registre actuel
 - `backend/bff/src/flotte/flotte.service.ts` — `?facilitator=`, vérifié par appel réel
+
+---
+
+## 8. La proposition « Echango comme entité de transport » (30/07/2026)
+
+*Proposition de l'utilisateur : ajouter l'entreprise de transport dans le
+**flux** de la configuration de commande, et traiter les transporteurs Echango
+comme une entité de transport parmi d'autres — pas de facilitateur ⇒ pool
+Echango, facilitateur ⇒ ses conducteurs. Évaluée contre le source de `fleetops`.*
+
+### 8.1 « Entités » n'est pas ce qu'on croit — vérifié
+
+L'onglet **Entités** de la configuration de commande ne désigne pas des
+organisations mais **les marchandises transportées**. `Entity::$fillable` porte
+`weight`, `weight_unit`, `length`, `width`, `height`, `dimensions_unit`,
+`barcode`, `qr_code`, `sku`, `price`, `destination_uuid`. Le composant console
+`order-config-manager/entities.js` crée des `custom-entity` avec
+`dimensions_unit: 'cm'` et `weight_unit: 'kg'`.
+
+C'est le catalogue des **types de colis** d'une configuration. Y ranger une
+entreprise de transport ferait porter au champ un second sens — précisément
+l'erreur que `meta` nous a coûtée aujourd'hui.
+
+### 8.2 Le logement natif existe déjà, et nous l'utilisons
+
+`Order.$fillable` contient `facilitator_uuid` **et** `facilitator_type` : c'est
+un rattachement polymorphe, prévu pour l'entité qui *réalise* la course, par
+opposition à `customer` qui la *commande*. Le module flotte filtre déjà dessus
+(`?facilitator=`, vérifié par appel réel : 2 commandes sur 29, 0 pour un uuid
+inventé).
+
+Il n'y a donc rien à ajouter à Fleetbase — seulement à s'en servir à la
+création, ce que le commerçant ne fait jamais aujourd'hui (§3.1).
+
+### 8.3 « Pas de facilitateur ⇒ Echango » : à retenir, avec une correction
+
+**L'idée est juste, et elle vaut mieux que ma formulation initiale.** Je disais
+« un indépendant est sa propre entreprise » ; la proposition va plus loin et
+supprime le cas nul : il y a toujours un prestataire, Echango étant le
+prestataire par défaut. Un seul chemin de choix, un seul chemin de dispatch,
+une seule table de favoris.
+
+**Mais la responsabilité ne doit PAS suivre cette uniformité.** Si Echango
+devenait le facilitateur des courses du pool, alors la contrepartie du
+commerçant serait Echango — donc :
+
+- Echango devrait au commerçant les espèces qu'un conducteur détient, ce qui
+  est **exactement la détention de fonds pour compte de tiers** que la Voie B a
+  été choisie pour éviter (`specs_paiement_livraison.md` §6) ;
+- Echango répondrait de la disparition d'un conducteur du pool, alors qu'il ne
+  l'emploie pas — il l'a sélectionné, ce qui n'est pas la même chose (§6.3 ne
+  vaut que pour une entreprise qui *emploie*).
+
+**La différence entre le pool Echango et une entreprise n'est pas
+structurelle, elle est contractuelle.** Il faut donc l'écrire comme telle :
+
+```
+FleetAccount { answersForItsDrivers: bool }
+
+  pool Echango       → false → la contrepartie financière est le CONDUCTEUR
+  entreprise réelle  → true  → la contrepartie financière est l'ENTREPRISE
+```
+
+On garde l'uniformité proposée là où elle est bonne — le choix, le dispatch,
+les favoris — et on nomme la seule chose qui diffère au lieu de la cacher dans
+une absence de ligne. Un drapeau qui dit « celle-ci se porte garante » est plus
+honnête qu'un `null` dont il faut deviner le sens.
+
+### 8.4 Ce que le flux peut réellement faire — et c'est plus que je ne pensais
+
+`Activity` porte un attribut **`logic`** : une liste de `Logic`, chacune
+portant des `Condition{field, operator, value}`. `Activity::getNext()` ne
+propose que les activités dont **toutes** les logiques passent :
+
+```php
+foreach ($children as $childActivity) {
+    if ($childActivity->passes($order)) $nextActivities->push($childActivity);
+}
+```
+
+Et `Condition::eval()` résout son champ par `Order::resolveDynamicValue()`, qui
+cherche dans cet ordre : **attribut de la commande** (donc `facilitator_uuid`),
+puis **champ personnalisé**, puis **clé de `meta`**.
+
+**Le flux peut donc se brancher sur `facilitator_uuid` — et sur nos treize
+champs personnalisés.** Ce n'était pas acquis, et ça ouvre une possibilité
+réelle.
+
+### 8.5 Mais le flux n'est pas un moteur d'affectation
+
+Il décide **quelles activités sont proposées ensuite**, pas **à qui la course
+est confiée**. Aucune activité ne signifie « affecter aux conducteurs de
+l'entreprise X » : le dispatch passe par `facilitator_uuid` et
+`driver_assigned_uuid`, pas par le flux.
+
+Utiliser le flux pour router serait détourner une machine à états en table de
+routage — même famille d'erreur qu'au §8.1.
+
+### 8.6 En revanche, le flux résout un vrai manque : l'état intermédiaire
+
+Le flux actuel est `created → dispatched → started → enroute → completed`. Avec
+une entreprise, il existe un état que rien ne nomme : **la course est confiée à
+l'entreprise, qui n'a pas encore désigné son conducteur.**
+
+C'est exactement le trou qu'on a rebouché à la main dans l'app aujourd'hui, en
+dérivant « Transporteur affecté » de deux champs (`status` + `driver_assigned`)
+parce que le statut reste `dispatched` après l'affectation. Une activité native
+`assigned`, avec pour logique `facilitator_uuid` `exists`, ferait porter cet
+état **par Fleetbase** au lieu de le faire déduire par chaque écran — ce qui
+est la règle 1 du projet, dans le bon sens.
+
+**Suggestion retenue** : ajouter une activité entre `dispatched` et `started`,
+et supprimer la dérivation côté app.
+
+### 8.7 ⚠️ Toucher au flux n'est pas anodin
+
+`OrderConfig::getDispatchActivity()` fait
+`$this->activities()->firstWhere('code', 'dispatched')`. **Une activité
+renommée ou retirée rend tout dispatch muet** — pas en erreur, muet. C'est déjà
+inscrit comme piste dans CLAUDE.md. Toute modification du flux doit donc être
+faite en connaissance de cause, et vérifiée par une vraie publication.
+
+Deux précautions supplémentaires, lues dans `Condition::eval()` :
+
+- il fait `strtolower($order->resolveDynamicValue($field))`. Comparer un uuid
+  fonctionne, mais **une condition d'égalité sur un uuid d'entreprise fige la
+  configuration sur cette entreprise**. Les conditions doivent tester
+  l'**existence** (`facilitator_uuid` / `exists`), jamais l'égalité avec un
+  acteur nommé ;
+- `strtolower()` sur une valeur non textuelle (un tableau, `items`) est au
+  mieux inutile, au pire une erreur PHP 8. Ne brancher que sur des scalaires.
+
+### 8.8 Ce que je retiens de la proposition
+
+| Élément | Verdict |
+|---|---|
+| Ajouter l'entreprise dans les **Entités** | ❌ `entities` = marchandises |
+| Utiliser le flux pour **router** vers une entreprise | ❌ machine à états, pas routage |
+| **`facilitator`** comme logement de l'entreprise | ✅ natif, déjà utilisé, rien à ajouter |
+| **Toujours un prestataire**, Echango par défaut | ✅ à retenir — un seul chemin partout |
+| Faire suivre la **responsabilité financière** | ❌ un drapeau `answersForItsDrivers`, pas l'absence de facilitateur |
+| Une **activité native** pour « confiée, pas encore affectée » | ✅ suggestion ajoutée, elle supprime une dérivation côté app |
