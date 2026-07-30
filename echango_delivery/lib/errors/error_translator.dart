@@ -176,7 +176,6 @@ const Map<String, String> _fr = {
 
   // ── Constats du client, sans contrepartie serveur ───────────────────────
   'network.error': 'Connexion au serveur impossible. Vérifiez votre réseau.',
-  'not_found': 'Introuvable.',
   'server.error': 'Le serveur a rencontré une erreur. Réessayez.',
   'timeout.error': 'Le serveur met trop de temps à répondre. Réessayez.',
   'not_found': 'Ressource introuvable.',
@@ -345,7 +344,6 @@ const Map<String, String> _ar = {
 
   // ── ملاحظات جهاز العميل، بدون رمز من الخادم ──────────────────────────────
   'network.error': 'تعذر الاتصال بالخادم. تحقق من شبكتك.',
-  'not_found': 'غير موجود.',
   'server.error': 'واجه الخادم خطأً. حاول مرة أخرى.',
   'timeout.error': 'استغرق الخادم وقتاً طويلاً للرد. حاول مرة أخرى.',
   'not_found': 'المورد غير موجود.',

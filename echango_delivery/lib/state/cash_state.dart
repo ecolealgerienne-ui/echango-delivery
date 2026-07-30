@@ -193,7 +193,7 @@ class CashState extends ChangeNotifier {
   Future<DriverSearchResult> searchDrivers(String query) =>
       _apiClient.searchDrivers(query);
 
-  Future<bool> confirmCollection(String id) =
+  Future<bool> confirmCollection(String id) =>
       _mutate(() => _apiClient.confirmDeclaredCollection(id));
 
   Future<bool> disputeCollection(String id, {String? reason}) =>
