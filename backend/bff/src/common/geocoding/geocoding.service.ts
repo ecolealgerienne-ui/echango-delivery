@@ -207,17 +207,24 @@ export class GeocodingService {
 
     return {
       label: raw?.display_name ?? '',
-      // « Rue Larbi Tebessi, Ali Mellah, Belcourt » : la voie et les deux noms
-      // de secteur les plus fins. C'est ce qui permet de trouver la porte ;
-      // commune, wilaya, code postal et pays ont leur colonne et n'ont rien à
-      // faire dans une ligne d'adresse.
+      // **La voie seule.**
       //
-      // Dédoublonné : sur un point sans voie nommée, Nominatim renvoie parfois
-      // le même mot sous deux clés, et « Belcourt, Belcourt » se lit comme un
-      // défaut d'affichage.
-      shortLabel: [street, neighborhood, suburb]
-        .filter((v, i, all): v is string => Boolean(v) && all.indexOf(v) === i)
-        .join(', '),
+      // Une version précédente y joignait le quartier et le secteur — « Rue
+      // Mohamed Zekkal, Ali Mellah, Belcourt » — et c'était une erreur : ce
+      // libellé remplit le champ « Adresse » du formulaire, qui alimente
+      // `street1`. Or `neighborhood` et `district` ont désormais leur propre
+      // colonne, et la console affichait donc « Ali Mellah » deux fois. Une
+      // information répétée dans deux champs finit toujours par diverger : on
+      // en corrige un, jamais l'autre.
+      //
+      // Repli sur les noms de secteur quand il n'y a pas de voie nommée —
+      // point en zone non lotie, terrain, bord de route : mieux vaut « Ali
+      // Mellah » qu'un champ vide.
+      shortLabel:
+        street ??
+        [neighborhood, suburb]
+          .filter((v, i, all): v is string => Boolean(v) && all.indexOf(v) === i)
+          .join(', '),
       latitude: Number(raw?.lat) || 0,
       longitude: Number(raw?.lon) || 0,
       street,
