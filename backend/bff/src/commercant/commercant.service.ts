@@ -1095,13 +1095,18 @@ export class CommerçantService {
         },
         meta: this.buildOrderMeta(dto),
         scheduled_at: dto.scheduledAt,
-        // Un brouillon n'envoie NI `adhoc` NI `driver_assigned_uuid` : c'est
-        // cette absence, et rien de plus, qui le distingue d'une commande
-        // publiée — Fleetbase ne connaît aucun statut « brouillon » natif
-        // (vérifié dans ce projet, aucune occurrence dans le vocabulaire de
-        // statuts observé). `publishOrder` referme cette absence après coup.
+        // Un brouillon n'envoie NI `adhoc` NI `driver_assigned_uuid`.
+        //
+        // ⚠️ **Insuffisant à lui seul, découvert par test réel (30/07/2026)** :
+        // une commande créée sans ces deux champs passait quand même en
+        // `Dispatched` dans la console Fleetbase — visible aux transporteurs,
+        // exactement ce qu'un brouillon doit empêcher. `status: 'created'`
+        // explicite est la première piste essayée pour forcer la main ; la
+        // cause réelle côté Fleetbase (quel champ ou quelle logique déclenche
+        // ce passage) reste à établir, aucune instance n'étant joignable
+        // depuis ce bac à sable. **À revalider par un nouveau test réel.**
         ...(dto.draft
-          ? {}
+          ? { status: 'created' }
           : favourite
             ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
             : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),

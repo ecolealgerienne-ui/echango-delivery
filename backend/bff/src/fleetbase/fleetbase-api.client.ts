@@ -442,6 +442,19 @@ export class FleetbaseApiClient {
     type?: string;
     payload: { pickup_uuid: string; dropoff_uuid: string };
     meta?: Record<string, any>;
+    /**
+     * Forcé à `'created'` pour un brouillon (30/07/2026).
+     *
+     * ⚠️ **Découverte par test réel, pas par lecture de code** : une commande
+     * créée sans `adhoc` ni `driver_assigned_uuid` passait quand même en
+     * `Dispatched` dans la console, alors que rien dans le payload n'aurait dû
+     * déclencher cette transition. La cause exacte côté Fleetbase reste
+     * inconnue (aucune instance ni source joignable depuis ce bac à sable) —
+     * ceci est la première chose essayée, à confirmer par un nouveau test.
+     * Absent en temps normal : c'est Fleetbase qui décide du statut initial
+     * d'une commande publiée dès la création.
+     */
+    status?: string;
     /** Livraison programmée (ISO 8601). Colonne native `scheduled_at`. */
     scheduled_at?: string;
     /** Assignation directe — utilisée pour un transporteur favori disponible. */
