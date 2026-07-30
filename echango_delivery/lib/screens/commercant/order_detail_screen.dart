@@ -345,6 +345,58 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final currency = order.codCurrency ?? collection?.currency ?? '';
     final theme = Theme.of(context);
 
+    // ── Ce qui revient réellement au commerçant ────────────────────────────
+    //
+    // L'écran donnait les deux nombres — « à encaisser 1200 », « rémunération
+    // 550 » — et laissait la soustraction au commerçant, au moment précis où
+    // il compte sa caisse. C'est pourtant le seul chiffre qui l'intéresse là.
+    //
+    // La formule est la même que les frais de livraison soient inclus ou non
+    // dans le montant encaissé (règlement net, journal §17) : le transporteur
+    // retient sa rémunération sur ce qu'il a perçu et remet la différence.
+    // `cod_includes_delivery` ne change donc pas ce calcul — il ne sert qu'à
+    // dire au commerçant ce que le destinataire croit payer.
+    //
+    // Calculé sur le montant **réellement perçu** dès qu'il est connu, et non
+    // sur celui qui était demandé : sur un écart constaté à la porte,
+    // annoncer la somme demandée promettrait de l'argent qui ne viendra pas.
+    // Le montant et sa devise, en une seule forme. `currency` peut être vide
+    // (commande d'avant que la devise soit projetée) : concaténer sans couper
+    // laisserait « 650 » suivi d'une espace, visible entre parenthèses.
+    String money(num amount) => '${amount.toStringAsFixed(0)} $currency'.trim();
+
+    final price = order.price;
+    final settlement = <Widget>[];
+
+    if (price != null) {
+      final base = collection?.collectedAmount ?? order.codAmount!;
+      final net = base - price;
+      // Le futur tant que rien n'est encaissé : c'est une projection, pas un
+      // solde. Les annoncer du même ton ferait compter sur une somme
+      // qu'aucun transporteur n'a encore perçue.
+      final tense = collection == null ? 'Vous reviendra' : 'Vous revient';
+
+      settlement.addAll([
+        const Divider(height: 20),
+        Text(
+          net >= 0
+              ? '$tense : ${money(net)}'
+              // Cas réel et non théorique : la retenue du transporteur est
+              // plafonnée à ce qu'il a perçu, donc une course chère payée en
+              // partie laisse le commerçant débiteur. Le taire afficherait 0
+              // là où il doit de l'argent.
+              : 'Vous devrez au transporteur : ${money(-net)}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Le transporteur retient sa rémunération (${money(price)}) sur ce '
+          'qu\'il encaisse et vous remet la différence.',
+          style: theme.textTheme.bodySmall,
+        ),
+      ]);
+    }
+
     return Card(
       color: collection?.hasDiscrepancy == true
           ? Colors.orange.shade50
@@ -396,6 +448,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 style: theme.textTheme.bodySmall,
               ),
             ],
+            ...settlement,
           ],
         ),
       ),

@@ -719,45 +719,7 @@ export class CommerçantService {
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    // ── Instrument de diagnostic, activé à la demande ───────────────────────
-    //
-    // La fiche affichait presque rien alors que tout avait été saisi, et
-    // plusieurs suppositions successives n'ont pas suffi à dire pourquoi. La
-    // chaîne a exactement **trois** maillons, et il faut les distinguer sous
-    // peine de corriger le mauvais :
-    //
-    //   1. ce que Fleetbase renvoie à l'unité  (`getOrderWithRelations`)
-    //   2. ce que Fleetbase renvoie en liste   (`liveOrderFor`)
-    //   3. ce que le BFF sert réellement       (après projection)
-    //
-    // Le troisième maillon est celui qui manquait : sans lui, un `meta` bien
-    // présent en amont et perdu à la projection est indiscernable d'un `meta`
-    // jamais enregistré. Les deux premiers se comparent entre eux, le
-    // troisième les compare à la sortie.
-    //
-    // Derrière un drapeau parce que cela coûte un appel Fleetbase de plus :
-    // laisser le prix à chaque ouverture de fiche pour un diagnostic ponctuel
-    // serait exactement le genre de dette qu'on reproche ailleurs.
-    // `DEBUG_FLEETBASE_SHAPE=1` pour un test, retiré ensuite.
-    const debugShape = process.env.DEBUG_FLEETBASE_SHAPE === '1';
-    if (debugShape) {
-      await this.logUpstreamShape(merchant.fleetbaseVendorUuid, order, orderId);
-    }
-
     const merged = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
-
-    if (debugShape) {
-      const projected = merged as any;
-      this.logger.log(
-        `Forme servie de ${orderId} — meta: ${
-          projected?.meta ? `{${Object.keys(projected.meta).join(', ')}}` : 'ABSENT'
-        } | payload: ${
-          projected?.payload
-            ? `pickup=${projected.payload.pickup ? 'oui' : 'non'} dropoff=${projected.payload.dropoff ? 'oui' : 'non'}`
-            : 'ABSENT'
-        } | pod_method: ${projected?.pod_method ?? 'absent'}`,
-      );
-    }
 
     // Aucune donnée de facturation interne ne sort ici : la rémunération du
     // transporteur et la commission Echango vivent dans `DriverEarning`, et
@@ -781,14 +743,13 @@ export class CommerçantService {
    * a de commandes — et un parcours peut manquer sa cible, ce qu'une lecture
    * unitaire ne peut pas faire.
    *
-   * ⚠️ **Ce n'est PAS l'explication de la fiche vide du 30/07/2026**, et il
-   * faut le dire ici pour que personne ne classe le sujet. L'hypothèse était
-   * que la liste n'aurait pas servi `meta` ; la lecture du source Fleetbase
-   * l'invalide — `OrderResource::toArray()` renvoie `meta` et `payload` (avec
-   * `pickup`, `dropoff`, `entities`) **sans condition**, et la même classe sert
-   * les deux routes. La cause reste à établir : `DEBUG_FLEETBASE_SHAPE=1`
-   * journalise les trois maillons (unitaire, liste, sortie projetée) pour la
-   * nommer au lieu de la deviner.
+   * ⚠️ **Ce n'est PAS ce qui a vidé la fiche du 30/07/2026**, et il faut le
+   * dire ici pour que personne ne recycle l'explication. L'hypothèse était que
+   * la liste n'aurait pas servi `meta` ; le source Fleetbase l'invalide —
+   * `OrderResource::toArray()` renvoie `meta` et `payload` (avec `pickup`,
+   * `dropoff`, `entities`) **sans condition**, et la même classe sert les deux
+   * routes. La fiche était incomplète parce que l'écran ne lisait pas ces
+   * champs, corrigé côté Flutter (`548087c`) et constaté à l'écran.
    *
    * ── Le repli n'est pas de la prudence gratuite ─────────────────────────────
    *
@@ -855,62 +816,6 @@ export class CommerçantService {
     // page et peut manquer une commande là où la lecture unitaire la désigne :
     // mieux vaut une fiche éventuellement partielle qu'un écran en erreur.
     return this.liveOrderFor(vendorUuid, order).catch((): any => null);
-  }
-
-  /**
-   * Journalise la forme réelle de la commande **par les deux lectures**, côte à
-   * côte, et c'est tout l'intérêt du diagnostic.
-   *
-   * La version précédente n'observait que la liste paginée : elle montrait un
-   * `meta` absent sans pouvoir dire si la donnée manquait chez Fleetbase ou
-   * seulement dans cette réponse-là. Or c'est exactement la question — la
-   * console affiche tout, et elle lit à l'unité. Les deux lignes tranchent :
-   * `meta` présent à l'unité et absent de la liste nomme la cause ; absent des
-   * deux la déplace en amont, vers l'écriture.
-   *
-   * Nomme aussi les colonnes natives qu'on croit enregistrées et l'état de
-   * dispatch : une fiche incomplète a plusieurs causes possibles, et les
-   * confondre fait corriger la mauvaise.
-   */
-  private async logUpstreamShape(
-    vendorUuid: string,
-    order: { fleetbaseOrderId: string },
-    orderId: string,
-  ): Promise<void> {
-    const describe = (raw: any): string => {
-      if (!raw) return 'commande absente';
-
-      const metaShape =
-        raw.meta && typeof raw.meta === 'object'
-          ? `objet {${Object.keys(raw.meta).join(', ') || 'vide'}}`
-          : typeof raw.meta === 'string'
-            ? `CHAÎNE — ${String(raw.meta).slice(0, 160)}`
-            : `absent (${typeof raw.meta})`;
-
-      return (
-        `meta: ${metaShape} | pod_method: ${raw.pod_method ?? 'absent'} | ` +
-        `pod_required: ${raw.pod_required} | status: ${raw.status} | ` +
-        `adhoc: ${raw.adhoc} | dispatched: ${raw.dispatched}`
-      );
-    };
-
-    const unitary = await this.fleetbaseClient
-      .getOrderWithRelations(order.fleetbaseOrderId)
-      .then((response: any) => response?.order ?? response)
-      .catch((error: any) => `illisible : ${error.message}` as any);
-
-    const listed = await this.liveOrderFor(vendorUuid, order).catch(
-      (error: any) => `illisible : ${error.message}` as any,
-    );
-
-    this.logger.log(
-      `Forme amont de ${orderId} — À L'UNITÉ : ` +
-        `${typeof unitary === 'string' ? unitary : describe(unitary)}`,
-    );
-    this.logger.log(
-      `Forme amont de ${orderId} — DANS LA LISTE : ` +
-        `${typeof listed === 'string' ? listed : describe(listed)}`,
-    );
   }
 
   /**
