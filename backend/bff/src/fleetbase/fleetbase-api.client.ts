@@ -468,6 +468,74 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Définitions de champs personnalisés attachées à un sujet.
+   *
+   * Pour une commande, le sujet est l'**`OrderConfig`** et non la commande :
+   * les définitions décrivent le formulaire, les valeurs vivent sur chaque
+   * commande. C'est ce que fait la console
+   * (`custom-fields.js` : `store.query('custom-field', { subject_uuid: config.id })`).
+   */
+  async listCustomFields(subjectUuid: string) {
+    const response = await this.callFleetOps('GET', '/custom-fields', undefined, {
+      subject_uuid: subjectUuid,
+      limit: 200,
+    });
+    return response.data;
+  }
+
+  /**
+   * Déclare un champ personnalisé.
+   *
+   * ⚠️ Le corps est **à plat**, sans enveloppe : `getApiPayloadFromRequest()`
+   * cherche la clé au singulier (`custom_field`) puis retombe sur
+   * `$request->all()`. Les règles de `CreateCustomFieldRequest` sont elles
+   * aussi à plat, donc une enveloppe ferait échouer la validation.
+   */
+  async createCustomField(field: {
+    label: string;
+    name: string;
+    type: string;
+    subject_uuid: string;
+    subject_type: string;
+    category_uuid?: string;
+    description?: string;
+    help_text?: string;
+    required?: boolean;
+    editable?: boolean;
+    order?: number;
+  }) {
+    const response = await this.callFleetOps('POST', '/custom-fields', field);
+    return response.data;
+  }
+
+  /**
+   * Groupes de champs personnalisés d'un `OrderConfig`.
+   *
+   * Ce sont des `Category` avec `for = 'custom_field_group'`. La console range
+   * chaque champ dans un groupe et affiche la fiche groupe par groupe : un
+   * champ sans groupe risque de n'apparaître nulle part, ce qui viderait de
+   * son sens l'idée qu'un admin puisse corriger un montant.
+   */
+  async listCustomFieldGroups(ownerUuid: string) {
+    const response = await this.callFleetOps('GET', '/categories', undefined, {
+      owner_uuid: ownerUuid,
+      for: 'custom_field_group',
+      limit: 100,
+    });
+    return response.data;
+  }
+
+  async createCustomFieldGroup(ownerUuid: string, name: string) {
+    const response = await this.callFleetOps('POST', '/categories', {
+      owner_uuid: ownerUuid,
+      owner_type: 'order-config',
+      for: 'custom_field_group',
+      name,
+    });
+    return response.data;
+  }
+
+  /**
    * Resolve the default 'transport' OrderConfig UUID, required by order creation.
    */
   async getDefaultOrderConfigUuid(): Promise<string> {
@@ -531,6 +599,14 @@ export class FleetbaseApiClient {
     /** Preuve exigée à la livraison. Colonnes natives. */
     pod_required?: boolean;
     pod_method?: string;
+    /**
+     * Valeurs des champs personnalisés, dans le stockage **durable**.
+     *
+     * `createRecord()` les lit sous `order.custom_field_values` puis appelle
+     * `syncCustomFieldValues()`. Contrairement à `meta`, elles vivent dans une
+     * table séparée qu'une mise à jour ne mentionnant pas les efface pas.
+     */
+    custom_field_values?: { custom_field_uuid: string; value: any; value_type: string }[];
   }) {
     try {
       const response = await this.callFleetOps('POST', '/orders', { order });
@@ -572,6 +648,13 @@ export class FleetbaseApiClient {
       const response = await this.callFleetOps('GET', '/orders', undefined, {
         page,
         limit,
+        // Charge les valeurs de champs personnalisés avec leur définition.
+        //
+        // Sans ça elles arrivent quand même — `withCustomFields()` fait un
+        // `loadMissing()` sur chaque ressource — mais **une requête par
+        // commande** : cent commandes, deux cents requêtes côté Fleetbase.
+        // Le demander ici les charge en une fois.
+        with: ['customFieldValues.customField'],
         ...filters,
       });
       return response.data;
@@ -694,7 +777,17 @@ export class FleetbaseApiClient {
    */
   async getOrderWithRelations(orderUuid: string) {
     const params = new URLSearchParams();
-    for (const relation of ['payload', 'driverAssigned', 'trackingNumber', 'orderConfig']) {
+    for (const relation of [
+      'payload',
+      'driverAssigned',
+      'trackingNumber',
+      'orderConfig',
+      // Le stockage durable des données métier. `withCustomFields()` le
+      // chargerait de toute façon, mais l'exiger ici rend la dépendance
+      // visible : un jour où quelqu'un se demandera d'où viennent le prix et
+      // le montant à encaisser, la réponse est sur cette ligne.
+      'customFieldValues.customField',
+    ]) {
       params.append('with[]', relation);
     }
 

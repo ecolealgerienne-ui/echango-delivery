@@ -24,6 +24,8 @@
  * n'avait pas droit reste une fuite, simplement plus discrète.
  */
 
+import { readOrderCustomFields } from '../../fleetbase/order-custom-fields';
+
 /** Niveau de détail d'un lieu. */
 export type PlaceDetail =
   /** Tout : le client a droit à cette course. */
@@ -168,33 +170,47 @@ const ORDER_FIELDS = [
 const FLEETBASE_INTERNAL_META_KEYS = ['_index_resource'];
 
 /**
- * Le `meta` effectif d'une commande : celui de Fleetbase, complété par la
- * spécification figée à la création.
+ * Les données métier effectives d'une commande, dans l'ordre de confiance.
  *
- * ── Pourquoi cette fonction existe ──────────────────────────────────────────
+ * ── Trois stockages, et pourquoi trois ──────────────────────────────────────
  *
- * Affecter un transporteur depuis la console Fleetbase **efface `meta`**. Pas
- * partiellement : il est remplacé par `{_index_resource: true}`. Prix, montant
- * à encaisser, colis, précisions d'adresse — tout disparaît d'une commande en
- * cours, au moment précis où un transporteur en prend la charge.
+ * 1. **Les champs personnalisés** (`custom_field_values`) — le stockage
+ *    durable, et la source. Table séparée, synchronisée seulement si la
+ *    requête la porte : intacte après n'importe quelle mise à jour de la
+ *    commande. C'est aussi le seul endroit qu'un admin peut corriger depuis la
+ *    console en étant sûr que la correction tienne.
  *
- * Nous ne pouvons pas l'empêcher : la console est une interface d'admin
- * légitime, et l'écriture vient d'elle. Ce qui est en notre pouvoir, c'est de
- * ne pas dépendre d'un stockage qu'un tiers peut vider.
+ * 2. **`meta`** — le stockage historique, fragile par construction. Il est dans
+ *    le `$fillable` sans mutateur : `$record->update($input)` le **remplace en
+ *    entier**. Constaté le 30/07/2026 — après une affectation de transporteur
+ *    depuis la console, il ne restait que `{_index_resource: true}`. Il reste lu
+ *    pour les commandes d'avant la migration.
+ *
+ * 3. **`Order.specMeta`** — la copie locale de ce qui a été demandé, figée à la
+ *    création. Dernier recours, pour les commandes créées avant que les champs
+ *    personnalisés existent et dont le `meta` a déjà été effacé.
  *
  * ── L'ordre de préséance, et pourquoi il est dans ce sens ───────────────────
  *
- * Fleetbase gagne **clé par clé**. Une valeur modifiée en amont — par un admin
- * qui corrige un montant, par une évolution du produit — reste donc
- * autoritaire, conformément à la règle du projet. La copie locale ne comble
- * que les trous. Le seul cas qu'elle répare est l'effacement, qui n'est jamais
+ * Le plus durable gagne, **clé par clé**. Une valeur corrigée en amont — par un
+ * admin qui rectifie un montant — reste donc autoritaire, conformément à la
+ * règle 1 : Fleetbase fait foi. Les couches inférieures ne comblent que les
+ * trous, et le seul trou qu'elles réparent est un effacement, qui n'est jamais
  * une intention.
  *
- * L'inverse aurait fait de la copie locale la vraie source, et rendu toute
+ * L'ordre inverse aurait fait de la copie locale la vraie source et rendu toute
  * correction amont invisible : exactement le second vocabulaire que la règle 1
  * interdit.
  */
-export function effectiveMeta(liveMeta: any, specMeta: any): Record<string, any> | undefined {
+export function effectiveOrderMeta(order: any, specMeta: any): Record<string, any> | undefined {
+  const merged = mergeMetaLayers(order?.meta, specMeta);
+  const custom = readOrderCustomFields(order);
+
+  if (!Object.keys(custom).length) return merged;
+  return { ...(merged ?? {}), ...custom };
+}
+
+function mergeMetaLayers(liveMeta: any, specMeta: any): Record<string, any> | undefined {
   const parse = (value: any): Record<string, any> | undefined => {
     let source = value;
     if (typeof source === 'string') {
@@ -210,16 +226,22 @@ export function effectiveMeta(liveMeta: any, specMeta: any): Record<string, any>
   const live = parse(liveMeta);
   const spec = parse(specMeta);
 
-  if (!spec) return live;
-
-  // Les clés internes de Fleetbase ne masquent rien : sans ça, un `meta`
-  // réduit à `{_index_resource: true}` compterait comme « présent » pour cette
-  // clé, ce qui est vrai mais sans intérêt — et surtout, l'objet fusionné la
-  // relaierait aux apps.
+  // ⚠️ Les clés internes de Fleetbase sont retirées **avant tout**, y compris
+  // quand il n'y a pas de spécification locale à fusionner.
+  //
+  // La version précédente ne le faisait que dans la branche de fusion, et un
+  // `meta` réduit à `{_index_resource: true}` ressortait donc tel quel sur
+  // toute commande sans `specMeta` — c'est-à-dire sur toutes celles d'avant
+  // hier. Ce drapeau n'est pas une donnée métier : il signale que
+  // l'enregistrement vient de la ressource allégée, et le relayer plus loin
+  // reviendrait à propager un artefact de transport comme s'il décrivait la
+  // commande. Trouvé par un test unitaire, pas à la lecture.
   const meaningful: Record<string, any> = {};
   for (const [key, value] of Object.entries(live ?? {})) {
     if (!FLEETBASE_INTERNAL_META_KEYS.includes(key)) meaningful[key] = value;
   }
+
+  if (!spec) return live ? meaningful : undefined;
 
   return { ...spec, ...meaningful };
 }

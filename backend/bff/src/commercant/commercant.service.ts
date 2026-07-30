@@ -4,11 +4,12 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import {
-  effectiveMeta,
+  effectiveOrderMeta,
   projectOrderForMerchant,
   projectPlace,
 } from '../common/projections/order.projection';
@@ -27,6 +28,7 @@ export class CommerçantService {
     private audit: AuditService,
     private pricing: PricingService,
     private cash: CashService,
+    private orderCustomFields: OrderCustomFieldsService,
   ) {}
 
   /**
@@ -795,7 +797,7 @@ export class CommerçantService {
    */
   private withSpecMeta(live: any, cached?: { specMeta?: any } | null): any {
     if (!live) return live;
-    return { ...live, meta: effectiveMeta(live.meta, cached?.specMeta) };
+    return { ...live, meta: effectiveOrderMeta(live, cached?.specMeta) };
   }
 
   /**
@@ -1265,6 +1267,22 @@ export class CommerçantService {
         ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, meta?.cod_amount)
         : null;
 
+      // Les données métier partent DEUX fois, et ce n'est pas une duplication
+      // gratuite (règle 1) : ce sont deux stockages aux propriétés opposées.
+      //
+      // - `custom_field_values` est le stockage **durable** : table séparée,
+      //   synchronisée seulement si la requête la porte, donc intacte après
+      //   n'importe quelle mise à jour de la commande. C'est la source servie
+      //   aux applications.
+      // - `meta` reste écrit pour les lecteurs qui l'attendent — l'historique
+      //   des commandes d'avant cette migration, et tout intégrateur tiers.
+      //   Il est fragile par construction, d'où sa place derrière.
+      //
+      // Si le provisionnement des définitions a échoué, la liste est vide et
+      // la commande se crée quand même : on retombe sur le comportement
+      // d'avant, dégradé mais pas cassé.
+      const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
+
       const response = await this.fleetbaseClient.createOrder({
         order_config_uuid: orderConfigUuid,
         customer_uuid: merchant.fleetbaseVendorUuid,
@@ -1275,6 +1293,7 @@ export class CommerçantService {
           dropoff_uuid: dropoffPlace.place.uuid,
         },
         meta,
+        ...(customFieldValues.length ? { custom_field_values: customFieldValues } : {}),
         scheduled_at: dto.scheduledAt,
         // Un brouillon envoie `adhoc: false` ET `dispatched: false`
         // EXPLICITEMENT, pas seulement leur absence.

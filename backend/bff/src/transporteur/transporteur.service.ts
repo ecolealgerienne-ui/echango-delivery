@@ -7,7 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CashService } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import {
-  effectiveMeta,
+  effectiveOrderMeta,
   projectOrderForDriver,
 } from '../common/projections/order.projection';
 import {
@@ -175,7 +175,7 @@ export class TransporteurService {
     if (!rows.length) return orders;
 
     const spec = new Map(rows.map((r: any) => [r.fleetbaseOrderId, r.specMeta]));
-    return orders.map((o) => ({ ...o, meta: effectiveMeta(o?.meta, spec.get(o?.uuid)) }));
+    return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o, spec.get(o?.uuid)) }));
   }
 
   private async attachFailures(driverId: string, orders: any[]) {
