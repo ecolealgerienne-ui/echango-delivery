@@ -11,16 +11,41 @@
 # qui sort ici est ce qui est en base.
 #
 # Usage :
-#   FLEETBASE_API_KEY=... ./scripts/check-place-street.sh
-#   FLEETBASE_API_URL=http://localhost:8000 ./scripts/check-place-street.sh
+#   ./scripts/check-place-street.sh
+#
+# Les identifiants sont lus dans backend/bff/.env. Les passer à la main reste
+# possible et prime sur le fichier, mais ce n'est pas le chemin recommandé :
+# **un token Sanctum contient un `|`**, que le shell interprète comme un tube
+# s'il n'est pas entre guillemets — la variable part alors vide et le script
+# annonce une clé manquante alors qu'elle a été fournie.
 
 set -euo pipefail
 
-API_URL="${FLEETBASE_API_URL:-http://localhost:8000}"
-API_KEY="${FLEETBASE_API_KEY:-}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${ENV_FILE:-$ROOT/backend/bff/.env}"
+
+# Lecture ligne à ligne plutôt que `source` : le fichier n'est pas du shell, et
+# une valeur contenant `|`, `$` ou une espace serait exécutée au lieu d'être
+# lue. On ne prend que les deux clés attendues.
+read_env() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] || return 0
+  local line
+  line="$(grep -E "^[[:space:]]*${key}=" "$ENV_FILE" | tail -n 1)" || return 0
+  [[ -n "$line" ]] || return 0
+  line="${line#*=}"
+  line="${line%\"}"; line="${line#\"}"
+  line="${line%\'}"; line="${line#\'}"
+  printf '%s' "$line"
+}
+
+API_URL="${FLEETBASE_API_URL:-$(read_env FLEETBASE_API_URL)}"
+API_URL="${API_URL:-http://localhost:8000}"
+API_KEY="${FLEETBASE_API_KEY:-$(read_env FLEETBASE_API_KEY)}"
 
 if [[ -z "$API_KEY" ]]; then
-  echo "FLEETBASE_API_KEY manquante (le token Sanctum, pas la clé flb_live_)." >&2
+  echo "FLEETBASE_API_KEY introuvable." >&2
+  echo "Cherchée dans l'environnement, puis dans $ENV_FILE." >&2
   exit 1
 fi
 
