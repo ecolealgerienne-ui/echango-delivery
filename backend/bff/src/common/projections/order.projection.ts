@@ -214,7 +214,25 @@ const META_FIELDS = [
  * Une chaîne illisible retombe sur `undefined`, comme avant : mieux vaut pas de
  * `meta` qu'un `meta` inventé.
  */
-function projectMeta(meta: any): Record<string, any> | undefined {
+/**
+ * Clés de `meta` retirées d'une course **diffusée mais pas encore réclamée**.
+ *
+ * ⚠️ Trou trouvé le 30/07/2026. `payload.dropoff` était bien réduit à sa
+ * commune, mais `meta.dropoff_notes` porte **l'adresse de livraison telle que
+ * le commerçant l'a tapée** — rue, numéro, étage — et sortait en entier. La
+ * réduction était donc contournée par une clé voisine, exactement le défaut
+ * que l'expurgation existe pour fermer : on retire ce qu'on a pensé à retirer.
+ *
+ * `instructions` part avec, pour la même raison : « sonner au 3e, porte
+ * gauche, demander Karim » identifie une porte aussi sûrement qu'une rue.
+ *
+ * Ce qui reste est ce qui permet de **décider** de prendre la course — prix,
+ * catégorie de véhicule, colis, montant à encaisser — et l'enlèvement, qui
+ * est un commerce et se donne en entier par décision produit.
+ */
+const META_REDACTED_WHEN_UNCLAIMED = ['dropoff_notes', 'instructions'];
+
+function projectMeta(meta: any, unclaimed = false): Record<string, any> | undefined {
   let source = meta;
 
   if (typeof source === 'string') {
@@ -226,7 +244,12 @@ function projectMeta(meta: any): Record<string, any> | undefined {
   }
 
   if (!source || typeof source !== 'object') return undefined;
-  const projected = pick(source, META_FIELDS);
+
+  const allowed = unclaimed
+    ? META_FIELDS.filter((field) => !META_REDACTED_WHEN_UNCLAIMED.includes(field))
+    : META_FIELDS;
+
+  const projected = pick(source, allowed);
   return Object.keys(projected).length ? projected : undefined;
 }
 
@@ -265,7 +288,7 @@ export function projectOrderForDriver(order: any, options: OrderProjectionOption
   return {
     ...pick(order, ORDER_FIELDS),
     ...(links ? pick(order, ORDER_LINK_FIELDS) : {}),
-    meta: projectMeta(order.meta),
+    meta: projectMeta(order.meta, unclaimed),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
