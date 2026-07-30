@@ -718,6 +718,23 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    // ── Instrument de diagnostic, activé à la demande ───────────────────────
+    //
+    // La fiche affichait presque rien alors que tout avait été saisi, et trois
+    // suppositions successives n'ont pas suffi à dire pourquoi : les champs
+    // manquants venaient-ils de `meta` mal lu, d'une colonne native jamais
+    // enregistrée, ou de la commande introuvable en amont ? Cette ligne répond
+    // en un test au lieu d'un aller-retour par hypothèse.
+    //
+    // Derrière un drapeau parce qu'elle coûte un appel Fleetbase de plus :
+    // laisser le prix à chaque ouverture de fiche pour un diagnostic ponctuel
+    // serait exactement le genre de dette qu'on reproche ailleurs.
+    // `DEBUG_FLEETBASE_SHAPE=1` pour un test, retiré ensuite.
+    if (process.env.DEBUG_FLEETBASE_SHAPE === '1') {
+      await this.logUpstreamShape(merchant.fleetbaseVendorUuid, order, orderId);
+    }
+
     const [merged] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
     // Aucune donnée de facturation interne ne sort ici : la rémunération du
     // transporteur et la commission Echango vivent dans `DriverEarning`, et
@@ -727,6 +744,47 @@ export class CommerçantService {
       ...(await this.failuresFor(order.fleetbaseOrderId)),
       ...(await this.collectionFor(order.fleetbaseOrderId)),
     };
+  }
+
+  /**
+   * Journalise la forme réelle de la commande telle que Fleetbase la renvoie.
+   *
+   * Nomme les trois choses qui expliquent une fiche vide, et les distingue :
+   * le **type** de `meta` (un objet lu normalement, ou une chaîne JSON qui
+   * était écartée en silence), la présence des **colonnes natives** qu'on croit
+   * enregistrées, et l'état de dispatch. Sans cette distinction, une fiche
+   * incomplète peut venir de trois causes très différentes.
+   */
+  private async logUpstreamShape(
+    vendorUuid: string,
+    order: { fleetbaseOrderId: string },
+    orderId: string,
+  ): Promise<void> {
+    let raw: any;
+    try {
+      raw = await this.liveOrderFor(vendorUuid, order);
+    } catch (error: any) {
+      this.logger.warn(`Forme amont de ${orderId} illisible : ${error.message}`);
+      return;
+    }
+
+    if (!raw) {
+      this.logger.warn(`Forme amont de ${orderId} : commande absente de la liste Fleetbase`);
+      return;
+    }
+
+    const metaShape =
+      raw.meta && typeof raw.meta === 'object'
+        ? `objet {${Object.keys(raw.meta).join(', ') || 'vide'}}`
+        : typeof raw.meta === 'string'
+          ? `CHAÎNE — ${String(raw.meta).slice(0, 160)}`
+          : `absent (${typeof raw.meta})`;
+
+    this.logger.log(
+      `Forme amont de ${orderId} — meta: ${metaShape} | ` +
+        `pod_method: ${raw.pod_method ?? 'absent'} | pod_required: ${raw.pod_required} | ` +
+        `status: ${raw.status} | adhoc: ${raw.adhoc} | dispatched: ${raw.dispatched}`,
+    );
   }
 
   /**

@@ -181,9 +181,38 @@ const META_FIELDS = [
   'prefer_favourites',
 ];
 
+/**
+ * ⚠️ **Tolère un `meta` sérialisé en chaîne.**
+ *
+ * La version précédente faisait `if (typeof meta !== 'object') return undefined`
+ * : une chaîne JSON était donc **écartée en silence**, et avec elle TOUT ce que
+ * `meta` porte — prix, catégorie de véhicule, colis, montant à encaisser,
+ * précisions d'adresse. Le commerçant voyait une fiche presque vide alors que
+ * tout avait bien été enregistré.
+ *
+ * Ce n'est pas une hypothèse gratuite : `meta` est casté `Json::class` côté
+ * Fleetbase, et ce projet a déjà rencontré exactement ce défaut de forme sur
+ * `tracking_number`, servi « tantôt une chaîne, tantôt l'objet » — au point que
+ * le client Dart et `trackingNumberOf()` appliquent tous deux cette même
+ * tolérance. Un champ JSON qui arrive parfois encodé est un motif connu de
+ * l'amont, pas une exception.
+ *
+ * Une chaîne illisible retombe sur `undefined`, comme avant : mieux vaut pas de
+ * `meta` qu'un `meta` inventé.
+ */
 function projectMeta(meta: any): Record<string, any> | undefined {
-  if (!meta || typeof meta !== 'object') return undefined;
-  const projected = pick(meta, META_FIELDS);
+  let source = meta;
+
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (!source || typeof source !== 'object') return undefined;
+  const projected = pick(source, META_FIELDS);
   return Object.keys(projected).length ? projected : undefined;
 }
 
