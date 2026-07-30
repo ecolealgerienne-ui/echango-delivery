@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import '../errors/app_error.dart';
 import '../errors/error_translator.dart';
 import '../models/cash.dart';
+// `DriverSearchResult` / `KnownDriver` : l'annuaire est celui du commerçant,
+// et il sert ici à désigner qui a effectué une course non attribuée.
+import '../models/merchant_order.dart' show DriverSearchResult;
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
 
@@ -169,19 +172,28 @@ class CashState extends ChangeNotifier {
   Future<bool> declareMissingCollection({
     required String orderId,
     required double collectedAmount,
-    String? driverId,
+    String? fleetbaseDriverUuid,
     String? discrepancyReason,
     String? notes,
   }) =>
       _mutate(() => _apiClient.declareMissingCollection(
             orderId: orderId,
             collectedAmount: collectedAmount,
-            driverId: driverId,
+            fleetbaseDriverUuid: fleetbaseDriverUuid,
             discrepancyReason: discrepancyReason,
             notes: notes,
           ));
 
-  Future<bool> confirmCollection(String id) =>
+  /// Cherche un transporteur du réseau, pour désigner celui d'une course qui
+  /// n'en nomme aucun.
+  ///
+  /// Exposée ici plutôt qu'appelée directement par l'écran : `CashState` porte
+  /// déjà le client, et un second accès au réseau depuis un widget aurait
+  /// contourné la traduction d'erreur commune.
+  Future<DriverSearchResult> searchDrivers(String query) =>
+      _apiClient.searchDrivers(query);
+
+  Future<bool> confirmCollection(String id) =
       _mutate(() => _apiClient.confirmDeclaredCollection(id));
 
   Future<bool> disputeCollection(String id, {String? reason}) =>

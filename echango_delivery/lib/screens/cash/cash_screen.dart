@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../../models/cash.dart';
 // Pour `orderStatusLabel` : le libellé d'un statut vit à un seul endroit
 // (règle 4 du projet), même quand l'écran ne manipule pas de `MerchantOrder`.
-import '../../models/merchant_order.dart' show orderStatusLabel;
+import '../../models/merchant_order.dart' show KnownDriver, orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
 
@@ -386,6 +386,21 @@ class _CashScreenState extends State<CashScreen> {
 
     if (amount == null || !mounted) return;
 
+    // ── Qui a effectué la course, quand la livraison ne le dit pas ──────────
+    //
+    // Une course close depuis la console peut ne porter aucun transporteur.
+    // Le serveur refuse alors avec `cash.driver_required` — mais lui laisser
+    // renvoyer cette erreur serait un aller-retour perdu : le commerçant sait
+    // qui est venu, il faut le lui demander, pas le lui reprocher.
+    String? driverUuid;
+    if (p.driverName == null) {
+      driverUuid = await showDialog<String>(
+        context: context,
+        builder: (_) => const _DriverPickerDialog(),
+      );
+      if (driverUuid == null || !mounted) return;
+    }
+
     // Un écart demande un motif — le serveur le refuse sans, et lui répondre
     // par une erreur alors qu'on pouvait le demander serait un aller-retour
     // inutile.
@@ -411,6 +426,7 @@ class _CashScreenState extends State<CashScreen> {
     final ok = await state.declareMissingCollection(
       orderId: p.orderUuid,
       collectedAmount: amount,
+      fleetbaseDriverUuid: driverUuid,
       discrepancyReason: reason,
     );
     if (!mounted) return;
@@ -1052,6 +1068,162 @@ class _UnrecordedBanner extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Choisit le transporteur d'une course qui n'en désigne aucun.
+///
+/// ── Une recherche, pas un annuaire ──────────────────────────────────────────
+///
+/// Même règle que l'ajout d'un favori : le serveur refuse d'énumérer le réseau
+/// et demande de préciser au-delà de dix correspondances. Le commerçant tape le
+/// nom de celui qui est venu — il le connaît, c'est lui qui lui a remis le
+/// colis.
+///
+/// ── Pourquoi les comptes absents sont montrés mais non choisissables ────────
+///
+/// Un transporteur peut figurer dans l'annuaire Fleetbase sans avoir créé son
+/// compte dans l'application. Il ne peut alors **rien confirmer**, et
+/// l'encaissement resterait une affirmation pour toujours. Le masquer ferait
+/// croire qu'il n'existe pas et enverrait chercher ailleurs ; le montrer grisé,
+/// avec le motif, désigne l'action qui débloque — un geste d'opérateur.
+class _DriverPickerDialog extends StatefulWidget {
+  const _DriverPickerDialog();
+
+  @override
+  State<_DriverPickerDialog> createState() => _DriverPickerDialogState();
+}
+
+class _DriverPickerDialogState extends State<_DriverPickerDialog> {
+  final _controller = TextEditingController();
+  List<KnownDriver> _results = const [];
+  bool _searching = false;
+  bool _tooMany = false;
+  String? _error;
+  bool _searched = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _search() async {
+    final query = _controller.text.trim();
+    if (query.length < 2) return;
+
+    setState(() {
+      _searching = true;
+      _error = null;
+    });
+
+    try {
+      final result = await context.read<CashState>().searchDrivers(query);
+      if (!mounted) return;
+      setState(() {
+        _results = result.drivers;
+        _tooMany = result.tooMany;
+        _searched = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Recherche impossible');
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Qui a effectué cette livraison ?'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Cette livraison ne désigne aucun transporteur. '
+              'Cherchez-le par son nom ou son téléphone.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _search(),
+              decoration: InputDecoration(
+                labelText: 'Nom ou téléphone',
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: _searching ? null : _search,
+                ),
+              ),
+            ),
+            if (_searching)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+              ),
+            if (_tooMany)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  'Trop de correspondances — précisez le nom.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            if (_searched && !_searching && _results.isEmpty && !_tooMany)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  'Aucun transporteur trouvé.',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final d in _results)
+                    ListTile(
+                      enabled: d.hasAccount,
+                      leading: Icon(
+                        d.hasAccount ? Icons.person : Icons.person_off_outlined,
+                      ),
+                      title: Text(d.name ?? 'Transporteur'),
+                      subtitle: d.hasAccount
+                          ? null
+                          : const Text(
+                              'Pas de compte dans l\'application : '
+                              'il ne pourrait rien confirmer',
+                            ),
+                      onTap: d.hasAccount
+                          ? () => Navigator.pop(context, d.driverUuid)
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+      ],
     );
   }
 }

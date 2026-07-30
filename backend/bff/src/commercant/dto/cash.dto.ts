@@ -47,15 +47,19 @@ export class DeclareMissingCollectionDto {
   collectedAmount: number;
 
   /**
-   * Obligatoire uniquement quand la livraison ne porte aucun transporteur chez
-   * Fleetbase — cas réel, observé sur une course livrée. Ignoré sinon : si la
-   * course en désigne un, c'est lui qui fait foi, et accepter une autre
+   * Uuid Fleetbase du transporteur, obligatoire uniquement quand la livraison
+   * n'en porte aucun — cas réel, observé sur une course livrée. Ignoré sinon :
+   * si la course en désigne un, c'est lui qui fait foi, et accepter une autre
    * désignation permettrait d'imputer un encaissement à un tiers.
+   *
+   * L'uuid **Fleetbase** et non l'identifiant du compte Echango : c'est
+   * l'annuaire que le commerçant consulte (`/transporteurs/recherche`), et
+   * c'est déjà la clé qu'utilise `AddFavouriteDto`.
    */
   @IsOptional()
   @IsString()
-  @Matches(FLEETBASE_ID_PATTERN, { message: 'driverId invalide' })
-  driverId?: string;
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'fleetbaseDriverUuid invalide' })
+  fleetbaseDriverUuid?: string;
 
   /** Exigé par le service dès que le montant diffère de celui annoncé. */
   @IsOptional()

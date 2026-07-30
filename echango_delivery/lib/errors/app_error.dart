@@ -58,6 +58,18 @@ class AppError {
   static const String cashCodDeclarationRequired = 'cash.cod_declaration_required';
   static const String cashOrderUnknownToRegistry = 'cash.order_unknown_to_registry';
 
+  // Régularisation d'une livraison close hors application.
+  static const String cashCollectionAlreadyDeclared = 'cash.collection_already_declared';
+  static const String cashCollectionNotFound = 'cash.collection_not_found';
+  static const String cashCollectionNotConfirmable = 'cash.collection_not_confirmable';
+  static const String cashCollectionAlreadyConfirmed = 'cash.collection_already_confirmed';
+  static const String cashCollectionDisputed = 'cash.collection_disputed';
+  static const String cashOrderNotDelivered = 'cash.order_not_delivered';
+  static const String cashOrderHasNoCod = 'cash.order_has_no_cod';
+  static const String cashDriverRequired = 'cash.driver_required';
+  static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
+  static const String cashDriverNoAccount = 'cash.driver_no_account';
+
   // ── Commandes ────────────────────────────────────────────────────────────
   static const String orderNotFound = 'order.not_found';
   static const String orderForbidden = 'order.forbidden';

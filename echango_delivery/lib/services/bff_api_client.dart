@@ -610,12 +610,13 @@ class BffApiClient {
   /// rien. La déclaration n'établit rien seule : elle attend la confirmation du
   /// transporteur — ici le déclarant engage quelqu'un d'autre.
   ///
-  /// [driverId] n'est requis que si la livraison ne porte aucun transporteur
-  /// côté Fleetbase, cas réel sur une course close depuis la console.
+  /// [fleetbaseDriverUuid] n'est requis que si la livraison ne porte aucun
+  /// transporteur, cas réel sur une course close depuis la console. Ignoré
+  /// sinon : la course fait foi.
   Future<void> declareMissingCollection({
     required String orderId,
     required double collectedAmount,
-    String? driverId,
+    String? fleetbaseDriverUuid,
     String? discrepancyReason,
     String? notes,
   }) async {
@@ -624,7 +625,7 @@ class BffApiClient {
       headers: _buildHeaders(),
       body: jsonEncode({
         'collectedAmount': collectedAmount,
-        if (driverId != null) 'driverId': driverId,
+        if (fleetbaseDriverUuid != null) 'fleetbaseDriverUuid': fleetbaseDriverUuid,
         if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
         if (notes != null && notes.isNotEmpty) 'notes': notes,
       }),

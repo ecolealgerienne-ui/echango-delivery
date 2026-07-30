@@ -1889,7 +1889,12 @@ export class CommerçantService {
   async declareMissingCollection(
     merchantId: string,
     orderId: string,
-    input: { collectedAmount: number; driverId?: string; discrepancyReason?: string; notes?: string },
+    input: {
+      collectedAmount: number;
+      fleetbaseDriverUuid?: string;
+      discrepancyReason?: string;
+      notes?: string;
+    },
   ) {
     const merchant = await this.getMerchantWithValidation(merchantId);
     const order = await this.resolveOwnedOrder(merchantId, orderId);
@@ -1917,7 +1922,10 @@ export class CommerçantService {
       );
     }
 
-    const driverAccount = await this.resolveDriverForRegularisation(live, input.driverId);
+    const driverAccount = await this.resolveDriverForRegularisation(
+      live,
+      input.fleetbaseDriverUuid,
+    );
 
     const result = await this.cash.declareCollectionByMerchant(
       merchantId,
@@ -1957,45 +1965,56 @@ export class CommerçantService {
    */
   private async resolveDriverForRegularisation(
     live: any,
-    suppliedDriverId?: string,
+    suppliedUuid?: string,
   ): Promise<{ id: string; name: string }> {
     const assignedUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid ?? null;
+    const assignedName = live?.driver_assigned?.name ?? null;
 
-    if (assignedUuid) {
-      const account = await this.prisma.driverAccount.findFirst({
-        where: { fleetbaseDriverUuid: assignedUuid },
-        select: { id: true, firstName: true, lastName: true },
-      });
-      if (account) {
-        return {
-          id: account.id,
-          name: [account.firstName, account.lastName].filter(Boolean).join(' '),
-        };
-      }
-      // Assigné chez Fleetbase mais sans compte Echango : le transporteur n'a
-      // jamais été provisionné. On tombe sur la saisie manuelle plutôt que de
-      // refuser — le commerçant, lui, sait qui est venu.
-    }
+    // Fleetbase d'abord, saisie ensuite — jamais l'inverse. Si la course
+    // désigne un transporteur, accepter une autre désignation permettrait
+    // d'imputer un encaissement à un tiers.
+    const uuid = assignedUuid ?? suppliedUuid;
 
-    if (!suppliedDriverId) {
+    if (!uuid) {
       badRequest(
         'cash.driver_required',
         'Cette livraison ne porte aucun transporteur : indiquez qui l\'a effectuée',
       );
     }
 
-    const supplied = await this.prisma.driverAccount.findFirst({
-      where: { id: suppliedDriverId },
+    const account = await this.prisma.driverAccount.findFirst({
+      where: { fleetbaseDriverUuid: uuid },
       select: { id: true, firstName: true, lastName: true },
     });
-    if (!supplied) {
-      notFound('cash.driver_not_in_network', 'Transporteur inconnu du réseau');
+
+    if (account) {
+      return {
+        id: account.id,
+        name:
+          [account.firstName, account.lastName].filter(Boolean).join(' ')
+          || assignedName
+          || 'Transporteur',
+      };
     }
 
-    return {
-      id: supplied.id,
-      name: [supplied.firstName, supplied.lastName].filter(Boolean).join(' '),
-    };
+    // ⚠️ Deux situations, deux messages — la version précédente les confondait
+    // et affirmait « aucun transporteur » sur une course qui en portait un,
+    // constaté en réel.
+    //
+    // Un transporteur existe dans l'annuaire Fleetbase (créé par un opérateur
+    // en console) **sans avoir de compte Echango** tant qu'il ne s'est pas
+    // inscrit sur invitation. La régularisation lui est alors impossible, et
+    // ce n'est pas au commerçant de la contourner en désignant quelqu'un
+    // d'autre : sans compte, personne ne peut confirmer, et l'encaissement
+    // resterait une affirmation pour toujours.
+    //
+    // Le message nomme donc l'obstacle réel et l'action qui le lève —
+    // provisionner l'accès — qui est un geste d'opérateur, pas de commerçant.
+    badRequest(
+      'cash.driver_no_account',
+      `${assignedName ?? 'Ce transporteur'} n'a pas encore de compte dans l'application : `
+        + 'il ne peut donc rien confirmer. Demandez à Echango de lui créer un accès.',
+    );
   }
 
   async cancelOrder(merchantId: string, orderId: string) {

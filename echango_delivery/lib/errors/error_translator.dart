@@ -73,6 +73,26 @@ const Map<String, String> _fr = {
           'encaissé pour la clôturer.',
   'cash.order_unknown_to_registry':
       'Commande inconnue du registre : encaissement impossible.',
+  'cash.collection_already_declared':
+      'Un encaissement est déjà enregistré pour cette livraison.',
+  'cash.collection_not_found':
+      'Encaissement introuvable.',
+  'cash.collection_not_confirmable':
+      'Cet encaissement est le vôtre : rien à confirmer.',
+  'cash.collection_already_confirmed':
+      'Cet encaissement a déjà été confirmé.',
+  'cash.collection_disputed':
+      'Cet encaissement a été contesté.',
+  'cash.order_not_delivered':
+      'Seule une livraison terminée peut être régularisée.',
+  'cash.order_has_no_cod':
+      'Cette livraison n\'était pas payée à la réception.',
+  'cash.driver_required':
+      'Indiquez quel transporteur a effectué cette livraison.',
+  'cash.driver_not_in_network':
+      'Transporteur inconnu du réseau.',
+  'cash.driver_no_account':
+      'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   'order.not_found': 'Commande introuvable.',
@@ -156,6 +176,7 @@ const Map<String, String> _fr = {
 
   // ── Constats du client, sans contrepartie serveur ───────────────────────
   'network.error': 'Connexion au serveur impossible. Vérifiez votre réseau.',
+  'not_found': 'Introuvable.',
   'server.error': 'Le serveur a rencontré une erreur. Réessayez.',
   'timeout.error': 'Le serveur met trop de temps à répondre. Réessayez.',
   'not_found': 'Ressource introuvable.',
@@ -221,6 +242,26 @@ const Map<String, String> _ar = {
   'cash.cod_declaration_required':
       'هذه الطلبية تُدفع عند الاستلام: يرجى تصريح المبلغ المحصّل لإغلاقها.',
   'cash.order_unknown_to_registry': 'الطلبية غير معروفة في السجل: التحصيل غير ممكن.',
+  'cash.collection_already_declared':
+      'تم بالفعل تسجيل تحصيل لهذا التوصيل.',
+  'cash.collection_not_found':
+      'التحصيل غير موجود.',
+  'cash.collection_not_confirmable':
+      'هذا التحصيل خاص بك: لا شيء لتأكيده.',
+  'cash.collection_already_confirmed':
+      'تم تأكيد هذا التحصيل مسبقًا.',
+  'cash.collection_disputed':
+      'هذا التحصيل محل نزاع.',
+  'cash.order_not_delivered':
+      'لا يمكن تسوية سوى توصيل مكتمل.',
+  'cash.order_has_no_cod':
+      'هذا التوصيل لم يكن بالدفع عند الاستلام.',
+  'cash.driver_required':
+      'حدّد الناقل الذي قام بهذا التوصيل.',
+  'cash.driver_not_in_network':
+      'ناقل غير معروف في الشبكة.',
+  'cash.driver_no_account':
+      'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
 
   // ── الطلبيات ──────────────────────────────────────────────────────────────
   'order.not_found': 'الطلبية غير موجودة.',
@@ -304,6 +345,7 @@ const Map<String, String> _ar = {
 
   // ── ملاحظات جهاز العميل، بدون رمز من الخادم ──────────────────────────────
   'network.error': 'تعذر الاتصال بالخادم. تحقق من شبكتك.',
+  'not_found': 'غير موجود.',
   'server.error': 'واجه الخادم خطأً. حاول مرة أخرى.',
   'timeout.error': 'استغرق الخادم وقتاً طويلاً للرد. حاول مرة أخرى.',
   'not_found': 'المورد غير موجود.',

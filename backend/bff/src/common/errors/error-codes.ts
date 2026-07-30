@@ -81,6 +81,9 @@ export const ErrorCode = {
   CASH_ORDER_HAS_NO_COD: 'cash.order_has_no_cod',
   CASH_DRIVER_REQUIRED: 'cash.driver_required',
   CASH_DRIVER_NOT_IN_NETWORK: 'cash.driver_not_in_network',
+  /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
+  /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
+  CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   ORDER_NOT_FOUND: 'order.not_found',
