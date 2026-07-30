@@ -30,43 +30,12 @@
 #   DRIVER_LABEL         — de quoi le reconnaître dans les logs
 #   RESOLVE_DRIVER_ERROR — renseigné en cas d'échec
 
-_rd_env_file="${ENV_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/backend/bff/.env}"
-
-# Lecture ligne à ligne, jamais `source` : un token Sanctum contient un `|`,
-# que le shell exécuterait.
-_rd_read_env() { # clé -> valeur sur stdout
-  [ -f "$_rd_env_file" ] || return 0
-  local line
-  line="$(grep -E "^[[:space:]]*$1=" "$_rd_env_file" | tail -n 1)" || return 0
-  [ -n "$line" ] || return 0
-  line="${line#*=}"
-  line="${line%\"}"; line="${line#\"}"
-  line="${line%\'}"; line="${line#\'}"
-  printf '%s' "$line"
-}
-
-_rd_fleetbase() { # chemin -> corps sur stdout
-  local url="${FLEETBASE_API_URL:-$(_rd_read_env FLEETBASE_API_URL)}"
-  url="${url:-http://localhost:8000}"
-  local key="${FLEETBASE_API_KEY:-$(_rd_read_env FLEETBASE_API_KEY)}"
-
-  [ -n "$key" ] || { RESOLVE_DRIVER_ERROR="FLEETBASE_API_KEY introuvable ($_rd_env_file)"; return 1; }
-
-  # `host.docker.internal` est l'adresse de l'hôte vue depuis un conteneur :
-  # elle ne résout pas depuis un shell de ce même hôte.
-  local body
-  if ! body="$(curl -sS --fail -H "Authorization: Bearer $key" "$url$1" 2>/dev/null)"; then
-    local fallback="${url/host.docker.internal/localhost}"
-    [ "$fallback" != "$url" ] || { RESOLVE_DRIVER_ERROR="Fleetbase injoignable sur $url"; return 1; }
-    body="$(curl -sS --fail -H "Authorization: Bearer $key" "$fallback$1" 2>/dev/null)" \
-      || { RESOLVE_DRIVER_ERROR="Fleetbase injoignable sur $url ni $fallback"; return 1; }
-  fi
-  printf '%s' "$body"
-}
+. "$(dirname "${BASH_SOURCE[0]}")/fleetbase.sh"
 
 _rd_drivers() { # -> tableau JSON des conducteurs
   local response
-  response="$(_rd_fleetbase '/int/v1/drivers?limit=200')" || return 1
+  response="$(fb_get '/int/v1/drivers?limit=200')" \
+    || { RESOLVE_DRIVER_ERROR="$FLEETBASE_ERROR"; return 1; }
   echo "$response" | jq '.drivers // .data // []'
 }
 

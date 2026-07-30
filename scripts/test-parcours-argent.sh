@@ -39,9 +39,12 @@
 #   EMAIL= PASSWORD=               réutilise un commerçant existant
 #   GOODS=1300 FEE=650             montants joués
 #
-# ⚠️ Le commerçant doit être ACTIF côté Fleetbase (Fleet-Ops → Fournisseurs →
-# Statut), sinon la connexion est refusée — c'est le garde du Lot 4, et il est
-# volontaire.
+# Le commerçant est créé puis **activé par le script**, avec la clé de service
+# Fleetbase. Le garde du Lot 4 — pas de connexion tant qu'un admin n'a pas
+# passé le `Vendor` à `active` — est volontaire et reste entier ; c'est le rôle
+# d'admin qui est ici tenu par le script, pas le garde qui est contourné.
+# `register-merchant.sh` reste le script qui joue ce parcours **à la main**,
+# console comprise, et c'est lui qui prouve le garde.
 
 set -euo pipefail
 
@@ -85,18 +88,69 @@ echo "$((GOODS + FEE)) doivent être réclamés à la porte."
 # ── Sessions ───────────────────────────────────────────────────────────────
 step "Sessions"
 
+# La clé de service sert ici à deux choses : résoudre le conducteur, et jouer
+# le rôle de l'admin qui valide le commerçant.
+. "$(dirname "$0")/lib/fleetbase.sh"
+. "$(dirname "$0")/lib/resolve-driver.sh"
+
+# Active le fournisseur du commerçant, comme le ferait un admin dans la console.
+#
+# Le nom porte un suffixe unique parce que la recherche se fait par nom : la
+# console affiche déjà une douzaine de « Test Argent », et « prendre le plus
+# récent » est une mauvaise instruction — la liste n'est pas triée par date, et
+# activer le mauvais fournisseur produit un refus qu'on met dix minutes à
+# comprendre.
+activate_vendor() { # nom du fournisseur
+  local vendors uuid
+  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
+  uuid="$(echo "$vendors" | jq -r --arg n "$1" \
+    '(.vendors // .data // []) | map(select(.name == $n)) | last.uuid // empty')"
+  [ -n "$uuid" ] || { FLEETBASE_ERROR="fournisseur « $1 » introuvable côté Fleetbase"; return 1; }
+
+  fb_api PUT "/int/v1/vendors/$uuid" '{"status":"active"}' >/dev/null || return 1
+
+  # Relu plutôt que déduit du code HTTP : `status` n'est pas garanti `fillable`,
+  # et un `PUT` qui l'ignore renvoie 200 sans rien changer. Le refus de
+  # connexion trois lignes plus bas serait alors mis sur le compte du garde.
+  vendors="$(fb_get "/int/v1/vendors?limit=200")" || return 1
+  local now
+  now="$(echo "$vendors" | jq -r --arg u "$uuid" \
+    '(.vendors // .data // []) | map(select(.uuid == $u)) | first.status // empty')"
+  [ "$now" = "active" ] || {
+    FLEETBASE_ERROR="statut du fournisseur resté « ${now:-inconnu} » après le PUT"; return 1; }
+}
+
 if [ -z "$EMAIL" ]; then
-  EMAIL="argent-$(date +%s)@test.dz"
-  reg="$(curl -sS -X POST "$BFF_URL/auth/commercant/register" \
+  SUFFIX="$(date +%s)"
+  EMAIL="argent-$SUFFIX@test.dz"
+  BUSINESS="Test Argent $SUFFIX"
+
+  reg="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/merchant/register" \
     -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" \
-      '{email:$e, password:$p, businessName:"Test Argent", phone:"+213555000000"}')")"
-  echo "$reg" | jq -e '.id // .merchant' >/dev/null 2>&1 \
-    || echo "   (inscription : $(echo "$reg" | jq -c '.code // .message // .' 2>/dev/null))"
-  echo "   Commerçant créé : $EMAIL"
-  echo "   ⚠️ Activez son Vendor dans la console AVANT de continuer, puis"
-  echo "      relancez avec EMAIL=$EMAIL"
-  exit 0
+    -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" --arg b "$BUSINESS" \
+      '{email:$e, password:$p, businessName:$b, firstName:"Test", lastName:"Argent",
+        phone:"+213555000000", businessPhone:"+213555000000"}')")"
+  status="$(tail -n1 <<<"$reg")"
+  body="$(sed '$d' <<<"$reg")"
+
+  # ⚠️ Le refus 403 `merchant_pending` EST le succès attendu : depuis le Lot 4,
+  # l'inscription enregistre une demande et ne délivre pas de jeton. Tout le
+  # reste est un échec — y compris un 2xx, qui signifierait que la validation
+  # par un admin ne sert à rien.
+  code="$(jq -r '.code // empty' <<<"$body" 2>/dev/null)"
+  if [ "$status" = "403" ] && [ "$code" = "merchant_pending" ]; then
+    pass "Demande d'inscription enregistrée ($EMAIL)"
+  elif [ -n "$(jq -r '.token // empty' <<<"$body" 2>/dev/null)" ]; then
+    fail "Un jeton a été délivré à l'inscription — le garde du Lot 4 ne s'applique pas" "$body"
+  else
+    fail "Inscription en échec (HTTP $status)" "$body"
+  fi
+
+  activate_vendor "$BUSINESS" \
+    || fail "Activation du fournisseur impossible : ${FLEETBASE_ERROR:-}
+   Activez « $BUSINESS » dans la console (Fleet-Ops → Fournisseurs → Statut),
+   puis relancez avec EMAIL=$EMAIL"
+  pass "Fournisseur « $BUSINESS » activé"
 fi
 
 login="$(curl -sS -X POST "$BFF_URL/auth/login" -H 'Content-Type: application/json' \
@@ -107,7 +161,6 @@ pass "Commerçant connecté ($EMAIL)"
 
 # L'uuid ne s'affiche nulle part dans la console : on le résout depuis ce que
 # l'utilisateur a réellement sous les yeux — nom, email, téléphone, ID public.
-. "$(dirname "$0")/lib/resolve-driver.sh"
 resolve_driver "$DRIVER_HINT" || fail "$RESOLVE_DRIVER_ERROR"
 pass "Conducteur : $DRIVER_LABEL"
 
