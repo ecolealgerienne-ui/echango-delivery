@@ -1737,6 +1737,80 @@ export class CommerçantService {
   /**
    * Cancel an order
    */
+  /**
+   * L'argent qui n'est pas encore encaissé mais qui est attendu à une porte.
+   *
+   * ── Pourquoi cette lecture existe ───────────────────────────────────────────
+   *
+   * Le registre de caisse ne connaît que les espèces **déjà perçues** : une
+   * `CashCollection` naît à la clôture d'une livraison. Un commerçant dont les
+   * courses sont en route lisait donc « 0 DZD » et « aucune somme en attente »
+   * alors que 1950 DZD étaient réclamés à des portes ce jour-là.
+   *
+   * Ce n'était pas un écran vide, c'était un écran **faux dans le sens qui
+   * rassure** — le mode d'échec dont ce projet a déjà payé le prix plusieurs
+   * fois. Le registre restait juste : il répondait exactement à la question
+   * qu'on lui posait, et personne ne posait l'autre.
+   *
+   * ── Ce que ça n'est pas ─────────────────────────────────────────────────────
+   *
+   * Aucun état n'est stocké, aucune écriture comptable n'est créée : c'est une
+   * lecture, recalculée à chaque appel depuis Fleetbase et le registre. Une
+   * somme *attendue* n'est due par personne — le transporteur ne tient pas
+   * encore l'argent — et l'inscrire au registre créerait une dette pour une
+   * livraison qui peut encore échouer.
+   */
+  async pendingCollections(merchantId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const cached = await this.prisma.order.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!cached.length) return { currency: this.cash.currency, expected_total: 0, orders: [] };
+
+    const live = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
+
+    // Déjà encaissées : leur montant appartient au registre, pas à l'attente.
+    // Une livraison close SANS encaissement n'est pas possible depuis la garde
+    // du §16 ; si l'historique en contient, elle est exclue par le statut.
+    const collected = new Set(
+      (
+        await this.prisma.cashCollection.findMany({
+          where: { merchantId },
+          select: { fleetbaseOrderUuid: true },
+        })
+      ).map((c: { fleetbaseOrderUuid: string }) => c.fleetbaseOrderUuid),
+    );
+
+    const orders = live
+      .filter((o: any) => {
+        if (!o?.uuid || collected.has(o.uuid)) return false;
+        // `stale`/`missing` : Fleetbase injoignable ou commande disparue. On ne
+        // devine pas un montant attendu sur une commande dont on ignore l'état
+        // — annoncer de l'argent en s'appuyant sur un cache serait pire que de
+        // n'en annoncer aucun.
+        if (o.stale || o.missing) return false;
+        if (['completed', 'canceled', 'cancelled'].includes(o.status)) return false;
+        return Number(o.meta?.cod_amount) > 0;
+      })
+      .map((o: any) => ({
+        uuid: o.uuid,
+        bff_order_id: o.bff_order_id ?? null,
+        status: o.status ?? null,
+        driver_name: o.driver_assigned?.name ?? null,
+        dropoff_name: o.payload?.dropoff?.name ?? null,
+        expected_amount: Number(o.meta.cod_amount),
+        scheduled_at: o.scheduled_at ?? null,
+      }));
+
+    return {
+      currency: this.cash.currency,
+      expected_total: orders.reduce((sum, o) => sum + o.expected_amount, 0),
+      orders,
+    };
+  }
+
   async cancelOrder(merchantId: string, orderId: string) {
     this.logger.log(`Cancelling order ${orderId}`);
 

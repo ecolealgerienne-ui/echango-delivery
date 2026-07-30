@@ -587,6 +587,19 @@ class BffApiClient {
     return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
   }
 
+  /// Ce qui sera réclamé aux portes, et n'est encore dans la poche de personne.
+  ///
+  /// Sert une question que le registre ne sait pas poser : il n'enregistre que
+  /// le perçu, donc un commerçant dont les courses sont en route lisait « 0 DZD
+  /// / aucune somme en attente » pendant qu'on réclamait son argent ailleurs.
+  Future<List<PendingCollection>> getMerchantPendingCollections() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/commercant/encaissements/attendus'),
+      headers: _buildHeaders(),
+    );
+    return _listOf(_parseResponse(response), 'orders', PendingCollection.fromJson);
+  }
+
   /// Idem côté transporteur : ce qu'il détient, course par course.
   Future<List<CashCollectionEntry>> getDriverCollections() async {
     final response = await _httpClient.get(

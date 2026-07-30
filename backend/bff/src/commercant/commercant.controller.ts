@@ -43,6 +43,19 @@ export class CommerçantController {
     return this.cash.listCollections('merchant', req.user.id);
   }
 
+  /**
+   * Ce qui sera réclamé aux portes, et qui n'est encore dans la poche de
+   * personne.
+   *
+   * Servi par le module commerçant et non par `CashService` : la source est
+   * Fleetbase, pas le registre. Le registre ne connaît que le perçu — c'est
+   * précisément ce qui rendait l'écran muet sur l'argent en route.
+   */
+  @Get('encaissements/attendus')
+  async pendingCollections(@Request() req: any) {
+    return this.commercantService.pendingCollections(req.user.id);
+  }
+
   @Get('encaissements/remises')
   async remittances(@Request() req: any) {
     return this.cash.listRemittances('merchant', req.user.id);

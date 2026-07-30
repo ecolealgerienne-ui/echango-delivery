@@ -242,3 +242,53 @@ const cashDiscrepancyLabels = <String, String>{
   'montant_conteste': 'Le client a contesté le montant',
   'autre': 'Autre',
 };
+
+/// Une livraison dont l'argent sera réclamé à une porte, et n'est encore dans
+/// la poche de personne.
+///
+/// ── Pourquoi ce n'est PAS une entrée du registre ────────────────────────────
+///
+/// Le registre enregistre des faits : quelqu'un a perçu telle somme. Une somme
+/// attendue n'est un fait pour personne — le transporteur ne la tient pas
+/// encore, et la livraison peut échouer. L'inscrire au registre créerait une
+/// dette sur une hypothèse.
+///
+/// Mais l'omettre de l'écran était pire : un commerçant dont trois courses
+/// étaient en route lisait « 0 DZD, aucune somme en attente ». Un écran vide
+/// qui rassure à tort vaut moins qu'un écran qui distingue « perçu » de
+/// « attendu ».
+class PendingCollection extends Equatable {
+  final String orderUuid;
+  final String? bffOrderId;
+  final double expectedAmount;
+
+  /// Statut Fleetbase — il dit à quelle distance de la porte on est.
+  final String? status;
+  final String? driverName;
+  final String? dropoffName;
+
+  const PendingCollection({
+    required this.orderUuid,
+    required this.expectedAmount,
+    this.bffOrderId,
+    this.status,
+    this.driverName,
+    this.dropoffName,
+  });
+
+  factory PendingCollection.fromJson(Map<String, dynamic> json) => PendingCollection(
+        orderUuid: (json['uuid'] ?? '') as String,
+        bffOrderId: json['bff_order_id'] as String?,
+        expectedAmount: (json['expected_amount'] as num?)?.toDouble() ?? 0,
+        status: json['status'] as String?,
+        driverName: json['driver_name'] as String?,
+        dropoffName: json['dropoff_name'] as String?,
+      );
+
+  /// Vrai quand un transporteur tient déjà le colis : l'argent est bien plus
+  /// proche d'arriver que sur une course encore en recherche.
+  bool get isUnderway => driverName != null;
+
+  @override
+  List<Object?> get props => [orderUuid, expectedAmount, status];
+}

@@ -37,6 +37,13 @@ class CashState extends ChangeNotifier {
   /// pas — et c'est pourtant ce qu'on contrôle avant de confirmer une remise,
   /// geste qui éteint une dette.
   List<CashCollectionEntry> _collections = [];
+
+  /// Ce qui sera réclamé aux portes et n'est encore dans la poche de personne.
+  ///
+  /// Commerçant seulement : le transporteur, lui, sait ce qu'il a à collecter
+  /// en regardant ses courses — c'est son écran de travail. Le commerçant n'a
+  /// aucun autre endroit où lire ce chiffre.
+  List<PendingCollection> _pending = [];
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -51,8 +58,15 @@ class CashState extends ChangeNotifier {
   CashLedger? get ledger => _ledger;
   List<CashRemittance> get remittances => _remittances;
   List<CashCollectionEntry> get collections => _collections;
+  List<PendingCollection> get pending => _pending;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+
+  /// Total attendu aux portes. Distinct de [total], et il ne faut jamais les
+  /// additionner : l'un est détenu par quelqu'un, l'autre ne l'est par
+  /// personne.
+  double get expectedTotal =>
+      _pending.fold<double>(0, (sum, p) => sum + p.expectedAmount);
 
   /// Remises en attente de MA confirmation.
   ///
@@ -82,6 +96,7 @@ class CashState extends ChangeNotifier {
     _ledger = null;
     _remittances = [];
     _collections = [];
+    _pending = [];
     notifyListeners();
   }
 
@@ -106,6 +121,16 @@ class CashState extends ChangeNotifier {
               (_) => <CashCollectionEntry>[])
           : await _apiClient.getMerchantCollections().catchError(
               (_) => <CashCollectionEntry>[]);
+
+      // ⚠️ Pas de `catchError` silencieux ici, contrairement au détail.
+      //
+      // Un détail manquant laisse un total lisible ; un « attendu » manquant
+      // laisse l'écran affirmer qu'aucune somme n'est en attente, ce qui est
+      // exactement l'erreur qu'on corrige. Mieux vaut le message d'erreur que
+      // la fausse tranquillité — d'où la liste vidée ET l'erreur remontée.
+      _pending = isDriver
+          ? <PendingCollection>[]
+          : await _apiClient.getMerchantPendingCollections();
     } on AppException catch (e) {
       _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {

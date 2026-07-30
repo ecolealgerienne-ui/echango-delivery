@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/cash.dart';
+// Pour `orderStatusLabel` : le libellé d'un statut vit à un seul endroit
+// (règle 4 du projet), même quand l'écran ne manipule pas de `MerchantOrder`.
+import '../../models/merchant_order.dart' show orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
 
@@ -88,7 +91,7 @@ class _CashScreenState extends State<CashScreen> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (state.ledger?.isEmpty ?? true)
-              _empty()
+              _empty(hasPending: state.pending.isNotEmpty)
             else
               for (final balance in state.ledger!.balances)
                 _BalanceCard(
@@ -97,6 +100,16 @@ class _CashScreenState extends State<CashScreen> {
                   isDriver: _isDriver,
                   onDeclare: () => _declare(state, balance),
                 ),
+
+            // L'attendu vient après les soldes et avant le détail du perçu :
+            // c'est l'ordre du temps. Ce qu'on détient, ce qui va venir, puis
+            // d'où venait ce qu'on détient.
+            if (state.pending.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _sectionTitle('En cours — pas encore encaissé'),
+              for (final p in state.pending)
+                _PendingCard(entry: p, currency: state.currency),
+            ],
 
             // Le détail vient APRÈS les soldes, et c'est délibéré : on lit
             // d'abord combien, ensuite d'où ça vient. L'inverse noierait le
@@ -179,6 +192,28 @@ class _CashScreenState extends State<CashScreen> {
                       'cet argent.',
               style: theme.textTheme.bodySmall,
             ),
+            // ── Ce qui est attendu, et qui n'est encore à personne ───────────
+            //
+            // Séparé du total par une ligne, jamais additionné : le total est
+            // détenu par quelqu'un, l'attendu ne l'est par personne. Les
+            // confondre ferait croire à une somme récupérable aujourd'hui.
+            if (!_isDriver && state.expectedTotal > 0) ...[
+              const Divider(height: 24),
+              Text(
+                'À encaisser aux portes : '
+                '${state.expectedTotal.toStringAsFixed(0)} ${state.currency}',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${state.pending.length} livraison'
+                '${state.pending.length > 1 ? 's' : ''} en cours. '
+                'Cet argent n\'a pas encore été perçu.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+
             // La commission ne se règle pas ici, et l'écran doit le dire :
             // l'afficher comme un solde exigible promettrait un bouton qui
             // n'existe pas. C'est un montant enregistré, pas une dette que
@@ -204,16 +239,30 @@ class _CashScreenState extends State<CashScreen> {
     );
   }
 
-  Widget _empty() => Padding(
+  /// Aucun solde ouvert. [hasPending] change le texte du tout au tout.
+  ///
+  /// « Aucune somme en attente » était faux dès qu'une course encaissée était
+  /// en route : rien n'était *détenu*, mais de l'argent était bel et bien
+  /// attendu. C'est la formulation qui rassure à tort — celle qui coûte le plus
+  /// cher, parce qu'on ne va pas vérifier ce qu'un écran déclare tranquille.
+  Widget _empty({bool hasPending = false}) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 32),
         child: Column(
           children: [
-            Icon(Icons.payments_outlined, size: 56, color: Colors.grey[400]),
+            Icon(
+              hasPending ? Icons.schedule_outlined : Icons.payments_outlined,
+              size: 56,
+              color: Colors.grey[400],
+            ),
             const SizedBox(height: 12),
             Text(
               _isDriver
                   ? 'Vous ne détenez aucune somme'
-                  : 'Aucune somme en attente',
+                  : hasPending
+                      ? 'Rien à récupérer pour l\'instant :\n'
+                          'les livraisons en cours ne sont pas encore encaissées'
+                      : 'Aucune somme en attente',
+              textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600]),
             ),
           ],
@@ -637,4 +686,48 @@ class _CollectionCard extends StatelessWidget {
           ],
         ),
       );
+}
+
+/// Une livraison dont l'argent sera réclamé à une porte.
+///
+/// Volontairement plus sobre qu'une ligne d'encaissement : rien ici n'est un
+/// fait comptable, et une carte aussi détaillée que celle du perçu laisserait
+/// croire que la somme est acquise.
+class _PendingCard extends StatelessWidget {
+  final PendingCollection entry;
+  final String currency;
+
+  const _PendingCard({required this.entry, required this.currency});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: ListTile(
+        leading: Icon(
+          entry.isUnderway ? Icons.local_shipping_outlined : Icons.search,
+          color: Colors.grey[600],
+        ),
+        title: Text(entry.dropoffName ?? 'Livraison'),
+        subtitle: Text(
+          [
+            // Le libellé vient de la table partagée : deux écrans ne doivent
+            // pas nommer différemment le même statut (règle 4).
+            orderStatusLabel(entry.status ?? '', driverName: entry.driverName),
+            if (entry.driverName != null) entry.driverName!,
+          ].join(' · '),
+        ),
+        trailing: Text(
+          '${entry.expectedAmount.toStringAsFixed(0)} $currency',
+          style: theme.textTheme.bodyLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+            // Gris et non vert : cet argent n'est pas encore là.
+            color: Colors.grey[700],
+          ),
+        ),
+      ),
+    );
+  }
 }

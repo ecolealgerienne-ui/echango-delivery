@@ -7,6 +7,30 @@ import 'fleetbase_json.dart';
 // par le lire de deux façons (revue archi #14).
 import 'order.dart' show DeliveryFailure, Place;
 
+/// Le mot affiché pour un statut de livraison, à un seul endroit.
+///
+/// ── Pourquoi une fonction et non une méthode ────────────────────────────────
+///
+/// Trois écrans du commerçant lisent un statut, et deux d'entre eux ne
+/// manipulent pas de `MerchantOrder` — l'écran d'encaissement lit une livraison
+/// attendue, qui n'a ni adresses ni colis. Recopier la table chez eux est
+/// exactement ce que la règle 4 du projet interdit : « deux tables recopiées
+/// ont affiché deux textes différents pour la même commande ».
+///
+/// [driverName] change un seul mot, et c'est le plus important : `dispatched`
+/// se dit « Recherche transporteur » tant que personne n'a pris la course, et
+/// « Transporteur affecté » dès que quelqu'un l'a prise. Fleetbase ne distingue
+/// pas les deux dans son statut — c'est le second champ qui tranche.
+String orderStatusLabel(String status, {String? driverName}) => switch (status) {
+      'created' => 'Brouillon',
+      'dispatched' =>
+        driverName == null ? 'Recherche transporteur' : 'Transporteur affecté',
+      'started' || 'enroute' => 'En cours',
+      'completed' => 'Livrée',
+      'canceled' || 'cancelled' => 'Annulée',
+      _ => status,
+    };
+
 /// Commande vue par le commerçant.
 ///
 /// Désérialiseur écrit contre la forme RÉELLE renvoyée par Fleetbase, relevée
@@ -163,25 +187,11 @@ class MerchantOrder extends Equatable {
   ///
   /// Les écrans lisent ce getter plutôt que de refaire leur propre table : la
   /// fiche affichait `created` brut là où la liste affichait « En attente »,
-  /// pour la même commande.
-  /// ⚠️ `dispatched` recouvre deux situations que le commerçant vit
-  /// différemment : personne n'a encore pris la course, ou un transporteur est
-  /// affecté et n'a pas encore démarré. Le statut Fleetbase ne bouge qu'au
-  /// démarrage, donc lui seul afficherait « Recherche transporteur » à côté de
-  /// « Pris en charge par Alice ».
+  /// pour la même commande. La table elle-même vit dans [orderStatusLabel],
+  /// parce que l'écran d'encaissement en a besoin sans manipuler de commande.
   ///
-  /// Deux champs servis par le serveur, lus ensemble pour choisir un mot.
-  /// Rien n'est mémorisé ni dérivé : c'est de l'affichage, et il vit à un seul
-  /// endroit pour que deux écrans ne racontent pas deux histoires.
-  String get statusLabel => switch (status) {
-        'created' => 'Brouillon',
-        'dispatched' =>
-          driverName == null ? 'Recherche transporteur' : 'Transporteur affecté',
-        'started' || 'enroute' => 'En cours',
-        'completed' => 'Livrée',
-        'canceled' || 'cancelled' => 'Annulée',
-        _ => status,
-      };
+  /// Rien n'est mémorisé ni dérivé : c'est de l'affichage.
+  String get statusLabel => orderStatusLabel(status, driverName: driverName);
 
   /// ⚠️ Le BFF fusionne son cache local avec l'état Fleetbase : la réponse a
   /// donc la forme d'une commande Fleetbase, plus `bff_order_id`. Deux cas
