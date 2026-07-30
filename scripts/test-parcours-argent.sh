@@ -30,7 +30,10 @@
 #
 # ── Usage ──────────────────────────────────────────────────────────────────
 #
-#   ./scripts/test-parcours-argent.sh <uuid-driver-fleetbase>
+#   ./scripts/test-parcours-argent.sh                 # s'il n'y a qu'un conducteur
+#   ./scripts/test-parcours-argent.sh alice@test.dz   # ou email, téléphone,
+#   ./scripts/test-parcours-argent.sh driver_2xk9     # ID public, ID interne,
+#   ./scripts/test-parcours-argent.sh "Alice"         # ou un fragment de nom
 #
 #   BFF_URL=http://localhost:3001  adresse du BFF
 #   EMAIL= PASSWORD=               réutilise un commerçant existant
@@ -47,15 +50,9 @@ PASSWORD="${PASSWORD:-motdepasse123}"
 EMAIL="${EMAIL:-}"
 GOODS="${GOODS:-1300}"
 FEE="${FEE:-650}"
-DRIVER_UUID="${1:-}"
+DRIVER_HINT="${1:-}"
 
 command -v jq >/dev/null 2>&1 || { echo "jq requis."; exit 1; }
-
-if [ -z "$DRIVER_UUID" ]; then
-  echo "Usage : $0 <uuid-driver-fleetbase>" >&2
-  echo "  (l'uuid, pas le public_id affiché par la console)" >&2
-  exit 1
-fi
 
 pass() { echo "✅ $1"; }
 fail() { echo "❌ $1"; [ -n "${2:-}" ] && echo "   Réponse : $2"; exit 1; }
@@ -108,8 +105,14 @@ MERCHANT_TOKEN="$(echo "$login" | jq -r '.token // empty')"
 [ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant refusée" "$login"
 pass "Commerçant connecté ($EMAIL)"
 
+# L'uuid ne s'affiche nulle part dans la console : on le résout depuis ce que
+# l'utilisateur a réellement sous les yeux — nom, email, téléphone, ID public.
+. "$(dirname "$0")/lib/resolve-driver.sh"
+resolve_driver "$DRIVER_HINT" || fail "$RESOLVE_DRIVER_ERROR"
+pass "Conducteur : $DRIVER_LABEL"
+
 . "$(dirname "$0")/lib/driver-session.sh"
-[ -n "${DRIVER_TOKEN:-}" ] || fail "Session transporteur impossible" "${DRIVER_SESSION_ERROR:-}"
+obtain_driver_token "$DRIVER_UUID" || fail "Session transporteur impossible" "${DRIVER_SESSION_ERROR:-}"
 pass "Transporteur connecté — ${DRIVER_SESSION_NOTE:-}"
 
 # ── 1. Brouillon avec encaissement ─────────────────────────────────────────

@@ -10,24 +10,28 @@
 set -euo pipefail
 
 BFF_URL="${BFF_URL:-http://localhost:3001}"
-DRIVER_UUID="${1:-${FLEETBASE_DRIVER_UUID:-}}"
+DRIVER_HINT="${1:-${FLEETBASE_DRIVER_UUID:-}}"
 EMAIL="${EMAIL:-transporteur-test-$RANDOM@echango.local}"
 PASSWORD="${PASSWORD:-motdepasse123}"
 
 command -v jq >/dev/null 2>&1 || {
   echo "❌ jq requis : sudo apt update && sudo apt install -y jq"; exit 1; }
 
-if [ -z "$DRIVER_UUID" ]; then
-  echo "Usage : ./scripts/test-transporteur-module.sh <uuid-du-driver-fleetbase>"
+# ── L'identifiant est résolu, plus exigé ──────────────────────────────────
+#
+# Ce script réclamait l'`uuid` et rejetait un `public_id` en renvoyant vers une
+# commande `php artisan tinker`. Or **la console n'affiche jamais l'uuid** :
+# elle montre le nom, l'email, le téléphone et l'ID public. On exigeait donc la
+# seule valeur invisible, et on faisait porter à l'utilisateur un travail que
+# le script sait faire.
+. "$(dirname "$0")/lib/resolve-driver.sh"
+if ! resolve_driver "$DRIVER_HINT"; then
+  echo "❌ $RESOLVE_DRIVER_ERROR"
+  echo "   Accepté : uuid, ID public, ID interne, email, téléphone, ou un"
+  echo "   fragment de nom. Sans argument s'il n'y a qu'un seul conducteur."
   exit 1
 fi
-
-if [[ "$DRIVER_UUID" == driver_* ]]; then
-  echo "❌ \"$DRIVER_UUID\" est un public_id, pas un uuid. Récupérer le uuid :"
-  echo "  docker exec fleetbase-src-application-1 php artisan tinker \\"
-  echo "    --execute=\"echo DB::table('drivers')->where('public_id','$DRIVER_UUID')->value('uuid');\""
-  exit 1
-fi
+echo "Conducteur : $DRIVER_LABEL"
 
 pass() { echo "✅ $1"; }
 warn() { echo "⚠️  $1"; }
