@@ -226,8 +226,13 @@ pass "Course démarrée"
 
 # Le montant perçu est volontairement CONFORME ici : l'écart a son propre
 # scénario, et mélanger les deux rendrait un échec ambigu.
+#
+# ⚠️ Le corps est PLAT sur cette route (`CashCollectionDto`), alors qu'il est
+# imbriqué sous `cash` sur `/activite` (`UpdateActivityDto`). Deux formes pour
+# la même déclaration, parce que l'une porte l'encaissement seul et l'autre le
+# porte à côté de l'activité. Le §6 ci-dessous exerce la seconde.
 completed="$(dapi POST "/transporteur/commandes/$FB_UUID/terminer" \
-  "$(jq -n --argjson c "$expected" '{cash:{collectedAmount:$c}}')")"
+  "$(jq -n --argjson c "$expected" '{collectedAmount:$c}')")"
 echo "$completed" | jq -e '.code' >/dev/null 2>&1 \
   && fail "Clôture refusée" "$(echo "$completed" | jq -c '.')"
 pass "Livrée, $expected DZD déclarés encaissés"
@@ -295,6 +300,72 @@ final="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add //
 [ "$(printf '%.0f' "$final")" = "0" ] \
   || fail "Après confirmation la dette doit être soldée, reste $final"
 pass "Dette soldée : $final DZD"
+
+# ── 6. L'autre chemin de clôture ───────────────────────────────────────────
+step "6. Clôture par transition d'activité — le chemin de l'app"
+
+# ── Pourquoi une seconde commande plutôt qu'une assertion de plus ──────────
+#
+# `POST /terminer` n'est PAS le chemin que l'application emprunte : elle suit
+# les transitions que le serveur lui propose (`activites-suivantes`), et la
+# transition terminale passe par `POST /activite`. C'est le défaut corrigé au
+# journal §16 — la garde « pas de clôture sans déclaration d'encaissement »
+# n'existait que sur `/terminer`, donc elle était **décorative**, et une
+# livraison encaissée se serait close sans que l'argent figure nulle part.
+#
+# Ne tester que `/terminer` recréerait exactement l'angle mort qui a produit le
+# défaut. Une commande ne se clôturant qu'une fois, il en faut une seconde.
+
+order2="$(mapi POST /commercant/commandes "$(jq -n \
+  --argjson goods "$GOODS" --argjson fee "$FEE" '{
+  pickupLocationName: "Boulangerie Test", pickupLatitude: 36.7538, pickupLongitude: 3.0588,
+  pickupContactName: "Commerce", pickupContactPhone: "+213555000000",
+  dropoffLocationName: "Client Test 2", dropoffLatitude: 36.7500, dropoffLongitude: 3.0600,
+  dropoffContactName: "Destinataire 2", dropoffContactPhone: "+213555222222",
+  price: $fee, codAmount: $goods, codIncludesDelivery: false,
+  podMethod: "aucune", preferFavourites: false, draft: false
+}')")"
+ORDER2_ID="$(echo "$order2" | jq -r '.id // .uuid // empty')"
+[ -n "$ORDER2_ID" ] || fail "Seconde commande refusée" "$(echo "$order2" | jq -c '.')"
+
+live2="$(mapi GET "/commercant/commandes/$ORDER2_ID")"
+FB2="$(echo "$live2" | jq -r '.uuid')"
+dapi POST "/transporteur/commandes/$FB2/accepter" >/dev/null
+dapi POST "/transporteur/commandes/$FB2/demarrer" >/dev/null
+pass "Seconde course acceptée et démarrée"
+
+# L'activité terminale est celle que le SERVEUR propose, pas une que le script
+# fabrique : `updateActivity()` de Fleetbase commence par `if (!isActivity(...))
+# return $this` — un objet inventé produirait un 2xx sans le moindre effet.
+acts="$(dapi GET "/transporteur/commandes/$FB2/activites-suivantes")"
+terminal="$(echo "$acts" | jq -c '
+  [.. | objects | select(.code == "completed" or .status == "completed")] | first // empty')"
+[ -n "$terminal" ] || fail "Aucune activité terminale proposée après 'démarrer'.
+   Le flux passe peut-être par des étapes intermédiaires (points de passage) —
+   les codes proposés ici sont : $(echo "$acts" | jq -c '[.. | objects | .code? // empty] | unique')" \
+   "$(echo "$acts" | jq -c '.')"
+
+# ⚠️ Le contrôle central : la clôture SANS déclaration doit être refusée sur ce
+# chemin comme sur l'autre. C'est la garde qui était décorative.
+refused="$(dapi POST "/transporteur/commandes/$FB2/activite" \
+  "$(jq -n --argjson a "$terminal" '{activity:$a}')")"
+echo "$refused" | jq -e '.code' >/dev/null 2>&1 \
+  || fail "Clôture SANS déclaration d'encaissement acceptée — la garde ne couvre pas ce chemin" \
+     "$(echo "$refused" | jq -c '.')"
+pass "Clôture sans déclaration refusée ($(echo "$refused" | jq -r '.code'))"
+
+closed="$(dapi POST "/transporteur/commandes/$FB2/activite" \
+  "$(jq -n --argjson a "$terminal" --argjson c "$expected" '{activity:$a, cash:{collectedAmount:$c}}')")"
+echo "$closed" | jq -e '.code' >/dev/null 2>&1 \
+  && fail "Clôture par activité refusée" "$(echo "$closed" | jq -c '.')"
+
+# La dette repart de zéro (soldée au §5), donc elle doit valoir exactement
+# celle d'une course : c'est la preuve que l'encaissement a bien été écrit par
+# ce chemin-là, et non hérité du précédent.
+after2="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add // 0')"
+[ "$(printf '%.0f' "$after2")" = "$due" ] \
+  || fail "L'encaissement déclaré par /activite doit créer $due de dette, reçu $after2"
+pass "Encaissement enregistré par /activite : $after2 DZD — les deux chemins écrivent bien"
 
 echo
 echo "════════════════════════════════════════════════════════════"
