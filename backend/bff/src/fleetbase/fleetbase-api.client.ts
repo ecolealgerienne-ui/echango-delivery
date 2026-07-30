@@ -469,19 +469,6 @@ export class FleetbaseApiClient {
     type?: string;
     payload: { pickup_uuid: string; dropoff_uuid: string };
     meta?: Record<string, any>;
-    /**
-     * Forcé à `'created'` pour un brouillon (30/07/2026).
-     *
-     * ⚠️ **Découverte par test réel, pas par lecture de code** : une commande
-     * créée sans `adhoc` ni `driver_assigned_uuid` passait quand même en
-     * `Dispatched` dans la console, alors que rien dans le payload n'aurait dû
-     * déclencher cette transition. La cause exacte côté Fleetbase reste
-     * inconnue (aucune instance ni source joignable depuis ce bac à sable) —
-     * ceci est la première chose essayée, à confirmer par un nouveau test.
-     * Absent en temps normal : c'est Fleetbase qui décide du statut initial
-     * d'une commande publiée dès la création.
-     */
-    status?: string;
     /** Livraison programmée (ISO 8601). Colonne native `scheduled_at`. */
     scheduled_at?: string;
     /** Assignation directe — utilisée pour un transporteur favori disponible. */
@@ -490,6 +477,21 @@ export class FleetbaseApiClient {
     adhoc?: boolean;
     /** Rayon de diffusion en mètres. Colonne native `adhoc_distance`. */
     adhoc_distance?: number;
+    /**
+     * Explicite pour un brouillon (30/07/2026), à `false`.
+     *
+     * ⚠️ **Corrige une hypothèse fausse** : un précédent essai forçait
+     * `status: 'created'`, sans effet — la commande passait quand même en
+     * `Dispatched` à la création (constaté par test réel, journal d'activité
+     * montrant les deux évènements à la même minute). Capture réseau de la
+     * console (30/07/2026) : un formulaire de création y envoie `status: null`
+     * (jamais de chaîne explicite) mais **`dispatched: false` et `adhoc:
+     * false` explicites** — deux champs que notre appel omettait purement et
+     * simplement pour un brouillon. L'hypothèse retenue : Fleetbase traite
+     * l'absence de ces deux champs comme un défaut permissif (dispatch
+     * immédiat), et seule une valeur `false` explicite l'empêche.
+     */
+    dispatched?: boolean;
     /** Preuve exigée à la livraison. Colonnes natives. */
     pod_required?: boolean;
     pod_method?: string;

@@ -245,13 +245,17 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
     ...pick(order, ORDER_FIELDS),
     // Brouillon (30/07/2026) : dérivé, jamais stocké — Fleetbase n'a pas de
     // statut « draft », donc l'absence de dispatch (ni adhoc, ni transporteur
-    // assigné) EST le brouillon. `driver_assigned_uuid` est lu directement sur
-    // `order` : il n'est pas dans `ORDER_FIELDS` (le commerçant ne voit que
-    // `driver_assigned`, jamais l'identifiant Fleetbase brut), mais rien
-    // n'empêche de le LIRE ici pour une décision purement interne à la
-    // projection.
+    // assigné, ni passage par `dispatched`) EST le brouillon. `dispatched` est
+    // le signal le plus direct : capture réseau de la console (30/07/2026), une
+    // commande qui reste « Created » y porte `dispatched: false` explicite, et
+    // l'activité « Order Dispatched » n'apparaît que sur celles qui ne le sont
+    // plus. `driver_assigned_uuid` est lu directement sur `order` : il n'est
+    // pas dans `ORDER_FIELDS` (le commerçant ne voit que `driver_assigned`,
+    // jamais l'identifiant Fleetbase brut), mais rien n'empêche de le LIRE ici
+    // pour une décision purement interne à la projection.
     is_draft:
       order.adhoc !== true &&
+      order.dispatched !== true &&
       !order.driver_assigned_uuid &&
       !['completed', 'canceled', 'cancelled'].includes(order.status),
     meta: projectMeta(order.meta),

@@ -1095,18 +1095,19 @@ export class CommerçantService {
         },
         meta: this.buildOrderMeta(dto),
         scheduled_at: dto.scheduledAt,
-        // Un brouillon n'envoie NI `adhoc` NI `driver_assigned_uuid`.
+        // Un brouillon envoie `adhoc: false` ET `dispatched: false`
+        // EXPLICITEMENT, pas seulement leur absence.
         //
-        // ⚠️ **Insuffisant à lui seul, découvert par test réel (30/07/2026)** :
-        // une commande créée sans ces deux champs passait quand même en
-        // `Dispatched` dans la console Fleetbase — visible aux transporteurs,
-        // exactement ce qu'un brouillon doit empêcher. `status: 'created'`
-        // explicite est la première piste essayée pour forcer la main ; la
-        // cause réelle côté Fleetbase (quel champ ou quelle logique déclenche
-        // ce passage) reste à établir, aucune instance n'étant joignable
-        // depuis ce bac à sable. **À revalider par un nouveau test réel.**
+        // ⚠️ **Corrige une hypothèse fausse** (30/07/2026) : omettre `adhoc` et
+        // `driver_assigned_uuid` ne suffisait pas — la commande passait quand
+        // même en `Dispatched` dès la création, et `status: 'created'` forcé
+        // n'a rien changé non plus. Capture réseau de la console : son
+        // formulaire de création envoie `status: null` (jamais une chaîne) et
+        // surtout `dispatched: false`/`adhoc: false` explicites, deux champs
+        // que ce chemin omettait purement et simplement. Fleetbase semble
+        // traiter leur absence comme un défaut permissif.
         ...(dto.draft
-          ? { status: 'created' }
+          ? { adhoc: false, dispatched: false }
           : favourite
             ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
             : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
@@ -1222,7 +1223,7 @@ export class CommerçantService {
       badRequest('order.already_terminal', `Commande déjà ${live.status}, publication impossible`);
     }
 
-    if (live.adhoc === true || live.driver_assigned_uuid) {
+    if (live.adhoc === true || live.dispatched === true || live.driver_assigned_uuid) {
       badRequest('order.already_published', 'Cette commande a déjà été publiée');
     }
 
