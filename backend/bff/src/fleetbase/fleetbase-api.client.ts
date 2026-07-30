@@ -688,44 +688,46 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * Dispatche une commande — la rend visible aux transporteurs et pose son
-   * statut `dispatched`.
+   * Dispatche une commande — la diffuse aux transporteurs ET fait avancer son
+   * statut.
    *
-   * ── Il existe un endpoint dédié, et rien d'autre ne le remplace ───────────
+   * ── Il existe DEUX endpoints de dispatch, et un seul fait le travail ──────
    *
-   * Trouvé dans le source `fleetops` (`server/src/routes.php` →
-   * `OrderController@dispatchOrder`), après **trois** tentatives infructueuses
-   * qui supposaient toutes qu'un autre mécanisme suffirait : omettre
-   * `adhoc`/`driver_assigned_uuid` à la création, puis forcer
-   * `status: 'created'`, puis passer par `next-activity`/`update-activity`.
-   * Aucune ne dispatchait, parce que le dispatch n'est ni un statut ni une
-   * activité — c'est une opération à part :
+   * C'est ce qui a coûté quatre tentatives. Lus dans le source `fleetops` :
    *
-   *   public function dispatchOrder(string $id) {
-   *       if (!$order->hasDriverAssigned && !$order->adhoc) {
-   *           return response()->apiError('No driver assigned to dispatch!');
-   *       }
-   *       if ($order->dispatched) {
-   *           return response()->apiError('Order has already been dispatched!');
-   *       }
-   *       $order->dispatch();
-   *       $order->insertDispatchActivity();
-   *   }
+   * `v1` — `dispatchOrder(string $id)`, identifiant dans le chemin :
    *
-   * `insertDispatchActivity()` explique au passage pourquoi rejouer
-   * `update-activity` semblait plausible : l'activité « Order Dispatched » est
-   * une **conséquence** du dispatch, écrite par lui, pas sa cause.
+   *   if ($order->dispatched) { return apiError('Order has already been dispatched!'); }
+   *   $order->dispatch();              // drapeau `dispatched` + `dispatched_at`
+   *   $order->insertDispatchActivity(); // l'activité, qui écrit `status`
    *
-   * ⚠️ **L'ordre des appels n'est pas négociable** : la garde exige un
+   * Deux opérations séparées, précédées d'une garde sur le drapeau. Si quoi que
+   * ce soit a déjà posé `dispatched` — et poser `adhoc: true` par un `PUT` le
+   * fait —, cette route **refuse et n'écrit jamais l'activité** : la commande
+   * reste `status = created` définitivement. Symptôme observé en réel : une
+   * commande portant à la fois « Created » et « Dispatched at 13:25 », avec
+   * pour seule activité « Order Created ».
+   *
+   * `int/v1` — `dispatchOrder(Request $request)`, identifiant dans le CORPS :
+   *
+   *   $order = Order::findById($request->input('order'), [...]);
+   *   $order->dispatchWithActivity();
+   *
+   * Une seule méthode, `dispatchWithActivity()`, qui fait les deux d'un bloc.
+   * **C'est la route de la console** (`PATCH /int/v1/orders/dispatch`), donc
+   * celle dont le comportement est éprouvé au quotidien par l'éditeur.
+   *
+   * D'où ce choix. `PATCH` et non `POST` : le verbe est imposé par
+   * `$router->patch('dispatch', $controller('dispatchOrder'))`.
+   *
+   * ⚠️ **L'ordre des appels reste non négociable** : le dispatch exige un
    * transporteur assigné OU `adhoc` déjà posé. Assigner (ou diffuser) d'abord,
-   * dispatcher ensuite — l'inverse échoue avec « No driver assigned to
-   * dispatch! ».
+   * dispatcher ensuite.
    */
-  async dispatchOrder(orderPublicId: string) {
-    const response = await this.callFleetOpsPublic(
-      'POST',
-      `/orders/${this.seg(orderPublicId)}/dispatch`,
-    );
+  async dispatchOrder(orderUuid: string) {
+    const response = await this.callFleetOps('PATCH', '/orders/dispatch', {
+      order: orderUuid,
+    });
     return response.data;
   }
 
@@ -982,48 +984,6 @@ export class FleetbaseApiClient {
     const body = assignDriverPublicId ? { assign: assignDriverPublicId } : {};
     const response = await this.callFleetOpsPublic('POST', `/orders/${this.seg(orderPublicId)}/start`, body);
     return response.data;
-  }
-
-  /**
-   * Pose l'activité « Order Dispatched », qui fait avancer le **statut**.
-   *
-   * ── Pourquoi ça existe à côté de `dispatchOrder()` ────────────────────────
-   *
-   * `OrderController@dispatchOrder` fait **deux** choses distinctes :
-   * `$order->dispatch()` (le drapeau `dispatched` + `dispatched_at`) puis
-   * `$order->insertDispatchActivity()` (l'activité, qui écrit `status`).
-   *
-   * Or poser `adhoc: true` par un `PUT` déclenche la première **sans** la
-   * seconde : constaté en réel (30/07/2026) sur une commande affichant à la
-   * fois « Created » et « Dispatched at 13:25 », avec pour seule activité
-   * « Order Created ». `POST /dispatch` refuse alors de rattraper le tir —
-   * « Order has already been dispatched! » — puisqu'il teste le drapeau
-   * d'abord. Cette méthode pose l'activité qui manque, exactement comme le
-   * fait la console (« Update activity » → « Order Dispatched »).
-   *
-   * L'activité n'est jamais fabriquée de notre côté : elle est demandée à
-   * `next-activity`, qui la renvoie telle que Fleetbase l'attend.
-   */
-  async insertDispatchActivity(orderPublicId: string) {
-    const next = await this.getNextActivities(orderPublicId);
-    const activities: any[] = Array.isArray(next)
-      ? next
-      : Array.isArray(next?.activities)
-        ? next.activities
-        : [];
-
-    const dispatched = activities.find(
-      (a: any) => a?.code === 'dispatched' || a?.key === 'dispatched',
-    );
-
-    if (!dispatched) {
-      throw new Error(
-        `Aucune activité « dispatched » proposée par Fleetbase pour ${orderPublicId} ` +
-          `(reçu : ${activities.map((a: any) => a?.code ?? a?.key).join(', ') || 'rien'})`,
-      );
-    }
-
-    return this.updateOrderActivity(orderPublicId, dispatched);
   }
 
   /**

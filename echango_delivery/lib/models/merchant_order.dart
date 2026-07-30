@@ -116,12 +116,16 @@ class MerchantOrder extends Equatable {
 
   /// Brouillon : enregistrée, pas encore publiée.
   ///
-  /// **Déduit du seul statut Fleetbase**, jamais d'un drapeau que le BFF
-  /// aurait calculé et renvoyé à côté. Toute commande naît `created` chez
-  /// Fleetbase et n'en sort que par un dispatch réel — un second état
-  /// mémorisé quelque part finirait par diverger du premier, ce qui est
-  /// arrivé (commande `created` chez Fleetbase mais « déjà publiée » côté
-  /// app, donc plus republiable).
+  /// **Le statut Fleetbase fait foi, et lui seul** (règle projet). Le drapeau
+  /// `dispatched` existe aussi côté Fleetbase et dit « c'est parti », mais s'en
+  /// servir ici ferait diverger l'app du garde-fou serveur, qui décide sur le
+  /// statut : une commande jugée publiée d'un côté et republiable de l'autre.
+  /// Un seul champ arbitre, des deux côtés.
+  ///
+  /// Conséquence assumée : une commande dont le dispatch a échoué à mi-chemin
+  /// reste `created`, donc reste un brouillon republiable. C'est le
+  /// comportement voulu — le réessai répare, là où un second état mémorisé
+  /// bloquait définitivement.
   bool get isDraft => status == 'created';
 
   /// Publiée, en attente qu'un transporteur la prenne.
@@ -129,12 +133,12 @@ class MerchantOrder extends Equatable {
 
   bool get canCancel => !isFinished;
 
-  /// Libellé métier du statut, **seule** traduction de la langue Fleetbase
-  /// vers celle du commerçant.
+  /// Libellé métier, **seule** traduction du vocabulaire Fleetbase vers celui
+  /// du commerçant.
   ///
-  /// Les écrans lisent ce getter plutôt que de refaire leur propre table :
-  /// la fiche affichait `created` brut là où la liste affichait « En
-  /// attente », pour la même commande.
+  /// Les écrans lisent ce getter plutôt que de refaire leur propre table : la
+  /// fiche affichait `created` brut là où la liste affichait « En attente »,
+  /// pour la même commande.
   String get statusLabel => switch (status) {
         'created' => 'Brouillon',
         'dispatched' => 'Recherche transporteur',

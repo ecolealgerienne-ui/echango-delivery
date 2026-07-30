@@ -1243,16 +1243,6 @@ export class CommerçantService {
       );
     }
 
-    // ⚠️ Résolu AVANT le `try`, délibérément. Un `badRequest()` levé à
-    // l'intérieur serait rattrapé par le `catch` ci-dessous et réemballé en
-    // « publication impossible » — le message précis serait perdu, et le code
-    // d'erreur avec lui. Même piège que le `rollbackVendor()` du Lot 4 et que
-    // le réemballage corrigé dans `createOrder`.
-    const publicId = live.public_id;
-    if (!publicId) {
-      badRequest('order.missing_public_id', 'Commande mal formée côté serveur');
-    }
-
     const meta = live.meta ?? {};
     const preferFavourites = meta.prefer_favourites !== false;
     const favourite = preferFavourites
@@ -1277,38 +1267,14 @@ export class CommerçantService {
         );
       }
 
-      // Étape 2 — faire avancer le statut.
+      // Étape 2 — dispatcher, par la route de la console.
       //
-      // `POST /dispatch` fait normalement le travail complet : le drapeau
-      // `dispatched` PUIS l'activité qui écrit `status`
-      // (`OrderController@dispatchOrder`).
-      //
-      // ⚠️ Mais l'étape 1 a pu poser le drapeau toute seule : un `PUT` avec
-      // `adhoc: true` déclenche `dispatch()` sans insérer l'activité — d'où
-      // une commande à la fois « Created » et « Dispatched at … », constatée
-      // en réel. `POST /dispatch` refuse alors (« Order has already been
-      // dispatched! ») en testant le drapeau avant tout, et le statut
-      // resterait `created` pour toujours.
-      //
-      // On rattrape ce cas précis, et lui seul : poser l'activité qui manque.
-      // Les autres refus (pas de transporteur assigné, par exemple) doivent
-      // continuer de remonter.
-      try {
-        await this.fleetbaseClient.dispatchOrder(publicId);
-      } catch (error: any) {
-        const upstream: string =
-          error.response?.data?.error ||
-          error.response?.data?.errors?.[0] ||
-          error.response?.data?.message ||
-          '';
-
-        if (!/already been dispatched/i.test(upstream)) throw error;
-
-        this.logger.log(
-          `${orderId} déjà marquée dispatchée par l'étape 1 — pose de l'activité manquante`,
-        );
-        await this.fleetbaseClient.insertDispatchActivity(publicId);
-      }
+      // `dispatchWithActivity()` pose le drapeau ET l'activité qui écrit le
+      // statut, d'un seul bloc. C'est ce que fait la console, et c'est ce qui
+      // distingue cette route de sa jumelle `v1`, qui sépare les deux et
+      // refuse dès que le drapeau est posé — laissant alors le statut bloqué
+      // à `created` pour toujours. Détail complet dans `dispatchOrder()`.
+      await this.fleetbaseClient.dispatchOrder(cached.fleetbaseOrderId);
     } catch (error: any) {
       if (error instanceof HttpException) throw error;
 
