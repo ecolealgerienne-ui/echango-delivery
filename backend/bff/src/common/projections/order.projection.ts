@@ -100,6 +100,10 @@ export function projectPlace(place: any, detail: PlaceDetail, anonymousName?: st
       ...(place.contact_name === undefined && typeof fromMeta === 'string'
         ? { contact_name: fromMeta }
         : {}),
+      // Adresse principale du carnet (§ « adresse magasin », 30/07/2026) :
+      // même mécanisme que `contact_name`, un booléen déposé dans `meta` sans
+      // équivalent natif sur `Place`.
+      is_default: place?.meta?.is_default === true,
     };
   }
 
@@ -239,6 +243,17 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
 
   return {
     ...pick(order, ORDER_FIELDS),
+    // Brouillon (30/07/2026) : dérivé, jamais stocké — Fleetbase n'a pas de
+    // statut « draft », donc l'absence de dispatch (ni adhoc, ni transporteur
+    // assigné) EST le brouillon. `driver_assigned_uuid` est lu directement sur
+    // `order` : il n'est pas dans `ORDER_FIELDS` (le commerçant ne voit que
+    // `driver_assigned`, jamais l'identifiant Fleetbase brut), mais rien
+    // n'empêche de le LIRE ici pour une décision purement interne à la
+    // projection.
+    is_draft:
+      order.adhoc !== true &&
+      !order.driver_assigned_uuid &&
+      !['completed', 'canceled', 'cancelled'].includes(order.status),
     meta: projectMeta(order.meta),
     payload: payload
       ? {

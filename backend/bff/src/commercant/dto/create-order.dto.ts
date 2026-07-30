@@ -177,6 +177,19 @@ export class CreateOrderDto {
   @IsOptional()
   @IsBoolean()
   codIncludesDelivery?: boolean;
+
+  /**
+   * Enregistre la commande sans la diffuser (décision produit, 30/07/2026).
+   *
+   * Chez Fleetbase, un brouillon n'est rien de plus qu'une commande créée
+   * sans `adhoc` ni `driver_assigned_uuid` : personne n'est sollicité tant
+   * qu'elle n'est pas publiée (`POST /commandes/:id/publier`). Aucun statut
+   * dédié n'existe côté Fleetbase pour ça — l'absence des deux champs de
+   * dispatch EST le brouillon, rien n'est stocké de plus.
+   */
+  @IsOptional()
+  @IsBoolean()
+  draft?: boolean;
 }
 
 export class OrderItemDto {

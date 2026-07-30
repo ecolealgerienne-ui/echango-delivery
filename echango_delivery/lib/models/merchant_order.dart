@@ -23,6 +23,11 @@ class MerchantOrder extends Equatable {
   final String status;
   final String? trackingNumber;
   final bool dispatched;
+
+  /// Brouillon : créée sans dispatch, en attente d'être publiée. Dérivé côté
+  /// BFF (`is_draft`), jamais stocké — voir `commercant.service.ts`
+  /// `publishOrder`.
+  final bool isDraft;
   /// L'état Fleetbase n'a pas pu être récupéré : afficher « indisponible »
   /// plutôt qu'un statut faux.
   final bool degraded;
@@ -91,6 +96,7 @@ class MerchantOrder extends Equatable {
     required this.createdAt,
     this.trackingNumber,
     this.dispatched = false,
+    this.isDraft = false,
     this.degraded = false,
     this.pickup,
     this.dropoff,
@@ -141,6 +147,7 @@ class MerchantOrder extends Equatable {
       status: readStatus(json),
       trackingNumber: readTrackingNumber(json),
       dispatched: json['dispatched'] == true,
+      isDraft: json['is_draft'] == true,
       degraded: json['stale'] == true || json['missing'] == true,
       createdAt: readDate(json, 'created_at'),
       pickup: place('pickup'),
@@ -173,7 +180,7 @@ class MerchantOrder extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, publicId, status, dispatched, createdAt];
+  List<Object?> get props => [id, publicId, status, dispatched, isDraft, createdAt];
 }
 
 /// Résumé lisible du contenu du colis, à partir de `meta.items`.
@@ -201,6 +208,10 @@ class SavedAddress extends Equatable {
   final String? contactName;
   final String? contactPhone;
 
+  /// Adresse principale du commerçant — préremplit le retrait à la création
+  /// d'une nouvelle livraison. Une seule à la fois, imposé côté serveur.
+  final bool isDefault;
+
   const SavedAddress({
     required this.id,
     required this.name,
@@ -209,6 +220,7 @@ class SavedAddress extends Equatable {
     required this.longitude,
     this.contactName,
     this.contactPhone,
+    this.isDefault = false,
   });
 
   factory SavedAddress.fromJson(Map<String, dynamic> json) {
@@ -225,11 +237,17 @@ class SavedAddress extends Equatable {
       longitude: coords?.longitude ?? 0,
       contactName: json['contact_name'] as String?,
       contactPhone: json['phone'] as String? ?? json['contact_phone'] as String?,
+      isDefault: json['is_default'] == true,
     );
   }
 
+  /// `false` sur `(0, 0)` : depuis que la position est facultative à
+  /// l'enregistrement (décision produit, 30/07/2026), c'est l'absence, pas un
+  /// point valide au large du golfe de Guinée.
+  bool get hasPosition => latitude != 0 || longitude != 0;
+
   @override
-  List<Object?> get props => [id, name, address, latitude, longitude];
+  List<Object?> get props => [id, name, address, latitude, longitude, isDefault];
 }
 
 /// Résultat de géocodage renvoyé par le BFF.

@@ -67,6 +67,26 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  /// Publie un brouillon : déclenche le dispatch (favori ou pool commun).
+  ///
+  /// Le geste qui manque depuis la création — sans lui, un brouillon reste
+  /// invisible de tout transporteur indéfiniment, ce qui est précisément le
+  /// but tant qu'il n'a pas été relu.
+  Future<void> _publish(MerchantOrderState orderState) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final success = await orderState.publishOrder(widget.orderId);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(success
+            ? 'Livraison publiée : Echango recherche un transporteur.'
+            : orderState.errorMessage ?? 'Publication impossible'),
+        backgroundColor: success ? null : Colors.red,
+      ),
+    );
+  }
+
   /// Rouvre le formulaire de création, pré-rempli à partir de cette livraison.
   ///
   /// Le formulaire est ouvert, pas la commande créée : l'enlèvement programmé
@@ -160,7 +180,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     const SizedBox(height: 12),
                     // Le commerçant a surtout besoin de savoir « où ça en
                     // est » : l'exprimer en clair plutôt qu'en code de statut.
-                    if (order.isWaitingDispatch)
+                    //
+                    // Un brouillon n'est PAS « en attente d'attribution » —
+                    // personne ne cherche encore de transporteur, et dire le
+                    // contraire ferait croire à une recherche en cours là où
+                    // rien n'a démarré.
+                    if (order.isDraft)
+                      _banner(
+                        Colors.blueGrey.shade50,
+                        Icons.edit_note,
+                        'Brouillon : aucun transporteur n\'est sollicité tant '
+                        'que vous ne publiez pas cette livraison.',
+                      )
+                    else if (order.isWaitingDispatch)
                       _banner(
                         Colors.orange.shade50,
                         Icons.hourglass_empty,
@@ -200,6 +232,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       _favouriteCard(order),
                     ],
                     const SizedBox(height: 24),
+                    // Publier passe avant tout le reste sur un brouillon :
+                    // c'est l'unique geste qui manque pour que la livraison
+                    // existe réellement aux yeux d'un transporteur.
+                    if (order.isDraft) ...[
+                      ElevatedButton.icon(
+                        onPressed:
+                            orderState.isLoading ? null : () => _publish(orderState),
+                        icon: const Icon(Icons.publish_outlined),
+                        label: const Text('Publier'),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     // Reprendre passe avant annuler : c'est l'action courante
                     // (une boulangerie livre le même client chaque semaine),
                     // l'autre est exceptionnelle. Les ranger dans cet ordre
@@ -508,15 +552,22 @@ class _DriverMap extends StatefulWidget {
 
 class _DriverMapState extends State<_DriverMap> {
   DriverPosition? _position;
-  bool _loading = true;
+  bool _loading = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
+  /// `false` tant que le commerçant n'a pas demandé la position.
+  ///
+  /// Charger la position — et donc dessiner la carte, qui télécharge des
+  /// tuiles OpenStreetMap — dès l'ouverture de la fiche sollicitait le
+  /// serveur et le réseau du commerçant pour un écran qu'il ne regarde pas
+  /// forcément. La demande explicite (décision produit, 30/07/2026) rend ce
+  /// coût proportionné à l'usage réel.
+  bool _requested = false;
 
   Future<void> _load() async {
+    setState(() {
+      _requested = true;
+      _loading = true;
+    });
     final state = context.read<MerchantOrderState>();
     final position = await state.loadDriverPosition(widget.orderId);
     if (!mounted) return;
@@ -528,6 +579,17 @@ class _DriverMapState extends State<_DriverMap> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_requested) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: OutlinedButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.map_outlined),
+          label: const Text('Voir la position du transporteur'),
+        ),
+      );
+    }
+
     if (_loading) {
       return const SizedBox(
         height: 60,

@@ -189,6 +189,15 @@ export class CommerçantController {
   }
 
   /**
+   * Publie un brouillon : déclenche le dispatch (favori ou pool commun) sur
+   * une commande créée sans lui (§ « brouillon », 30/07/2026).
+   */
+  @Post('commandes/:id/publier')
+  async publishOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
+    return this.commercantService.publishOrder(req.user.id, orderId);
+  }
+
+  /**
    * Dernière position connue du transporteur affecté à cette course.
    *
    * Un point avec sa fraîcheur, pas un itinéraire : l'heure d'arrivée estimée

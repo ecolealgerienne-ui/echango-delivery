@@ -91,6 +91,8 @@ export const ErrorCode = {
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
+  ORDER_ALREADY_PUBLISHED: 'order.already_published',
+  ORDER_PUBLISH_FAILED: 'order.publish_failed',
   ORDER_ACCEPT_FAILED: 'order.accept_failed',
   ORDER_START_FAILED: 'order.start_failed',
   ORDER_COMPLETE_FAILED: 'order.complete_failed',

@@ -642,6 +642,27 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Publie un brouillon vers un transporteur favori précis, sans passer par
+   * le pool.
+   *
+   * Même primitive que `releaseOrderToPool` (un `PUT /orders/{uuid}` avec
+   * `driver_assigned_uuid` dans le `$fillable` du modèle `Order`), dans
+   * l'autre sens : on assigne au lieu de détacher, et `adhoc` reste absent —
+   * c'est justement l'assignation directe qui distingue ce chemin du pool.
+   *
+   * ⚠️ **Non validé par un appel réel** : même réserve que
+   * `releaseOrderToPool`, aucune instance Fleetbase n'est joignable depuis ce
+   * bac à sable. À éprouver à la première publication d'un brouillon confié à
+   * un favori.
+   */
+  async assignOrderDirectly(orderUuid: string, driverUuid: string) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: { driver_assigned_uuid: driverUuid },
+    });
+    return response.data;
+  }
+
+  /**
    * Conducteurs de la compagnie, filtrés côté serveur.
    *
    * ⚠️ **`phone` est absent de `DriverFilters`, et ce n'est pas un oubli** :

@@ -292,13 +292,43 @@ class MerchantOrderState extends ChangeNotifier {
     }
   }
 
-  Future<bool> createOrder(Map<String, dynamic> body) async {
+  /// Crée une commande et renvoie son identifiant local, ou `null` en cas
+  /// d'échec.
+  ///
+  /// L'identifiant sert à ouvrir directement la fiche créée — un brouillon
+  /// tout juste enregistré, en particulier, où le commerçant a un « Publier »
+  /// à portée de main sans repasser par la liste.
+  Future<String?> createOrder(Map<String, dynamic> body) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
     try {
-      await _apiClient.createMerchantOrder(body);
+      final response = await _apiClient.createMerchantOrder(body);
       await loadOrders();
+      return response['id'] as String?;
+    } on AppException catch (e) {
+      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+      return null;
+    } catch (e) {
+      _errorMessage = _genericError;
+      return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Publie un brouillon : déclenche le dispatch (favori ou pool commun).
+  Future<bool> publishOrder(String id) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await _apiClient.publishMerchantOrder(id);
+      await loadOrders();
+      if (_selected?.id == id || _selected?.publicId == id) {
+        await selectOrder(id);
+      }
       return true;
     } on AppException catch (e) {
       _errorMessage = translateErrorCode(e.code, _localeState.locale);
@@ -345,14 +375,17 @@ class MerchantOrderState extends ChangeNotifier {
     }
   }
 
+  /// Seuls [name] et [contactPhone] sont obligatoires (décision produit,
+  /// 30/07/2026) : [address] et la position se complètent souvent après coup.
   Future<bool> saveAddress({
     required String label,
     required String name,
-    required String address,
-    required double latitude,
-    required double longitude,
+    String? address,
+    double? latitude,
+    double? longitude,
     String? contactName,
-    String? contactPhone,
+    required String contactPhone,
+    bool isDefault = false,
   }) async {
     _isLoading = true;
     _errorMessage = null;
@@ -366,6 +399,7 @@ class MerchantOrderState extends ChangeNotifier {
         longitude: longitude,
         contactName: contactName,
         contactPhone: contactPhone,
+        isDefault: isDefault,
       );
       await loadAddresses();
       return true;
@@ -384,16 +418,18 @@ class MerchantOrderState extends ChangeNotifier {
   /// Modifie une adresse existante.
   ///
   /// Une adresse enregistrée pré-remplit chaque livraison qui la choisit : une
-  /// erreur ne gêne pas une fois, elle se répète.
+  /// erreur ne gêne pas une fois, elle se répète. Seuls [name] et
+  /// [contactPhone] sont obligatoires, comme pour [saveAddress].
   Future<bool> updateAddress(
     String id, {
     required String label,
     required String name,
-    required String address,
-    required double latitude,
-    required double longitude,
+    String? address,
+    double? latitude,
+    double? longitude,
     String? contactName,
-    String? contactPhone,
+    required String contactPhone,
+    bool isDefault = false,
   }) =>
       _addressWrite(
         () => _apiClient.updateMerchantAddress(
@@ -405,6 +441,7 @@ class MerchantOrderState extends ChangeNotifier {
           longitude: longitude,
           contactName: contactName,
           contactPhone: contactPhone,
+          isDefault: isDefault,
         ),
       );
 

@@ -105,11 +105,29 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   void initState() {
     super.initState();
     _applyTemplate();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final state = context.read<MerchantOrderState>();
-      state.loadAddresses();
+      await state.loadAddresses();
       state.loadFavourites();
+      if (!mounted) return;
+
+      // Préremplit le retrait avec l'adresse principale (décision produit,
+      // 30/07/2026) — seulement à la création d'une nouvelle livraison :
+      // dupliquer une commande passée a déjà son propre point de retrait, et
+      // l'écraser romprait avec le principe même de « refaire cette
+      // livraison ».
+      if (widget.template == null && _pickupPoint == null) {
+        SavedAddress? defaultAddress;
+        for (final a in state.addresses) {
+          if (a.isDefault) {
+            defaultAddress = a;
+            break;
+          }
+        }
+        if (defaultAddress != null) _applyAddress(defaultAddress, toPickup: true);
+      }
+
       // Le devis est demandé d'emblée sur une commande reprise : les deux
       // points sont déjà connus, et attendre une modification pour l'afficher
       // laisserait le champ prix vide alors que tout est là.
@@ -179,6 +197,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final pod = t['podMethod'];
     if (pod is String) _podMethod = pod;
 
+    final preferFav = t['preferFavourites'];
+    if (preferFav is bool) _preferFavourites = preferFav;
+
     final pickupLat = coord('pickupLatitude');
     final pickupLon = coord('pickupLongitude');
     if (pickupLat != null && pickupLon != null) {
@@ -204,6 +225,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     super.dispose();
   }
 
+  /// Applique une adresse du carnet au formulaire.
+  ///
+  /// ⚠️ La position n'est plus garantie : une adresse peut être enregistrée
+  /// sans elle (décision produit, 30/07/2026). Reconduire `(0, 0)` comme un
+  /// point valide referait exactement l'erreur déjà corrigée pour la carte —
+  /// une commande dispatchée depuis le golfe de Guinée. Le point reste donc
+  /// `null`, et le bandeau de statut en dessous du bouton carte le signale.
   void _applyAddress(SavedAddress a, {required bool toPickup}) {
     setState(() {
       if (toPickup) {
@@ -211,15 +239,26 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _pickupAddress.text = a.address;
         _pickupContact.text = a.contactName ?? '';
         _pickupPhone.text = a.contactPhone ?? '';
-        _pickupPoint = LatLng(a.latitude, a.longitude);
+        _pickupPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
       } else {
         _dropoffName.text = a.name;
         _dropoffAddress.text = a.address;
         _dropoffContact.text = a.contactName ?? '';
         _dropoffPhone.text = a.contactPhone ?? '';
-        _dropoffPoint = LatLng(a.latitude, a.longitude);
+        _dropoffPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
       }
     });
+
+    if (!a.hasPosition && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '« ${a.name} » n\'a pas de position enregistrée : placez-la sur '
+            'la carte pour continuer.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _submit(MerchantOrderState orderState) async {
@@ -241,7 +280,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final router = GoRouter.of(context);
     final messenger = ScaffoldMessenger.of(context);
 
-    final success = await orderState.createOrder({
+    final orderId = await orderState.createOrder({
+      // Toute commande créée depuis ce formulaire naît en brouillon (décision
+      // produit, 30/07/2026) : personne n'est sollicité tant que le
+      // commerçant n'a pas relu la fiche et cliqué « Publier ». Le dispatch
+      // (favori ou pool) est décidé au moment de la publication, pas ici.
+      'draft': true,
       'pickupLocationName': _pickupName.text.trim(),
       'pickupLatitude': _pickupPoint!.latitude,
       'pickupLongitude': _pickupPoint!.longitude,
@@ -290,11 +334,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     });
 
     if (!mounted) return;
-    if (success) {
+    if (orderId != null) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Demande de livraison envoyée')),
+        const SnackBar(
+          content: Text(
+            'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
+            'transporteur.',
+          ),
+        ),
       );
-      router.pop();
+      // Vers la fiche, pas la liste : le « Publier » y est à portée de main,
+      // et c'est le geste qui manque encore pour que la livraison parte
+      // réellement.
+      router.pushReplacement('/commercant/commandes/$orderId');
     } else {
       messenger.showSnackBar(
         SnackBar(
@@ -372,9 +424,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_instructions, 'Instructions pour le transporteur',
                     Icons.notes_outlined, maxLines: 3),
                 const SizedBox(height: 16),
-                // Dire ce qui se passe ensuite : sans ça, une commande qui
-                // n'apparaît pas immédiatement côté transporteur passe pour
-                // un dysfonctionnement.
+                // Dire ce qui se passe ensuite : sans ça, un brouillon qui
+                // n'atteint personne tant qu'il n'est pas publié passe pour un
+                // dysfonctionnement.
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -382,9 +434,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Text(
-                    'Votre demande est transmise à Echango, qui recherche un '
-                    'transporteur disponible. Vous suivrez son avancement '
-                    'depuis la liste des livraisons.',
+                    'Cette livraison est enregistrée en brouillon : aucun '
+                    'transporteur n\'est sollicité tant que vous ne l\'avez pas '
+                    'publiée depuis sa fiche.',
                     style: TextStyle(fontSize: 12),
                   ),
                 ),
@@ -397,8 +449,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           width: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.send),
-                  label: const Text('Demander un transporteur'),
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Enregistrer en brouillon'),
                 ),
                 const SizedBox(height: 32),
               ],

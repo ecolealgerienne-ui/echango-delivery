@@ -235,6 +235,10 @@ export class CommerçantService {
     if (dto.items?.length) meta.items = dto.items;
     if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
     if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
+    // Reproduit à l'identique par « refaire cette livraison » — sans lui, la
+    // duplication retombait systématiquement sur la valeur par défaut du
+    // formulaire (`true`), jamais sur le choix réel de la commande d'origine.
+    meta.prefer_favourites = dto.preferFavourites === true;
 
     // Montant à encaisser. Porté dans `meta` et non confondu avec `price` :
     // c'est ce que le destinataire doit au commerçant, tandis que `price` est
@@ -1002,7 +1006,18 @@ export class CommerçantService {
       deliveryInstructions: meta.instructions ?? null,
       items: Array.isArray(meta.items) ? meta.items : null,
       vehicleType: meta.vehicle_type ?? null,
-      podMethod: live.pod_method ?? null,
+      // `?? 'aucune'`, pas `?? null` : l'app envoie toujours l'un des deux
+      // valeurs à la création (jamais de troisième état), et `pod_method`
+      // n'est écrit chez Fleetbase QUE quand une preuve est exigée — son
+      // absence est donc le signal fiable que « aucune » avait été choisi, pas
+      // une valeur inconnue. Sans ce repli, la duplication d'une commande sans
+      // preuve exigée faisait réapparaître « Photo à la livraison », le
+      // défaut du formulaire de création, jamais le choix d'origine.
+      podMethod: live.pod_method ?? 'aucune',
+      // Reproduit tel quel : sans lui, une commande dupliquée sollicitait
+      // toujours les favoris en premier, même quand la commande d'origine
+      // avait délibérément visé le pool commun.
+      preferFavourites: meta.prefer_favourites !== false,
       // Le prix est repris tel quel : c'est une proposition du commerçant, et
       // reproposer ce qui avait trouvé preneur est le comportement utile. S'il
       // avait été refusé pour insuffisance, l'écran de création reste
@@ -1060,7 +1075,12 @@ export class CommerçantService {
       //
       // Le plafond de dette reste, lui : il ne présume rien de la personne, il
       // borne l'exposition. C'est le garde-fou qui fait le travail.
-      const favourite = dto.preferFavourites
+      //
+      // ⚠️ Un brouillon (`dto.draft`) ne sollicite aucun favori à la création :
+      // la décision de dispatch est tout entière différée à la publication
+      // (`publishOrder`), au moment où elle a une chance de refléter une
+      // disponibilité à jour plutôt que celle de l'instant de la saisie.
+      const favourite = dto.preferFavourites && !dto.draft
         ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, dto.codAmount)
         : null;
 
@@ -1075,9 +1095,16 @@ export class CommerçantService {
         },
         meta: this.buildOrderMeta(dto),
         scheduled_at: dto.scheduledAt,
-        ...(favourite
-          ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
-          : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
+        // Un brouillon n'envoie NI `adhoc` NI `driver_assigned_uuid` : c'est
+        // cette absence, et rien de plus, qui le distingue d'une commande
+        // publiée — Fleetbase ne connaît aucun statut « brouillon » natif
+        // (vérifié dans ce projet, aucune occurrence dans le vocabulaire de
+        // statuts observé). `publishOrder` referme cette absence après coup.
+        ...(dto.draft
+          ? {}
+          : favourite
+            ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
+            : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
         pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
         pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
       });
@@ -1141,6 +1168,98 @@ export class CommerçantService {
           : 'Failed to create order',
       );
     }
+  }
+
+  /**
+   * Publie un brouillon : déclenche le dispatch qu'une création en mode
+   * `draft` a délibérément omis.
+   *
+   * ── Ce qui fait qu'une commande EST un brouillon ─────────────────────────
+   *
+   * Aucun champ dédié, aucun statut Fleetbase « draft » — l'absence de
+   * `adhoc` et de `driver_assigned_uuid` est le seul signal, exactement celui
+   * que `createOrder` a laissé vide. Le vérifier ici, à nouveau, est ce qui
+   * empêche de publier deux fois une commande déjà partie (au pool ou chez un
+   * favori) : la republier écraserait une assignation en cours avec une
+   * nouvelle décision de dispatch, potentiellement différente.
+   *
+   * ── Comment la décision de dispatch est reprise ─────────────────────────
+   *
+   * `meta.prefer_favourites` porte le choix fait à la création (Task #38) :
+   * c'est lui qui décide, pas un nouveau réglage demandé au commerçant au
+   * moment de publier — publier doit rester un geste, pas un second
+   * formulaire. `vehicle_type` et `cod_amount` viennent du même `meta`, pour
+   * que `pickAvailableFavourite` applique exactement les mêmes filtres qu'à
+   * la création (catégorie de véhicule, plafond de dette).
+   *
+   * ⚠️ **Chemin non éprouvé par un appel réel** : `assignOrderDirectly` et
+   * `releaseOrderToPool` reposent sur la même analogie de payload que le
+   * reste de ce fichier, jamais rejouée contre une vraie instance Fleetbase
+   * depuis ce bac à sable.
+   */
+  async publishOrder(merchantId: string, orderId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const cached = await this.resolveOwnedOrder(merchantId, orderId);
+
+    let live: any;
+    try {
+      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, cached);
+    } catch (error: any) {
+      this.logger.warn(`Publication impossible (${orderId}) : ${error.message}`);
+      badRequest('order.publish_failed', 'Impossible de publier cette commande pour le moment');
+    }
+
+    if (!live) {
+      notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
+    }
+
+    if (['completed', 'canceled', 'cancelled'].includes(live.status)) {
+      badRequest('order.already_terminal', `Commande déjà ${live.status}, publication impossible`);
+    }
+
+    if (live.adhoc === true || live.driver_assigned_uuid) {
+      badRequest('order.already_published', 'Cette commande a déjà été publiée');
+    }
+
+    const meta = live.meta ?? {};
+    const preferFavourites = meta.prefer_favourites !== false;
+    const favourite = preferFavourites
+      ? await this.pickAvailableFavourite(merchantId, meta.vehicle_type, meta.cod_amount)
+      : null;
+
+    try {
+      if (favourite) {
+        await this.fleetbaseClient.assignOrderDirectly(
+          cached.fleetbaseOrderId,
+          favourite.fleetbaseDriverUuid,
+        );
+      } else {
+        await this.fleetbaseClient.releaseOrderToPool(
+          cached.fleetbaseOrderId,
+          this.adhocRadiusMetres(),
+        );
+      }
+    } catch (error: any) {
+      this.logger.error(`Publication échouée (${orderId}) : ${error.message}`);
+      badRequest('order.publish_failed', 'Impossible de publier cette commande pour le moment');
+    }
+
+    // Reflète tout de suite l'assignation côté cache : sans ça, l'écran
+    // afficherait encore « brouillon » jusqu'au prochain passage du
+    // réconciliateur, alors que la publication vient de réussir.
+    await this.prisma.order.update({
+      where: { id: cached.id },
+      data: { driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null },
+    });
+
+    if (favourite) {
+      this.logger.log(`Brouillon ${cached.id} publié vers le favori ${favourite.fleetbaseDriverUuid}`);
+    } else {
+      this.logger.log(`Brouillon ${cached.id} publié vers le pool commun`);
+    }
+
+    const [merged] = await this.mergeWithFleetbase([cached], merchant.fleetbaseVendorUuid);
+    return merged;
   }
 
   /**
@@ -1307,26 +1426,75 @@ export class CommerçantService {
     try {
       const response = await this.fleetbaseClient.createOwnedPlace(merchant.fleetbaseVendorUuid, {
         name: dto.name,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
+        // `?? 0` : absence de position, pas une position au large du golfe de
+        // Guinée — même convention que `readDriverPosition()`. Seuls `name` et
+        // `contactPhone` sont exigés du commerçant (§ SaveAddressDto).
+        latitude: dto.latitude ?? 0,
+        longitude: dto.longitude ?? 0,
         address: dto.address,
         phone: dto.contactPhone,
         meta: {
-          label: dto.label,
+          label: dto.label ?? 'commerce',
           // `contact_name`, et non `contactName` : c'est la clé que
           // `projectPlace` relit, et que la création de commande dépose. Deux
           // orthographes pour la même donnée faisaient disparaître le contact
           // d'une adresse enregistrée dès sa relecture.
           contact_name: dto.contactName,
           notes: dto.notes,
+          is_default: dto.isDefault === true,
         },
       });
 
-      this.logger.log(`Address saved: ${response?.place?.uuid}`);
+      const uuid = response?.place?.uuid;
+      // Une seule adresse principale à la fois : sans ce nettoyage, une
+      // ancienne resterait marquée et le préremplissage du retrait
+      // deviendrait ambigu. Fait après coup, sur le nouvel enregistrement
+      // déjà réussi — un échec ici ne doit pas annuler la création.
+      if (dto.isDefault === true) {
+        await this.clearOtherDefaults(merchant.fleetbaseVendorUuid, uuid);
+      }
+
+      this.logger.log(`Address saved: ${uuid}`);
       return projectPlace(response.place, 'full');
     } catch (error) {
       this.logger.error(`Failed to save address: ${error.message}`);
       badRequest('merchant.address_save_failed', 'Failed to save address');
+    }
+  }
+
+  /**
+   * Retire le drapeau « adresse principale » de toute autre entrée du carnet.
+   *
+   * ⚠️ `meta` est remplacé en entier à chaque écriture Fleetbase, jamais
+   * fusionné côté serveur : réécrire l'ancien défaut exige donc de reprendre
+   * tout son `meta` existant (label, contact, notes), pas seulement
+   * `is_default` — sans quoi le nettoyage effacerait au passage le reste de
+   * sa fiche.
+   *
+   * Best-effort : une ancienne adresse principale qui reste marquée en double
+   * n'est pas grave au point de bloquer l'enregistrement de la nouvelle.
+   */
+  private async clearOtherDefaults(vendorUuid: string, exceptPlaceUuid?: string): Promise<void> {
+    try {
+      const response = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
+      const places = this.fleetbaseClient.extractCollection(response, 'places');
+      const others = places.filter(
+        (p: any) => p?.meta?.is_default === true && p?.uuid !== exceptPlaceUuid,
+      );
+
+      for (const place of others) {
+        const position = readDriverPosition(place);
+        await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
+          name: place.name,
+          latitude: position?.latitude ?? 0,
+          longitude: position?.longitude ?? 0,
+          address: place.address,
+          phone: place.phone,
+          meta: { ...place.meta, is_default: false },
+        });
+      }
+    } catch (error: any) {
+      this.logger.warn(`Nettoyage de l'ancienne adresse principale échoué : ${error.message}`);
     }
   }
 
@@ -1379,16 +1547,23 @@ export class CommerçantService {
     try {
       const response = await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
         name: dto.name,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
+        latitude: dto.latitude ?? 0,
+        longitude: dto.longitude ?? 0,
         address: dto.address,
         phone: dto.contactPhone,
         meta: {
-          label: dto.label,
+          label: dto.label ?? 'commerce',
           contact_name: dto.contactName,
           notes: dto.notes,
+          is_default: dto.isDefault === true,
         },
       });
+
+      if (dto.isDefault === true) {
+        const merchant = await this.getMerchantWithValidation(merchantId);
+        await this.clearOtherDefaults(merchant.fleetbaseVendorUuid, place.uuid);
+      }
+
       this.logger.log(`Adresse ${place.uuid} modifiée`);
       return projectPlace(response?.place ?? response, 'full');
     } catch (error) {

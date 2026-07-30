@@ -299,6 +299,20 @@ class _StatusChip extends StatelessWidget {
       );
     }
 
+    // Avant le statut : un brouillon partage le même `status` Fleetbase
+    // (« created ») qu'une commande déjà publiée et pas encore prise — sans
+    // ce cas à part, la puce afficherait « En attente », qui ferait croire
+    // qu'un transporteur est déjà sollicité.
+    if (order.isDraft) {
+      return const Chip(
+        label: Text('Brouillon', style: TextStyle(fontSize: 11, color: Colors.white)),
+        backgroundColor: Colors.blueGrey,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      );
+    }
+
     final (label, color) = switch (order.status) {
       'completed' => ('Livrée', Colors.green),
       'canceled' => ('Annulée', Colors.grey),

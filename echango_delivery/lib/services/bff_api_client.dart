@@ -929,6 +929,16 @@ class BffApiClient {
     return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
+  /// Publie un brouillon : déclenche le dispatch (favori ou pool commun) sur
+  /// une commande créée sans lui.
+  Future<Map<String, dynamic>> publishMerchantOrder(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/commandes/$id/publier'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   /// Champs à reprendre pour recommencer une livraison identique.
   ///
   /// Ne crée rien : le serveur renvoie de quoi pré-remplir le formulaire, que
@@ -1115,15 +1125,19 @@ class BffApiClient {
   }
 
   /// Modifie une adresse du carnet. [id] est l'identifiant du lieu.
+  ///
+  /// Seuls [name] et [contactPhone] sont obligatoires (décision produit,
+  /// 30/07/2026) : [address] et la position se complètent souvent après coup.
   Future<void> updateMerchantAddress(
     String id, {
     required String label,
     required String name,
-    required String address,
-    required double latitude,
-    required double longitude,
+    String? address,
+    double? latitude,
+    double? longitude,
     String? contactName,
-    String? contactPhone,
+    required String contactPhone,
+    bool isDefault = false,
   }) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/commercant/adresses/$id'),
@@ -1131,11 +1145,12 @@ class BffApiClient {
       body: jsonEncode({
         'label': label,
         'name': name,
-        'address': address,
-        'latitude': latitude,
-        'longitude': longitude,
+        if (address != null && address.isNotEmpty) 'address': address,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
-        if (contactPhone != null && contactPhone.isNotEmpty) 'contactPhone': contactPhone,
+        'contactPhone': contactPhone,
+        'isDefault': isDefault,
       }),
     );
     _parseResponse(response);
@@ -1149,14 +1164,17 @@ class BffApiClient {
     _parseResponse(response);
   }
 
+  /// Seuls [name] et [contactPhone] sont obligatoires (décision produit,
+  /// 30/07/2026) : [address] et la position se complètent souvent après coup.
   Future<void> saveMerchantAddress({
     required String label,
     required String name,
-    required String address,
-    required double latitude,
-    required double longitude,
+    String? address,
+    double? latitude,
+    double? longitude,
     String? contactName,
-    String? contactPhone,
+    required String contactPhone,
+    bool isDefault = false,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/commercant/adresses'),
@@ -1164,11 +1182,12 @@ class BffApiClient {
       body: jsonEncode({
         'label': label,
         'name': name,
-        'address': address,
-        'latitude': latitude,
-        'longitude': longitude,
+        if (address != null && address.isNotEmpty) 'address': address,
+        if (latitude != null) 'latitude': latitude,
+        if (longitude != null) 'longitude': longitude,
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
-        if (contactPhone != null && contactPhone.isNotEmpty) 'contactPhone': contactPhone,
+        'contactPhone': contactPhone,
+        'isDefault': isDefault,
       }),
     );
     _parseResponse(response);

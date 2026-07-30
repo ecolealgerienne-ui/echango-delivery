@@ -136,8 +136,25 @@ class _AddressesScreenState extends State<AddressesScreen> {
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 6),
                   child: ListTile(
-                    leading: const Icon(Icons.place_outlined),
-                    title: Text(a.name),
+                    leading: Icon(
+                      a.isDefault ? Icons.star : Icons.place_outlined,
+                      color: a.isDefault ? Colors.amber.shade700 : null,
+                    ),
+                    title: Row(
+                      children: [
+                        Flexible(child: Text(a.name)),
+                        if (a.isDefault) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '· Principale',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.amber.shade700),
+                          ),
+                        ],
+                      ],
+                    ),
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -151,7 +168,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                         // Une adresse sans position ne peut pas servir : le
                         // formulaire de commande exige un point. Le dire ici
                         // évite de le découvrir au moment de commander.
-                        if (a.latitude == 0 && a.longitude == 0)
+                        if (!a.hasPosition)
                           Text(
                             'Position manquante — à compléter',
                             style: TextStyle(
@@ -204,6 +221,10 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   LatLng? _point;
   bool _saving = false;
 
+  /// Adresse principale : préremplit le retrait à la création d'une nouvelle
+  /// livraison.
+  bool _isDefault = false;
+
   bool get _isEdit => widget.existing != null;
 
   @override
@@ -216,6 +237,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     _address.text = a.address;
     _contact.text = a.contactName ?? '';
     _phone.text = a.contactPhone ?? '';
+    _isDefault = a.isDefault;
     // Une adresse enregistrée sans coordonnées exploitables laisse le point
     // nul : le formulaire redemandera de le placer, plutôt que de reconduire
     // un point faux qui empoisonnerait chaque livraison qui la réutilise.
@@ -249,17 +271,20 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     });
   }
 
+  /// Seuls le nom et le téléphone sont obligatoires (décision produit,
+  /// 30/07/2026) : l'adresse texte et la position se complètent souvent après
+  /// coup, une fois le lieu connu plus précisément.
   Future<void> _save() async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final orderState = context.read<MerchantOrderState>();
 
-    if (_name.text.trim().isEmpty || _point == null) {
+    if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(_name.text.trim().isEmpty
               ? 'Le nom est obligatoire'
-              : 'Placez la position sur la carte'),
+              : 'Le téléphone est obligatoire'),
         ),
       );
       return;
@@ -272,19 +297,21 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
             label: 'commerce',
             name: _name.text.trim(),
             address: _address.text.trim(),
-            latitude: _point!.latitude,
-            longitude: _point!.longitude,
+            latitude: _point?.latitude,
+            longitude: _point?.longitude,
             contactName: _contact.text.trim(),
             contactPhone: _phone.text.trim(),
+            isDefault: _isDefault,
           )
         : await orderState.saveAddress(
             label: 'commerce',
             name: _name.text.trim(),
             address: _address.text.trim(),
-            latitude: _point!.latitude,
-            longitude: _point!.longitude,
+            latitude: _point?.latitude,
+            longitude: _point?.longitude,
             contactName: _contact.text.trim(),
             contactPhone: _phone.text.trim(),
+            isDefault: _isDefault,
           );
     if (!mounted) return;
     setState(() => _saving = false);
@@ -316,41 +343,54 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
               _field(_name, 'Nom *', Icons.label_outline),
               _field(_address, 'Adresse', Icons.place_outlined),
               _field(_contact, 'Contact', Icons.person_outline),
-              _field(_phone, 'Téléphone', Icons.phone_outlined,
+              _field(_phone, 'Téléphone *', Icons.phone_outlined,
                   keyboard: TextInputType.phone),
               const SizedBox(height: 8),
               FilledButton.tonalIcon(
                 onPressed: _pickOnMap,
                 icon: const Icon(Icons.map_outlined),
                 label: Text(_point == null
-                    ? 'Placer sur la carte *'
+                    ? 'Placer sur la carte'
                     : 'Modifier la position'),
               ),
               const SizedBox(height: 8),
+              // Optionnelle, mais son absence a une conséquence concrète à
+              // dire : sans elle, cette adresse ne pourra pas servir telle
+              // quelle à une commande tant qu'elle n'aura pas été complétée.
               Row(
                 children: [
                   Icon(
-                    _point == null
-                        ? Icons.error_outline
-                        : Icons.check_circle_outline,
+                    _point == null ? Icons.info_outline : Icons.check_circle_outline,
                     size: 16,
                     color: _point == null
-                        ? Theme.of(context).colorScheme.error
+                        ? Theme.of(context).colorScheme.onSurfaceVariant
                         : Colors.green.shade700,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       _point == null
-                          ? 'Position non définie — c\'est elle qui permet de '
-                              'trouver un transporteur à proximité'
+                          ? 'Position non définie (facultatif) — à compléter '
+                              'avant de commander avec cette adresse'
                           : 'Position définie',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _isDefault,
+                onChanged: (v) => setState(() => _isDefault = v),
+                title: const Text('Adresse principale'),
+                subtitle: Text(
+                  'Préremplit le retrait à chaque nouvelle livraison. '
+                  'Une seule adresse principale à la fois.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(height: 16),
               ElevatedButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: _saving
