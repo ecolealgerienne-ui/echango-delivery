@@ -305,6 +305,9 @@ export class FleetbaseApiClient {
    *
    * Le téléphone va sur la colonne native `phone` ; le nom passe par `meta`,
    * le modèle `Place` n'ayant pas de champ dédié.
+   *
+   * ⚠️ **L'adresse s'écrit dans `street1`, jamais dans `address`** — voir la
+   * note de `PLACE_ADDRESS_COLUMN` ci-dessous.
    */
   async createPlace(
     name: string,
@@ -319,7 +322,7 @@ export class FleetbaseApiClient {
           type: 'Point',
           coordinates: [longitude, latitude],
         },
-        ...(contact?.address ? { address: contact.address } : {}),
+        ...(contact?.address ? { street1: contact.address } : {}),
         ...(contact?.phone ? { phone: contact.phone } : {}),
         ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
       });
@@ -339,7 +342,15 @@ export class FleetbaseApiClient {
    */
   async createOwnedPlace(
     ownerUuid: string,
-    data: { name: string; latitude: number; longitude: number; address?: string; phone?: string; meta?: Record<string, any> },
+    data: {
+      name: string;
+      latitude: number;
+      longitude: number;
+      street1?: string;
+      city?: string;
+      phone?: string;
+      meta?: Record<string, any>;
+    },
   ) {
     try {
       const response = await this.callFleetOps('POST', '/places', {
@@ -348,7 +359,8 @@ export class FleetbaseApiClient {
           type: 'Point',
           coordinates: [data.longitude, data.latitude],
         },
-        address: data.address,
+        street1: data.street1,
+        city: data.city,
         phone: data.phone,
         owner_uuid: ownerUuid,
         owner_type: 'fleet-ops:vendor',
@@ -393,7 +405,8 @@ export class FleetbaseApiClient {
       name: string;
       latitude: number;
       longitude: number;
-      address?: string;
+      street1?: string;
+      city?: string;
       phone?: string;
       meta?: Record<string, any>;
       ownerUuid?: string;
@@ -405,7 +418,8 @@ export class FleetbaseApiClient {
         type: 'Point',
         coordinates: [data.longitude, data.latitude],
       },
-      address: data.address,
+      street1: data.street1,
+      city: data.city,
       phone: data.phone,
       meta: data.meta,
       ...(data.ownerUuid ? { owner_uuid: data.ownerUuid, owner_type: 'fleet-ops:vendor' } : {}),

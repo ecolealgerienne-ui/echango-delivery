@@ -33,6 +33,21 @@ export class SaveAddressDto {
   @IsString()
   address?: string; // Full address string
 
+  /**
+   * Commune, telle que le géocodage inverse l'a rendue au moment où le
+   * commerçant a posé son point.
+   *
+   * Facultative, et pas seulement par prudence : elle n'existe que si le
+   * commerçant est passé par la carte. Elle est enregistrée parce qu'elle
+   * alimente `coarseLocality()`, qui réduit une adresse de livraison à sa
+   * commune sur une course diffusée mais pas encore réclamée. Sans champ
+   * structuré, cette réduction repose sur un découpage de la chaîne formatée
+   * — une heuristique qui, en cas de doute, ne renvoie rien.
+   */
+  @IsOptional()
+  @IsString()
+  city?: string;
+
   @IsOptional()
   @IsString()
   contactName?: string;

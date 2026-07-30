@@ -1692,7 +1692,14 @@ export class CommerçantService {
         // `contactPhone` sont exigés du commerçant (§ SaveAddressDto).
         latitude: dto.latitude ?? 0,
         longitude: dto.longitude ?? 0,
-        address: dto.address,
+        // `street1`, et non `address` : `address` n'est PAS une colonne du
+        // modèle `Place` — c'est un accesseur (`$appends`) qui recompose
+        // name + street1 + street2 + city + province + code postal + pays.
+        // L'envoyer était donc ignoré en silence par `fill()`, et l'adresse
+        // saisie n'atteignait jamais la base : la console affichait « RUE 1 : -»
+        // et la relecture retombait sur le nom du lieu.
+        street1: dto.address,
+        city: dto.city,
         phone: dto.contactPhone,
         meta: {
           label: dto.label ?? 'commerce',
@@ -1749,7 +1756,12 @@ export class CommerçantService {
           name: place.name,
           latitude: position?.latitude ?? 0,
           longitude: position?.longitude ?? 0,
-          address: place.address,
+          // ⚠️ `place.street1`, pas `place.address` : `PUT /places` remplace
+          // l'objet entier, et `address` est un accesseur non enregistrable.
+          // Le relire pour le renvoyer aurait effacé la rue de toutes les
+          // autres adresses à chaque changement d'adresse principale.
+          street1: place.street1,
+          city: place.city,
           phone: place.phone,
           meta: { ...place.meta, is_default: false },
           ownerUuid: vendorUuid,
@@ -1812,7 +1824,10 @@ export class CommerçantService {
         name: dto.name,
         latitude: dto.latitude ?? 0,
         longitude: dto.longitude ?? 0,
-        address: dto.address,
+        // Voir `saveAddress` : `address` est un accesseur, seul `street1` est
+        // enregistrable.
+        street1: dto.address,
+        city: dto.city,
         phone: dto.contactPhone,
         meta: {
           label: dto.label ?? 'commerce',

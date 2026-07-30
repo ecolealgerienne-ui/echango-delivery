@@ -296,7 +296,21 @@ String? _firstItemDescription(dynamic items) {
 class SavedAddress extends Equatable {
   final String id;
   final String name;
+
+  /// Adresse **telle que Fleetbase la recompose** : nom, rue, commune, code
+  /// postal, pays concaténés. C'est un accesseur côté serveur, bon à afficher
+  /// et impossible à réenregistrer.
   final String address;
+
+  /// La rue seule, telle qu'elle a été saisie — le seul champ réellement
+  /// enregistré, et donc le seul à remettre dans un formulaire de
+  /// modification.
+  ///
+  /// ⚠️ Préremplir le champ « Adresse » avec [address] et le réenregistrer
+  /// écrirait « BOULANGERIE TEST - Rue Larbi Tebessi » dans la rue, puis
+  /// « BOULANGERIE TEST - BOULANGERIE TEST - Rue… » au passage suivant : le
+  /// nom se réempilerait à chaque modification, sans jamais lever d'erreur.
+  final String street1;
   final double latitude;
   final double longitude;
   final String? contactName;
@@ -310,6 +324,7 @@ class SavedAddress extends Equatable {
     required this.id,
     required this.name,
     required this.address,
+    this.street1 = '',
     required this.latitude,
     required this.longitude,
     this.contactName,
@@ -327,6 +342,7 @@ class SavedAddress extends Equatable {
       id: readAnyId(json),
       name: (json['name'] ?? '') as String,
       address: (json['address'] ?? json['street1'] ?? '') as String,
+      street1: (json['street1'] ?? '') as String,
       latitude: coords?.latitude ?? 0,
       longitude: coords?.longitude ?? 0,
       contactName: json['contact_name'] as String?,

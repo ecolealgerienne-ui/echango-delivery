@@ -234,15 +234,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// `null`, et le bandeau de statut en dessous du bouton carte le signale.
   void _applyAddress(SavedAddress a, {required bool toPickup}) {
     setState(() {
+      // `street1` et non `address` : l'accesseur de Fleetbase recompose le nom
+      // du lieu avec sa rue, donc reprendre `address` remplissait le champ
+      // « Adresse » avec le nom déjà présent juste au-dessus — la fiche de
+      // livraison affichait trois fois « BOULANGERIE TEST ».
       if (toPickup) {
         _pickupName.text = a.name;
-        _pickupAddress.text = a.address;
+        _pickupAddress.text = a.street1;
         _pickupContact.text = a.contactName ?? '';
         _pickupPhone.text = a.contactPhone ?? '';
         _pickupPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
       } else {
         _dropoffName.text = a.name;
-        _dropoffAddress.text = a.address;
+        _dropoffAddress.text = a.street1;
         _dropoffContact.text = a.contactName ?? '';
         _dropoffPhone.text = a.contactPhone ?? '';
         _dropoffPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
