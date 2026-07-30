@@ -2705,3 +2705,146 @@ L'**écart à la porte** (percevoir moins, ou plus, que le montant annoncé), le
 **plafond de dette**, et la **dette négative** (course prépayée). Trois chemins
 du registre que ce parcours ne traverse pas — délibérément : mélanger l'écart au
 scénario nominal rendrait un échec ambigu. Ils méritent leur propre scénario.
+
+## 30. L'écran d'encaissement, ou trois façons de mentir avec un chiffre juste (30/07/2026)
+
+Un commerçant regarde sa caisse et lit **0 DZD**, alors qu'il a deux colis
+livrés à plus de 5000 et deux courses en route. Le registre ne mentait pas : il
+n'enregistre que les espèces **déjà perçues**, et il répondait exactement à la
+question qu'on lui posait. Personne ne posait les autres.
+
+Le lot a demandé trois corrections successives, chacune révélée par un test
+réel, et chacune du même genre — **un écran juste sur ce qu'il affiche et faux
+sur ce qu'il laisse croire**.
+
+### 30.1 Premier état : le perçu seul
+
+`CashCollection` naît à la clôture d'une livraison. Un commerçant dont les
+courses sont en route n'a donc rien à lire, et l'écran affichait « 0 DZD » et
+« Aucune somme en attente » pendant que 1950 DZD étaient réclamés à des portes.
+
+Avant de conclure, quatre causes possibles ont été écartées par vérification :
+les chemins Dart correspondent aux routes, les requêtes Prisma filtrent sur le
+bon acteur, le `.catchError` du détail n'avalait rien, et ce compte n'a
+effectivement aucun encaissement. L'écran n'était pas cassé.
+
+`GET /commercant/encaissements/attendus` sert donc ce que le registre ne peut
+pas connaître : les livraisons dont un montant sera réclamé à une porte. **Aucun
+état n'est stocké** — c'est une lecture recalculée depuis Fleetbase et le
+registre. Une somme attendue n'est due par personne, et l'inscrire créerait une
+dette pour une livraison qui peut encore échouer.
+
+Un choix qui compte : ce chargement **n'a pas** le `catchError` silencieux du
+détail. Un détail manquant laisse un total lisible ; un « attendu » manquant
+fait réaffirmer à l'écran qu'aucune somme n'est en attente, c'est-à-dire
+l'erreur qu'on corrige.
+
+### 30.2 Deuxième état : les brouillons comptés
+
+Le premier filtre s'écrivait par exclusion — *tout sauf terminé et annulé* — et
+comptait donc les **brouillons**. Constaté à l'écran : deux commandes jamais
+publiées, sans transporteur, annoncées comme 2400 DZD « à encaisser aux
+portes ». La même erreur que celle qu'on venait de corriger, retournée.
+
+`EXPECTS_CASH_AT_DOOR` est désormais une liste **fermée**. Ce n'est pas
+l'exclusion de `created` qui compte, c'est la fermeture : un statut inconnu —
+nouveau chez Fleetbase, ou venu d'une configuration de flux qu'on n'utilise pas
+— ne sera pas compté. Sur une somme d'argent, le sens de l'échec se choisit :
+oublier un montant réel se voit dans la liste des livraisons, en annoncer un
+imaginaire ne se voit nulle part.
+
+La liste vit dans son propre fichier pour que le test **importe** la liste et
+n'en recopie pas une seconde. Une liste de statuts dupliquée dans un test est le
+pire des deux mondes : elle passe au vert en décrivant une règle que le code
+n'applique plus.
+
+### 30.3 Troisième état : livré, et absent du registre
+
+Restaient les deux colis livrés. **`CashCollection` n'a qu'un seul chemin
+d'écriture** — `settleCashIfDue()`, appelée par les deux routes de clôture du
+transporteur. Une commande qui atteint `completed` autrement n'y laisse rien, et
+le cas normal est *un admin qui la clôture depuis la console Fleetbase*.
+
+Ce n'est pas un défaut du registre : la console est une interface de production
+légitime (règle 1), et elle ne connaît pas nos gardes. Mais le résultat était
+inacceptable — 5972 DZD livrés, un écran à 0, aucun signal.
+
+On ne peut pas **inventer** l'encaissement : personne ne nous a dit ce qui a été
+perçu, et un montant supposé au registre serait pire que rien — une dette
+fabriquée ne se défait pas. Ce qu'on peut faire, c'est **montrer le trou**, avec
+le montant *annoncé* et jamais présenté comme dû, en tête d'écran parce que
+c'est le seul cas où le registre ne peut pas trancher.
+
+### 30.4 La régularisation, et l'inversion de la règle fondatrice
+
+Le commerçant peut désormais déclarer l'encaissement manquant. Ce geste
+**inverse** la règle du registre, et c'est tout l'enjeu :
+
+- le transporteur qui déclare **s'attribue sa propre dette** — nul ne ment pour
+  se rendre débiteur, aucune confirmation nécessaire ;
+- le commerçant qui déclare **engage quelqu'un d'autre** — sans confirmation, il
+  pourrait fabriquer une créance.
+
+`debtBetween()` ne compte donc que le confirmé. Et **la rémunération naît à la
+confirmation, pas à la déclaration** : l'écrire tout de suite produirait une
+dette *négative* — l'encaissement ne compte pas encore, la rémunération si —
+c'est-à-dire un commerçant qui devrait de l'argent pour avoir signalé un oubli.
+
+**Un piège de migration évité de justesse.** Filtrer sur
+`confirmedAt: { not: null }` aurait fait disparaître **toutes les dettes
+existantes** le jour de la migration : les lignes déjà écrites naissent avec ce
+champ nul. La clause porte donc sur le déclarant — `declaredBy = 'driver'` OU
+confirmé. Une colonne ajoutée ne doit jamais changer le sens des lignes d'avant,
+surtout quand ce sens est une somme d'argent. Le test le vérifie explicitement
+sur une ligne héritée.
+
+### 30.5 Deux messages pour deux situations qu'on confondait
+
+Le refus affichait « cette livraison ne porte aucun transporteur » sur une
+course qui en portait un. Un transporteur peut figurer dans l'annuaire Fleetbase
+— créé par un opérateur en console — **sans avoir de compte dans
+l'application**, et il ne peut alors rien confirmer.
+
+Les deux cas n'appellent pas la même chose : l'un se complète par une saisie,
+l'autre est un refus définitif qui se lève par un geste d'**opérateur**
+(provisionner l'accès). D'où `cash.driver_no_account`, qui nomme l'obstacle réel.
+
+Le sélecteur de transporteur, lui, avait été *annoncé* et non construit — l'app
+laissait le serveur refuser. Il existe maintenant, sur le même annuaire que les
+favoris, et montre les comptes absents **grisés avec le motif** plutôt que
+masqués : les cacher ferait croire qu'ils n'existent pas.
+
+### 30.6 Ce que ce lot a appris sur les vérifications elles-mêmes
+
+Trois contrôles ont failli, et aucun sur le code métier.
+
+1. **`tsc` vert ne vaut pas ce qu'il semble valoir ici.** Le client Prisma n'est
+   jamais généré dans le sandbox — le proxy refuse `binaries.prisma.sh`, y
+   compris `--no-engine` — donc `@prisma/client` s'y résout sur un stub où tout
+   est `any`. `liveOrderDetailed(vendorUuid, order)`, arguments inversés,
+   passait ici et échouait chez l'utilisateur. Consigné en tête des règles.
+
+2. **Un vérificateur qui ne voit pas tout déplace l'erreur.** Le script
+   improvisé pour les clés de traduction filtrait sur `domaine.motif` et ne
+   voyait pas `not_found` : il a signalé un manque inexistant, l'entrée ajoutée a
+   fait un doublon, et c'est `dart analyze` qui l'a rattrapé.
+   `tool/check_error_codes.dart` remplace l'improvisation.
+
+3. **Une correction automatique sans garde-fou peut être pire que le défaut.**
+   Ma « réparation » des apostrophes non échappées a mordu sur les lignes
+   clé+valeur et corrompu 182 lignes du traducteur. Repris depuis git, refait
+   avec l'échappement à la source.
+
+### 30.7 Ce qui reste
+
+⚠️ **Le transporteur n'est pas notifié** d'une déclaration : `MerchantNotification`
+est la seule table de notification du projet. Il la voit en ouvrant sa caisse,
+pas au moment où elle est faite. Le push driver est possible (FCM via
+`UserDevice`, validé §5.1), c'est un lot à part.
+
+⚠️ **Prérequis** : `npm run prisma:migrate` puis `prisma generate` — quatre
+colonnes sur `CashCollection`.
+
+**Non éprouvé par un test réel** : la chaîne déclaration → confirmation →
+dette, et le sélecteur de transporteur. Les trois états successifs de l'écran
+ont été constatés en réel, la régularisation ne l'a pas encore été.
