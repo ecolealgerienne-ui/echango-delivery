@@ -1,7 +1,8 @@
 # Les flux d'argent à quatre acteurs
 
-*Rédigé le 30/07/2026. **Analyse et recommandations — rien n'est implémenté.** Les
-questions du §6 sont des décisions produit, pas des choix techniques.*
+*Rédigé le 30/07/2026. **Rien n'est implémenté.** Les trois questions qui
+décidaient du modèle ont été tranchées le même jour (§6) ; le code peut donc
+être écrit, dans l'ordre du §7.*
 
 ---
 
@@ -12,11 +13,13 @@ questions du §6 sont des décisions produit, pas des choix techniques.*
 | **Destinataire** | rien | non — il paie | non |
 | **Transporteur** (driver) | app Echango | **oui**, les espèces à la porte | oui, à qui il doit remettre |
 | **Commerçant** | app Echango | non | oui, la course |
-| **Entreprise de transport** | app Echango (profil flotte) | ? | ? |
+| **Entreprise de transport** | app Echango (profil flotte) | non — son conducteur tient | **oui**, et elle répond de ses conducteurs (§6.3) |
 | **Echango** | console Fleetbase | **jamais** (décision fondatrice, Voie B) | non |
 
-L'entreprise de transport est le seul acteur dont les deux dernières colonnes
-sont vides. **C'est tout le sujet de ce document.**
+L'entreprise de transport était le seul acteur dont les deux dernières colonnes
+étaient vides. **C'est tout le sujet de ce document** — et depuis les décisions
+du §6, elles sont remplies : elle ne tient jamais les espèces, mais c'est elle
+qui doit.
 
 ## 2. Ce qui existe aujourd'hui : trois acteurs, deux parties
 
@@ -143,7 +146,9 @@ Mécaniquement résolu par 4.1 : si la dette est celle de l'entreprise,
 `assertCashCeiling()` la borne à l'échelle de l'entreprise, tous conducteurs
 confondus. C'est l'exposition réelle du commerçant.
 
-Reste à trancher s'il faut **aussi** un plafond interne par conducteur (§6.3).
+Reste à trancher s'il faut **aussi** un plafond interne par conducteur
+(§6bis.1) — ce qui ne bloque rien, l'entreprise disposant de moyens de
+contrainte que nous n'avons pas.
 
 ### 4.4 La commission porte sur le prix de la course, pas sur la rémunération
 
@@ -154,16 +159,15 @@ Ce que l'entreprise reverse à son conducteur lui appartient.
 Effet de bord favorable : le calcul devient identique pour un indépendant,
 chez qui les deux montants coïncident.
 
-### 4.5 Le destinataire n'a toujours aucune voix
+### 4.5 Le destinataire : hors périmètre, et il faut le dire
 
-Il paie, et **rien dans le système ne vient de lui**. Sur un écart, la parole
-du transporteur est la seule source. À quatre acteurs, la chaîne s'allonge
-encore : commerçant → entreprise → transporteur → destinataire, soit trois
-intermédiaires entre celui qui paie et celui qui constate le manque.
+**Décision du 30/07/2026 : le client final n'entre pas dans la plateforme
+aujourd'hui.** Le point reste noté parce qu'il ne disparaît pas en étant
+différé — il paie, et rien dans le système ne vient de lui. Sur un écart, la
+parole du transporteur est la seule source, et la chaîne s'allonge encore à
+quatre acteurs : commerçant → entreprise → transporteur → destinataire.
 
-Un accusé de réception au destinataire — SMS ou page de suivi — est le seul
-contrepoids possible. Écarté jusqu'ici comme confort ; à quatre acteurs, c'est
-un élément de preuve.
+À rouvrir quand un litige réel se produira, pas avant.
 
 ## 5. Ce qu'il ne faut PAS faire
 
@@ -177,44 +181,103 @@ un élément de preuve.
 - **Stocker un solde par entreprise** pour éviter d'agréger. Même raison
   qu'aujourd'hui : une différence recalculée ne dérive pas.
 
-## 6. À trancher — ce sont des décisions produit
+## 6. Décisions prises le 30/07/2026
 
-1. **Le commerçant choisit-il une entreprise, ou seulement un transporteur ?**
-   S'il la choisit, il faut la lui présenter (recherche, favoris au niveau
-   entreprise) et poser `facilitator` à la création. S'il ne la choisit pas,
-   l'entreprise ne peut recevoir que ce qu'un opérateur lui attribue — et le
-   §3.1 reste un manque assumé.
-2. **L'entreprise peut-elle prendre une course diffusée au pool** et
-   l'attribuer ensuite à l'un de ses conducteurs ? C'est le mode qui donne un
-   sens à son existence sans obliger le commerçant à la choisir.
-3. **Plafond de dette interne, conducteur → entreprise ?** L'entreprise a des
-   moyens de contrainte que nous n'avons pas (contrat, salaire). Le lui imposer
-   par logiciel peut être une gêne autant qu'un service.
-4. **Qui supporte la perte si un conducteur disparaît avec les espèces ?**
-   L'entreprise répond-elle de ses conducteurs vis-à-vis du commerçant ? C'est
-   la question la plus lourde, et la réponse détermine si le modèle « la dette
-   est celle de l'entreprise » est acceptable pour elle.
-5. **La commission d'Echango est-elle facturée à l'entreprise** en une fois, ou
-   course par course comme aujourd'hui ?
-6. **Un conducteur peut-il travailler pour deux entreprises**, ou en
-   indépendant *et* pour une entreprise ? Si oui, sa dette n'est plus une, et
+### 6.1 ✅ Le commerçant choisit une entreprise **ou** un transporteur du pool
+
+Les deux, au même endroit et au même moment. Ce ne sont pas deux
+fonctionnalités : c'est un seul choix, « à qui je confie cette course », dont
+la réponse est tantôt une personne, tantôt une société.
+
+**Ce que ça impose, et qui n'était pas prévu :**
+
+- `DriverFavourite` ne suffit plus. Un commerçant doit pouvoir mettre une
+  entreprise en favori comme il met un transporteur — donc la table doit porter
+  un **type de partie**, exactement comme le registre de caisse (§4.1). Deux
+  tables de favoris feraient deux écrans, deux recherches et deux logiques de
+  repli pour un seul geste utilisateur.
+- La recherche de l'écran « Mes transporteurs » doit rendre les deux, et dire
+  lequel est lequel : on n'appelle pas une entreprise comme on appelle un
+  conducteur.
+- À la création, `pickAvailableFavourite()` doit pouvoir répondre une
+  entreprise. Et dans ce cas **on ne pose pas `driver_assigned_uuid`** — on
+  pose `facilitator_uuid` et on laisse l'entreprise désigner le sien. Confier
+  la course à une société *et* nommer son conducteur serait décider à sa place.
+
+### 6.2 ✅ Une entreprise peut prendre une course du pool et l'attribuer en interne
+
+C'est ce qui lui donne un rôle sans obliger le commerçant à la choisir.
+
+**Ce que ça impose :**
+
+- Une action de **prise en charge** côté flotte, qui n'existe pas : aujourd'hui
+  `flotte.service.ts` ne fait que *lire* `?facilitator=<son vendor>`, donc elle
+  ne voit que ce qu'un opérateur lui a déjà rattaché. Il faut l'équivalent
+  d'`acceptOrder()` du transporteur, qui pose `facilitator_uuid`.
+- Une **course diffusée est donc visible par deux populations** — les
+  transporteurs indépendants et les entreprises — qui peuvent la réclamer en
+  même temps. Le premier arrivé l'emporte, et le second doit recevoir un refus
+  explicite : `order.already_taken` existe déjà pour ce cas côté transporteur.
+- Une fois prise, la course **disparaît du pool** pour tout le monde, y compris
+  des transporteurs indépendants qui l'avaient sous les yeux.
+
+### 6.3 ✅ L'entreprise répond de ses conducteurs
+
+C'est la réponse qui rend le modèle du §4.1 tenable : **la dette envers le
+commerçant est celle de l'entreprise**, et elle le reste si l'un de ses
+conducteurs disparaît avec les espèces. Le commerçant a un interlocuteur
+solvable et identifié ; l'entreprise assume le risque qu'elle est seule à
+pouvoir maîtriser, puisqu'elle recrute et paie ses conducteurs.
+
+**Conséquence directe** : la perte d'un conducteur ne change **rien** au solde
+que le commerçant voit. Elle bascule en interne, sur la chaîne
+conducteur → entreprise, où l'entreprise dispose de moyens que nous n'avons pas
+— contrat, salaire, procédure.
+
+### 6.4 ✅ Le destinataire reste hors plateforme
+
+Voir §4.5.
+
+## 6bis. Ce qui reste ouvert
+
+1. **Plafond de dette interne, conducteur → entreprise ?** L'entreprise a des
+   moyens de contrainte que nous n'avons pas. Le lui imposer par logiciel peut
+   être un service autant qu'une gêne. *Ne bloque rien : le plafond envers le
+   commerçant, lui, est tranché.*
+2. **La commission d'Echango est-elle facturée à l'entreprise** en une fois ou
+   course par course ? *Ne bloque rien : son recouvrement n'est de toute façon
+   pas construit.*
+3. **Un conducteur peut-il travailler pour deux entreprises**, ou en
+   indépendant *et* pour une entreprise ? Si oui, sa dette n'est plus unique et
    l'écran « ce que vous détenez » doit la ventiler par contrepartie.
+   *Celle-ci compte* : elle décide si le couple de parties du §4.1 suffit, ou
+   s'il faut aussi une notion d'appartenance multiple.
 
-## 7. Ordre de mise en œuvre suggéré
+## 7. Ordre de mise en œuvre
 
-Aucune ligne ne devrait être écrite avant les réponses 1, 2 et 4 — elles
-décident du modèle, pas du code. Ensuite, dans cet ordre :
+Les trois questions qui décidaient du modèle sont tranchées (§6.1, §6.2, §6.3).
+Le code peut être écrit, dans cet ordre — chaque lot rendant le suivant
+mécanique :
 
-1. **Généraliser le couple de parties** dans les trois tables du registre
-   (§4.1) — à contrat constant, sans changer une règle métier. C'est la
-   fondation ; tout le reste en découle mécaniquement.
-2. **Poser `facilitator` à la création** quand le commerçant choisit une
-   entreprise (§6.1).
-3. **Basculer la base de commission** sur le prix de la course (§4.4).
-4. **Écran de remise interne** conducteur → entreprise (§4.2) — sans code
-   nouveau si 1 est fait.
-5. **Accusé au destinataire** (§4.5), qui vaut aussi pour le modèle à trois
-   acteurs.
+1. **Généraliser le couple de parties** (§4.1) dans les trois tables du
+   registre **et dans les favoris** (§6.1). À contrat constant : le cas
+   transporteur↔commerçant continue de fonctionner à l'identique, et le cas
+   entreprise devient le *même* cas. C'est la fondation ; tout le reste en
+   découle sans branche conditionnelle.
+2. **Choisir une entreprise à la création** : favoris polymorphes, recherche
+   qui rend les deux types, et `facilitator_uuid` posé sans
+   `driver_assigned_uuid` (§6.1).
+3. **Prise en charge d'une course du pool par une entreprise** (§6.2), avec le
+   refus du second arrivant.
+4. **Basculer la base de commission** sur le prix de la course (§4.4) — sans
+   quoi une entreprise serait taxée sur un salaire que nous ne connaissons pas.
+5. **Remise interne** conducteur → entreprise (§4.2). Sans code nouveau si 1
+   est fait : c'est le même mécanisme, avec une autre contrepartie.
+
+⚠️ **Le lot 1 touche des tables d'argent.** Les lignes existantes portent
+toutes un couple transporteur↔commerçant : la reprise de données les recopie en
+`debtorType = 'driver'`, sans changer un seul solde. Le vérifier avant de
+migrer, pas après.
 
 ---
 
