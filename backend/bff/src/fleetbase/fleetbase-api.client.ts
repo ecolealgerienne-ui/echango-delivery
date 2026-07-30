@@ -643,7 +643,11 @@ export class FleetbaseApiClient {
    */
   async assignOrderToDriver(driverUuid: string, orderUuid: string) {
     try {
-      const response = await this.callFleetOps('POST', `/drivers/${driverUuid}/assign-order`, {
+      // `seg()` comme partout ailleurs : l'uuid vient ici de notre propre base
+      // (favori enregistré, conducteur d'une flotte vérifiée), mais la
+      // discipline vaut mieux uniforme que jugée site par site — c'est
+      // exactement ce que la revue P0 avait relevé sur les autres chemins.
+      const response = await this.callFleetOps('POST', `/drivers/${this.seg(driverUuid)}/assign-order`, {
         order: orderUuid,
       });
       return response.data;

@@ -1235,6 +1235,16 @@ export class CommerçantService {
       badRequest('order.already_published', 'Cette commande a déjà été publiée');
     }
 
+    // ⚠️ Résolu AVANT le `try`, délibérément. Un `badRequest()` levé à
+    // l'intérieur serait rattrapé par le `catch` ci-dessous et réemballé en
+    // « publication impossible » — le message précis serait perdu, et le code
+    // d'erreur avec lui. Même piège que le `rollbackVendor()` du Lot 4 et que
+    // le réemballage corrigé dans `createOrder`.
+    const publicId = live.public_id;
+    if (!publicId) {
+      badRequest('order.missing_public_id', 'Commande mal formée côté serveur');
+    }
+
     const meta = live.meta ?? {};
     const preferFavourites = meta.prefer_favourites !== false;
     const favourite = preferFavourites
@@ -1245,7 +1255,9 @@ export class CommerçantService {
       // Étape 1 — qui peut prendre la commande.
       if (favourite) {
         // Même route que le persona flotte (`flotte.service.ts`), déjà en
-        // usage réel : `POST /drivers/{uuid}/assign-order`.
+        // usage réel : `POST /drivers/{uuid}/assign-order` — int/v1
+        // uniquement, cette route n'existe pas sur `v1` (vérifié dans
+        // `server/src/routes.php`), d'où `callFleetOps` et l'uuid.
         await this.fleetbaseClient.assignOrderToDriver(
           favourite.fleetbaseDriverUuid,
           cached.fleetbaseOrderId,
@@ -1265,15 +1277,27 @@ export class CommerçantService {
       // « Order Dispatched », pas l'inverse. Voir `dispatchOrder()` côté
       // client Fleetbase pour le détail et les trois essais qui ont échoué
       // avant de le trouver.
-      const publicId = live.public_id;
-      if (!publicId) {
-        badRequest('order.missing_public_id', 'Commande mal formée côté serveur');
-      }
-
       await this.fleetbaseClient.dispatchOrder(publicId);
     } catch (error: any) {
-      this.logger.error(`Publication échouée (${orderId}) : ${error.message}`);
-      badRequest('order.publish_failed', 'Impossible de publier cette commande pour le moment');
+      if (error instanceof HttpException) throw error;
+
+      // Le message de Fleetbase est remonté tel quel quand il existe : ses
+      // deux refus de dispatch sont explicites et actionnables (« No driver
+      // assigned to dispatch! », « Order has already been dispatched! »).
+      // Les remplacer par une phrase générique reviendrait à jeter la seule
+      // information qui dit quoi corriger.
+      const detail =
+        error.response?.data?.errors?.[0] ||
+        error.response?.data?.error ||
+        error.response?.data?.message;
+
+      this.logger.error(
+        `Publication échouée (${orderId}) : ${detail ?? error.message}`,
+      );
+      badRequest(
+        'order.publish_failed',
+        detail || 'Impossible de publier cette commande pour le moment',
+      );
     }
 
     // Reflète tout de suite l'assignation côté cache : sans ça, l'écran
