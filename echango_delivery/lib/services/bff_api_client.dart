@@ -1146,7 +1146,14 @@ class BffApiClient {
       body: jsonEncode({
         'label': label,
         'name': name,
-        if (address != null && address.isNotEmpty) 'address': address,
+        // Envoyée même vide, contrairement aux autres : `PUT /places` ne
+        // modifie que les clés présentes, donc l'omettre rendait le champ
+        // **ineffaçable** — vider la ligne et enregistrer conservait l'ancienne
+        // adresse, sans erreur ni indice à l'écran.
+        if (address != null) 'address': address,
+        // La commune, elle, reste omise quand elle est absente : elle ne vient
+        // que du géocodage, et l'envoyer vide effacerait celle enregistrée lors
+        // d'un passage précédent par la carte.
         if (city != null && city.isNotEmpty) 'city': city,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
@@ -1185,7 +1192,14 @@ class BffApiClient {
       body: jsonEncode({
         'label': label,
         'name': name,
-        if (address != null && address.isNotEmpty) 'address': address,
+        // Envoyée même vide, contrairement aux autres : `PUT /places` ne
+        // modifie que les clés présentes, donc l'omettre rendait le champ
+        // **ineffaçable** — vider la ligne et enregistrer conservait l'ancienne
+        // adresse, sans erreur ni indice à l'écran.
+        if (address != null) 'address': address,
+        // La commune, elle, reste omise quand elle est absente : elle ne vient
+        // que du géocodage, et l'envoyer vide effacerait celle enregistrée lors
+        // d'un passage précédent par la carte.
         if (city != null && city.isNotEmpty) 'city': city,
         if (latitude != null) 'latitude': latitude,
         if (longitude != null) 'longitude': longitude,
