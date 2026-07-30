@@ -72,6 +72,22 @@ class _CashScreenState extends State<CashScreen> {
             // attente bloque une dette : la reléguer sous l'historique la ferait
             // oublier, et la dette resterait due alors que l'argent a changé de
             // mains.
+            // Un encaissement que le commerçant a déclaré à ma place attend le
+            // même geste qu'une remise, et pour la même raison : sans ma
+            // confirmation, il n'entre dans aucune dette. Le placer ailleurs
+            // que dans « À confirmer » en ferait deux mécaniques distinctes
+            // pour une seule règle.
+            if (state.collectionsToConfirm.isNotEmpty) ...[
+              _sectionTitle('Encaissements à confirmer'),
+              for (final c in state.collectionsToConfirm)
+                _CollectionToConfirmCard(
+                  entry: c,
+                  onConfirm: () => _confirmCollection(state, c),
+                  onDispute: () => _disputeCollection(state, c),
+                ),
+              const SizedBox(height: 16),
+            ],
+
             if (state.awaitingMyConfirmation.isNotEmpty) ...[
               _sectionTitle('À confirmer'),
               for (final r in state.awaitingMyConfirmation)
@@ -98,7 +114,12 @@ class _CashScreenState extends State<CashScreen> {
                 currency: state.currency,
               ),
               for (final p in state.unrecorded)
-                _PendingCard(entry: p, currency: state.currency, isAnomaly: true),
+                _PendingCard(
+                  entry: p,
+                  currency: state.currency,
+                  isAnomaly: true,
+                  onRegularise: () => _regularise(state, p),
+                ),
               const SizedBox(height: 16),
             ],
 
@@ -338,6 +359,126 @@ class _CashScreenState extends State<CashScreen> {
     );
   }
 
+  /// Régularise une livraison close hors application.
+  ///
+  /// Le montant est prérempli avec celui qui était **annoncé** — c'est le seul
+  /// chiffre que nous connaissions, et dans le cas courant c'est le bon. Le
+  /// commerçant le corrige si le client a payé autrement ; un écart exige alors
+  /// un motif, comme à la porte.
+  Future<void> _regularise(CashState state, PendingCollection p) async {
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (_) => _AmountDialog(
+        title: 'Déclarer l\'encaissement',
+        subtitle: p.driverName != null
+            ? '${p.driverName} a encaissé combien sur cette livraison ? '
+                'Il devra confirmer avant que la somme ne soit comptée.'
+            : 'Combien a été encaissé sur cette livraison ? '
+                'Le transporteur devra confirmer avant que la somme ne soit comptée.',
+        maximum: p.expectedAmount,
+        currency: state.currency,
+        // Zéro est une réponse légitime ici — « le client n'a pas payé » est un
+        // fait à enregistrer, pas une absence de saisie. Sur une remise, au
+        // contraire, remettre zéro ne décrit aucun geste.
+        allowZero: true,
+      ),
+    );
+
+    if (amount == null || !mounted) return;
+
+    // Un écart demande un motif — le serveur le refuse sans, et lui répondre
+    // par une erreur alors qu'on pouvait le demander serait un aller-retour
+    // inutile.
+    String? reason;
+    if (amount != p.expectedAmount) {
+      reason = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => SimpleDialog(
+          title: const Text('Pourquoi ce montant diffère ?'),
+          children: [
+            for (final entry in cashDiscrepancyLabels.entries)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(dialogContext, entry.key),
+                child: Text(entry.value),
+              ),
+          ],
+        ),
+      );
+      if (reason == null || !mounted) return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.declareMissingCollection(
+      orderId: p.orderUuid,
+      collectedAmount: amount,
+      discrepancyReason: reason,
+    );
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Déclaré. En attente de confirmation du transporteur.'
+            : state.errorMessage ?? 'Déclaration impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _confirmCollection(CashState state, CashCollectionEntry c) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.confirmCollection(c.id);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Encaissement confirmé — il entre dans votre caisse.'
+            : state.errorMessage ?? 'Confirmation impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _disputeCollection(CashState state, CashCollectionEntry c) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Contester cet encaissement ?'),
+        content: Text(
+          'Vous déclarez ne pas avoir encaissé '
+          '${c.collectedAmount.toStringAsFixed(0)} ${c.currency} sur cette '
+          'livraison. Rien ne sera compté et Echango sera alerté.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Retour'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Contester'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await state.disputeCollection(c.id);
+    if (!mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Encaissement contesté.'
+            : state.errorMessage ?? 'Contestation impossible'),
+        backgroundColor: ok ? null : Colors.red,
+      ),
+    );
+  }
+
   Future<void> _dispute(CashState state, CashRemittance r) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -555,11 +696,17 @@ class _AmountDialog extends StatefulWidget {
   final double maximum;
   final String currency;
 
+  /// Autorise un montant nul. Faux par défaut : sur une remise, zéro ne décrit
+  /// aucun geste. Vrai sur une régularisation, où « le client n'a rien payé »
+  /// est un fait qu'il faut pouvoir enregistrer.
+  final bool allowZero;
+
   const _AmountDialog({
     required this.title,
     required this.subtitle,
     required this.maximum,
     required this.currency,
+    this.allowZero = false,
   });
 
   @override
@@ -578,7 +725,8 @@ class _AmountDialogState extends State<_AmountDialog> {
 
   double? get _value {
     final parsed = double.tryParse(_controller.text.trim());
-    if (parsed == null || parsed <= 0 || parsed > widget.maximum) return null;
+    if (parsed == null || parsed > widget.maximum) return null;
+    if (widget.allowZero ? parsed < 0 : parsed <= 0) return null;
     return parsed;
   }
 
@@ -727,10 +875,15 @@ class _PendingCard extends StatelessWidget {
   /// forme : c'est le même objet, mais il ne demande pas la même chose.
   final bool isAnomaly;
 
+  /// Ouvre la déclaration. Nul sur une livraison en cours : il n'y a rien à
+  /// régulariser tant que personne n'est passé à la porte.
+  final VoidCallback? onRegularise;
+
   const _PendingCard({
     required this.entry,
     required this.currency,
     this.isAnomaly = false,
+    this.onRegularise,
   });
 
   @override
@@ -772,6 +925,74 @@ class _PendingCard extends StatelessWidget {
             // anomalie, on ignore même s'il a été perçu.
             color: isAnomaly ? Colors.orange.shade900 : Colors.grey[700],
           ),
+        ),
+        // Le geste vit sur la ligne et non dans la bannière : chaque livraison
+        // se régularise avec son propre montant, et un bouton global aurait
+        // demandé un chiffre pour deux courses différentes.
+        onTap: onRegularise,
+      ),
+    );
+  }
+}
+
+/// Encaissement que le commerçant a déclaré à la place du transporteur.
+///
+/// Les deux montants sont montrés côte à côte : ce qui était annoncé, et ce que
+/// le commerçant affirme. Confirmer, c'est accepter une dette — le transporteur
+/// doit voir sur quoi il s'engage, pas seulement un chiffre.
+class _CollectionToConfirmCard extends StatelessWidget {
+  final CashCollectionEntry entry;
+  final VoidCallback onConfirm;
+  final VoidCallback onDispute;
+
+  const _CollectionToConfirmCard({
+    required this.entry,
+    required this.onConfirm,
+    required this.onDispute,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    String money(double amount) =>
+        '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
+
+    return Card(
+      color: Colors.orange.shade50,
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Le commerçant déclare que vous avez encaissé '
+              '${money(entry.collectedAmount)}',
+              style: theme.textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Montant annoncé sur la livraison : ${money(entry.expectedAmount)}.'
+              '${entry.hasDiscrepancy ? ' Écart déclaré : '
+                  '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? ''}.' : ''}',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Tant que vous n\'avez pas confirmé, cette somme n\'entre dans '
+              'aucun compte.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(onPressed: onDispute, child: const Text('Contester')),
+                const SizedBox(width: 8),
+                FilledButton(onPressed: onConfirm, child: const Text('Confirmer')),
+              ],
+            ),
+          ],
         ),
       ),
     );

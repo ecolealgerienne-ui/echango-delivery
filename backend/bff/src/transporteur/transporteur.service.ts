@@ -573,6 +573,53 @@ export class TransporteurService {
    * Anything else is a 404 rather than a 403 — a driver has no business
    * learning that a given order id exists at all.
    */
+  /**
+   * Confirme un encaissement que le commerçant a déclaré à la place du
+   * transporteur, après une clôture faite hors application.
+   *
+   * ── D'où vient l'autorisation ───────────────────────────────────────────────
+   *
+   * De la ligne de registre elle-même, dont `driverId` est ce transporteur —
+   * `CashService` le vérifie. Passer par `getOrder()` aurait été le réflexe, et
+   * il aurait **échoué précisément dans le cas visé** : ces livraisons peuvent
+   * ne porter aucun `driver_assigned_uuid` chez Fleetbase (observé en réel), et
+   * `getOrder()` refuse tout ce qui n'est ni assigné ni adhoc réclamable.
+   *
+   * ── Pourquoi la rémunération est relue ici ──────────────────────────────────
+   *
+   * Elle vient de la **commande**, jamais du corps de la requête : la faire
+   * saisir par celui qui confirme sa propre dette lui laisserait fixer ce qu'il
+   * retient dessus. Si la commande est illisible, on confirme quand même avec
+   * une rémunération nulle — bloquer laisserait la dette hors du registre, ce
+   * qui est le défaut qu'on répare, et une rémunération manquante se rattrape.
+   */
+  async confirmDeclaredCollection(driverId: string, collectionId: string) {
+    const collection = await this.prisma.cashCollection.findFirst({
+      where: { id: collectionId, driverId },
+      select: { fleetbaseOrderUuid: true },
+    });
+
+    if (!collection) {
+      notFound('cash.collection_not_found', 'Encaissement introuvable');
+    }
+
+    let price = 0;
+    try {
+      const order = await this.resolveOrder(collection.fleetbaseOrderUuid);
+      if (order) {
+        const [hydrated] = await this.withSpecMeta([order]);
+        price = Number(hydrated?.meta?.price ?? order?.meta?.price) || 0;
+      }
+    } catch (error: any) {
+      this.logger.warn(
+        `Rémunération illisible pour ${collection.fleetbaseOrderUuid} lors de la `
+          + `confirmation d'encaissement : ${error.message} — confirmée sans rémunération`,
+      );
+    }
+
+    return this.cash.confirmCollection(driverId, collectionId, price);
+  }
+
   async getOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);

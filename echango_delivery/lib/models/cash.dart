@@ -193,6 +193,21 @@ class CashCollectionEntry extends Equatable {
   /// Identifiant Fleetbase de la livraison, pour retrouver la fiche.
   final String orderUuid;
 
+  /// `driver` ou `merchant`. Une ligne déclarée par le commerçant régularise
+  /// une livraison close hors application : elle ne compte dans aucune dette
+  /// tant que le transporteur ne l'a pas confirmée.
+  final String declaredBy;
+  final DateTime? confirmedAt;
+  final DateTime? disputedAt;
+  final String? disputeReason;
+
+  /// Attend une confirmation du transporteur — et n'est donc, pour l'instant,
+  /// qu'une affirmation du commerçant.
+  bool get awaitsDriverConfirmation =>
+      declaredBy == 'merchant' && confirmedAt == null && disputedAt == null;
+
+  bool get isDisputed => disputedAt != null;
+
   const CashCollectionEntry({
     required this.id,
     required this.expectedAmount,
@@ -202,6 +217,10 @@ class CashCollectionEntry extends Equatable {
     this.retainedAmount = 0,
     this.netAmount = 0,
     this.orderUuid = '',
+    this.declaredBy = 'driver',
+    this.confirmedAt,
+    this.disputedAt,
+    this.disputeReason,
     this.discrepancyReason,
     this.notes,
   });
@@ -222,6 +241,17 @@ class CashCollectionEntry extends Equatable {
             ((json['collected_amount'] as num?)?.toDouble() ?? 0) -
                 ((json['retained_amount'] as num?)?.toDouble() ?? 0),
         orderUuid: (json['order_uuid'] ?? '') as String,
+        // Défaut `driver` : une ligne servie par un BFF antérieur à la
+        // régularisation n'a pas ce champ, et elle EST une déclaration du
+        // transporteur. Le défaut inverse l'aurait affichée « en attente ».
+        declaredBy: (json['declared_by'] ?? 'driver') as String,
+        confirmedAt: json['confirmed_at'] is String
+            ? DateTime.tryParse(json['confirmed_at'] as String)
+            : null,
+        disputedAt: json['disputed_at'] is String
+            ? DateTime.tryParse(json['disputed_at'] as String)
+            : null,
+        disputeReason: json['dispute_reason'] as String?,
         collectedAt:
             DateTime.tryParse((json['collected_at'] ?? '') as String) ?? DateTime.now(),
       );

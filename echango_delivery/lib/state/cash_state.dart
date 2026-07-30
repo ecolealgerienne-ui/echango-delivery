@@ -153,6 +153,40 @@ class CashState extends ChangeNotifier {
     }
   }
 
+  /// Encaissements déclarés par le commerçant et qui attendent MA confirmation.
+  ///
+  /// Transporteur uniquement. Vus du commerçant, ce sont ses propres
+  /// déclarations : les lui présenter comme actionnables promettrait un bouton
+  /// que le serveur refuserait, exactement comme pour les remises.
+  List<CashCollectionEntry> get collectionsToConfirm => _persona == 'driver'
+      ? _collections.where((c) => c.awaitsDriverConfirmation).toList()
+      : const [];
+
+  /// Régularise une livraison close hors application.
+  ///
+  /// Renvoie `true` si la déclaration est enregistrée — elle attend alors la
+  /// confirmation du transporteur et ne change encore aucune dette.
+  Future<bool> declareMissingCollection({
+    required String orderId,
+    required double collectedAmount,
+    String? driverId,
+    String? discrepancyReason,
+    String? notes,
+  }) =>
+      _mutate(() => _apiClient.declareMissingCollection(
+            orderId: orderId,
+            collectedAmount: collectedAmount,
+            driverId: driverId,
+            discrepancyReason: discrepancyReason,
+            notes: notes,
+          ));
+
+  Future<bool> confirmCollection(String id) =>
+      _mutate(() => _apiClient.confirmDeclaredCollection(id));
+
+  Future<bool> disputeCollection(String id, {String? reason}) =>
+      _mutate(() => _apiClient.disputeDeclaredCollection(id, reason: reason));
+
   /// Déclare une remise. [counterpartyId] est l'autre partie : un commerçant
   /// vu du transporteur, un transporteur vu du commerçant.
   Future<bool> declareRemittance(String counterpartyId, double amount) =>

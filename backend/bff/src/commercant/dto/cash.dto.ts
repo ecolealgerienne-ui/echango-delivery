@@ -1,4 +1,5 @@
-import { IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.constants';
 import { Type } from 'class-transformer';
 import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 
@@ -26,4 +27,43 @@ export class DisputeRemittanceDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+}
+
+/**
+ * Régularisation : « ce transporteur a bien encaissé X sur cette livraison ».
+ *
+ * Sert le cas d'une course clôturée hors application — depuis la console
+ * Fleetbase — qui ne laisse aucun encaissement au registre.
+ *
+ * ⚠️ Cette déclaration n'établit rien à elle seule : elle attend la
+ * confirmation du transporteur, faute de quoi un commerçant pourrait inventer
+ * une créance sur quelqu'un d'autre.
+ */
+export class DeclareMissingCollectionDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(500000)
+  collectedAmount: number;
+
+  /**
+   * Obligatoire uniquement quand la livraison ne porte aucun transporteur chez
+   * Fleetbase — cas réel, observé sur une course livrée. Ignoré sinon : si la
+   * course en désigne un, c'est lui qui fait foi, et accepter une autre
+   * désignation permettrait d'imputer un encaissement à un tiers.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'driverId invalide' })
+  driverId?: string;
+
+  /** Exigé par le service dès que le montant diffère de celui annoncé. */
+  @IsOptional()
+  @IsIn(COLLECTION_DISCREPANCY_REASONS as unknown as string[])
+  discrepancyReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notes?: string;
 }

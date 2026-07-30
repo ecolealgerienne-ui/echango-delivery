@@ -604,6 +604,56 @@ class BffApiClient {
     return PendingCollections.fromJson(_parseResponse(response));
   }
 
+  /// « Ce transporteur a bien encaissé X sur cette livraison. »
+  ///
+  /// Régularise une course clôturée hors application, dont le registre ne sait
+  /// rien. La déclaration n'établit rien seule : elle attend la confirmation du
+  /// transporteur — ici le déclarant engage quelqu'un d'autre.
+  ///
+  /// [driverId] n'est requis que si la livraison ne porte aucun transporteur
+  /// côté Fleetbase, cas réel sur une course close depuis la console.
+  Future<void> declareMissingCollection({
+    required String orderId,
+    required double collectedAmount,
+    String? driverId,
+    String? discrepancyReason,
+    String? notes,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/commercant/commandes/$orderId/encaissement'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'collectedAmount': collectedAmount,
+        if (driverId != null) 'driverId': driverId,
+        if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      }),
+    );
+    _parseResponse(response);
+  }
+
+  /// Le transporteur confirme un encaissement déclaré par le commerçant.
+  ///
+  /// Aucun corps : la rémunération vient de la commande, jamais de lui — la
+  /// saisir au moment où il confirme sa propre dette lui laisserait fixer ce
+  /// qu'il retient dessus.
+  Future<void> confirmDeclaredCollection(String collectionId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/caisse/encaissements/$collectionId/confirmer'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> disputeDeclaredCollection(String collectionId, {String? reason}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/caisse/encaissements/$collectionId/contester'),
+      headers: _buildHeaders(),
+      body: jsonEncode({if (reason != null && reason.isNotEmpty) 'reason': reason}),
+    );
+    _parseResponse(response);
+  }
+
   /// Idem côté transporteur : ce qu'il détient, course par course.
   Future<List<CashCollectionEntry>> getDriverCollections() async {
     final response = await _httpClient.get(

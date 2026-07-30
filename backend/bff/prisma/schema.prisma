@@ -588,8 +588,41 @@ model CashCollection {
 
   collectedAt         DateTime @default(now())
 
+  /// Qui affirme cet encaissement : `driver` ou `merchant`.
+  ///
+  /// ── Pourquoi deux origines, et pourquoi elles ne valent PAS pareil ─────────
+  ///
+  /// Le cas normal est `driver` : le transporteur tient l'argent et déclare ce
+  /// qu'il a perçu. Il s'attribue une dette à lui-même — personne ne ment pour
+  /// se rendre débiteur, et aucune confirmation n'est nécessaire.
+  ///
+  /// Le cas `merchant` existe parce qu'une clôture faite hors application (un
+  /// admin depuis la console Fleetbase) ne passe par aucune de nos gardes : la
+  /// livraison est faite, l'encaissement n'est enregistré nulle part, et le
+  /// commerçant se retrouve avec un trou qu'il est seul à voir. Il peut donc le
+  /// déclarer — mais il déclare alors la dette de QUELQU'UN D'AUTRE, ce qui
+  /// change tout : sans confirmation, n'importe quel commerçant pourrait
+  /// inventer une créance sur un transporteur.
+  declaredBy          String   @default("driver")
+
+  /// Quand l'autre partie a confirmé. Toujours renseigné d'office sur une
+  /// déclaration `driver` — c'est sa propre dette.
+  ///
+  /// ⚠️ `debtBetween()` ne compte que les encaissements confirmés : une
+  /// déclaration en attente est une affirmation, exactement comme une remise
+  /// non confirmée.
+  confirmedAt         DateTime?
+
+  /// Le transporteur conteste : « je n'ai pas encaissé cette livraison », ou
+  /// « pas ce montant ». La ligne reste, elle ne compte pas, et les deux
+  /// parties voient le désaccord — l'effacer laisserait le commerçant sans
+  /// trace de ce qu'il a affirmé.
+  disputedAt          DateTime?
+  disputeReason       String?
+
   @@index([driverId, merchantId])
   @@index([merchantId])
+  @@index([driverId, confirmedAt])
 }
 
 

@@ -52,6 +52,35 @@ export class TransporteurController {
     return this.cash.listCollections('driver', this.driverId(req));
   }
 
+  /**
+   * Confirme un encaissement que le COMMERÇANT a déclaré à sa place.
+   *
+   * Ce cas naît d'une livraison close hors application : le registre n'a rien
+   * enregistré, le commerçant a signalé le montant, et c'est cette confirmation
+   * qui le rend comptable — avant elle, il ne compte dans aucune dette.
+   *
+   * La rémunération est écrite dans le même geste, côté service : la course
+   * n'en avait pas non plus, et les séparer laisserait entre les deux un état
+   * où la dette est fausse.
+   */
+  @Post('caisse/encaissements/:id/confirmer')
+  async confirmCollection(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    // Aucun corps : la rémunération vient de la COMMANDE, jamais du
+    // transporteur. La lui faire saisir au moment où il confirme une dette lui
+    // laisserait fixer ce qu'il retient dessus.
+    return this.transporteurService.confirmDeclaredCollection(this.driverId(req), id);
+  }
+
+  /** « Je n'ai pas encaissé cette livraison », ou « pas ce montant ». */
+  @Post('caisse/encaissements/:id/contester')
+  async disputeCollection(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: DisputeRemittanceDto,
+  ) {
+    return this.cash.disputeCollection(this.driverId(req), id, dto.reason);
+  }
+
   @Get('caisse/remises')
   async cashRemittances(@Request() req: any) {
     return this.cash.listRemittances('driver', this.driverId(req));

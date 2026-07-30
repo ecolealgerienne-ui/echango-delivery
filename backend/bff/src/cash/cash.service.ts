@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { badRequest, notFound } from '../common/errors/http-errors';
+import { badRequest, conflict, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -129,7 +129,25 @@ export class CashService {
   async debtBetween(driverId: string, merchantId: string): Promise<number> {
     const [collected, earned, out, back] = await Promise.all([
       this.prisma.cashCollection.aggregate({
-        where: { driverId, merchantId },
+        // ⚠️ La condition porte sur le DÉCLARANT, pas seulement sur la
+        // confirmation, et c'est délibéré à deux titres.
+        //
+        // **Le sens** : un encaissement déclaré par le TRANSPORTEUR n'a besoin
+        // de personne — il s'attribue sa propre dette, et nul ne ment pour se
+        // rendre débiteur. Déclaré par le COMMERÇANT, il engage quelqu'un
+        // d'autre ; le compter sans confirmation permettrait d'inventer une
+        // créance sur un transporteur.
+        //
+        // **La migration** : filtrer sur le seul `confirmedAt: { not: null }`
+        // aurait fait disparaître **toutes les dettes existantes** le jour de
+        // la migration, puisque les lignes déjà écrites naissent avec un
+        // `confirmedAt` nul. Une colonne ajoutée ne doit jamais changer le sens
+        // des lignes d'avant — surtout quand ce sens est une somme d'argent.
+        where: {
+          driverId,
+          merchantId,
+          OR: [{ declaredBy: 'driver' }, { confirmedAt: { not: null } }],
+        },
         _sum: { collectedAmount: true },
       }),
       this.prisma.driverEarning.aggregate({
@@ -353,6 +371,12 @@ export class CashService {
         discrepancyReason: differs ? input.discrepancyReason : null,
         notes: input.notes,
         currency: this.currency,
+        // Déclaré par celui qui tient l'argent : confirmé d'office. Exiger que
+        // le commerçant valide chaque encaissement ferait dépendre la dette de
+        // son attention, alors que le fait est déjà établi par celui qu'il
+        // engage.
+        declaredBy: 'driver',
+        confirmedAt: new Date(),
       },
     });
 
@@ -761,9 +785,195 @@ export class CashService {
           notes: c.notes,
           currency: c.currency,
           collected_at: c.collectedAt.toISOString(),
+          // Une ligne déclarée par le commerçant et non encore confirmée ne
+          // compte dans aucune dette. L'afficher comme les autres ferait lire
+          // un montant acquis là où il n'y a qu'une affirmation.
+          declared_by: c.declaredBy,
+          confirmed_at: c.confirmedAt?.toISOString() ?? null,
+          disputed_at: c.disputedAt?.toISOString() ?? null,
+          dispute_reason: c.disputeReason,
         };
       }),
     };
+  }
+
+  /**
+   * Le commerçant déclare l'encaissement d'une livraison que le registre ignore.
+   *
+   * ── Pourquoi ce geste existe ────────────────────────────────────────────────
+   *
+   * `CashCollection` n'a qu'un chemin d'écriture : la clôture par l'application
+   * du transporteur. Une livraison close depuis la console Fleetbase n'y laisse
+   * rien, et le commerçant se retrouve devant un trou qu'il est seul à voir.
+   *
+   * ── Pourquoi ça ne crée PAS de dette tout de suite ──────────────────────────
+   *
+   * Ici le déclarant engage **quelqu'un d'autre**. C'est l'inverse exact de la
+   * déclaration du transporteur, qui s'attribue sa propre dette et n'a donc
+   * besoin de personne. Sans confirmation, un commerçant pourrait inventer une
+   * créance ; `debtBetween()` ne compte que le confirmé.
+   *
+   * Et la rémunération n'est **pas** écrite ici : l'écrire tout de suite ferait
+   * une dette négative — l'encaissement ne compte pas encore, la rémunération
+   * si — c'est-à-dire un commerçant qui devrait de l'argent pour avoir signalé
+   * un oubli. Les deux écritures naissent ensemble, à la confirmation.
+   */
+  async declareCollectionByMerchant(
+    merchantId: string,
+    driverId: string,
+    fleetbaseOrderUuid: string,
+    expectedAmount: number,
+    input: DeclareCollectionInput,
+  ) {
+    const collected = Math.round(input.collectedAmount * 100) / 100;
+
+    if (collected < 0) {
+      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
+    }
+    if (collected > expectedAmount) {
+      badRequest(
+        'cash.amount_exceeds_expected',
+        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}).`,
+      );
+    }
+
+    const differs = collected !== expectedAmount;
+    if (differs && !input.discrepancyReason) {
+      badRequest(
+        'cash.discrepancy_reason_required',
+        'Un écart entre le montant annoncé et le montant perçu exige un motif',
+      );
+    }
+
+    const existing = await this.prisma.cashCollection.findUnique({
+      where: { fleetbaseOrderUuid },
+    });
+    if (existing) {
+      // Pas d'idempotence permissive ici, contrairement à `declareCollection` :
+      // celle-ci existe parce que le transporteur peut réessayer après un échec
+      // de clôture. Le commerçant, lui, ne réessaie rien — une seconde
+      // déclaration signifie que la première a abouti et qu'il ne la voit pas,
+      // ou qu'un transporteur a déclaré entre-temps. Les deux se disent.
+      conflict(
+        'cash.collection_already_declared',
+        'Un encaissement est déjà enregistré pour cette livraison',
+      );
+    }
+
+    const collection = await this.prisma.cashCollection.create({
+      data: {
+        driverId,
+        merchantId,
+        fleetbaseOrderUuid,
+        expectedAmount,
+        collectedAmount: collected,
+        discrepancyReason: differs ? input.discrepancyReason : null,
+        notes: input.notes,
+        currency: this.currency,
+        declaredBy: 'merchant',
+        confirmedAt: null,
+      },
+    });
+
+    this.logger.log(
+      `Encaissement ${fleetbaseOrderUuid} déclaré par le commerçant ${merchantId} : `
+        + `${collected}/${expectedAmount} ${this.currency} — en attente de confirmation du transporteur`,
+    );
+
+    return {
+      id: collection.id,
+      expectedAmount,
+      collectedAmount: collected,
+      currency: collection.currency,
+      pending: true,
+    };
+  }
+
+  /**
+   * Le transporteur confirme un encaissement déclaré par le commerçant.
+   *
+   * C'est ici que naissent **les deux** écritures : l'encaissement devient
+   * comptable, et la rémunération est enregistrée dans le même geste. Les
+   * séparer laisserait, entre les deux, un état où la dette est fausse.
+   */
+  async confirmCollection(driverId: string, collectionId: string, grossAmount: number) {
+    const collection = await this.prisma.cashCollection.findFirst({
+      where: { id: collectionId, driverId },
+    });
+
+    if (!collection) {
+      notFound('cash.collection_not_found', 'Encaissement introuvable');
+    }
+    if (collection.declaredBy !== 'merchant') {
+      badRequest(
+        'cash.collection_not_confirmable',
+        'Cet encaissement est le vôtre : il n\'y a rien à confirmer',
+      );
+    }
+    if (collection.confirmedAt) {
+      badRequest('cash.collection_already_confirmed', 'Cet encaissement est déjà confirmé');
+    }
+    if (collection.disputedAt) {
+      badRequest('cash.collection_disputed', 'Cet encaissement est contesté — contactez Echango');
+    }
+
+    const updated = await this.prisma.cashCollection.update({
+      where: { id: collectionId },
+      data: { confirmedAt: new Date() },
+    });
+
+    // La rémunération, dans le même geste. `recordEarning` est idempotent sur
+    // `fleetbaseOrderUuid`, donc une course qui en aurait déjà une — cas
+    // improbable mais possible si la clôture applicative a fini par passer —
+    // n'en crée pas une seconde.
+    await this.recordEarning(
+      driverId,
+      collection.merchantId,
+      collection.fleetbaseOrderUuid,
+      grossAmount,
+      updated.collectedAmount,
+    );
+
+    const debt = await this.debtBetween(driverId, collection.merchantId);
+    this.logger.log(
+      `Encaissement ${collection.fleetbaseOrderUuid} confirmé par le transporteur — dette ${debt}`,
+    );
+
+    return { id: updated.id, confirmed: true, debt };
+  }
+
+  /** « Je n'ai pas encaissé cette livraison », ou « pas ce montant ». */
+  async disputeCollection(driverId: string, collectionId: string, reason?: string) {
+    const collection = await this.prisma.cashCollection.findFirst({
+      where: { id: collectionId, driverId },
+    });
+
+    if (!collection) {
+      notFound('cash.collection_not_found', 'Encaissement introuvable');
+    }
+    if (collection.declaredBy !== 'merchant') {
+      badRequest(
+        'cash.collection_not_confirmable',
+        'Cet encaissement est le vôtre : contestez-le auprès d\'Echango',
+      );
+    }
+    if (collection.confirmedAt) {
+      badRequest('cash.collection_already_confirmed', 'Cet encaissement est déjà confirmé');
+    }
+
+    const updated = await this.prisma.cashCollection.update({
+      where: { id: collectionId },
+      data: { disputedAt: new Date(), disputeReason: reason ?? null },
+    });
+
+    // La ligne reste, contestée. L'effacer priverait le commerçant de toute
+    // trace de ce qu'il a affirmé, et le désaccord disparaîtrait avec elle.
+    this.logger.warn(
+      `Encaissement ${collection.fleetbaseOrderUuid} CONTESTÉ par le transporteur `
+        + `${driverId} : ${reason ?? 'sans motif'}`,
+    );
+
+    return { id: updated.id, disputed: true };
   }
 
   private projectRemittance(r: any) {

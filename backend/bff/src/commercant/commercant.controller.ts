@@ -12,7 +12,11 @@ import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CashService } from '../cash/cash.service';
-import { MerchantRemittanceDto, DisputeRemittanceDto } from './dto/cash.dto';
+import {
+  MerchantRemittanceDto,
+  DisputeRemittanceDto,
+  DeclareMissingCollectionDto,
+} from './dto/cash.dto';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
 // E4) : un jeton transporteur ou flotte y était structurellement valide.
@@ -54,6 +58,22 @@ export class CommerçantController {
   @Get('encaissements/attendus')
   async pendingCollections(@Request() req: any) {
     return this.commercantService.pendingCollections(req.user.id);
+  }
+
+  /**
+   * « Ce transporteur a bien encaissé X sur cette livraison. »
+   *
+   * Ferme le trou laissé par une clôture faite hors application. La déclaration
+   * n'établit rien seule : elle attend la confirmation du transporteur, comme
+   * une remise — ici le déclarant engage quelqu'un d'autre.
+   */
+  @Post('commandes/:id/encaissement')
+  async declareMissingCollection(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: DeclareMissingCollectionDto,
+  ) {
+    return this.commercantService.declareMissingCollection(req.user.id, id, dto);
   }
 
   @Get('encaissements/remises')

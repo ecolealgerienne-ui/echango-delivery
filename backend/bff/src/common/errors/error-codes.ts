@@ -70,6 +70,18 @@ export const ErrorCode = {
   CASH_COD_DECLARATION_REQUIRED: 'cash.cod_declaration_required',
   CASH_ORDER_UNKNOWN_TO_REGISTRY: 'cash.order_unknown_to_registry',
 
+  // Régularisation d'une livraison close hors application : le commerçant
+  // déclare l'encaissement manquant, le transporteur confirme ou conteste.
+  CASH_COLLECTION_ALREADY_DECLARED: 'cash.collection_already_declared',
+  CASH_COLLECTION_NOT_FOUND: 'cash.collection_not_found',
+  CASH_COLLECTION_NOT_CONFIRMABLE: 'cash.collection_not_confirmable',
+  CASH_COLLECTION_ALREADY_CONFIRMED: 'cash.collection_already_confirmed',
+  CASH_COLLECTION_DISPUTED: 'cash.collection_disputed',
+  CASH_ORDER_NOT_DELIVERED: 'cash.order_not_delivered',
+  CASH_ORDER_HAS_NO_COD: 'cash.order_has_no_cod',
+  CASH_DRIVER_REQUIRED: 'cash.driver_required',
+  CASH_DRIVER_NOT_IN_NETWORK: 'cash.driver_not_in_network',
+
   // ── Commandes ────────────────────────────────────────────────────────────
   ORDER_NOT_FOUND: 'order.not_found',
   ORDER_FORBIDDEN: 'order.forbidden',

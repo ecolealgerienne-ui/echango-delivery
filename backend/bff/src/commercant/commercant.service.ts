@@ -1868,6 +1868,136 @@ export class CommerçantService {
     };
   }
 
+  /**
+   * Le commerçant régularise une livraison close hors application.
+   *
+   * ── Ce que ce geste peut et ne peut pas faire ───────────────────────────────
+   *
+   * Il **enregistre une affirmation**, pas un fait : le montant déclaré ne
+   * compte dans aucune dette tant que le transporteur ne l'a pas confirmé
+   * (`CashCollection.confirmedAt`). C'est la même règle que les remises, et
+   * pour la même raison — ici le déclarant engage quelqu'un d'autre.
+   *
+   * ── Pourquoi le transporteur peut devoir être nommé à la main ───────────────
+   *
+   * Une livraison close depuis la console peut n'avoir **aucun**
+   * `driver_assigned_uuid` : observé en réel le 30/07/2026 sur une course
+   * livrée de 3750 DZD. Le commerçant sait qui est venu ; Fleetbase l'ignore.
+   * Refuser la régularisation dans ce cas laisserait sans recours précisément
+   * la livraison la plus mal enregistrée des deux.
+   */
+  async declareMissingCollection(
+    merchantId: string,
+    orderId: string,
+    input: { collectedAmount: number; driverId?: string; discrepancyReason?: string; notes?: string },
+  ) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+
+    const live = await this.liveOrderDetailed(merchant.fleetbaseVendorUuid, order);
+    if (!live) {
+      notFound('order.not_found', 'Livraison introuvable');
+    }
+
+    // ⚠️ Résolus AVANT toute écriture, et les refus levés hors de tout `try` :
+    // un refus attrapé par un filet d'erreur ressortirait en « opération
+    // impossible », sans le code qui dit quoi corriger (règle 3).
+    if (live.status !== 'completed') {
+      badRequest(
+        'cash.order_not_delivered',
+        'Seule une livraison terminée peut être régularisée',
+      );
+    }
+
+    const expected = Number(live.meta?.cod_amount) || 0;
+    if (expected <= 0) {
+      badRequest(
+        'cash.order_has_no_cod',
+        'Cette livraison n\'était pas payée à la réception',
+      );
+    }
+
+    const driverAccount = await this.resolveDriverForRegularisation(live, input.driverId);
+
+    const result = await this.cash.declareCollectionByMerchant(
+      merchantId,
+      driverAccount.id,
+      order.fleetbaseOrderId,
+      expected,
+      {
+        collectedAmount: input.collectedAmount,
+        discrepancyReason: input.discrepancyReason,
+        notes: input.notes,
+      },
+    );
+
+    // ⚠️ **Le transporteur n'est pas notifié**, et c'est une limite, pas un
+    // oubli : `MerchantNotification` est la seule table de notification du
+    // projet, et elle vise le commerçant. La déclaration apparaît dans sa
+    // caisse à sa prochaine ouverture — donc la régularisation aboutit quand il
+    // regarde, pas quand elle est faite.
+    //
+    // En inventer une ici donnerait l'illusion d'un signal qui n'existe pas.
+    // Le push driver est possible (FCM via `UserDevice`, validé §5.1), c'est un
+    // lot à part.
+    this.logger.log(
+      `Régularisation déclarée par ${merchant.businessName} pour le transporteur `
+        + `${driverAccount.id} — en attente de sa confirmation (aucune notification poussée)`,
+    );
+
+    return { ...result, driver_name: driverAccount.name };
+  }
+
+  /**
+   * Qui est le transporteur d'une livraison qu'on régularise.
+   *
+   * Fleetbase d'abord, saisie du commerçant ensuite — et jamais l'inverse : si
+   * la course porte un transporteur, c'est lui qui fait foi, et accepter une
+   * autre désignation permettrait d'imputer un encaissement à un tiers.
+   */
+  private async resolveDriverForRegularisation(
+    live: any,
+    suppliedDriverId?: string,
+  ): Promise<{ id: string; name: string }> {
+    const assignedUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid ?? null;
+
+    if (assignedUuid) {
+      const account = await this.prisma.driverAccount.findFirst({
+        where: { fleetbaseDriverUuid: assignedUuid },
+        select: { id: true, firstName: true, lastName: true },
+      });
+      if (account) {
+        return {
+          id: account.id,
+          name: [account.firstName, account.lastName].filter(Boolean).join(' '),
+        };
+      }
+      // Assigné chez Fleetbase mais sans compte Echango : le transporteur n'a
+      // jamais été provisionné. On tombe sur la saisie manuelle plutôt que de
+      // refuser — le commerçant, lui, sait qui est venu.
+    }
+
+    if (!suppliedDriverId) {
+      badRequest(
+        'cash.driver_required',
+        'Cette livraison ne porte aucun transporteur : indiquez qui l\'a effectuée',
+      );
+    }
+
+    const supplied = await this.prisma.driverAccount.findFirst({
+      where: { id: suppliedDriverId },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!supplied) {
+      notFound('cash.driver_not_in_network', 'Transporteur inconnu du réseau');
+    }
+
+    return {
+      id: supplied.id,
+      name: [supplied.firstName, supplied.lastName].filter(Boolean).join(' '),
+    };
+  }
+
   async cancelOrder(merchantId: string, orderId: string) {
     this.logger.log(`Cancelling order ${orderId}`);
 
