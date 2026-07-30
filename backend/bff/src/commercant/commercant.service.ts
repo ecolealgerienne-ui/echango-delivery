@@ -1198,10 +1198,25 @@ export class CommerçantService {
    * que `pickAvailableFavourite` applique exactement les mêmes filtres qu'à
    * la création (catégorie de véhicule, plafond de dette).
    *
-   * ⚠️ **Chemin non éprouvé par un appel réel** : `assignOrderDirectly` et
-   * `releaseOrderToPool` reposent sur la même analogie de payload que le
-   * reste de ce fichier, jamais rejouée contre une vraie instance Fleetbase
-   * depuis ce bac à sable.
+   * ── Deux mécanismes distincts, découverts par capture réseau (30/07/2026) ──
+   *
+   * Un essai précédent se contentait d'un `PUT /orders` posant `adhoc`/
+   * `driver_assigned_uuid` (`assignOrderDirectly`/`releaseOrderToPool`) — la
+   * commande restait « Created » malgré tout. Capture réseau de la console :
+   * dispatcher une commande y est **une action à part**, « Update activity »
+   * → « Order Dispatched », qui rejoue exactement le mécanisme déjà validé
+   * côté transporteur (`getNextActivities` + `updateOrderActivity`,
+   * `GET/POST .../next-activity` et `.../update-activity`). `adhoc`/
+   * `driver_assigned_uuid` décident **qui** peut prendre la commande ; cette
+   * activité fait progresser **son propre suivi** (`dispatched`, `status`) —
+   * deux axes indépendants, l'un ne déclenche pas l'autre via un simple `PUT`.
+   * D'où les deux étapes ci-dessous : régler l'éligibilité, puis faire
+   * progresser l'activité — dans cet ordre, pour que l'activité voie déjà
+   * l'assignation si elle en dépend.
+   *
+   * ⚠️ **Partiellement éprouvé** : `getNextActivities`/`updateOrderActivity`
+   * sont validés de bout en bout côté transporteur (journal §6.19), mais pas
+   * encore rejoués depuis ce chemin commerçant précis.
    */
   async publishOrder(merchantId: string, orderId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
@@ -1234,15 +1249,51 @@ export class CommerçantService {
       : null;
 
     try {
+      // Étape 1 — qui peut prendre la commande.
       if (favourite) {
-        await this.fleetbaseClient.assignOrderDirectly(
-          cached.fleetbaseOrderId,
+        // Même route que le persona flotte (`flotte.service.ts`), déjà en
+        // usage réel : `POST /drivers/{uuid}/assign-order`.
+        await this.fleetbaseClient.assignOrderToDriver(
           favourite.fleetbaseDriverUuid,
+          cached.fleetbaseOrderId,
         );
       } else {
         await this.fleetbaseClient.releaseOrderToPool(
           cached.fleetbaseOrderId,
           this.adhocRadiusMetres(),
+        );
+      }
+
+      // Étape 2 — faire progresser le suivi de la commande elle-même.
+      //
+      // Sans elle, la commande reste au statut « Created » quels que soient
+      // `adhoc`/`driver_assigned_uuid` — c'est ce qu'un premier essai a
+      // montré. `getNextActivities` renvoie l'activité « dispatched » telle
+      // que Fleetbase l'attend, `updateOrderActivity` la soumet — jamais un
+      // statut inventé de notre côté.
+      const publicId = live.public_id;
+      if (!publicId) {
+        badRequest('order.missing_public_id', 'Commande mal formée côté serveur');
+      }
+
+      const nextActivities = await this.fleetbaseClient.getNextActivities(publicId);
+      const activities: any[] = Array.isArray(nextActivities)
+        ? nextActivities
+        : Array.isArray(nextActivities?.activities)
+          ? nextActivities.activities
+          : [];
+      const dispatchActivity = activities.find(
+        (a: any) => a?.code === 'dispatched' || a?.key === 'dispatched',
+      );
+
+      if (dispatchActivity) {
+        await this.fleetbaseClient.updateOrderActivity(publicId, dispatchActivity);
+      } else {
+        // Rare, mais pas bloquant : l'éligibilité (étape 1) est déjà posée,
+        // et un opérateur peut terminer la transition depuis la console.
+        this.logger.warn(
+          `Aucune activité « dispatched » proposée pour ${orderId} — ` +
+            `assignation faite, mais le statut peut rester « Created ».`,
         );
       }
     } catch (error: any) {
