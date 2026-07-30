@@ -267,9 +267,9 @@ class OrderItemLine extends Equatable {
   /// Une ligne lisible : « Gâteau · 2 kg · fragile ». Les parties absentes
   /// disparaissent au lieu d'afficher un tiret.
   String get label => [
-        if (quantity > 1) '${quantity}×',
+        if (quantity > 1) '$quantity×',
         description,
-        if (weight != null) '${weight} kg',
+        if (weight != null) '$weight kg',
         if (fragile) 'fragile',
       ].where((p) => p.isNotEmpty).join(' · ');
 
