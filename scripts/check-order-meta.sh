@@ -93,8 +93,30 @@ else
 fi
 echo
 
-echo "-- les clés qui coûtent de l'argent si elles manquent --"
+echo "-- champs personnalises (stockage DURABLE) --"
+cfv="$(echo "$order" | jq '.custom_field_values // []')"
+cfvcount="$(echo "$cfv" | jq 'length')"
+
+if [[ "$cfvcount" == "0" ]]; then
+  echo "  /!\  AUCUN - les donnees metier ne sont protegees que par meta,"
+  echo "      qu'une affectation depuis la console efface."
+else
+  echo "$cfv" | jq -r '.[] | "  \(.custom_field.name // .custom_field_uuid) = \(.value | tostring)  [\(.value_type // "text")]"'
+  echo
+  echo "  ($cfvcount valeur(s))"
+fi
+echo
+
+echo "-- les cles qui coutent de l'argent : ou sont-elles ? --"
 for key in price cod_amount cod_goods_amount cod_includes_delivery; do
-  value="$(echo "$meta" | jq -r --arg k "$key" '.[$k] // "ABSENTE"')"
-  echo "  $key = $value"
+  name="$(echo "$key" | tr '_' '-')"
+  durable="$(echo "$cfv" | jq -r --arg n "$name" '.[] | select(.custom_field.name == $n) | .value | tostring' | head -1)"
+  fragile="$(echo "$meta" | jq -r --arg k "$key" '.[$k] // ""')"
+
+  printf '  %-22s durable=%-12s meta=%s\n' "$key" "${durable:-ABSENT}" "${fragile:-absent}"
 done
+echo
+echo "Lecture : \"durable\" doit etre renseigne. \"meta\" vide est NORMAL sur une"
+echo "commande creee apres le 30/07/2026 : ces cles ont demenage, et les laisser"
+echo "aux deux endroits ferait diverger l'affichage de la console le jour ou un"
+echo "admin corrige un montant."

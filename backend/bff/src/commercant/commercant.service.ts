@@ -1233,6 +1233,8 @@ export class CommerçantService {
       const customFieldValues = await this.orderCustomFields.valuesFor(orderConfigUuid, meta);
       this.assertCustomFieldsComplete(meta, customFieldValues);
 
+      const metaWithoutCustomFields = this.metaOutsideCatalogue(meta);
+
       const [pickupPlace, dropoffPlace] = await Promise.all([
         // Les contacts sont bien transmis : ils étaient saisis, validés, puis
         // jetés (voir createPlace). Un transporteur devant une porte sans
@@ -1302,8 +1304,22 @@ export class CommerçantService {
           pickup_uuid: pickupPlace.place.uuid,
           dropoff_uuid: dropoffPlace.place.uuid,
         },
-        meta,
-        ...(customFieldValues.length ? { custom_field_values: customFieldValues } : {}),
+        // ⚠️ `meta` ne porte plus que ce qui n'a PAS de champ personnalisé —
+        // aujourd'hui `pricing_inputs` seul.
+        //
+        // Écrire les deux était juste tant que les champs personnalisés
+        // pouvaient manquer. Depuis qu'une commande sans eux est **refusée**,
+        // `meta` n'est plus un filet mais un doublon — et un doublon qui
+        // diverge : le jour où un admin corrige un prix dans les champs
+        // personnalisés, le panneau `METADATA` de la console continue
+        // d'afficher l'ancien. Deux valeurs pour le même montant, sans que rien
+        // ne dise laquelle fait foi. C'est le second vocabulaire que la règle 1
+        // interdit, réintroduit par prudence mal placée.
+        //
+        // `Order.specMeta` garde tout, lui : il n'est ni affiché ni modifiable,
+        // donc il ne peut pas contredire l'écran.
+        meta: metaWithoutCustomFields,
+        custom_field_values: customFieldValues,
         scheduled_at: dto.scheduledAt,
         // Un brouillon envoie `adhoc: false` ET `dispatched: false`
         // EXPLICITEMENT, pas seulement leur absence.
@@ -1627,6 +1643,25 @@ export class CommerçantService {
    * Le refus est levé **avant** toute écriture chez Fleetbase — d'où sa place
    * en tête de `createOrder`, avant même les deux `Place`.
    */
+  /**
+   * Ce qui reste à `meta` : les clés sans champ personnalisé correspondant.
+   *
+   * Renvoie `undefined` s'il ne reste rien, pour ne pas écrire un objet vide là
+   * où l'absence est plus lisible.
+   */
+  private metaOutsideCatalogue(
+    meta: Record<string, any> | undefined,
+  ): Record<string, any> | undefined {
+    if (!meta) return undefined;
+
+    const rest: Record<string, any> = {};
+    for (const [key, value] of Object.entries(meta)) {
+      if (!ORDER_CUSTOM_FIELD_KEYS.includes(key)) rest[key] = value;
+    }
+
+    return Object.keys(rest).length ? rest : undefined;
+  }
+
   private assertCustomFieldsComplete(
     meta: Record<string, any> | undefined,
     values: { custom_field_uuid: string }[],
