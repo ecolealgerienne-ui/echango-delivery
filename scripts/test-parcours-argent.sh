@@ -61,6 +61,19 @@ pass() { echo "✅ $1"; }
 fail() { echo "❌ $1"; [ -n "${2:-}" ] && echo "   Réponse : $2"; exit 1; }
 step() { echo; echo "── $1 ──"; }
 
+# Reconnaît une réponse d'erreur du BFF, sur stdin.
+#
+# ⚠️ Par `statusCode` et NON par `code`. Le script testait la présence de
+# `code`, ce qui marche tant que les réponses de succès n'en portent pas — or
+# **un objet activité en porte un** (`{"code":"enroute",…}`). Sur le chemin de
+# clôture par transition, une réponse parfaitement valide aurait donc été lue
+# comme un échec, ou pire : le jour où une erreur arrive sans `code`, elle
+# passerait pour un succès.
+#
+# `statusCode` est le seul champ que `HttpExceptionFilter` pose sur **toutes**
+# les erreurs, y compris celles qui n'ont pas de `code` métier.
+is_error() { jq -e 'type == "object" and ((.statusCode | type) == "number")' >/dev/null 2>&1; }
+
 mapi() { # method path [body] — appel commerçant
   local m="$1" p="$2" b="${3:-}"
   if [ -n "$b" ]; then
@@ -203,7 +216,7 @@ pass "À encaisser = $cod — la course s'ajoute bien à la marchandise"
 step "2. Publication (jamais jouée jusqu'ici)"
 
 published="$(mapi POST "/commercant/commandes/$ORDER_ID/publier")"
-echo "$published" | jq -e '.code' >/dev/null 2>&1 \
+echo "$published" | is_error \
   && fail "Publication refusée" "$(echo "$published" | jq -c '.')"
 
 after="$(mapi GET "/commercant/commandes/$ORDER_ID")"
@@ -217,7 +230,7 @@ step "3. Acceptation, démarrage, livraison"
 FB_UUID="$(echo "$after" | jq -r '.uuid')"
 
 accepted="$(dapi POST "/transporteur/commandes/$FB_UUID/accepter")"
-echo "$accepted" | jq -e '.code' >/dev/null 2>&1 \
+echo "$accepted" | is_error \
   && fail "Acceptation refusée" "$(echo "$accepted" | jq -c '.')"
 pass "Course acceptée"
 
@@ -233,7 +246,7 @@ pass "Course démarrée"
 # porte à côté de l'activité. Le §6 ci-dessous exerce la seconde.
 completed="$(dapi POST "/transporteur/commandes/$FB_UUID/terminer" \
   "$(jq -n --argjson c "$expected" '{collectedAmount:$c}')")"
-echo "$completed" | jq -e '.code' >/dev/null 2>&1 \
+echo "$completed" | is_error \
   && fail "Clôture refusée" "$(echo "$completed" | jq -c '.')"
 pass "Livrée, $expected DZD déclarés encaissés"
 
@@ -291,7 +304,7 @@ still="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add //
 pass "Dette inchangée avant confirmation — c'est le point du modèle"
 
 confirmed="$(mapi POST "/commercant/encaissements/remises/$REMITTANCE_ID/confirmer")"
-echo "$confirmed" | jq -e '.code' >/dev/null 2>&1 \
+echo "$confirmed" | is_error \
   && fail "Confirmation refusée" "$(echo "$confirmed" | jq -c '.')"
 
 # Une dette soldée disparaît de `balances` (`filter(.debt != 0)`), donc la
@@ -334,29 +347,65 @@ dapi POST "/transporteur/commandes/$FB2/accepter" >/dev/null
 dapi POST "/transporteur/commandes/$FB2/demarrer" >/dev/null
 pass "Seconde course acceptée et démarrée"
 
-# L'activité terminale est celle que le SERVEUR propose, pas une que le script
-# fabrique : `updateActivity()` de Fleetbase commence par `if (!isActivity(...))
-# return $this` — un objet inventé produirait un 2xx sans le moindre effet.
-acts="$(dapi GET "/transporteur/commandes/$FB2/activites-suivantes")"
-terminal="$(echo "$acts" | jq -c '
-  [.. | objects | select(.code == "completed" or .status == "completed")] | first // empty')"
-[ -n "$terminal" ] || fail "Aucune activité terminale proposée après 'démarrer'.
-   Le flux passe peut-être par des étapes intermédiaires (points de passage) —
-   les codes proposés ici sont : $(echo "$acts" | jq -c '[.. | objects | .code? // empty] | unique')" \
-   "$(echo "$acts" | jq -c '.')"
+# ── Le flux se PARCOURT, il ne se saute pas ────────────────────────────────
+#
+# Constaté en réel (30/07/2026) : juste après `demarrer`, la seule transition
+# proposée est `enroute`, dont le champ `activities: ["completed"]` annonce la
+# suivante. La clôture n'est donc jamais offerte d'emblée — il faut avancer
+# d'un cran, redemander, et recommencer.
+#
+# C'est ce que fait l'application, et c'est pourquoi le script le fait aussi :
+# poser directement une activité `completed` fabriquée passerait le test sans
+# rien prouver. `updateActivity()` de Fleetbase commence par
+# `if (!Utils::isActivity($activity)) return $this` — un objet inventé rend un
+# 2xx et **n'a aucun effet** (journal, découverte n°3 du lot brouillon/publier).
+#
+# La borne à 6 sauts protège d'un flux qui boucle sur lui-même : sans elle, une
+# configuration mal fermée ferait tourner le script indéfiniment.
+next_activities() { echo "$(dapi GET "/transporteur/commandes/$1/activites-suivantes")"; }
+
+# Normalise la réponse en tableau : elle est nue aujourd'hui, un `with` amont
+# suffirait à l'envelopper.
+as_activities() { jq -c 'if type == "array" then . else (.activities // .next_activity // .data // []) end'; }
+
+terminal=""; hops=0; trail=""
+while [ "$hops" -lt 6 ]; do
+  acts="$(next_activities "$FB2" | as_activities)"
+  terminal="$(echo "$acts" | jq -c '[.[] | select(.code == "completed")] | first // empty')"
+  [ -z "$terminal" ] || break
+
+  # Première transition non terminale proposée. On ne choisit pas : le serveur
+  # n'en offre qu'une à la fois dans ce flux, et en préférer une autre serait
+  # inventer un parcours.
+  hop="$(echo "$acts" | jq -c '.[0] // empty')"
+  [ -n "$hop" ] || fail "Le flux ne propose plus aucune transition et n'a pas abouti.
+   Parcouru :$trail" "$(echo "$acts" | jq -c '.')"
+
+  moved="$(dapi POST "/transporteur/commandes/$FB2/activite" \
+    "$(jq -n --argjson a "$hop" '{activity:$a}')")"
+  echo "$moved" | is_error \
+    && fail "Transition « $(echo "$hop" | jq -r '.code') » refusée" "$(echo "$moved" | jq -c '.')"
+
+  trail="$trail $(echo "$hop" | jq -r '.code') →"
+  hops=$((hops + 1))
+done
+
+[ -n "$terminal" ] || fail "Clôture jamais proposée après $hops transitions.
+   Parcouru :$trail"
+pass "Flux parcouru :$trail completed"
 
 # ⚠️ Le contrôle central : la clôture SANS déclaration doit être refusée sur ce
 # chemin comme sur l'autre. C'est la garde qui était décorative.
 refused="$(dapi POST "/transporteur/commandes/$FB2/activite" \
   "$(jq -n --argjson a "$terminal" '{activity:$a}')")"
-echo "$refused" | jq -e '.code' >/dev/null 2>&1 \
+echo "$refused" | is_error \
   || fail "Clôture SANS déclaration d'encaissement acceptée — la garde ne couvre pas ce chemin" \
      "$(echo "$refused" | jq -c '.')"
 pass "Clôture sans déclaration refusée ($(echo "$refused" | jq -r '.code'))"
 
 closed="$(dapi POST "/transporteur/commandes/$FB2/activite" \
   "$(jq -n --argjson a "$terminal" --argjson c "$expected" '{activity:$a, cash:{collectedAmount:$c}}')")"
-echo "$closed" | jq -e '.code' >/dev/null 2>&1 \
+echo "$closed" | is_error \
   && fail "Clôture par activité refusée" "$(echo "$closed" | jq -c '.')"
 
 # La dette repart de zéro (soldée au §5), donc elle doit valoir exactement
