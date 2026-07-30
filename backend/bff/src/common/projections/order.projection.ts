@@ -187,8 +187,12 @@ const META_FIELDS = [
  * La version précédente faisait `if (typeof meta !== 'object') return undefined`
  * : une chaîne JSON était donc **écartée en silence**, et avec elle TOUT ce que
  * `meta` porte — prix, catégorie de véhicule, colis, montant à encaisser,
- * précisions d'adresse. Le commerçant voyait une fiche presque vide alors que
- * tout avait bien été enregistré.
+ * précisions d'adresse.
+ *
+ * ⚠️ Ce n'est **pas** ce qui a vidé la fiche du 30/07/2026 : la console montrait
+ * un `meta` objet et complet, ce qui écarte cette piste-là. La tolérance reste
+ * parce que le motif est réel en amont (ci-dessous), pas parce qu'elle a résolu
+ * ce défaut.
  *
  * Ce n'est pas une hypothèse gratuite : `meta` est casté `Json::class` côté
  * Fleetbase, et ce projet a déjà rencontré exactement ce défaut de forme sur

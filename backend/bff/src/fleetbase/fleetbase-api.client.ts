@@ -623,6 +623,55 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Une commande **désignée par son identifiant**, relations comprises.
+   *
+   * ── Ce que le source garantit (lu, pas supposé) ───────────────────────────
+   *
+   * `fleetbaseRoutes('orders')` expose `GET {id}` → `findRecord()`, qui appelle
+   * `$this->model->getById($id, …, $request)`. Trois faits en découlent, tous
+   * vérifiés dans `core-api` :
+   *
+   * - **uuid OU public_id** : `getById` fait `where(key, $id)->orWhere(publicId,
+   *   $id)`. C'est l'une des rares routes qui accepte les deux, là où la
+   *   résolution d'identifiant est ailleurs tout sauf uniforme (journal §6.7).
+   * - **`with[]` est honoré** : `withRelationships()` lit `with` ou `expand`, et
+   *   ne charge une relation que si `method_exists($model, $nom)` — un nom
+   *   inconnu est **ignoré en silence**, jamais une erreur. Donc rien à casser
+   *   si une relation disparaît en amont, mais rien non plus qui le signale :
+   *   les noms ci-dessous sont ceux de la console.
+   * - **réponse clé au singulier** : `findRecord` renvoie `['order' => …]`.
+   *   L'appelant déballe `response.order ?? response`.
+   *
+   * `getById` filtre aussi sur `company_uuid` depuis la session — le cloisonnement
+   * par organisation tient donc sans qu'on l'ajoute.
+   *
+   * ⚠️ **Cette lecture ne « corrige » pas la fiche de détail incomplète du
+   * 30/07/2026.** L'hypothèse était que la liste appauvrissait la réponse ; le
+   * source la contredit — `OrderResource::toArray()` sert `meta`, et `payload`
+   * y compris `pickup`/`dropoff`/`entities`, **sans condition**, et la même
+   * classe sert la liste et l'unitaire. On garde la lecture unitaire parce
+   * qu'elle est juste (un appel au lieu d'un parcours de pages qui peut manquer
+   * sa cible), pas parce qu'elle résout ce défaut-là.
+   *
+   * Les relations demandées sont celles dont la projection commerçant a besoin
+   * — ni plus (chaque `with[]` coûte une jointure), ni moins.
+   */
+  async getOrderWithRelations(orderUuid: string) {
+    const params = new URLSearchParams();
+    for (const relation of ['payload', 'driverAssigned', 'trackingNumber', 'orderConfig']) {
+      params.append('with[]', relation);
+    }
+
+    const response = await this.callFleetOps(
+      'GET',
+      `/orders/${this.seg(orderUuid)}`,
+      undefined,
+      params,
+    );
+    return response.data;
+  }
+
+  /**
    * Cancel an order. Note: no {id} in the path - the order UUID goes in
    * the request body as 'order', per OrderController::cancel().
    */

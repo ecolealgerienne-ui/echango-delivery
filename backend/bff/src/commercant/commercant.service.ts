@@ -721,21 +721,44 @@ export class CommerçantService {
 
     // ── Instrument de diagnostic, activé à la demande ───────────────────────
     //
-    // La fiche affichait presque rien alors que tout avait été saisi, et trois
-    // suppositions successives n'ont pas suffi à dire pourquoi : les champs
-    // manquants venaient-ils de `meta` mal lu, d'une colonne native jamais
-    // enregistrée, ou de la commande introuvable en amont ? Cette ligne répond
-    // en un test au lieu d'un aller-retour par hypothèse.
+    // La fiche affichait presque rien alors que tout avait été saisi, et
+    // plusieurs suppositions successives n'ont pas suffi à dire pourquoi. La
+    // chaîne a exactement **trois** maillons, et il faut les distinguer sous
+    // peine de corriger le mauvais :
     //
-    // Derrière un drapeau parce qu'elle coûte un appel Fleetbase de plus :
+    //   1. ce que Fleetbase renvoie à l'unité  (`getOrderWithRelations`)
+    //   2. ce que Fleetbase renvoie en liste   (`liveOrderFor`)
+    //   3. ce que le BFF sert réellement       (après projection)
+    //
+    // Le troisième maillon est celui qui manquait : sans lui, un `meta` bien
+    // présent en amont et perdu à la projection est indiscernable d'un `meta`
+    // jamais enregistré. Les deux premiers se comparent entre eux, le
+    // troisième les compare à la sortie.
+    //
+    // Derrière un drapeau parce que cela coûte un appel Fleetbase de plus :
     // laisser le prix à chaque ouverture de fiche pour un diagnostic ponctuel
     // serait exactement le genre de dette qu'on reproche ailleurs.
     // `DEBUG_FLEETBASE_SHAPE=1` pour un test, retiré ensuite.
-    if (process.env.DEBUG_FLEETBASE_SHAPE === '1') {
+    const debugShape = process.env.DEBUG_FLEETBASE_SHAPE === '1';
+    if (debugShape) {
       await this.logUpstreamShape(merchant.fleetbaseVendorUuid, order, orderId);
     }
 
-    const [merged] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
+    const merged = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
+
+    if (debugShape) {
+      const projected = merged as any;
+      this.logger.log(
+        `Forme servie de ${orderId} — meta: ${
+          projected?.meta ? `{${Object.keys(projected.meta).join(', ')}}` : 'ABSENT'
+        } | payload: ${
+          projected?.payload
+            ? `pickup=${projected.payload.pickup ? 'oui' : 'non'} dropoff=${projected.payload.dropoff ? 'oui' : 'non'}`
+            : 'ABSENT'
+        } | pod_method: ${projected?.pod_method ?? 'absent'}`,
+      );
+    }
+
     // Aucune donnée de facturation interne ne sort ici : la rémunération du
     // transporteur et la commission Echango vivent dans `DriverEarning`, et
     // n'ont pas d'usage dans l'app commerçant.
@@ -747,43 +770,146 @@ export class CommerçantService {
   }
 
   /**
-   * Journalise la forme réelle de la commande telle que Fleetbase la renvoie.
+   * La commande telle qu'une fiche de détail a besoin de la voir.
    *
-   * Nomme les trois choses qui expliquent une fiche vide, et les distingue :
-   * le **type** de `meta` (un objet lu normalement, ou une chaîne JSON qui
-   * était écartée en silence), la présence des **colonnes natives** qu'on croit
-   * enregistrées, et l'état de dispatch. Sans cette distinction, une fiche
-   * incomplète peut venir de trois causes très différentes.
+   * ── Lecture unitaire : désigner la commande, pas la chercher ───────────────
+   *
+   * La console interroge la commande à l'unité (`GET /int/v1/orders/{id}` avec
+   * ses relations) ; le BFF la prenait dans la liste paginée, en parcourant
+   * jusqu'à cinquante pages pour retrouver celle qu'il connaît déjà par son
+   * uuid. Désigner coûte un appel, chercher en coûte autant que l'organisation
+   * a de commandes — et un parcours peut manquer sa cible, ce qu'une lecture
+   * unitaire ne peut pas faire.
+   *
+   * ⚠️ **Ce n'est PAS l'explication de la fiche vide du 30/07/2026**, et il
+   * faut le dire ici pour que personne ne classe le sujet. L'hypothèse était
+   * que la liste n'aurait pas servi `meta` ; la lecture du source Fleetbase
+   * l'invalide — `OrderResource::toArray()` renvoie `meta` et `payload` (avec
+   * `pickup`, `dropoff`, `entities`) **sans condition**, et la même classe sert
+   * les deux routes. La cause reste à établir : `DEBUG_FLEETBASE_SHAPE=1`
+   * journalise les trois maillons (unitaire, liste, sortie projetée) pour la
+   * nommer au lieu de la deviner.
+   *
+   * ── Le repli n'est pas de la prudence gratuite ─────────────────────────────
+   *
+   * `mergeWithFleetbase` porte deux comportements que la lecture unitaire n'a
+   * pas : le drapeau `stale` quand Fleetbase est injoignable, et `missing`
+   * quand la commande a disparu. Les deux se voient à l'écran (« État
+   * indisponible ») au lieu de faire échouer la fiche. Y retomber garantit
+   * qu'un défaut de la lecture unitaire dégrade l'affichage au lieu de le
+   * casser.
+   */
+  private async detailedOrder(
+    order: { id: string; fleetbaseOrderId: string },
+    vendorUuid: string,
+  ): Promise<any> {
+    const live = await this.liveOrderDetailed(order, vendorUuid);
+    if (live) return projectOrderForMerchant(live, { bff_order_id: order.id });
+
+    const [merged] = await this.mergeWithFleetbase([order], vendorUuid);
+    return merged;
+  }
+
+  /**
+   * La commande Fleetbase **brute et complète**, ou `null`.
+   *
+   * Partagée par les usages qui ont besoin de la commande entière : la fiche
+   * de détail, le modèle de duplication, et la publication — cette dernière
+   * lisant `prefer_favourites`, `vehicle_type` et `cod_amount` pour décider à
+   * quel favori confier la course. Un `meta` manquant y serait plus qu'un
+   * affichage incomplet : il changerait l'attribution.
+   *
+   * La garde sur l'uuid n'est pas décorative : cet objet décide de qui reçoit
+   * la course. Même principe que `getDriverByUuid` — sur un doute d'enveloppe
+   * ou une régression amont, le pire cas doit être « introuvable », jamais
+   * « la commande de quelqu'un d'autre ».
+   *
+   * `null` plutôt qu'une exception : chaque appelant a son propre repli, et
+   * aucun ne doit échouer sur une lecture d'agrément.
+   */
+  private async liveOrderDetailed(
+    order: { fleetbaseOrderId: string },
+    vendorUuid: string,
+  ): Promise<any | null> {
+    try {
+      const response = await this.fleetbaseClient.getOrderWithRelations(order.fleetbaseOrderId);
+      // Fleetbase enveloppe tantôt sous `order`, tantôt à plat — même
+      // tolérance qu'ailleurs dans ce fichier.
+      const live = response?.order ?? response;
+
+      // Uuid absent ou différent : on ne sert pas la commande de quelqu'un
+      // d'autre sur un doute. Même garde que `getDriverByUuid`.
+      if (live?.uuid === order.fleetbaseOrderId) return live;
+
+      this.logger.warn(
+        `Lecture unitaire inexploitable pour ${order.fleetbaseOrderId} — repli sur la liste`,
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `Lecture unitaire échouée pour ${order.fleetbaseOrderId} (${error.message}) — repli sur la liste`,
+      );
+    }
+
+    // Repli sur la liste. Elle porte en principe les mêmes champs (le même
+    // `OrderResource` sert les deux routes), mais elle est parcourue page par
+    // page et peut manquer une commande là où la lecture unitaire la désigne :
+    // mieux vaut une fiche éventuellement partielle qu'un écran en erreur.
+    return this.liveOrderFor(vendorUuid, order).catch((): any => null);
+  }
+
+  /**
+   * Journalise la forme réelle de la commande **par les deux lectures**, côte à
+   * côte, et c'est tout l'intérêt du diagnostic.
+   *
+   * La version précédente n'observait que la liste paginée : elle montrait un
+   * `meta` absent sans pouvoir dire si la donnée manquait chez Fleetbase ou
+   * seulement dans cette réponse-là. Or c'est exactement la question — la
+   * console affiche tout, et elle lit à l'unité. Les deux lignes tranchent :
+   * `meta` présent à l'unité et absent de la liste nomme la cause ; absent des
+   * deux la déplace en amont, vers l'écriture.
+   *
+   * Nomme aussi les colonnes natives qu'on croit enregistrées et l'état de
+   * dispatch : une fiche incomplète a plusieurs causes possibles, et les
+   * confondre fait corriger la mauvaise.
    */
   private async logUpstreamShape(
     vendorUuid: string,
     order: { fleetbaseOrderId: string },
     orderId: string,
   ): Promise<void> {
-    let raw: any;
-    try {
-      raw = await this.liveOrderFor(vendorUuid, order);
-    } catch (error: any) {
-      this.logger.warn(`Forme amont de ${orderId} illisible : ${error.message}`);
-      return;
-    }
+    const describe = (raw: any): string => {
+      if (!raw) return 'commande absente';
 
-    if (!raw) {
-      this.logger.warn(`Forme amont de ${orderId} : commande absente de la liste Fleetbase`);
-      return;
-    }
+      const metaShape =
+        raw.meta && typeof raw.meta === 'object'
+          ? `objet {${Object.keys(raw.meta).join(', ') || 'vide'}}`
+          : typeof raw.meta === 'string'
+            ? `CHAÎNE — ${String(raw.meta).slice(0, 160)}`
+            : `absent (${typeof raw.meta})`;
 
-    const metaShape =
-      raw.meta && typeof raw.meta === 'object'
-        ? `objet {${Object.keys(raw.meta).join(', ') || 'vide'}}`
-        : typeof raw.meta === 'string'
-          ? `CHAÎNE — ${String(raw.meta).slice(0, 160)}`
-          : `absent (${typeof raw.meta})`;
+      return (
+        `meta: ${metaShape} | pod_method: ${raw.pod_method ?? 'absent'} | ` +
+        `pod_required: ${raw.pod_required} | status: ${raw.status} | ` +
+        `adhoc: ${raw.adhoc} | dispatched: ${raw.dispatched}`
+      );
+    };
+
+    const unitary = await this.fleetbaseClient
+      .getOrderWithRelations(order.fleetbaseOrderId)
+      .then((response: any) => response?.order ?? response)
+      .catch((error: any) => `illisible : ${error.message}` as any);
+
+    const listed = await this.liveOrderFor(vendorUuid, order).catch(
+      (error: any) => `illisible : ${error.message}` as any,
+    );
 
     this.logger.log(
-      `Forme amont de ${orderId} — meta: ${metaShape} | ` +
-        `pod_method: ${raw.pod_method ?? 'absent'} | pod_required: ${raw.pod_required} | ` +
-        `status: ${raw.status} | adhoc: ${raw.adhoc} | dispatched: ${raw.dispatched}`,
+      `Forme amont de ${orderId} — À L'UNITÉ : ` +
+        `${typeof unitary === 'string' ? unitary : describe(unitary)}`,
+    );
+    this.logger.log(
+      `Forme amont de ${orderId} — DANS LA LISTE : ` +
+        `${typeof listed === 'string' ? listed : describe(listed)}`,
     );
   }
 
@@ -926,13 +1052,7 @@ export class CommerçantService {
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    let live: any;
-    try {
-      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, order);
-    } catch (error) {
-      this.logger.warn(`Preuve de commande indisponible : ${error.message}`);
-      notFound('order.proof_not_found', 'Preuve indisponible');
-    }
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
 
     if (!live?.proof_url) {
       notFound('order.proof_not_found', 'Aucune preuve enregistrée pour cette livraison');
@@ -970,13 +1090,7 @@ export class CommerçantService {
 
     const order = await this.resolveOwnedOrder(merchantId, orderId);
 
-    let live: any;
-    try {
-      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, order);
-    } catch (error) {
-      this.logger.warn(`Position indisponible (${orderId}) : ${error.message}`);
-      return { position: null };
-    }
+    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
 
     const driverUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid;
     if (!driverUuid) return { position: null };
@@ -1030,13 +1144,11 @@ export class CommerçantService {
 
     const cached = await this.resolveOwnedOrder(merchantId, orderId);
 
-    let live: any;
-    try {
-      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, cached);
-    } catch (error) {
-      this.logger.warn(`Modèle de commande indisponible : ${error.message}`);
-      badRequest('order.template_failed', 'Impossible de relire cette commande pour l\'instant');
-    }
+    // Lecture unitaire : la duplication reprend tout `meta` (catégorie de
+    // véhicule, montant à encaisser, préférence de favoris, articles), et
+    // désigner la commande vaut mieux que la chercher dans une liste paginée
+    // qui peut la manquer.
+    const live = await this.liveOrderDetailed(cached, merchant.fleetbaseVendorUuid);
 
     if (!live) {
       notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
@@ -1273,13 +1385,12 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
     const cached = await this.resolveOwnedOrder(merchantId, orderId);
 
-    let live: any;
-    try {
-      live = await this.liveOrderFor(merchant.fleetbaseVendorUuid, cached);
-    } catch (error: any) {
-      this.logger.warn(`Publication impossible (${orderId}) : ${error.message}`);
-      badRequest('order.publish_failed', 'Impossible de publier cette commande pour le moment');
-    }
+    // Lecture unitaire, et ici l'enjeu n'est pas l'affichage :
+    // `prefer_favourites`, `vehicle_type` et `cod_amount` vivent dans `meta`,
+    // et c'est sur eux que se décide **à qui la course est confiée**. Une
+    // commande manquée par le parcours de la liste ferait échouer la
+    // publication ; un `meta` incomplet la publierait de travers, sans erreur.
+    const live = await this.liveOrderDetailed(cached, merchant.fleetbaseVendorUuid);
 
     if (!live) {
       notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
