@@ -265,6 +265,7 @@ class PendingCollection extends Equatable {
   /// Statut Fleetbase — il dit à quelle distance de la porte on est.
   final String? status;
   final String? driverName;
+  final String? driverPhone;
   final String? dropoffName;
 
   const PendingCollection({
@@ -273,6 +274,7 @@ class PendingCollection extends Equatable {
     this.bffOrderId,
     this.status,
     this.driverName,
+    this.driverPhone,
     this.dropoffName,
   });
 
@@ -282,6 +284,7 @@ class PendingCollection extends Equatable {
         expectedAmount: (json['expected_amount'] as num?)?.toDouble() ?? 0,
         status: json['status'] as String?,
         driverName: json['driver_name'] as String?,
+        driverPhone: json['driver_phone'] as String?,
         dropoffName: json['dropoff_name'] as String?,
       );
 
@@ -291,4 +294,60 @@ class PendingCollection extends Equatable {
 
   @override
   List<Object?> get props => [orderUuid, expectedAmount, status];
+}
+
+/// Ce que le registre ne sait pas encore, en deux catégories très différentes.
+///
+/// Les mélanger serait une faute : [inFlight] est normal — l'argent est en
+/// route, il arrivera. [unrecorded] est une **anomalie** — la livraison est
+/// faite, l'argent a changé de mains ou non, et rien ne l'enregistre. La
+/// première se regarde, la seconde se règle.
+class PendingCollections {
+  final String currency;
+  final List<PendingCollection> inFlight;
+
+  /// Livraisons terminées dont aucun encaissement n'a été déclaré.
+  ///
+  /// ── D'où vient ce cas ───────────────────────────────────────────────────
+  ///
+  /// Le registre n'a qu'un chemin d'écriture : la clôture par l'application du
+  /// transporteur. Une commande passée à « livrée » depuis la console Fleetbase
+  /// — ce que fait un admin, légitimement — n'y laisse rien.
+  ///
+  /// Le montant affiché est celui qui était **annoncé**, jamais un montant
+  /// perçu : personne ne nous a dit ce qui a réellement été remis. L'écrire au
+  /// registre inventerait une dette ; le taire laisserait le commerçant devant
+  /// un zéro.
+  final List<PendingCollection> unrecorded;
+
+  const PendingCollections({
+    this.currency = '',
+    this.inFlight = const [],
+    this.unrecorded = const [],
+  });
+
+  factory PendingCollections.fromJson(Map<String, dynamic> json) {
+    List<PendingCollection> listOf(String key) =>
+        ((json[key] as List?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(PendingCollection.fromJson)
+            .toList();
+
+    return PendingCollections(
+      currency: (json['currency'] ?? '') as String,
+      inFlight: listOf('orders'),
+      unrecorded: listOf('unrecorded'),
+    );
+  }
+
+  /// Recalculés localement plutôt que lus : le serveur les envoie, mais les
+  /// dériver de la liste affichée garantit que le total et les lignes ne
+  /// peuvent pas se contredire à l'écran.
+  double get expectedTotal =>
+      inFlight.fold<double>(0, (sum, p) => sum + p.expectedAmount);
+
+  double get unrecordedTotal =>
+      unrecorded.fold<double>(0, (sum, p) => sum + p.expectedAmount);
+
+  bool get isEmpty => inFlight.isEmpty && unrecorded.isEmpty;
 }

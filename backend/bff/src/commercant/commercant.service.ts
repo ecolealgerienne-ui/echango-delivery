@@ -1760,21 +1760,46 @@ export class CommerçantService {
    * somme *attendue* n'est due par personne — le transporteur ne tient pas
    * encore l'argent — et l'inscrire au registre créerait une dette pour une
    * livraison qui peut encore échouer.
+   *
+   * ── La troisième catégorie : livrée, et pourtant absente du registre ────────
+   *
+   * `CashCollection` n'a **qu'un seul chemin d'écriture** : `settleCashIfDue()`,
+   * appelée par les deux routes de clôture du transporteur. Une commande qui
+   * atteint `completed` autrement — et le cas normal est *un admin qui la
+   * clôture depuis la console Fleetbase* — n'en laisse aucune trace.
+   *
+   * Ce n'est pas un défaut du registre : la console est une interface de
+   * production légitime (règle 1 du projet), et elle ne connaît pas nos gardes.
+   * Mais le résultat, lui, est inacceptable — deux colis livrés à plus de 5000
+   * DZD, et un écran qui affiche 0 sans rien signaler.
+   *
+   * On ne peut pas **inventer** l'encaissement : personne ne nous a dit ce qui
+   * a été perçu, et écrire un montant supposé au registre serait bien pire que
+   * de n'en écrire aucun. Ce qu'on peut faire, et qu'on doit, c'est **montrer
+   * le trou** : ces livraisons sont listées à part, avec le montant qui était
+   * annoncé, pour que le commerçant sache quoi réclamer à qui.
    */
   async pendingCollections(merchantId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
+
+    const empty = {
+      currency: this.cash.currency,
+      expected_total: 0,
+      orders: [] as any[],
+      unrecorded_total: 0,
+      unrecorded: [] as any[],
+    };
 
     const cached = await this.prisma.order.findMany({
       where: { merchantId },
       orderBy: { createdAt: 'desc' },
     });
-    if (!cached.length) return { currency: this.cash.currency, expected_total: 0, orders: [] };
+    if (!cached.length) return empty;
 
     const live = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
 
-    // Déjà encaissées : leur montant appartient au registre, pas à l'attente.
-    // Une livraison close SANS encaissement n'est pas possible depuis la garde
-    // du §16 ; si l'historique en contient, elle est exclue par le statut.
+    // Déjà au registre : leur montant est un fait enregistré, il n'appartient
+    // ni à l'attente ni au trou.
     const collected = new Set(
       (
         await this.prisma.cashCollection.findMany({
@@ -1784,31 +1809,62 @@ export class CommerçantService {
       ).map((c: { fleetbaseOrderUuid: string }) => c.fleetbaseOrderUuid),
     );
 
-    const orders = live
-      .filter((o: any) => {
-        if (!o?.uuid || collected.has(o.uuid)) return false;
-        // `stale`/`missing` : Fleetbase injoignable ou commande disparue. On ne
-        // devine pas un montant attendu sur une commande dont on ignore l'état
-        // — annoncer de l'argent en s'appuyant sur un cache serait pire que de
-        // n'en annoncer aucun.
-        if (o.stale || o.missing) return false;
-        if (!EXPECTS_CASH_AT_DOOR.includes(o.status)) return false;
-        return Number(o.meta?.cod_amount) > 0;
-      })
-      .map((o: any) => ({
-        uuid: o.uuid,
-        bff_order_id: o.bff_order_id ?? null,
-        status: o.status ?? null,
-        driver_name: o.driver_assigned?.name ?? null,
-        dropoff_name: o.payload?.dropoff?.name ?? null,
-        expected_amount: Number(o.meta.cod_amount),
-        scheduled_at: o.scheduled_at ?? null,
-      }));
+    const describe = (o: any) => ({
+      uuid: o.uuid,
+      bff_order_id: o.bff_order_id ?? null,
+      status: o.status ?? null,
+      driver_name: o.driver_assigned?.name ?? null,
+      driver_phone: o.driver_assigned?.phone ?? null,
+      dropoff_name: o.payload?.dropoff?.name ?? null,
+      expected_amount: Number(o.meta.cod_amount),
+      scheduled_at: o.scheduled_at ?? null,
+      completed_at: o.updated_at ?? null,
+    });
+
+    // Candidates communes aux deux listes : un montant à encaisser était
+    // annoncé, et le registre n'en sait rien.
+    //
+    // `stale`/`missing` écartés : Fleetbase injoignable ou commande disparue.
+    // On ne parle pas d'argent sur une commande dont on ignore l'état —
+    // s'appuyer sur le cache serait annoncer un montant sans savoir s'il est
+    // encore d'actualité.
+    const candidates = live.filter(
+      (o: any) =>
+        o?.uuid
+        && !collected.has(o.uuid)
+        && !o.stale
+        && !o.missing
+        && Number(o.meta?.cod_amount) > 0,
+    );
+
+    const orders = candidates
+      .filter((o: any) => EXPECTS_CASH_AT_DOOR.includes(o.status))
+      .map(describe);
+
+    // Livrées sans qu'aucun encaissement n'ait été déclaré. Le montant affiché
+    // est celui qui était **annoncé**, jamais un montant perçu : nous ignorons
+    // ce qui a réellement changé de mains, et le présenter comme une somme due
+    // serait inventer une dette.
+    const unrecorded = candidates
+      .filter((o: any) => o.status === 'completed')
+      .map(describe);
+
+    if (unrecorded.length) {
+      // Trace serveur : c'est le symptôme d'une clôture hors application, et
+      // l'écran seul ne le dirait qu'au commerçant qui regarde.
+      this.logger.warn(
+        `${unrecorded.length} livraison(s) du commerçant ${merchantId} sont terminées `
+          + 'avec un montant à encaisser et sans encaissement enregistré — '
+          + 'clôture probablement faite hors application (console Fleetbase).',
+      );
+    }
 
     return {
       currency: this.cash.currency,
       expected_total: orders.reduce((sum, o) => sum + o.expected_amount, 0),
       orders,
+      unrecorded_total: unrecorded.reduce((sum, o) => sum + o.expected_amount, 0),
+      unrecorded,
     };
   }
 

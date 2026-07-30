@@ -592,12 +592,16 @@ class BffApiClient {
   /// Sert une question que le registre ne sait pas poser : il n'enregistre que
   /// le perçu, donc un commerçant dont les courses sont en route lisait « 0 DZD
   /// / aucune somme en attente » pendant qu'on réclamait son argent ailleurs.
-  Future<List<PendingCollection>> getMerchantPendingCollections() async {
+  /// Deux listes servies ensemble : ce qui est en route, et ce qui est livré
+  /// **sans encaissement enregistré** — un cas qui n'aurait pas dû exister et
+  /// qui existe, parce qu'une clôture depuis la console Fleetbase ne passe par
+  /// aucune de nos gardes.
+  Future<PendingCollections> getMerchantPendingCollections() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/encaissements/attendus'),
       headers: _buildHeaders(),
     );
-    return _listOf(_parseResponse(response), 'orders', PendingCollection.fromJson);
+    return PendingCollections.fromJson(_parseResponse(response));
   }
 
   /// Idem côté transporteur : ce qu'il détient, course par course.

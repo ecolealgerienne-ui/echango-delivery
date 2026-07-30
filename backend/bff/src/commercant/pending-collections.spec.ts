@@ -109,4 +109,12 @@ describe('les statuts qui comptent', () => {
     expect(counts('on_hold')).toBe(false);
     expect(counts('')).toBe(false);
   });
+
+  it('`completed` n\'est pas « attendu », il est traité à part', () => {
+    // Une livraison terminée n'attend plus rien à une porte. Si son
+    // encaissement manque, c'est une **anomalie**, servie dans `unrecorded` —
+    // la ranger avec l'attendu masquerait qu'elle appelle un appel
+    // téléphonique et non de la patience.
+    expect(counts('completed')).toBe(false);
+  });
 });

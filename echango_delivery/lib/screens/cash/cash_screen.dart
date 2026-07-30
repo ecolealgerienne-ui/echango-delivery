@@ -84,6 +84,24 @@ class _CashScreenState extends State<CashScreen> {
               const SizedBox(height: 16),
             ],
 
+            // ── L'anomalie passe avant les soldes ────────────────────────────
+            //
+            // Une livraison terminée dont l'encaissement n'a jamais été déclaré
+            // est le seul cas où le registre ne peut PAS trancher : il ignore
+            // si l'argent a changé de mains. La reléguer sous l'historique la
+            // ferait manquer, et c'est précisément l'argent qu'on risque de ne
+            // jamais revoir.
+            if (!_isDriver && state.unrecorded.isNotEmpty) ...[
+              _UnrecordedBanner(
+                total: state.unrecordedTotal,
+                count: state.unrecorded.length,
+                currency: state.currency,
+              ),
+              for (final p in state.unrecorded)
+                _PendingCard(entry: p, currency: state.currency, isAnomaly: true),
+              const SizedBox(height: 16),
+            ],
+
             _sectionTitle(_isDriver ? 'Mes comptes' : 'Mes transporteurs'),
             if (state.isLoading && state.ledger == null)
               const Padding(
@@ -91,7 +109,10 @@ class _CashScreenState extends State<CashScreen> {
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (state.ledger?.isEmpty ?? true)
-              _empty(hasPending: state.pending.isNotEmpty)
+              _empty(
+                hasPending: state.pending.isNotEmpty,
+                hasUnrecorded: state.unrecorded.isNotEmpty,
+              )
             else
               for (final balance in state.ledger!.balances)
                 _BalanceCard(
@@ -245,7 +266,7 @@ class _CashScreenState extends State<CashScreen> {
   /// en route : rien n'était *détenu*, mais de l'argent était bel et bien
   /// attendu. C'est la formulation qui rassure à tort — celle qui coûte le plus
   /// cher, parce qu'on ne va pas vérifier ce qu'un écran déclare tranquille.
-  Widget _empty({bool hasPending = false}) => Padding(
+  Widget _empty({bool hasPending = false, bool hasUnrecorded = false}) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 32),
         child: Column(
           children: [
@@ -258,10 +279,15 @@ class _CashScreenState extends State<CashScreen> {
             Text(
               _isDriver
                   ? 'Vous ne détenez aucune somme'
-                  : hasPending
-                      ? 'Rien à récupérer pour l\'instant :\n'
-                          'les livraisons en cours ne sont pas encore encaissées'
-                      : 'Aucune somme en attente',
+                  // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus,
+                  // « aucune somme en attente » contredirait la bannière qui
+                  // vient d'annoncer des livraisons non enregistrées.
+                  : hasUnrecorded
+                      ? 'Aucun solde ouvert — mais voir l\'alerte ci-dessus'
+                      : hasPending
+                          ? 'Rien à récupérer pour l\'instant :\n'
+                              'les livraisons en cours ne sont pas encore encaissées'
+                          : 'Aucune somme en attente',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600]),
             ),
@@ -697,7 +723,15 @@ class _PendingCard extends StatelessWidget {
   final PendingCollection entry;
   final String currency;
 
-  const _PendingCard({required this.entry, required this.currency});
+  /// Livraison terminée sans encaissement déclaré. Change les mots, pas la
+  /// forme : c'est le même objet, mais il ne demande pas la même chose.
+  final bool isAnomaly;
+
+  const _PendingCard({
+    required this.entry,
+    required this.currency,
+    this.isAnomaly = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -705,27 +739,96 @@ class _PendingCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
+      color: isAnomaly ? Colors.orange.shade50 : null,
       child: ListTile(
         leading: Icon(
-          entry.isUnderway ? Icons.local_shipping_outlined : Icons.search,
-          color: Colors.grey[600],
+          isAnomaly
+              ? Icons.help_outline
+              : entry.isUnderway
+                  ? Icons.local_shipping_outlined
+                  : Icons.search,
+          color: isAnomaly ? Colors.orange.shade800 : Colors.grey[600],
         ),
         title: Text(entry.dropoffName ?? 'Livraison'),
         subtitle: Text(
-          [
-            // Le libellé vient de la table partagée : deux écrans ne doivent
-            // pas nommer différemment le même statut (règle 4).
-            orderStatusLabel(entry.status ?? '', driverName: entry.driverName),
-            if (entry.driverName != null) entry.driverName!,
-          ].join(' · '),
+          isAnomaly
+              // Pas le statut ici : « Livrée » est vrai mais ne dit pas ce qui
+              // manque, et c'est ce qui manque qui appelle une action.
+              ? entry.driverName != null
+                  ? 'Livrée par ${entry.driverName} · encaissement non déclaré'
+                  : 'Livrée · encaissement non déclaré'
+              : [
+                  // Le libellé vient de la table partagée : deux écrans ne
+                  // doivent pas nommer différemment le même statut (règle 4).
+                  orderStatusLabel(entry.status ?? '', driverName: entry.driverName),
+                  if (entry.driverName != null) entry.driverName!,
+                ].join(' · '),
         ),
         trailing: Text(
           '${entry.expectedAmount.toStringAsFixed(0)} $currency',
           style: theme.textTheme.bodyLarge?.copyWith(
             fontWeight: FontWeight.w600,
-            // Gris et non vert : cet argent n'est pas encore là.
-            color: Colors.grey[700],
+            // Gris et non vert : cet argent n'est pas encore là — et sur une
+            // anomalie, on ignore même s'il a été perçu.
+            color: isAnomaly ? Colors.orange.shade900 : Colors.grey[700],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Explique l'anomalie plutôt que d'afficher un chiffre orange sans raison.
+///
+/// Le montant annoncé n'est PAS présenté comme dû : nous ignorons ce qui a
+/// réellement changé de mains à la porte. Écrire « on vous doit 5972 DZD »
+/// serait inventer une dette ; écrire 0, comme avant, c'était nier la
+/// livraison. Le seul énoncé vrai est « ces livraisons sont faites et rien
+/// n'est enregistré ».
+class _UnrecordedBanner extends StatelessWidget {
+  final double total;
+  final int count;
+  final String currency;
+
+  const _UnrecordedBanner({
+    required this.total,
+    required this.count,
+    required this.currency,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: Colors.orange.shade100,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.report_problem_outlined, color: Colors.orange.shade900),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$count livraison${count > 1 ? 's' : ''} '
+                    'sans encaissement enregistré',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Montant annoncé : ${total.toStringAsFixed(0)} $currency. '
+              'La livraison est terminée, mais le transporteur n\'a pas déclaré '
+              'ce qu\'il a encaissé — cela arrive quand la course est clôturée '
+              'depuis l\'administration et non depuis son application. '
+              'Contactez-le pour régulariser.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
         ),
       ),
     );

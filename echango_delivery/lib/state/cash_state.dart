@@ -43,7 +43,7 @@ class CashState extends ChangeNotifier {
   /// Commerçant seulement : le transporteur, lui, sait ce qu'il a à collecter
   /// en regardant ses courses — c'est son écran de travail. Le commerçant n'a
   /// aucun autre endroit où lire ce chiffre.
-  List<PendingCollection> _pending = [];
+  PendingCollections _pending = const PendingCollections();
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -58,15 +58,27 @@ class CashState extends ChangeNotifier {
   CashLedger? get ledger => _ledger;
   List<CashRemittance> get remittances => _remittances;
   List<CashCollectionEntry> get collections => _collections;
-  List<PendingCollection> get pending => _pending;
+  /// Livraisons en route dont l'argent sera réclamé à une porte.
+  List<PendingCollection> get pending => _pending.inFlight;
+
+  /// Livraisons terminées dont **aucun encaissement n'a été déclaré**.
+  ///
+  /// Séparé de [pending] parce que ce n'est pas la même chose du tout : l'un
+  /// est le cours normal des choses, l'autre est une anomalie qui appelle un
+  /// appel au transporteur.
+  List<PendingCollection> get unrecorded => _pending.unrecorded;
+
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
   /// Total attendu aux portes. Distinct de [total], et il ne faut jamais les
   /// additionner : l'un est détenu par quelqu'un, l'autre ne l'est par
   /// personne.
-  double get expectedTotal =>
-      _pending.fold<double>(0, (sum, p) => sum + p.expectedAmount);
+  double get expectedTotal => _pending.expectedTotal;
+
+  /// Total livré sans encaissement enregistré. À ne mélanger ni avec l'un ni
+  /// avec l'autre : c'est un montant dont on ignore s'il a été perçu.
+  double get unrecordedTotal => _pending.unrecordedTotal;
 
   /// Remises en attente de MA confirmation.
   ///
@@ -96,7 +108,7 @@ class CashState extends ChangeNotifier {
     _ledger = null;
     _remittances = [];
     _collections = [];
-    _pending = [];
+    _pending = const PendingCollections();
     notifyListeners();
   }
 
@@ -129,7 +141,7 @@ class CashState extends ChangeNotifier {
       // exactement l'erreur qu'on corrige. Mieux vaut le message d'erreur que
       // la fausse tranquillité — d'où la liste vidée ET l'erreur remontée.
       _pending = isDriver
-          ? <PendingCollection>[]
+          ? const PendingCollections()
           : await _apiClient.getMerchantPendingCollections();
     } on AppException catch (e) {
       _errorMessage = translateErrorCode(e.code, _localeState.locale);
