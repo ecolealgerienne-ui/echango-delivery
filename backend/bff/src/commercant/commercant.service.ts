@@ -1277,15 +1277,38 @@ export class CommerçantService {
         );
       }
 
-      // Étape 2 — dispatcher, par l'endpoint dédié.
+      // Étape 2 — faire avancer le statut.
       //
-      // Ni un `PUT` sur les colonnes, ni une activité soumise : le dispatch
-      // est une opération à part (`POST /v1/orders/{id}/dispatch` →
-      // `OrderController@dispatchOrder`). C'est LUI qui écrit l'activité
-      // « Order Dispatched », pas l'inverse. Voir `dispatchOrder()` côté
-      // client Fleetbase pour le détail et les trois essais qui ont échoué
-      // avant de le trouver.
-      await this.fleetbaseClient.dispatchOrder(publicId);
+      // `POST /dispatch` fait normalement le travail complet : le drapeau
+      // `dispatched` PUIS l'activité qui écrit `status`
+      // (`OrderController@dispatchOrder`).
+      //
+      // ⚠️ Mais l'étape 1 a pu poser le drapeau toute seule : un `PUT` avec
+      // `adhoc: true` déclenche `dispatch()` sans insérer l'activité — d'où
+      // une commande à la fois « Created » et « Dispatched at … », constatée
+      // en réel. `POST /dispatch` refuse alors (« Order has already been
+      // dispatched! ») en testant le drapeau avant tout, et le statut
+      // resterait `created` pour toujours.
+      //
+      // On rattrape ce cas précis, et lui seul : poser l'activité qui manque.
+      // Les autres refus (pas de transporteur assigné, par exemple) doivent
+      // continuer de remonter.
+      try {
+        await this.fleetbaseClient.dispatchOrder(publicId);
+      } catch (error: any) {
+        const upstream: string =
+          error.response?.data?.error ||
+          error.response?.data?.errors?.[0] ||
+          error.response?.data?.message ||
+          '';
+
+        if (!/already been dispatched/i.test(upstream)) throw error;
+
+        this.logger.log(
+          `${orderId} déjà marquée dispatchée par l'étape 1 — pose de l'activité manquante`,
+        );
+        await this.fleetbaseClient.insertDispatchActivity(publicId);
+      }
     } catch (error: any) {
       if (error instanceof HttpException) throw error;
 

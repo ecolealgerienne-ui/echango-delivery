@@ -985,6 +985,48 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Pose l'activité « Order Dispatched », qui fait avancer le **statut**.
+   *
+   * ── Pourquoi ça existe à côté de `dispatchOrder()` ────────────────────────
+   *
+   * `OrderController@dispatchOrder` fait **deux** choses distinctes :
+   * `$order->dispatch()` (le drapeau `dispatched` + `dispatched_at`) puis
+   * `$order->insertDispatchActivity()` (l'activité, qui écrit `status`).
+   *
+   * Or poser `adhoc: true` par un `PUT` déclenche la première **sans** la
+   * seconde : constaté en réel (30/07/2026) sur une commande affichant à la
+   * fois « Created » et « Dispatched at 13:25 », avec pour seule activité
+   * « Order Created ». `POST /dispatch` refuse alors de rattraper le tir —
+   * « Order has already been dispatched! » — puisqu'il teste le drapeau
+   * d'abord. Cette méthode pose l'activité qui manque, exactement comme le
+   * fait la console (« Update activity » → « Order Dispatched »).
+   *
+   * L'activité n'est jamais fabriquée de notre côté : elle est demandée à
+   * `next-activity`, qui la renvoie telle que Fleetbase l'attend.
+   */
+  async insertDispatchActivity(orderPublicId: string) {
+    const next = await this.getNextActivities(orderPublicId);
+    const activities: any[] = Array.isArray(next)
+      ? next
+      : Array.isArray(next?.activities)
+        ? next.activities
+        : [];
+
+    const dispatched = activities.find(
+      (a: any) => a?.code === 'dispatched' || a?.key === 'dispatched',
+    );
+
+    if (!dispatched) {
+      throw new Error(
+        `Aucune activité « dispatched » proposée par Fleetbase pour ${orderPublicId} ` +
+          `(reçu : ${activities.map((a: any) => a?.code ?? a?.key).join(', ') || 'rien'})`,
+      );
+    }
+
+    return this.updateOrderActivity(orderPublicId, dispatched);
+  }
+
+  /**
    * The activities the order can legally transition to right now.
    *
    * Needed because the order detail carries no activity data at all — verified
