@@ -732,6 +732,38 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Retire une commande de la diffusion : ni transporteur assigné, ni adhoc.
+   *
+   * ── Pourquoi cette opération existe ───────────────────────────────────────
+   *
+   * C'est la **compensation** de l'étape 1 de la publication. Il n'y a pas de
+   * transaction possible entre notre Postgres et le MySQL de Fleetbase, joint
+   * en HTTP : publier se fait en deux écritures amont (rendre éligible, puis
+   * dispatcher) et rien ne les rend atomiques.
+   *
+   * Or la première a un effet immédiatement visible : `adhoc: true` suffit à
+   * faire apparaître la course dans la liste des opportunités d'un
+   * transporteur — `transporteur.service.ts` filtre sur `adhoc === true` sans
+   * exiger `dispatched`, et accepte de la faire prendre en statut `created`.
+   * Si la seconde écriture échoue, la course est donc **réclamable alors que
+   * le commerçant la croit encore en brouillon**.
+   *
+   * Ramener `adhoc` à `false` et détacher le transporteur restaure un vrai
+   * brouillon. Best-effort par nature : si la compensation échoue à son tour,
+   * il ne reste qu'à le journaliser fort — mais l'inverse, ne rien tenter,
+   * laisse une course en circulation que personne n'a publiée.
+   */
+  async withdrawFromDispatch(orderUuid: string) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: {
+        driver_assigned_uuid: null,
+        adhoc: false,
+      },
+    });
+    return response.data;
+  }
+
+  /**
    * Conducteurs de la compagnie, filtrés côté serveur.
    *
    * ⚠️ **`phone` est absent de `DriverFilters`, et ce n'est pas un oubli** :

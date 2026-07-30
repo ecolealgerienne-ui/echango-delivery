@@ -1274,7 +1274,20 @@ export class CommerçantService {
       // distingue cette route de sa jumelle `v1`, qui sépare les deux et
       // refuse dès que le drapeau est posé — laissant alors le statut bloqué
       // à `created` pour toujours. Détail complet dans `dispatchOrder()`.
-      await this.fleetbaseClient.dispatchOrder(cached.fleetbaseOrderId);
+      //
+      // ⚠️ **Compensée si elle échoue.** Les deux étapes ne sont pas
+      // atomiques — aucune transaction ne couvre notre Postgres et le MySQL de
+      // Fleetbase joint en HTTP — et l'étape 1 a déjà rendu la course
+      // réclamable par un transporteur (`transporteur.service.ts` filtre sur
+      // `adhoc === true` sans exiger `dispatched`). Sans compensation, un
+      // échec ici laisse une course en circulation que le commerçant croit
+      // encore en brouillon.
+      try {
+        await this.fleetbaseClient.dispatchOrder(cached.fleetbaseOrderId);
+      } catch (dispatchError) {
+        await this.withdrawAfterFailedDispatch(cached.fleetbaseOrderId);
+        throw dispatchError;
+      }
     } catch (error: any) {
       if (error instanceof HttpException) throw error;
 
@@ -1297,13 +1310,24 @@ export class CommerçantService {
       );
     }
 
-    // Reflète tout de suite l'assignation côté cache : sans ça, l'écran
-    // afficherait encore « brouillon » jusqu'au prochain passage du
-    // réconciliateur, alors que la publication vient de réussir.
-    await this.prisma.order.update({
-      where: { id: cached.id },
-      data: { driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null },
-    });
+    // Troisième écriture, locale — et **délibérément non bloquante**.
+    //
+    // La publication a réussi côté Fleetbase à ce point : lever ici ferait
+    // remonter un échec au commerçant pour une course pourtant partie, qui
+    // réessaierait alors une publication désormais refusée. Le cache n'est
+    // qu'un cache, et `OrderReconcilerService` le remet d'aplomb au passage
+    // suivant — c'est exactement le rôle qu'on lui a donné.
+    try {
+      await this.prisma.order.update({
+        where: { id: cached.id },
+        data: { driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null },
+      });
+    } catch (error: any) {
+      this.logger.warn(
+        `Cache non mis à jour après publication de ${cached.id} : ${error.message} — ` +
+          'le réconciliateur corrigera',
+      );
+    }
 
     if (favourite) {
       this.logger.log(`Brouillon ${cached.id} publié vers le favori ${favourite.fleetbaseDriverUuid}`);
@@ -1313,6 +1337,39 @@ export class CommerçantService {
 
     const [merged] = await this.mergeWithFleetbase([cached], merchant.fleetbaseVendorUuid);
     return merged;
+  }
+
+  /**
+   * Défait l'étape 1 quand le dispatch a échoué.
+   *
+   * ── Pourquoi ça compte, et ce que ça ne garantit pas ────────────────────────
+   *
+   * L'étape 1 rend la course réclamable (`adhoc: true` suffit à la faire
+   * apparaître aux transporteurs). Un échec de l'étape 2 sans compensation
+   * laisse donc une course en circulation que le commerçant croit encore en
+   * brouillon — la pire des deux issues, parce qu'elle est invisible de son
+   * côté.
+   *
+   * Best-effort, et l'aveu est important : si la compensation échoue à son
+   * tour, la course **reste** réclamable, et seul ce journal en garde trace.
+   * Il n'y a pas de transaction possible entre deux systèmes joints en HTTP ;
+   * ce filet réduit la fenêtre, il ne la ferme pas. Une course prise dans
+   * l'intervalle par un transporteur ne serait de toute façon plus retirable
+   * sans le prévenir.
+   */
+  private async withdrawAfterFailedDispatch(fleetbaseOrderId: string): Promise<void> {
+    try {
+      await this.fleetbaseClient.withdrawFromDispatch(fleetbaseOrderId);
+      this.logger.log(
+        `Dispatch échoué sur ${fleetbaseOrderId} — course retirée de la diffusion`,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `COMPENSATION ÉCHOUÉE — la commande Fleetbase ${fleetbaseOrderId} reste ` +
+          `réclamable par un transporteur alors qu'elle n'a pas été publiée. ` +
+          `À retirer à la main depuis la console : ${error.message}`,
+      );
+    }
   }
 
   /**
