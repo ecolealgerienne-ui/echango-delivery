@@ -17,6 +17,7 @@ import {
 import { PricingService } from '../common/pricing/pricing.service';
 import { CashService } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
+import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
 
 @Injectable()
 export class CommerçantService {
@@ -1791,7 +1792,7 @@ export class CommerçantService {
         // — annoncer de l'argent en s'appuyant sur un cache serait pire que de
         // n'en annoncer aucun.
         if (o.stale || o.missing) return false;
-        if (['completed', 'canceled', 'cancelled'].includes(o.status)) return false;
+        if (!EXPECTS_CASH_AT_DOOR.includes(o.status)) return false;
         return Number(o.meta?.cod_amount) > 0;
       })
       .map((o: any) => ({
