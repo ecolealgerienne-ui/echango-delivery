@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/cash.dart';
 import '../../models/merchant_order.dart';
-import '../../models/order.dart' show DeliveryFailure;
+import '../../models/order.dart' show DeliveryFailure, Place;
 import '../../models/vehicle_type.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/merchant_order_state.dart';
@@ -211,9 +211,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       _banner(Colors.grey.shade200, Icons.cancel_outlined,
                           'Livraison annulée.'),
                     const SizedBox(height: 12),
-                    _placeCard('Retrait', order.pickup?.name, order.pickup?.address),
+                    _placeCard('Retrait', order.pickup, order.pickupNotes),
                     const SizedBox(height: 12),
-                    _placeCard('Livraison', order.dropoff?.name, order.dropoff?.address),
+                    _placeCard('Livraison', order.dropoff, order.dropoffNotes),
                     // Signalements d'échec : le commerçant devra répondre à son
                     // client, et le justificatif n'allait jusqu'ici qu'à celui
                     // qui l'avait produit.
@@ -450,10 +450,41 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (
           Icons.verified_outlined,
           'Preuve',
-          order.podMethod == 'photo' ? 'Photo à la livraison' : order.podMethod!,
+          switch (order.podMethod!) {
+            'photo' => 'Photo à la livraison',
+            'aucune' => 'Aucune preuve demandée',
+            final other => other,
+          },
         ),
-      if (order.packageContents != null)
+      // Le montant à encaisser figure ici en plus de la carte d'encaissement :
+      // celle-ci ne parle que de ce qui a été RÉELLEMENT perçu, et n'apparaît
+      // qu'après la livraison. Le commerçant doit pouvoir relire ce qu'il a
+      // demandé, avant.
+      if (order.codAmount != null)
+        (
+          Icons.account_balance_wallet_outlined,
+          'À encaisser',
+          '${order.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'.trim() +
+              (order.codIncludesDelivery
+                  ? ' (livraison incluse)'
+                  : ' (marchandise seule)'),
+        ),
+      // Une ligne par article : le poids et la mention fragile étaient saisis
+      // puis invisibles, alors que ce sont eux qui fondent un refus pour
+      // « colis inadapté ».
+      for (final item in order.items)
+        (Icons.inventory_2_outlined, 'Colis', item.label),
+      // Repli pour les commandes d'avant la projection détaillée des articles.
+      if (order.items.isEmpty && order.packageContents != null)
         (Icons.inventory_2_outlined, 'Colis', order.packageContents!),
+      if (order.preferFavourites != null)
+        (
+          order.preferFavourites! ? Icons.star_outline : Icons.public,
+          'Diffusion',
+          order.preferFavourites!
+              ? 'Mes transporteurs habituels en priorité'
+              : 'Tout le réseau',
+        ),
       if (order.instructions != null)
         (Icons.notes_outlined, 'Instructions', order.instructions!),
     ];
@@ -512,21 +543,70 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
   }
 
-  Widget _placeCard(String title, String? name, String? address) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleSmall),
+  /// Carte d'un point de la livraison, avec **tout** ce qui a été saisi.
+  ///
+  /// ⚠️ La version précédente ne prenait que le nom et l'adresse : le contact
+  /// et son téléphone, pourtant saisis au formulaire et bien renvoyés par le
+  /// serveur (`Place.contactName`/`contactPhone`), n'étaient affichés nulle
+  /// part. Le commerçant ne pouvait donc pas relire le numéro qu'il avait
+  /// donné au transporteur — ni le corriger s'il s'était trompé.
+  ///
+  /// [notes] est la précision d'adresse tapée à la création : elle vit dans
+  /// `meta.pickup_notes`/`dropoff_notes`, pas sur le `Place`, et se perdait
+  /// pour la même raison.
+  Widget _placeCard(String title, Place? place, String? notes) {
+    final theme = Theme.of(context);
+    final contact = place?.contactName;
+    final phone = place?.contactPhone;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Text(place?.name ?? '—',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (place?.address != null && place!.address.isNotEmpty)
+              Text(place.address),
+            if (notes != null && notes.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(notes, style: theme.textTheme.bodySmall),
+              ),
+            if (contact != null && contact.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Text(name ?? '—',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              if (address != null && address.isNotEmpty) Text(address),
+              Row(
+                children: [
+                  const Icon(Icons.person_outline, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(contact)),
+                ],
+              ),
             ],
-          ),
+            if (phone != null && phone.isNotEmpty)
+              Row(
+                children: [
+                  const Icon(Icons.phone_outlined, size: 16),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(phone)),
+                  // Appeler depuis la fiche : c'est le geste attendu quand une
+                  // livraison pose question, et le numéro était déjà là.
+                  IconButton(
+                    icon: const Icon(Icons.call, size: 18),
+                    tooltip: 'Appeler',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => NavigationLauncher.call(phone),
+                  ),
+                ],
+              ),
+          ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 /// Dernière position connue du transporteur, sur une carte.

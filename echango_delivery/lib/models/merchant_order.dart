@@ -47,6 +47,27 @@ class MerchantOrder extends Equatable {
   final num? price;
   final String? currency;
 
+  /// Précisions d'adresse saisies à la création (« Adresse » du formulaire).
+  ///
+  /// Elles vivent dans `meta.pickup_notes`/`meta.dropoff_notes` et non sur le
+  /// `Place` : `createPlace` ne dépose que le nom, les coordonnées et le
+  /// contact. Projetées depuis le début, elles n'étaient lues nulle part — un
+  /// commerçant ne pouvait donc pas relire l'adresse qu'il avait tapée.
+  final String? pickupNotes;
+  final String? dropoffNotes;
+
+  /// Contenu du colis, ligne par ligne, avec poids et fragilité.
+  ///
+  /// [packageContents] n'en donne qu'un résumé d'une ligne, utile en liste.
+  /// La fiche, elle, doit pouvoir tout montrer : le poids et la mention
+  /// fragile étaient saisis puis invisibles.
+  final List<OrderItemLine> items;
+
+  /// Les favoris ont-ils été sollicités en premier ?
+  ///
+  /// `null` sur les commandes créées avant que ce choix soit projeté.
+  final bool? preferFavourites;
+
   /// Téléphone du transporteur affecté.
   ///
   /// Le BFF le projetait déjà ; personne ne le lisait. Un commerçant qui veut
@@ -102,6 +123,10 @@ class MerchantOrder extends Equatable {
     this.packageContents,
     this.price,
     this.currency,
+    this.pickupNotes,
+    this.dropoffNotes,
+    this.items = const [],
+    this.preferFavourites,
     this.driverPhone,
     this.codAmount,
     this.codCurrency,
@@ -189,6 +214,15 @@ class MerchantOrder extends Equatable {
       podMethod: json['pod_method'] as String?,
       instructions: meta?['instructions'] as String?,
       packageContents: _firstItemDescription(meta?['items']),
+      pickupNotes: meta?['pickup_notes'] as String?,
+      dropoffNotes: meta?['dropoff_notes'] as String?,
+      items: meta?['items'] is List
+          ? (meta!['items'] as List)
+              .whereType<Map<String, dynamic>>()
+              .map(OrderItemLine.fromJson)
+              .toList()
+          : const [],
+      preferFavourites: meta?['prefer_favourites'] as bool?,
       price: meta?['price'] as num?,
       currency: meta?['currency'] as String?,
       codAmount: meta?['cod_amount'] as num?,
@@ -203,6 +237,44 @@ class MerchantOrder extends Equatable {
 
   @override
   List<Object?> get props => [id, publicId, status, dispatched, createdAt];
+}
+
+/// Une ligne de colis, telle que saisie à la création.
+///
+/// Le poids et la mention fragile étaient transmis au serveur depuis le lot du
+/// 29/07 mais n'étaient réaffichés nulle part — le commerçant ne pouvait pas
+/// vérifier ce qu'il avait déclaré, ni s'en servir en cas de litige.
+class OrderItemLine extends Equatable {
+  final String description;
+  final int quantity;
+  final num? weight;
+  final bool fragile;
+
+  const OrderItemLine({
+    required this.description,
+    this.quantity = 1,
+    this.weight,
+    this.fragile = false,
+  });
+
+  factory OrderItemLine.fromJson(Map<String, dynamic> json) => OrderItemLine(
+        description: (json['description'] ?? '') as String,
+        quantity: (json['quantity'] as num?)?.toInt() ?? 1,
+        weight: json['weight'] as num?,
+        fragile: json['fragile'] == true,
+      );
+
+  /// Une ligne lisible : « Gâteau · 2 kg · fragile ». Les parties absentes
+  /// disparaissent au lieu d'afficher un tiret.
+  String get label => [
+        if (quantity > 1) '${quantity}×',
+        description,
+        if (weight != null) '${weight} kg',
+        if (fragile) 'fragile',
+      ].where((p) => p.isNotEmpty).join(' · ');
+
+  @override
+  List<Object?> get props => [description, quantity, weight, fragile];
 }
 
 /// Résumé lisible du contenu du colis, à partir de `meta.items`.

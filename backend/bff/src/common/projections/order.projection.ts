@@ -175,6 +175,10 @@ const META_FIELDS = [
   // pour que le commerçant sache lire son chiffre d'affaires, et pour que le
   // transporteur sache expliquer au destinataire ce qu'il paie.
   'cod_includes_delivery',
+  // Choix du commerçant à la création. Écrit depuis le début (il sert à
+  // reproduire une commande dupliquée) mais jamais projeté : la fiche ne
+  // pouvait donc pas lui rappeler s'il avait sollicité ses favoris.
+  'prefer_favourites',
 ];
 
 function projectMeta(meta: any): Record<string, any> | undefined {
