@@ -176,23 +176,47 @@ export class GeocodingService {
         .filter((v) => typeof v === 'string' && v.length > 0)
         .join(' ') || undefined;
 
-    const neighborhood = first(a.neighbourhood, a.suburb, a.quarter, a.city_district);
+    // ── Correspondance établie sur un appel réel (Alger, 30/07/2026) ────────
+    //
+    //   road         : Rue Larbi Tebessi     neighbourhood : Ali Mellah
+    //   suburb       : Belcourt              city          : Alger
+    //   county       : Daïra Sidi M'Hamed    state         : Alger
+    //   postcode     : 16000                 country_code  : dz
+    //
+    // Deux enseignements, tous deux contraires à ce que j'avais supposé.
+    //
+    // **Nominatim ne rend pas la commune.** « Sidi M'Hamed » n'apparaît que
+    // dans le nom de la daïra ; `city` porte l'agglomération et `state` la
+    // wilaya, qui s'appellent toutes deux « Alger ». Il n'y a donc pas de clé
+    // à choisir pour la commune : elle n'est pas dans la réponse. `city` reste
+    // le plus proche, et sur une commune hors agglomération il la renvoie
+    // directement — d'où la chaîne, qui couvre les deux cas.
+    //
+    // **`neighbourhood` et `suburb` coexistent et diffèrent.** N'en garder
+    // qu'un perdrait « Belcourt », qui est le nom par lequel un transporteur
+    // situe l'adresse — bien plus que « Daïra Sidi M'Hamed ». D'où `suburb`
+    // dans `district` de préférence à la daïra, qui n'aide personne à
+    // trouver une porte.
+    const neighborhood = first(a.neighbourhood, a.quarter, a.suburb, a.city_district);
+    const suburb = first(a.suburb, a.city_district);
+    const district =
+      suburb && suburb !== neighborhood ? suburb : first(a.county, a.state_district);
 
-    // `municipality` d'abord : là où Nominatim l'émet, c'est la commune, plus
-    // précise que `city` qui désigne l'agglomération. À Alger, la différence
-    // est celle entre « Sidi M'Hamed » et « Alger ».
     const city = first(a.municipality, a.city, a.town, a.village, a.city_district);
-
-    const district = first(a.county, a.state_district);
     const province = first(a.state, a.region);
 
     return {
       label: raw?.display_name ?? '',
-      // Le quartier n'est repris que s'il n'est pas déjà dans la rue — sur un
-      // point sans voie nommée, Nominatim renvoie parfois le même mot deux
-      // fois, et « Belcourt, Belcourt » se lit comme un défaut.
-      shortLabel: [street, neighborhood === street ? undefined : neighborhood]
-        .filter(Boolean)
+      // « Rue Larbi Tebessi, Ali Mellah, Belcourt » : la voie et les deux noms
+      // de secteur les plus fins. C'est ce qui permet de trouver la porte ;
+      // commune, wilaya, code postal et pays ont leur colonne et n'ont rien à
+      // faire dans une ligne d'adresse.
+      //
+      // Dédoublonné : sur un point sans voie nommée, Nominatim renvoie parfois
+      // le même mot sous deux clés, et « Belcourt, Belcourt » se lit comme un
+      // défaut d'affichage.
+      shortLabel: [street, neighborhood, suburb]
+        .filter((v, i, all): v is string => Boolean(v) && all.indexOf(v) === i)
         .join(', '),
       latitude: Number(raw?.lat) || 0,
       longitude: Number(raw?.lon) || 0,

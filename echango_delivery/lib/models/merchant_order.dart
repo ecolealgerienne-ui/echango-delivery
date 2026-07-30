@@ -386,6 +386,11 @@ class SavedAddress extends Equatable {
     final parts = <String>[
       if (street1.isNotEmpty) street1,
       if (neighborhood != null && neighborhood!.isNotEmpty) neighborhood!,
+      // Le district porte le quartier connu — « Belcourt » — et non la daïra
+      // quand les deux existent. C'est le nom par lequel on situe une adresse
+      // à Alger, donc l'omettre appauvrissait la ligne plus que la wilaya.
+      if (district != null && district!.isNotEmpty && district != neighborhood)
+        district!,
       if (city != null && city!.isNotEmpty) city!,
       if (province != null && province!.isNotEmpty && province != city) province!,
       if (postalCode != null && postalCode!.isNotEmpty) postalCode!,
