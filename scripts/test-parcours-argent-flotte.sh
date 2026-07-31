@@ -115,6 +115,11 @@ dapi() { # method path [body] — conducteur
 # compte démarre à zéro : vrai au premier run, faux ensuite — un conducteur
 # réutilisé porte les dettes des runs précédents. C'est le défaut constaté en
 # réel sur le scénario à deux acteurs (2600 au lieu de 1300, sur un code juste).
+# ⚠️ Rend « aucune » quand la contrepartie est absente, et l'appelant le traduit
+# en 0. Ce n'est pas une précaution : `balancesFor()` **retire les soldes nuls**
+# de la liste (`filter(b => b.debt !== 0)`). Une dette soldée ne vaut donc pas
+# `0` dans la réponse — elle n'y est plus du tout, et un contrôle qui attendrait
+# la ligne échouerait précisément au moment où tout s'est bien passé.
 debt_toward() { # ledger_json counterparty_id
   echo "$1" | jq -r --arg c "$2" \
     'first(.balances[] | select(.counterparty_id == $c)) | .debt // "aucune"'
@@ -225,8 +230,9 @@ pass "Adhésion acceptée par le conducteur"
 
 drivers="$(fapi GET /flotte/drivers)"
 echo "$drivers" | jq -e --arg u "$DRIVER_UUID" \
-  '[(.data // .drivers // .)[]? | (.uuid // .driver_uuid // .id)] | index($u) != null' >/dev/null \
-  || fail "Le conducteur n'apparaît pas dans la liste de l'entreprise" "$(echo "$drivers" | jq -c '.')"
+  '[.data[].uuid] | index($u) != null' >/dev/null \
+  || fail "Le conducteur n'apparaît pas dans la liste de l'entreprise" \
+     "$(echo "$drivers" | jq -c '[.data[].uuid]')"
 pass "Le conducteur figure dans la liste de l'entreprise"
 
 # ── 2. La course ───────────────────────────────────────────────────────────
@@ -259,10 +265,16 @@ pass "Publiée : $EXPECTED à encaisser, course diffusée"
 # ── 3. L'entreprise prend la course ────────────────────────────────────────
 step "3. Prise par l'entreprise"
 
+# ⚠️ Les clés sont NOMMÉES, jamais devinées par un `.data // .`. Un tel repli
+# transforme un changement de contrat en succès silencieux — et c'est
+# exactement ce qu'un script comme celui-ci doit attraper. Les formes ont été
+# relevées dans les services : `{data:[…]}` partout, sauf la liste du
+# conducteur qui rend `{orders:[…]}`.
 opps="$(fapi GET /flotte/opportunites)"
 echo "$opps" | jq -e --arg u "$FB_UUID" \
-  '[(.data // .)[]? | (.uuid // .id)] | index($u) != null' >/dev/null \
-  || fail "La course publiée n'apparaît pas dans les opportunités" "$(echo "$opps" | jq -c '[(.data // .)[]? | .uuid]')"
+  '[.data[].uuid] | index($u) != null' >/dev/null \
+  || fail "La course publiée n'apparaît pas dans les opportunités" \
+     "$(echo "$opps" | jq -c '[.data[].uuid]')"
 pass "La course figure dans les courses libres"
 
 # ⚠️ L'identité du destinataire est masquée tant que personne ne s'est engagé
@@ -281,11 +293,16 @@ pass "Course prise par l'entreprise"
 # Une course prise ne doit plus être réclamable par un indépendant : `adhoc`
 # passe à `false` dans le même geste, sans quoi les pings de diffusion
 # continuent toutes les ~4 minutes.
+# ⚠️ `.orders` et non `.data` : `listOrders` rend `{orders:[…]}` sur un `type`
+# précis, et `{active, adhoc, history}` sans. C'est le seul des six accès de ce
+# script qui ne s'appelle pas `data` — et mon `.data // .` le masquait au lieu
+# de le signaler : le repli tombait sur l'objet entier, dont les valeurs sont
+# des TABLEAUX, d'où « Cannot index array with string "uuid" ».
 still="$(dapi GET "/transporteur/commandes?type=adhoc")"
 echo "$still" | jq -e --arg u "$FB_UUID" \
-  '[(.data // .)[]? | (.uuid // .id)] | index($u) == null' >/dev/null \
+  '[.orders[].uuid] | index($u) == null' >/dev/null \
   || fail "La course reste offerte au pool après avoir été prise" \
-     "$(echo "$still" | jq -c '[(.data // .)[]? | .uuid]')"
+     "$(echo "$still" | jq -c '[.orders[].uuid]')"
 pass "Retirée du pool — plus offerte aux indépendants"
 
 # ── 4. Désignation du conducteur ───────────────────────────────────────────
@@ -371,7 +388,7 @@ before="$(debt_toward "$(dapi GET /transporteur/caisse)" "$FLEET_ID")"
 pass "Dette inchangée avant confirmation"
 
 R1_ID="$(fapi GET /flotte/caisse/remises | jq -r \
-  '[(.data // .)[]? | select(.confirmed_at == null)] | last.id // empty')"
+  '[.data[] | select(.confirmed_at == null)] | last.id // empty')"
 [ -n "$R1_ID" ] || fail "L'entreprise ne voit aucune remise à confirmer"
 c1="$(fapi POST "/flotte/caisse/remises/$R1_ID/confirmer")"
 echo "$c1" | is_error && fail "Confirmation refusée" "$(echo "$c1" | jq -c '.')"
@@ -396,7 +413,7 @@ echo "$r2" | is_error && fail "Déclaration de remise refusée" "$(echo "$r2" | 
 pass "Remise de $FLEET_OWES déclarée par l'entreprise"
 
 R2_ID="$(mapi GET /commercant/encaissements/remises | jq -r \
-  '[(.data // .)[]? | select(.confirmed_at == null)] | last.id // empty')"
+  '[.data[] | select(.confirmed_at == null)] | last.id // empty')"
 [ -n "$R2_ID" ] || fail "Le commerçant ne voit aucune remise à confirmer"
 c2="$(mapi POST "/commercant/encaissements/remises/$R2_ID/confirmer")"
 echo "$c2" | is_error && fail "Confirmation refusée" "$(echo "$c2" | jq -c '.')"
