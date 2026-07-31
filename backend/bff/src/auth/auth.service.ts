@@ -814,8 +814,13 @@ export class AuthService {
     vendorUuid: string,
   ): Promise<string | null> {
     try {
-      const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
-      const drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+      // Paginé : la version précédente lisait une seule page. Un conducteur
+      // au-delà était déclaré ne PAS appartenir à l'entreprise, et son
+      // invitation refusée — un refus de sécurité pour une raison qui n'en
+      // était pas une, sans rien à l'écran pour le distinguer d'un vrai.
+      const drivers = await this.fleetbaseClient.fetchEveryDriverMatching({
+        vendor: vendorUuid,
+      });
       const found = drivers.some((d: any) => d?.uuid === fleetbaseDriverUuid);
       return found ? vendorUuid : null;
     } catch (error: any) {

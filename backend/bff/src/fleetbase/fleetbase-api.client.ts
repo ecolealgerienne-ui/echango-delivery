@@ -1164,6 +1164,63 @@ export class FleetbaseApiClient {
     return candidate?.uuid === driverUuid ? candidate : null;
   }
 
+  /**
+   * **Tous** les conducteurs correspondant à un filtre, pages comprises.
+   *
+   * ── Le plafond silencieux que ceci ferme ─────────────────────────────────
+   *
+   * `getAllDrivers()` rend **une** page. Trois appels s'en servaient comme
+   * d'une liste exhaustive avec `limit: 100`, et deux autres sans limite du
+   * tout — c'est-à-dire avec la page par défaut de Fleetbase :
+   *
+   *  * le **repli par les chiffres** des trois recherches de conducteur, qui
+   *    balaie le réseau entier pour retrouver un numéro écrit dans un autre
+   *    format. Au-delà du plafond, la **garde anti-doublon cesse d'opérer** —
+   *    et une même personne se retrouve avec deux `Driver` Fleetbase, position
+   *    et historique désynchronisés, ce que tout ce mécanisme existe pour
+   *    empêcher ;
+   *  * `fetchOwnedDrivers()`, la liste que l'entreprise voit de ses PROPRES
+   *    conducteurs ;
+   *  * le repli d'invitation d'`auth.service`, qui **refuse une invitation
+   *    légitime** quand le conducteur est au-delà de la première page.
+   *
+   * Dans les trois cas, une liste tronquée n'est pas une liste partielle :
+   * c'est une **réponse fausse**, puisque l'appelant y cherche l'absence de
+   * quelqu'un. Même famille que le plafond de 100 sur les commandes (28/07) et
+   * même remède — d'où la symétrie volontaire avec `fetchEveryOrder`.
+   *
+   * Le garde-fou de pages n'est pas une limite que quelqu'un doit atteindre ;
+   * le franchir est journalisé, parce qu'au-delà les résultats redeviennent
+   * faux.
+   */
+  async fetchEveryDriverMatching(
+    filters: DriverFilters = {},
+    pageSize = 100,
+    maxPages = 20,
+  ): Promise<any[]> {
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const drivers = this.extractCollection(
+        await this.getAllDrivers({ ...filters, page, limit: pageSize }),
+        'drivers',
+      );
+
+      if (drivers.length === 0) break;
+      all.push(...drivers);
+      if (drivers.length < pageSize) break;
+
+      if (page === maxPages) {
+        this.logger.warn(
+          `fetchEveryDriverMatching a atteint le garde-fou de ${maxPages} pages — ` +
+            'la liste est tronquée, et un conducteur existant peut être déclaré absent',
+        );
+      }
+    }
+
+    return all;
+  }
+
   async getAllDrivers(filters: DriverFilters = {}) {
     try {
       const response = await this.callFleetOps('GET', '/drivers', undefined, filters);

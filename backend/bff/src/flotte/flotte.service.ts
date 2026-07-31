@@ -14,7 +14,11 @@ import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-pos
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
-import { sameIdentifier } from '../common/identity/subscriber-number';
+import {
+  phoneContains,
+  sameIdentifier,
+  subscriberDigits,
+} from '../common/identity/subscriber-number';
 
 @Injectable()
 export class FlotteService {
@@ -585,14 +589,28 @@ export class FlotteService {
         // ⚠️ Repli par les chiffres seuls, repris de `commercant.searchDrivers`.
         //
         // `?query=` est un LIKE SQL : « +213555123456 » ne trouve rien si
-        // l'enregistrement porte « 0555123456 ». Sans ce repli, `matches` est
-        // vide, aucune comparaison n'a lieu, et le doublon que toute cette
+        // l'enregistrement porte « 0555123456 ». Sans ce repli, aucune
+        // comparaison identifiante n'a lieu, et le doublon que toute cette
         // fonctionnalité existe pour empêcher est créé — sur le format le plus
         // courant du pays.
-        const digits = needle.replace(/\D/g, '');
-        if (matches.length === 0 && digits.length >= 6) {
-          const wide = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
-          matches = this.fleetbaseClient.extractCollection(wide, 'drivers');
+        //
+        // ⚠️ **La condition porte sur l'absence de correspondance IDENTIFIANTE,
+        // pas sur une liste vide.** Elle testait `matches.length === 0` : il
+        // suffisait donc que le LIKE ramène quelqu'un d'autre — un email
+        // contenant les mêmes chiffres, par exemple — pour que le balayage soit
+        // sauté et le doublon créé quand même. Une liste non vide n'est pas une
+        // réponse à la question posée.
+        //
+        // ⚠️ Et le balayage est PAGINÉ. Il était plafonné à 100 conducteurs :
+        // au-delà, cette garde cessait d'opérer sans rien signaler.
+        const identifies = (list: any[]) =>
+          list.some(
+            (d: any) =>
+              sameIdentifier(d?.email, needle) || sameIdentifier(d?.phone, needle),
+          );
+
+        if (!identifies(matches) && subscriberDigits(needle).length >= 6) {
+          matches = await this.fleetbaseClient.fetchEveryDriverMatching();
         }
       } catch (error: any) {
         // ⚠️ L'annuaire injoignable **ne bloque pas** la création.
@@ -729,15 +747,13 @@ export class FlotteService {
       // ne trouve rien si l'enregistrement porte « +213555123456 ». Sans lui,
       // l'entreprise conclut que la personne n'est pas dans le réseau — et la
       // recrée, ce que tout ce lot existe pour éviter.
-      const digits = q.replace(/\D/g, '');
-      if (matches.length === 0 && digits.length >= 4) {
-        const wide = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
-        matches = this.fleetbaseClient
-          .extractCollection(wide, 'drivers')
-          .filter((d: any) => {
-            const phone = String(d?.phone ?? '').replace(/\D/g, '');
-            return phone.length > 0 && phone.includes(digits);
-          });
+      // ⚠️ Deux défauts en un ici. Le balayage était plafonné à 100 — d'où la
+      // pagination —, et surtout la comparaison portait sur les chiffres BRUTS :
+      // « 0555123456 » ne contient pas « 213555123456 », donc le repli échouait
+      // précisément sur le couple qu'il existait pour rattraper.
+      if (matches.length === 0 && subscriberDigits(q).length >= 4) {
+        const wide = await this.fleetbaseClient.fetchEveryDriverMatching();
+        matches = wide.filter((d: any) => phoneContains(d?.phone, q));
       }
     } catch (error: any) {
       this.logger.warn(`Annuaire conducteurs indisponible : ${error.message}`);
@@ -1217,9 +1233,13 @@ export class FlotteService {
       return cached.drivers;
     }
 
-    const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
-    const drivers = response?.drivers || response?.data || (Array.isArray(response) ? response : []);
-    const owned = (drivers || []).filter((d: any) => d?.vendor_uuid === vendorUuid);
+    // Paginé : sans cela, une entreprise dont les conducteurs dépassent la page
+    // par défaut de Fleetbase ne voyait pas les siens — et le sélecteur de
+    // conducteur les déclarait inexistants.
+    const drivers = await this.fleetbaseClient.fetchEveryDriverMatching({
+      vendor: vendorUuid,
+    });
+    const owned = drivers.filter((d: any) => d?.vendor_uuid === vendorUuid);
 
     this.driverCache.set(vendorUuid, { at: Date.now(), drivers: owned });
     return owned;

@@ -30,7 +30,12 @@
  * Il importe désormais ce que le service exécute (règle 5).
  */
 
-import { sameIdentifier, subscriberNumber } from '../common/identity/subscriber-number';
+import {
+  phoneContains,
+  sameIdentifier,
+  subscriberDigits,
+  subscriberNumber,
+} from '../common/identity/subscriber-number';
 
 describe('reconnaître deux fois la même personne', () => {
   it('reconnaît le format local et le format international', () => {
@@ -83,6 +88,62 @@ describe('reconnaître deux fois la même personne', () => {
     expect(sameIdentifier('', '0555123456')).toBe(false);
     expect(sameIdentifier('   ', '0555123456')).toBe(false);
     expect(sameIdentifier(213555123456, '0555123456')).toBe(false);
+  });
+
+  describe('recherche partielle — trois replis la faisaient à l’envers', () => {
+    it('trouve le format international depuis une saisie locale', () => {
+      // ⚠️ **Le cas mesuré le 31/07/2026** : les trois replis comparaient les
+      // chiffres BRUTS par `includes`. « 0555123456 » donne `0555123456`,
+      // « +213555123456 » donne `213555123456`, et aucun ne contient l'autre —
+      // donc le repli échouait sur le couple le plus fréquent du pays, celui
+      // pour lequel il avait été écrit.
+      expect(phoneContains('+213555123456', '0555123456')).toBe(true);
+      expect(phoneContains('0555123456', '+213555123456')).toBe(true);
+    });
+
+    it('trouve malgré les séparateurs de la base', () => {
+      expect(phoneContains('+213 555 12 34 56', '0555123456')).toBe(true);
+    });
+
+    it('accepte un FRAGMENT, contrairement à sameIdentifier', () => {
+      // L'exemple donné dans le commentaire qui justifiait ce repli, et qui
+      // échouait avec l'ancienne comparaison.
+      expect(phoneContains('+2135551234', '0555 12 34')).toBe(true);
+      // Un fragment ne fonde jamais un refus de création, lui : la garde
+      // anti-doublon passe par `sameIdentifier`, qui exige un numéro complet.
+      expect(sameIdentifier('+2135551234', '0555 12 34')).toBe(false);
+    });
+
+    it('ne rapproche pas deux numéros distincts', () => {
+      expect(phoneContains('+213555123456', '0666123456')).toBe(false);
+    });
+
+    it('ne laisse pas un fragment matcher À CHEVAL sur l’indicatif', () => {
+      // ⚠️ **Cas ajouté après avoir muté la fonction** : ne normaliser que le
+      // côté saisi laissait les douze autres cas au vert. « 13555 » n'est le
+      // début d'aucun numéro — ces chiffres viennent du « 213 » de l'indicatif
+      // collé au début de l'abonné. Sans normaliser AUSSI l'enregistrement, la
+      // recherche rapportait des correspondances qui n'existent que dans la
+      // représentation, pas dans le numéro.
+      expect(phoneContains('+213555123456', '13555')).toBe(false);
+      // Et le vrai début, lui, se trouve.
+      expect(phoneContains('+213555123456', '55512')).toBe(true);
+    });
+
+    it('ne ramène rien sur une valeur absente ou vide', () => {
+      expect(phoneContains(null, '0555123456')).toBe(false);
+      expect(phoneContains('', '0555123456')).toBe(false);
+      // Un fragment vide ramènerait TOUT l'annuaire : c'est le pire cas
+      // possible pour une recherche qui balaie le réseau entier.
+      expect(phoneContains('+213555123456', '')).toBe(false);
+      expect(phoneContains('+213555123456', 'abc')).toBe(false);
+    });
+
+    it('normalise sans exiger de longueur, contrairement à subscriberNumber', () => {
+      expect(subscriberDigits('0555 12 34')).toBe('5551234');
+      expect(subscriberDigits('+213555123456')).toBe('555123456');
+      expect(subscriberNumber('0555 12 34')).toBeNull();
+    });
   });
 
   it('compare les emails littéralement, casse comprise', () => {

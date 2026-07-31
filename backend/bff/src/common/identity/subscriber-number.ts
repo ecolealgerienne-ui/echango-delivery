@@ -49,17 +49,55 @@
  * exemple, que la comparaison littérale de `sameIdentifier` a déjà traité.
  */
 export function subscriberNumber(value: string): string | null {
-  let digits = value.replace(/\D/g, '');
-  if (!digits) return null;
-
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.startsWith('213')) digits = digits.slice(3);
-  if (digits.startsWith('0')) digits = digits.slice(1);
+  const digits = subscriberDigits(value);
 
   // Neuf chiffres est la longueur d'un numéro algérien sans son zéro
   // (`555123456`). Tout ce qui n'y correspond pas est trop incertain pour
   // fonder un refus de création.
   return digits.length === 9 ? digits : null;
+}
+
+/**
+ * La même normalisation, **sans exigence de longueur**.
+ *
+ * ── Pourquoi les deux existent ────────────────────────────────────────────
+ *
+ * [subscriberNumber] fonde un **refus** : il exige un numéro complet, parce
+ * qu'un fragment ne doit jamais empêcher une création. Une **recherche**, elle,
+ * travaille par définition sur des fragments — « 0555 12 » doit trouver quelque
+ * chose. La normalisation est la même, l'exigence non.
+ *
+ * ⚠️ **Trois recherches comparaient les chiffres BRUTS par `includes`**, et
+ * échouaient donc sur le couple le plus fréquent du pays : « 0555123456 »
+ * donne `0555123456`, « +213555123456 » donne `213555123456`, et aucun ne
+ * contient l'autre. Mesuré le 31/07/2026 : quatre cas sur cinq échouaient,
+ * **dont l'exemple donné dans le commentaire qui justifiait ce repli**. C'est
+ * exactement le défaut corrigé le même jour dans `sameIdentifier` — il avait
+ * survécu ailleurs parce que ces trois sites-là n'étaient pas sous test.
+ */
+export function subscriberDigits(value: string): string {
+  let digits = value.replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('213')) digits = digits.slice(3);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+
+  return digits;
+}
+
+/**
+ * L'enregistrement [stored] porte-t-il un numéro qui **contient** [needle] ?
+ *
+ * La comparaison se fait sur les chiffres normalisés des deux côtés : c'est ce
+ * qui rend « 0555 12 34 » capable de trouver « +2135551234 ». Rend `false` sur
+ * une valeur absente ou sur un fragment vide plutôt que de tout ramener.
+ */
+export function phoneContains(stored: unknown, needle: string): boolean {
+  if (typeof stored !== 'string') return false;
+  const haystack = subscriberDigits(stored);
+  const fragment = subscriberDigits(needle);
+  return fragment.length > 0 && haystack.length > 0 && haystack.includes(fragment);
 }
 
 /**

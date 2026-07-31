@@ -19,6 +19,10 @@ import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
 import { isTerminalOrderStatus } from '../common/orders/order-status';
+import {
+  phoneContains,
+  subscriberDigits,
+} from '../common/identity/subscriber-number';
 
 @Injectable()
 export class CommerçantService {
@@ -594,9 +598,6 @@ export class CommerçantService {
     // `searchWhere` est un LIKE SQL — le forcer en minuscules ne servait que la
     // comparaison en mémoire, qui n'existe plus.
     const q = query.trim();
-    // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
-    // espaces ou un indicatif que l'enregistrement n'a pas.
-    const digits = q.replace(/\D/g, '');
 
     // ⚠️ La recherche porte sur l'annuaire FLEETBASE, pas sur les comptes
     // applicatifs.
@@ -638,15 +639,14 @@ export class CommerçantService {
     // Repli sur les chiffres seuls : une saisie comme « 0555 12 34 » ne trouve
     // rien côté serveur si l'enregistrement est écrit « +2135551234 ». Le
     // rapatriement reste borné et ne se déclenche que sur un échec.
-    if (matches.length === 0 && digits.length >= 4) {
+    if (matches.length === 0 && subscriberDigits(q).length >= 4) {
       try {
-        const response = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
-        matches = this.fleetbaseClient
-          .extractCollection(response, 'drivers')
-          .filter((d: any) => {
-            const phone = String(d?.phone ?? '').replace(/\D/g, '');
-            return phone.length > 0 && phone.includes(digits);
-          });
+        // Paginé, et comparé sur les chiffres NORMALISÉS : la version
+        // précédente plafonnait à 100 conducteurs et comparait les chiffres
+        // bruts — elle échouait donc sur l'exemple même de ce commentaire,
+        // « 0555 12 34 » contre « +2135551234 ».
+        const wide = await this.fleetbaseClient.fetchEveryDriverMatching();
+        matches = wide.filter((d: any) => phoneContains(d?.phone, q));
       } catch {
         // Le repli est un bonus : son échec ne doit pas casser la recherche.
       }
