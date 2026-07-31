@@ -330,7 +330,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// comme un chargement impossible. Interroger d'abord pour n'afficher
   /// qu'ensuite doublerait les allers-retours pour le même résultat.
   Widget _proofCard() => AppSectionCard(
-  child: Column(
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Preuve de livraison',
@@ -339,7 +339,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ProofImage(url: '/commercant/commandes/${widget.orderId}/preuve'),
             ],
           ),
-);
+      );
 
   /// Paiement à la livraison : ce qui était demandé, et ce qui a été perçu.
   ///
@@ -405,11 +405,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
 
     return AppSectionCard(
-  // Même rôle des deux côtés : l'écart se signale par son libellé,
-  pas par
+      // Même rôle des deux côtés : l'écart se signale par son libellé, pas par
       // une nuance d'orange que personne ne sait nommer.
       color: context.semantic.warningContainer,
-  child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -457,7 +456,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ...settlement,
           ],
         ),
-);
+    );
   }
 
   Widget _banner(Color color, IconData icon, String text) => Container(
@@ -553,7 +552,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     ];
 
     return AppSectionCard(
-  child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Votre demande',
@@ -578,7 +577,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
           ],
         ),
-);
+    );
   }
 
   /// Proposer la mise en favori au moment où elle a du sens : la livraison
@@ -620,7 +619,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final phone = place?.contactPhone;
 
     return AppSectionCard(
-  child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
@@ -662,7 +661,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
           ],
         ),
-);
+    );
   }
 }
 
@@ -872,8 +871,8 @@ class _FailureHistory extends StatelessWidget {
     final multiple = failures.length > 1;
 
     return AppSectionCard(
-  color: theme.colorScheme.errorContainer,
-  child: Column(
+      color: theme.colorScheme.errorContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -916,6 +915,6 @@ class _FailureHistory extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 }

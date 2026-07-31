@@ -211,10 +211,10 @@ class _CashScreenState extends State<CashScreen> {
   Widget _totalCard(CashState state) {
     final theme = Theme.of(context);
     return AppSectionCard(
-  color: _isDriver
+      color: _isDriver
           ? context.semantic.warningContainer
           : context.semantic.successContainer,
-  child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -285,7 +285,7 @@ class _CashScreenState extends State<CashScreen> {
             ],
           ],
         ),
-);
+    );
   }
 
   /// Aucun solde ouvert. [hasPending] change le texte du tout au tout.
@@ -556,7 +556,7 @@ class _BalanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppSectionCard.dense(
-  child: Column(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -636,7 +636,7 @@ class _BalanceCard extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 }
 
@@ -656,8 +656,8 @@ class _PendingRemittanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppSectionCard.dense(
-  color: context.semantic.warningContainer,
-  child: Column(
+      color: context.semantic.warningContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(remittance.formattedAmount,
@@ -688,7 +688,7 @@ class _PendingRemittanceCard extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 }
 
@@ -801,8 +801,8 @@ class _CollectionCard extends StatelessWidget {
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
     return AppSectionCard.dense(
-  margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-  child: Column(
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -849,7 +849,7 @@ class _CollectionCard extends StatelessWidget {
             ],
           ],
         ),
-);
+    );
   }
 
   Widget _line(ThemeData theme, String label, String value, {bool strong = false}) =>
@@ -970,9 +970,9 @@ class _CollectionToConfirmCard extends StatelessWidget {
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
     return AppSectionCard.dense(
-  color: context.semantic.warningContainer,
-  margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-  child: Column(
+      color: context.semantic.warningContainer,
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -1004,7 +1004,7 @@ class _CollectionToConfirmCard extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 }
 
@@ -1030,8 +1030,8 @@ class _UnrecordedBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AppSectionCard(
-  color: context.semantic.warningContainer,
-  child: Column(
+      color: context.semantic.warningContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -1059,7 +1059,7 @@ class _UnrecordedBanner extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 }
 

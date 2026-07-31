@@ -581,7 +581,7 @@ class _VehicleTypeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DriverPresenceState>(
       builder: (context, presence, _) => AppSectionCard(
-  child: Column(
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
@@ -622,7 +622,7 @@ class _VehicleTypeCard extends StatelessWidget {
               ),
             ],
           ),
-),
+      ),
     );
   }
 }

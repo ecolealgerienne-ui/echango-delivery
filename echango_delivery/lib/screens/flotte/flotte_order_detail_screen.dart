@@ -523,8 +523,8 @@ class _Section extends StatelessWidget {
 
     final theme = Theme.of(context);
     return AppSectionCard(
-  margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
-  child: Column(
+      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
@@ -550,7 +550,7 @@ class _Section extends StatelessWidget {
               Wrap(spacing: 8, children: actions),
           ],
         ),
-);
+    );
   }
 }
 

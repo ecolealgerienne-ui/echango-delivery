@@ -811,8 +811,8 @@ class _FailureHistory extends StatelessWidget {
     final multiple = failures.length > 1;
 
     return AppSectionCard(
-  color: theme.colorScheme.errorContainer,
-  child: Column(
+      color: theme.colorScheme.errorContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -860,7 +860,7 @@ class _FailureHistory extends StatelessWidget {
             ),
           ],
         ),
-);
+    );
   }
 
   static String _formatDate(DateTime date) {
