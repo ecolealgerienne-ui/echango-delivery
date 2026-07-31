@@ -210,9 +210,15 @@ class _OrdersTab extends StatelessWidget {
           // afficherait son écran d'erreur. Ne rien faire est le bon geste
           // quand il n'y a nulle part où aller.
           onTap: _openable(order) ? () => context.push('/flotte/commandes/${order['uuid']}') : null,
+          // ⚠️ **Un `FilledButton`, comme dans l'onglet d'à côté.** C'était un
+          // `TextButton` : l'action principale de la ligne — celle sans
+          // laquelle la course ne partira jamais — se lisait comme un lien,
+          // pendant que « Prendre cette course » s'affichait en bouton plein à
+          // un coup d'onglet d'écart. Même nature d'action, deux niveaux de
+          // visibilité, dans le même écran (voir `theme/app_buttons.dart`).
           trailing: hasDriver
               ? null
-              : TextButton(
+              : FilledButton(
                   onPressed: () => _pickDriver(context, order, t),
                   child: Text(t('fleet.orders.assign')),
                 ),

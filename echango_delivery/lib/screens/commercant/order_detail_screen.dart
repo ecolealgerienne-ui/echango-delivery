@@ -13,6 +13,7 @@ import '../../models/vehicle_type.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
@@ -253,7 +254,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // c'est l'unique geste qui manque pour que la livraison
                     // existe réellement aux yeux d'un transporteur.
                     if (order.isDraft) ...[
-                      ElevatedButton.icon(
+                      FilledButton.icon(
                         onPressed:
                             orderState.isLoading ? null : () => _publish(orderState),
                         icon: const Icon(Icons.publish_outlined),
@@ -279,9 +280,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             orderState.isLoading ? null : () => _cancel(orderState),
                         icon: const Icon(Icons.close),
                         label: const Text('Annuler la livraison'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Theme.of(context).colorScheme.error,
-                        ),
+                        style: AppButtonStyles.destructiveOutlined(context),
                       ),
                     const SizedBox(height: AppSpacing.xxl),
                   ],

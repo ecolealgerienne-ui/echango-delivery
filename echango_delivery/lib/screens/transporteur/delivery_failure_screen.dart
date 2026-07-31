@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/app_snack_bar.dart';
@@ -152,11 +153,10 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             // Submit Button
             Consumer<OrderState>(
               builder: (context, orderState, _) {
-                return ElevatedButton(
+                return FilledButton(
                   onPressed: orderState.isLoading ? null : () => _submitFailureReport(context, orderState),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    foregroundColor: Theme.of(context).colorScheme.onError,
+                  style: AppButtonStyles.destructiveFilled(
+                    context,
                     padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                   ),
                   child: orderState.isLoading

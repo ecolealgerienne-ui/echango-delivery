@@ -10,6 +10,7 @@ import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
 import '../../state/locale_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
@@ -816,9 +817,7 @@ class _PendingRemittanceCard extends StatelessWidget {
               children: [
                 TextButton(
                   onPressed: onDispute,
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.error,
-                  ),
+                  style: AppButtonStyles.destructiveText(context),
                   child: Text(t('cash.action.received_nothing')),
                 ),
                 const Spacer(),

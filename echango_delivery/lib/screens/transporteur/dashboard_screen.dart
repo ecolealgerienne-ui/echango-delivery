@@ -8,6 +8,7 @@ import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
@@ -490,13 +491,12 @@ class ProfileScreen extends StatelessWidget {
           const SizedBox(height: AppSpacing.xxl),
           Consumer<AuthState>(
             builder: (context, authState, _) {
-              return ElevatedButton(
+              return FilledButton(
                 onPressed: authState.isLoading
                     ? null
                     : () => _handleLogout(context, authState),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
+                style: AppButtonStyles.destructiveFilled(
+                  context,
                   padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                 ),
                 child: authState.isLoading

@@ -10,6 +10,7 @@ import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
@@ -244,7 +245,7 @@ class OrderDetailScreen extends StatelessWidget {
     final claimable = order.adhoc == true && order.driverId == null;
     if (claimable) {
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy ? null : () => _acceptOrder(context, order.id, orderState),
           child: const Text('Accepter cette course'),
         ),
@@ -262,13 +263,13 @@ class OrderDetailScreen extends StatelessWidget {
 
       buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy
               ? null
               : () => requiresPod
                   ? _applyActivityWithProof(context, order, activity, orderState)
                   : _applyActivity(context, order, activity, orderState),
-          style: ElevatedButton.styleFrom(
+          style: FilledButton.styleFrom(
             backgroundColor: code == 'completed'
                 ? context.semantic.success
                 : context.semantic.warning,
@@ -300,9 +301,7 @@ class OrderDetailScreen extends StatelessWidget {
                   assigned: returnable),
           icon: const Icon(Icons.do_not_disturb_on_outlined),
           label: Text(claimable ? 'Refuser cette course' : 'Rendre cette course'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
-          ),
+          style: AppButtonStyles.destructiveOutlined(context),
         ),
       );
     }
@@ -311,14 +310,11 @@ class OrderDetailScreen extends StatelessWidget {
     if (!order.isFinished && !claimable) {
       buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/echec'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Theme.of(context).colorScheme.error,
-            foregroundColor: Theme.of(context).colorScheme.onError,
-          ),
+          style: AppButtonStyles.destructiveFilled(context),
           child: const Text('Signaler un échec de livraison'),
         ),
       );
@@ -582,7 +578,7 @@ class _DeclineSheetState extends State<_DeclineSheet> {
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
-            ElevatedButton(
+            FilledButton(
               onPressed: _reason == null
                   ? null
                   : () => Navigator.pop(
@@ -592,10 +588,12 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                           notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
                         ),
                       ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+              // ⚠️ Le rembourrage vertical valait 14, hors barème — glissé sur
+              // `AppSpacing.md` (12), le jeton voisin. Deux pixels, mais la
+              // seule valeur d'espacement du fichier qui n'était pas nommée.
+              style: AppButtonStyles.destructiveFilled(
+                context,
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               ),
               child: Text(widget.assigned ? 'Rendre la course' : 'Refuser'),
             ),
@@ -647,11 +645,11 @@ class _ProofSheetState extends State<_ProofSheet> {
             onChanged: (photo) => setState(() => _photo = photo),
           ),
           const SizedBox(height: AppSpacing.xl),
-          ElevatedButton(
+          FilledButton(
             onPressed: _photo == null
                 ? null
                 : () => Navigator.pop(context, _photo),
-            style: ElevatedButton.styleFrom(
+            style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
             child: const Text('Envoyer la preuve et valider l\'étape'),
@@ -1021,7 +1019,7 @@ class _CashSheetState extends State<_CashSheet> {
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
-            ElevatedButton(
+            FilledButton(
               onPressed: _canSubmit
                   ? () => Navigator.pop(
                         context,
@@ -1034,7 +1032,7 @@ class _CashSheetState extends State<_CashSheet> {
                         ),
                       )
                   : null,
-              style: ElevatedButton.styleFrom(
+              style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               child: const Text('Valider et clôturer la livraison'),

@@ -125,7 +125,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  ElevatedButton(
+                  FilledButton(
                     onPressed: authState.isLoading ? null : () => _submit(authState),
                     child: authState.isLoading
                         ? const SizedBox(

@@ -457,7 +457,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xl),
-                ElevatedButton.icon(
+                FilledButton.icon(
                   onPressed: orderState.isLoading ? null : () => _submit(orderState),
                   icon: orderState.isLoading
                       ? const SizedBox(

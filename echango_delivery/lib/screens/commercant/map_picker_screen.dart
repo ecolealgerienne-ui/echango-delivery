@@ -292,7 +292,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 ],
               ),
               const SizedBox(height: AppSpacing.md),
-              ElevatedButton.icon(
+              FilledButton.icon(
                 onPressed: () => Navigator.pop(
                   context,
                   PickedLocation(

@@ -454,7 +454,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.lg),
-              ElevatedButton.icon(
+              FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: _saving
                     ? const SizedBox(
