@@ -10,7 +10,7 @@ Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse central
 
 ## Règles de développement — à respecter sans exception
 
-Quatre règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
+Six règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
 
 ⚠️ **Ce qu'un `tsc` vert vaut dans le sandbox Claude Code — et ce qu'il ne vaut pas (30/07/2026).** Le client Prisma n'y est **jamais généré** (le proxy sortant refuse `binaries.prisma.sh` par politique, y compris avec `--no-engine`), donc `@prisma/client` s'y résout sur un fichier de 4 ko où tout est `any`. Conséquence : **rien de ce qui traverse un type Prisma n'est vérifié ici**, et un `npx tsc --noEmit` vert ne dit rien de ces chemins-là. Constaté : `liveOrderDetailed(merchant.fleetbaseVendorUuid, order)` — arguments inversés — passait ici parce que `merchant` était `any`, et échouait à la compilation chez l'utilisateur, où le client est généré. La vérification a fonctionné, simplement pas de mon côté. À l'écriture : relire à la main toute signature dont un argument vient d'une ligne Prisma, et annoncer un `tsc` vert pour ce qu'il est — une vérification **partielle**.
 
@@ -66,6 +66,47 @@ Langues cibles : **français + arabe (RTL)**. Le serveur renvoie un **code** sta
 - Un libellé métier partagé par plusieurs écrans vit **à un seul endroit** (ex. `MerchantOrder.statusLabel`) : deux tables recopiées ont affiché deux textes différents pour la même commande.
 
 ⚠️ **Dette connue** : ~575 chaînes d'interface (labels, boutons, textes d'aide) restent en français en dur dans `lib/screens/` et `lib/widgets/`. Décision explicite de ne pas les traiter dans le lot i18n initial — détail et mesure dans `docs/audit_i18n_erreurs.md`. Tout **nouvel** écran doit néanmoins éviter d'en ajouter.
+
+### 5. Un invariant s'applique, il ne se documente pas
+
+**Dès qu'un commentaire dit « doit rester identique à X », « le pendant exact de X », « même règle que X » — c'est le signal qu'il faut extraire, pas commenter.** La phrase est l'aveu que rien ne tient l'invariant à notre place, et **un commentaire ne peut pas échouer**.
+
+Le cas fondateur (31/07/2026) : `isClaimable` (entreprise) et `isClaimableAdhoc` (transporteur) étaient identiques caractère pour caractère, chacun portant un commentaire affirmant que les deux devaient le rester. J'avais donc **vu** le couplage, je l'avais **écrit**, et je ne l'avais pas appliqué. Les deux copies excluaient `canceled` sans exclure `completed` : une course **livrée** s'est affichée dans « Courses libres », avec un bouton « Prendre cette course ». Personne ne l'avait vu parce qu'on avait vérifié que les deux copies **s'accordaient entre elles**, pas qu'elles avaient raison — **deux copies d'accord ne prouvent rien**.
+
+En cherchant, cinq endroits nommaient « statut terminal » et trois divergeaient : deux oubliaient `completed`, un oubliait l'orthographe `cancelled` (Fleetbase émet les deux). Chacun produisait son propre défaut.
+
+**Le critère, parce qu'il ne s'agit pas de tout fusionner** : la question n'est pas *« ces deux bouts se ressemblent-ils »* mais **« si l'un change, l'autre doit-il changer ? »**.
+- **Oui ⇒ un seul endroit.** Les deux prédicats de disponibilité : les deux populations réclament les mêmes courses, une divergence n'est pas une variante, c'est un défaut.
+- **Non ⇒ deux endroits, et un commentaire qui dit pourquoi.** `orderStatusLabel` (commerçant) et `fleetOrderStateKey` (entreprise) se ressemblent beaucoup et répondent à deux questions différentes : où en est ma livraison / qu'est-ce que je dois en faire.
+- **Quand la fusion coûte plus qu'elle ne rapporte**, l'invariant se tient par un **contrôle exécuté**, jamais par une phrase : `projectOrderForDriver` et `projectOrderForFleet` restent séparées, et un test vérifie qu'elles servent le même niveau de détail.
+
+⚠️ **Un test qui recopie ce qu'il vérifie ne vérifie que lui-même.** Le premier test de ce prédicat en contenait une **troisième** copie, « reproduction fidèle » pour contourner une dépendance à Prisma. Il serait resté vert pendant que les deux vrais prédicats divergeaient. Un test importe ce que le code exécute, ou il ne sert à rien.
+
+### 6. Des composants graphiques réutilisables — l'homogénéité ne se maintient pas à la main
+
+**Un motif d'interface qui apparaît deux fois devient un widget partagé dans `lib/widgets/`.** C'est la règle 5 appliquée à l'écran, et elle a la même justification : recopier une mise en page, c'est s'engager à la corriger partout, ce que personne ne fait.
+
+**Mesuré le 31/07/2026, et c'est ce qui a rendu la règle nécessaire** — le thème *est* unique et partagé (`theme/app_theme.dart`, un seul `theme:` dans `main.dart`), mais les écrans ne s'en servent pas également :
+
+| dossier | couleurs en dur | via le thème |
+|---|---|---|
+| `screens/flotte/` | 3 | 17 |
+| `screens/commercant/` | 54 | 39 |
+| `screens/transporteur/` | 48 | 41 |
+| `screens/cash/` | 24 | 16 |
+
+Les écrans du profil entreprise sont **six à huit fois plus pilotés par le thème** que les autres, qui peignent leurs propres couleurs. D'où la remarque de l'utilisateur : « le thème entre le commerçant et le facilitateur est différent ». Il ne l'est pas — c'est son application qui l'est.
+
+Et il n'existe **que trois widgets partagés** (`language_selector`, `photo_field`, `proof_image`) pour dix-neuf fichiers d'écran, alors que les mêmes motifs sont réécrits partout : bandeau d'erreur (8 fois, 7 fichiers), message d'absence (13 fois, 10 fichiers), carte de section (69 fois, 14 fichiers), SnackBar (43 fois, 13 fichiers).
+
+**En pratique :**
+
+- **`Colors.*` et `Color(0x…)` sont interdits dans un écran.** La couleur vient de `Theme.of(context).colorScheme` — sans quoi un changement de thème ne traverse pas l'application, et deux écrans du même produit ne se ressemblent plus.
+- **Un motif répété se nomme.** Bandeau d'erreur, état vide avec sa consigne, carte de section, ligne libellé/valeur : ce sont des widgets, pas des copies.
+- **Un composant partagé porte sa règle métier avec lui.** `_Empty` accompagne toujours l'absence d'une consigne, parce qu'une liste vide sans explication se lit comme une panne (défaut corrigé deux fois) ; le bandeau d'erreur se pose **au-dessus** du contenu et ne le remplace pas, parce qu'un rechargement raté ne doit pas effacer ce qui était lisible. Recopier la mise en page sans la règle, c'est reproduire le défaut qu'elle corrige.
+- **Les nouveaux écrans n'ont aucune excuse** — comme pour la règle 4, la dette existante est assumée (`docs/audit_i18n_erreurs.md`), mais elle ne grandit pas.
+
+⚠️ **Dette connue** : les ~130 couleurs en dur de `screens/commercant/`, `screens/transporteur/` et `screens/cash/`, et les quatre motifs ci-dessus non extraits. Non traité au 31/07/2026 — à faire avant le pilote, c'est ce que voit l'utilisateur en premier.
 
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
