@@ -278,6 +278,22 @@ export class FleetbaseApiClient {
     pageSize = 200,
     maxPages = 25,
   ): Promise<any | null> {
+    // ⚠️ La condition d'arrêt ne suppose PAS que `limit` est honoré.
+    //
+    // Écrire `if (vendors.length < pageSize) return null` paraît naturel et
+    // rendrait ce correctif **entièrement inerte** si le serveur plafonne
+    // `limit` en dessous de la valeur demandée : la première page renverrait
+    // moins que `pageSize`, on sortirait aussitôt, et le garde resterait aussi
+    // auto-désarmant qu'avant — avec cinquante lignes de commentaire expliquant
+    // qu'il ne l'est plus. C'est la leçon fondatrice du projet : Fleetbase
+    // **abandonne un paramètre inconnu sans erreur**, donc aucune supposition
+    // sur un paramètre de requête ne se vérifie toute seule.
+    //
+    // On s'arrête donc sur une page **vide**, et on détecte séparément le cas
+    // où `page` serait ignoré — sans quoi on relirait la même page vingt-cinq
+    // fois avant de conclure « introuvable », c'est-à-dire « laisse passer ».
+    let previousFirstUuid: string | null = null;
+
     for (let page = 1; page <= maxPages; page++) {
       let vendors: any[];
       try {
@@ -294,7 +310,17 @@ export class FleetbaseApiClient {
       const found = vendors.find((v: any) => v?.uuid === vendorUuid);
       if (found) return found;
 
-      if (vendors.length < pageSize) return null;
+      if (vendors.length === 0) return null;
+
+      const firstUuid = vendors[0]?.uuid ?? null;
+      if (page > 1 && firstUuid !== null && firstUuid === previousFirstUuid) {
+        this.logger.warn(
+          `/vendors semble ignorer le paramètre « page » (page ${page} identique à la ` +
+            `précédente) — recherche de ${vendorUuid} abandonnée, le statut renvoyé ne fait pas foi`,
+        );
+        return null;
+      }
+      previousFirstUuid = firstUuid;
 
       if (page === maxPages) {
         // Ne pas rendre `null` en silence : au-delà du garde-fou, « introuvable »

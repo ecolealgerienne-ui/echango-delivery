@@ -34,6 +34,42 @@ _driver_login() { # email password -> token sur stdout
     | jq -r '.token // empty'
 }
 
+# Accorde le rôle « prestataire plateforme » au compte opérateur jetable.
+#
+# Écrit en base plutôt que par une route : `isPlatform` n'en a aucune, et c'est
+# voulu — un compte flotte qui pourrait se déclarer plateforme ferait retenir à
+# ses conducteurs une rémunération qui ne leur revient pas. C'est un geste
+# d'admin, tenu ici par le script, exactement comme l'activation du fournisseur.
+#
+# **Refuse si un prestataire plateforme existe déjà.** L'invariant « exactement
+# un » fonde la résolution du facilitateur pour toutes les courses du pool ; le
+# casser pour faire passer un test rendrait le test vert et le produit faux.
+_promote_operator_to_platform() { # email -> 0 si promu
+  PLATFORM_PROMOTION_ERROR=""
+  local existing
+
+  existing=$(docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
+    "SELECT email FROM \"FleetAccount\" WHERE \"isPlatform\" = true LIMIT 1;" \
+    2>/dev/null | tr -d '[:space:]' || true)
+
+  if [ -n "$existing" ]; then
+    PLATFORM_PROMOTION_ERROR=$(cat <<EOF
+un prestataire plateforme existe déjà ($existing) et le script ne le remplace pas.
+   Fournissez ses identifiants pour que les tests s'en servent :
+     ECHANGO_PLATFORM_EMAIL='$existing' ECHANGO_PLATFORM_PASSWORD='<mdp>' \$0 …
+EOF
+)
+    return 1
+  fi
+
+  docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
+    "UPDATE \"FleetAccount\" SET \"isPlatform\" = true WHERE email = '$1';" \
+    >/dev/null 2>&1 || {
+      PLATFORM_PROMOTION_ERROR="écriture impossible (conteneur echango_bff_postgres joignable ?)"
+      return 1
+    }
+}
+
 _existing_driver_email() { # driver_uuid -> email sur stdout, vide si aucun
   docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
     "SELECT email FROM \"DriverAccount\" WHERE \"fleetbaseDriverUuid\"='$1';" \
@@ -54,21 +90,73 @@ obtain_operator_token() { # -> renseigne OPERATOR_TOKEN
 }
 
 # Compte opérateur (persona `fleet`), seul habilité à émettre une invitation.
+#
+# ── Trois étapes depuis le Lot 0, et non plus deux ──────────────────────────
+#
+# L'inscription d'une entreprise de transport ne délivre plus de jeton : elle
+# enregistre une **demande**, et répond `403 fleet_pending`. Le `Vendor` naît
+# `inactive`, et `loginFleet` refuse tant qu'un admin ne l'a pas validé.
+#
+# Le script tient donc le rôle de cet admin, avec la clé de service — comme
+# `test-parcours-argent.sh` le fait déjà pour le commerçant. **Le garde n'est
+# pas contourné**, il est franchi par le geste qui est prévu pour le franchir ;
+# `register-merchant.sh` reste le script qui joue ce parcours à la main et
+# prouve que le garde existe.
 _operator_token() { # -> token sur stdout
-  local email="operateur-test-$RANDOM@echango.local" token
-  token=$(curl -sS -X POST "$BFF_URL/auth/flotte/register" \
+  # Prestataire plateforme réel, si l'utilisateur l'a provisionné
+  # (`npm run prisma:seed`) et en fournit les identifiants. C'est le chemin le
+  # plus fidèle : c'est bien Echango qui invite les conducteurs du pool.
+  if [ -n "${ECHANGO_PLATFORM_EMAIL:-}" ] && [ -n "${ECHANGO_PLATFORM_PASSWORD:-}" ]; then
+    curl -sS -X POST "$BFF_URL/auth/flotte/login" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg e "$ECHANGO_PLATFORM_EMAIL" --arg p "$ECHANGO_PLATFORM_PASSWORD" \
+         '{email:$e, password:$p}')" \
+      | jq -r '.token // empty'
+    return 0
+  fi
+
+  local email="operateur-test-$RANDOM@echango.local"
+
+  # La bibliothèque Fleetbase n'est pas toujours déjà chargée : les scripts qui
+  # ne veulent qu'une session transporteur ne la sourcent pas.
+  if ! declare -F fb_activate_vendor_by_email >/dev/null 2>&1; then
+    # shellcheck source=fleetbase.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/fleetbase.sh"
+  fi
+
+  curl -sS -o /dev/null -X POST "$BFF_URL/auth/flotte/register" \
     -H 'Content-Type: application/json' \
     -d "$(jq -n --arg e "$email" --arg p "$PASSWORD" \
-       '{email:$e, password:$p, businessName:"Flotte de test"}')" \
-    | jq -r '.token // empty')
+       '{email:$e, password:$p, businessName:"Flotte de test"}')" || true
 
-  if [ -z "$token" ]; then
-    token=$(curl -sS -X POST "$BFF_URL/auth/flotte/login" \
-      -H 'Content-Type: application/json' \
-      -d "$(jq -n --arg e "$email" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
-      | jq -r '.token // empty')
+  # Un échec d'activation n'est pas silencieux : sans lui la connexion suivante
+  # échouera, et sans ce message on mettrait le refus sur le compte du garde.
+  if ! fb_activate_vendor_by_email "$email"; then
+    echo "opérateur non activé : ${FLEETBASE_ERROR:-cause inconnue}" >&2
+    return 0
   fi
-  echo "$token"
+
+  # ── Et il faut que cet opérateur ait le DROIT d'inviter ce conducteur ──────
+  #
+  # Depuis le Lot 0, une entreprise ne peut inviter qu'un conducteur qui lui est
+  # rattaché — ou, si elle est le prestataire **plateforme**, un conducteur que
+  # personne n'a rattaché, c'est-à-dire un conducteur du pool. Les conducteurs
+  # de test en font partie.
+  #
+  # Le script tient donc ici le second rôle d'admin, comme il tenait le premier
+  # en activant le fournisseur. Il ne le prend que si **aucun** prestataire
+  # plateforme n'existe : promouvoir un compte jetable alors qu'Echango est déjà
+  # posé casserait l'invariant « exactement un », et c'est un invariant dont
+  # dépend la résolution du facilitateur.
+  if ! _promote_operator_to_platform "$email"; then
+    echo "opérateur non promu plateforme : ${PLATFORM_PROMOTION_ERROR:-cause inconnue}" >&2
+    return 0
+  fi
+
+  curl -sS -X POST "$BFF_URL/auth/flotte/login" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg e "$email" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
+    | jq -r '.token // empty'
 }
 
 # Renvoie 0 et renseigne DRIVER_TOKEN, ou renvoie 1 et renseigne

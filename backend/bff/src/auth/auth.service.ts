@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Logger,
   ConflictException,
+  HttpException,
 } from '@nestjs/common';
 import { badRequest, unauthorized, forbidden, conflict, notFound } from '../common/errors/http-errors';
 import { AuditService } from '../common/audit/audit.service';
@@ -484,6 +485,14 @@ export class AuthService {
         `Demande d'inscription entreprise enregistrée : ${fleet.id} (en attente de validation)`,
       );
     } catch (error) {
+      // Laissez-passer : aucun refus métier ne naît dans ce `try` aujourd'hui,
+      // mais le jour où quelqu'un y ajoute un `conflict()`, il serait avalé
+      // **et** déclencherait `rollbackVendor()` — donc supprimerait un Vendor
+      // légitime en réponse à un refus. Trois lignes qui ferment un piège que
+      // ce fichier commente déjà deux fois.
+      if (error instanceof HttpException) {
+        throw error;
+      }
       await this.rollbackVendor(createdVendorUuid);
       this.logger.error(`Fleet registration failed: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
@@ -658,6 +667,18 @@ export class AuthService {
       );
     }
 
+    // Le refus était audité, pas le succès — or c'est le succès qui crée un
+    // jeton donnant l'identité de quelqu'un. `DriverInvitation` ne stocke pas
+    // son émetteur : cette entrée est le **seul** lien entre une invitation et
+    // l'entreprise qui l'a demandée.
+    this.audit.succeeded({
+      actorType: 'fleet',
+      actorId: fleetId,
+      action: 'driver.invitation',
+      resourceType: 'Driver',
+      resourceId: fleetbaseDriverUuid,
+    });
+
     this.logger.log(`Driver invitation issued for ${fleetbaseDriverUuid} by fleet ${fleetId}`);
 
     return { invitationToken: token, expiresAt };
@@ -714,8 +735,41 @@ export class AuthService {
       notFound('auth.driver_not_found', 'Driver not found in Fleetbase');
     }
 
-    const vendorUuid = driver.vendor_uuid ?? null;
-    const isOwn = vendorUuid !== null && vendorUuid === fleet.fleetbaseVendorUuid;
+    // ⚠️ **Champ absent ≠ conducteur non rattaché**, et confondre les deux
+    // casserait ce garde dans les deux sens à la fois.
+    //
+    // Le seul endroit du dépôt qui lisait `vendor_uuid` jusqu'ici le lisait sur
+    // la réponse de **liste** (`flotte.service.ts`). Rien n'établit que la
+    // ressource **unitaire** l'expose : ce projet a déjà rencontré une ressource
+    // d'index et une ressource complète divergentes (`_index_resource`), et une
+    // résolution d'identifiant non uniforme route par route.
+    //
+    // Si le champ manquait et qu'on lisait `?? null`, alors : plus aucune
+    // entreprise ne pourrait inviter son propre conducteur (403 systématique),
+    // et le prestataire plateforme pourrait inviter n'importe qui — le tout sans
+    // une seule erreur pour le signaler. D'où la distinction explicite entre
+    // « absent » et « nul », et le repli sur la liste, dont on SAIT qu'elle
+    // porte le champ.
+    let vendorUuid: string | null;
+
+    if ('vendor_uuid' in driver) {
+      vendorUuid = driver.vendor_uuid || null;
+    } else {
+      this.logger.warn(
+        `La lecture unitaire du conducteur ${fleetbaseDriverUuid} ne porte pas vendor_uuid — ` +
+          'repli sur la liste filtrée par fournisseur',
+      );
+      vendorUuid = await this.readDriverVendorFromList(
+        fleetbaseDriverUuid,
+        fleet.fleetbaseVendorUuid,
+      );
+    }
+
+    // `fleetbaseVendorUuid` vide rendrait `isOwn` vrai pour tout conducteur sans
+    // fournisseur. Aucun chemin actuel ne le permet — les deux créateurs lèvent
+    // si l'uuid manque — mais rien ne l'interdit en base.
+    const isOwn =
+      !!fleet.fleetbaseVendorUuid && vendorUuid === fleet.fleetbaseVendorUuid;
     const isUnattachedPoolDriver = vendorUuid === null && fleet.isPlatform === true;
 
     if (isOwn || isUnattachedPoolDriver) return;
@@ -733,6 +787,46 @@ export class AuthService {
       'auth.driver_not_in_fleet',
       "Ce transporteur n'appartient pas à votre entreprise.",
     );
+  }
+
+  /**
+   * Repli quand la lecture unitaire d'un conducteur ne porte pas `vendor_uuid`.
+   *
+   * `GET /drivers?vendor=<uuid>` est le filtre que le module flotte utilise
+   * depuis le Lot 1, et sa réponse porte le champ — c'est de là que venait la
+   * seule lecture connue. On demande donc « les conducteurs de CETTE
+   * entreprise » et on regarde si le nôtre y est.
+   *
+   * Rend l'uuid du fournisseur si le conducteur appartient à l'entreprise
+   * interrogée, `null` sinon. `null` signifie donc ici « pas à cette
+   * entreprise-là », ce qui suffit au seul appelant : il n'a pas besoin de
+   * savoir à qui d'autre, il a besoin de savoir si c'est à lui.
+   *
+   * ⚠️ Conséquence à connaître : dans ce repli, un conducteur rattaché à une
+   * AUTRE entreprise et un conducteur du pool deviennent indiscernables. Le
+   * prestataire plateforme pourrait donc inviter un conducteur d'une entreprise
+   * tierce. C'est pourquoi ce chemin journalise en `warn` : il est un filet, pas
+   * un mode de fonctionnement, et le contrôle qui le rend inutile tient en un
+   * `curl` (voir `docs/specs_facilitateur.md` §12).
+   */
+  private async readDriverVendorFromList(
+    fleetbaseDriverUuid: string,
+    vendorUuid: string,
+  ): Promise<string | null> {
+    try {
+      const response = await this.fleetbaseClient.getAllDrivers({ vendor: vendorUuid });
+      const drivers = this.fleetbaseClient.extractCollection(response, 'drivers');
+      const found = drivers.some((d: any) => d?.uuid === fleetbaseDriverUuid);
+      return found ? vendorUuid : null;
+    } catch (error: any) {
+      this.logger.error(
+        `Repli sur la liste des conducteurs impossible (${error.message}) — invitation refusée`,
+      );
+      badRequest(
+        'auth.driver_invitation_failed',
+        'Impossible de vérifier ce transporteur pour le moment. Réessayez.',
+      );
+    }
   }
 
   /**

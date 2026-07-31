@@ -68,3 +68,41 @@ fb_api() { # méthode chemin [corps-json]
 }
 
 fb_get() { fb_api GET "$1"; }
+
+# Active un fournisseur, en tenant le rôle de l'admin qui le ferait en console.
+#
+# ── Pourquoi cette fonction existe ──────────────────────────────────────────
+#
+# Depuis le Lot 0 du chantier facilitateur, un `Vendor` d'entreprise de
+# transport naît `inactive` et `loginFleet` refuse tant qu'un admin ne l'a pas
+# validé. C'est voulu, et le garde reste entier : ce qui est automatisé ici
+# n'est pas le contournement du garde, c'est **le geste de l'admin**. Le même
+# raisonnement que pour le commerçant, dont `test-parcours-argent.sh` fait déjà
+# l'activation avec la clé de service — `register-merchant.sh` restant le script
+# qui joue le parcours à la main et prouve le garde.
+#
+# Sans elle, trois scripts s'arrêtaient à leur première ligne utile : plus
+# aucun moyen automatisé d'obtenir une session opérateur.
+#
+# La recherche se fait par **email** et non par nom : les comptes de test
+# partagent tous « Flotte de test », et activer le mauvais fournisseur produit
+# un refus qu'on met dix minutes à comprendre.
+fb_activate_vendor_by_email() { # email
+  local vendors uuid now
+  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
+
+  uuid="$(echo "$vendors" | jq -r --arg e "$1" \
+    '(.vendors // .data // []) | map(select(.email == $e)) | last.uuid // empty')"
+  [ -n "$uuid" ] || { FLEETBASE_ERROR="aucun fournisseur d'email « $1 »"; return 1; }
+
+  fb_api PUT "/int/v1/vendors/$uuid" '{"status":"active"}' >/dev/null || return 1
+
+  # Relu, jamais déduit du code HTTP : `status` n'est pas garanti `fillable`,
+  # et un `PUT` qui l'ignore répond 200 sans rien changer. Le refus de connexion
+  # suivant serait alors mis sur le compte du garde plutôt que du PUT.
+  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
+  now="$(echo "$vendors" | jq -r --arg u "$uuid" \
+    '(.vendors // .data // []) | map(select(.uuid == $u)) | first.status // empty')"
+  [ "$now" = "active" ] \
+    || { FLEETBASE_ERROR="statut resté « ${now:-inconnu} » après le PUT"; return 1; }
+}

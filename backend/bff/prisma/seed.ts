@@ -34,6 +34,7 @@
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 const prisma = new PrismaClient();
 
@@ -70,6 +71,7 @@ function fleetbase() {
  */
 async function findVendorByName(api: ReturnType<typeof fleetbase>, name: string) {
   const pageSize = 200;
+  let previousFirstUuid: string | null = null;
 
   for (let page = 1; page <= 25; page++) {
     const { data } = await api.get('/int/v1/vendors', { params: { page, limit: pageSize } });
@@ -77,7 +79,20 @@ async function findVendorByName(api: ReturnType<typeof fleetbase>, name: string)
 
     const found = vendors.find((v) => v?.name === name);
     if (found) return found;
-    if (vendors.length < pageSize) return null;
+    if (vendors.length === 0) return null;
+
+    // Même précaution que `findVendorAcrossPages` : ne rien supposer de `limit`
+    // ni de `page`. Ici l'enjeu est plus direct encore — conclure « introuvable »
+    // à tort crée un **second** Vendor Echango, ce que cette fonction existe
+    // précisément pour empêcher.
+    const firstUuid: string | null = vendors[0]?.uuid ?? null;
+    if (page > 1 && firstUuid !== null && firstUuid === previousFirstUuid) {
+      throw new Error(
+        `/int/v1/vendors semble ignorer le paramètre « page » — refus de conclure que ` +
+          `« ${name} » n'existe pas, et donc de le créer en double.`,
+      );
+    }
+    previousFirstUuid = firstUuid;
   }
 
   throw new Error(
@@ -86,12 +101,41 @@ async function findVendorByName(api: ReturnType<typeof fleetbase>, name: string)
 }
 
 async function main() {
+  const hasCredentials = EMAIL !== '' && PASSWORD.length >= MIN_PASSWORD_LENGTH;
+
+  if (EMAIL !== '' && !hasCredentials) {
+    throw new Error(
+      `ECHANGO_PLATFORM_PASSWORD fait ${PASSWORD.length} caractères, minimum ` +
+        `${MIN_PASSWORD_LENGTH}. Ce compte voit le registre de caisse de tout le réseau.`,
+    );
+  }
+
   const existing = await prisma.fleetAccount.findFirst({ where: { isPlatform: true } });
 
   if (existing) {
+    // ── Un second passage AVEC identifiants doit pouvoir ouvrir le compte ───
+    //
+    // La première version sortait ici quoi qu'il arrive. Or le premier passage
+    // se fait souvent sans identifiants — on ne les a pas encore choisis — et
+    // le compte naît alors inconnectable. Sortir sans rien faire rendait le SQL
+    // manuel obligatoire pour le seul compte capable d'inviter un conducteur du
+    // pool. Le script doit finir ce qu'il a commencé.
+    if (hasCredentials) {
+      const opened = await prisma.fleetAccount.update({
+        where: { id: existing.id },
+        data: { email: EMAIL, password: await bcrypt.hash(PASSWORD, 10), active: true },
+      });
+      console.log(`✅ Compte opérateur ouvert sur le prestataire existant : ${opened.email}`);
+      return;
+    }
+
     console.log(
       `✅ Prestataire plateforme déjà en place : ${existing.businessName} ` +
-        `(${existing.id}, vendor ${existing.fleetbaseVendorUuid})`,
+        `(${existing.id}, vendor ${existing.fleetbaseVendorUuid})` +
+        (existing.active
+          ? ''
+          : '\n   ⚠️ Compte non connectable. Relancez avec ECHANGO_PLATFORM_EMAIL et ' +
+            'ECHANGO_PLATFORM_PASSWORD pour l’ouvrir.'),
     );
     return;
   }
@@ -99,9 +143,17 @@ async function main() {
   const api = fleetbase();
 
   let vendor = await findVendorByName(api, NAME);
+  let vendorWasCreated = false;
 
   if (vendor) {
     console.log(`Vendor « ${NAME} » trouvé chez Fleetbase : ${vendor.uuid}`);
+    // Un Vendor préexistant peut être `inactive` — auquel cas la connexion de
+    // l'opérateur serait refusée en `fleet_pending`, sans que rien n'explique
+    // pourquoi puisque ce script vient d'annoncer un succès.
+    if (vendor.status !== 'active') {
+      console.log(`   Statut « ${vendor.status ?? 'non renseigné'} » → passage à « active »`);
+      await api.put(`/int/v1/vendors/${vendor.uuid}`, { status: 'active' });
+    }
   } else {
     console.log(`Création du Vendor « ${NAME} » chez Fleetbase…`);
     // `active` explicite, à l'inverse des entreprises tierces qui naissent
@@ -117,36 +169,47 @@ async function main() {
     if (!vendor?.uuid) {
       throw new Error("Fleetbase n'a pas renvoyé d'uuid pour le Vendor créé");
     }
+    vendorWasCreated = true;
     console.log(`Vendor créé : ${vendor.uuid}`);
   }
 
   // Sans identifiants, on enregistre quand même le prestataire — il sert à
-  // désigner un facilitateur — mais avec un mot de passe impossible à deviner
-  // ET impossible à utiliser. Un compte opérateur se provisionne sciemment.
-  const hasCredentials = EMAIL !== '' && PASSWORD.length >= MIN_PASSWORD_LENGTH;
-
-  if (EMAIL !== '' && !hasCredentials) {
-    throw new Error(
-      `ECHANGO_PLATFORM_PASSWORD fait ${PASSWORD.length} caractères, minimum ` +
-        `${MIN_PASSWORD_LENGTH}. Ce compte voit le registre de caisse de tout le réseau.`,
-    );
+  // désigner un facilitateur — mais avec un mot de passe **réellement**
+  // aléatoire. `hrtime.bigint()` est un compteur monotone, pas une source
+  // cryptographique : il aurait décrit une propriété qu'on n'avait pas.
+  // Ce qui protège pour de bon reste `active: false`, relu à chaque requête.
+  let fleet: { id: string; email: string };
+  try {
+    fleet = await prisma.fleetAccount.create({
+      data: {
+        email: EMAIL || `platform+${vendor.uuid}@echango.local`,
+        password: await bcrypt.hash(
+          hasCredentials ? PASSWORD : randomBytes(32).toString('hex'),
+          10,
+        ),
+        businessName: NAME,
+        fleetbaseVendorUuid: vendor.uuid,
+        isPlatform: true,
+        active: hasCredentials,
+      },
+    });
+  } catch (error: any) {
+    // Deux écritures, deux systèmes, aucune transaction commune — la règle 2 du
+    // projet s'applique ici comme ailleurs. Sans compensation, un email déjà
+    // pris laisserait un Vendor « Echango Delivery » orphelin, que le prochain
+    // passage réutiliserait silencieusement.
+    if (vendorWasCreated) {
+      try {
+        await api.delete(`/int/v1/vendors/${vendor.uuid}`);
+        console.error(`   Vendor ${vendor.uuid} supprimé (compensation)`);
+      } catch {
+        console.error(
+          `   ⚠️ Vendor ${vendor.uuid} orphelin chez Fleetbase — à supprimer en console.`,
+        );
+      }
+    }
+    throw error;
   }
-
-  const fleet = await prisma.fleetAccount.create({
-    data: {
-      email: EMAIL || `platform+${vendor.uuid}@echango.local`,
-      // Un hash bcrypt d'une valeur aléatoire : aucune chaîne saisissable n'y
-      // correspond, donc le compte existe sans être connectable.
-      password: await bcrypt.hash(
-        hasCredentials ? PASSWORD : `unusable-${vendor.uuid}-${process.hrtime.bigint()}`,
-        10,
-      ),
-      businessName: NAME,
-      fleetbaseVendorUuid: vendor.uuid,
-      isPlatform: true,
-      active: hasCredentials,
-    },
-  });
 
   console.log(`✅ Prestataire plateforme enregistré : ${fleet.id}`);
   console.log(
