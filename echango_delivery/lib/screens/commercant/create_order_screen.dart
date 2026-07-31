@@ -9,6 +9,7 @@ import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Formulaire de demande de livraison.
 ///
@@ -377,7 +378,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
             child: Column(
@@ -390,7 +391,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_pickupContact, 'Contact sur place', Icons.person_outline),
                 _field(_pickupPhone, 'Téléphone *', Icons.phone_outlined,
                     keyboard: TextInputType.phone),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 _section('Livraison'),
                 _locationRow(orderState, toPickup: false),
                 _field(_dropoffName, 'Destinataire *', Icons.person_outline),
@@ -398,7 +399,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_dropoffContact, 'Contact (si différent)', Icons.person_outline),
                 _field(_dropoffPhone, 'Téléphone *', Icons.phone_outlined,
                     keyboard: TextInputType.phone),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 _section('Colis'),
                 _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
                     Icons.inventory_2_outlined),
@@ -419,24 +420,24 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 ),
                 _vehicleSelector(),
                 _pricingSection(),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 _section('Options'),
                 _codSection(),
                 _scheduleTile(),
                 _podSelector(),
                 _favouritesTile(orderState),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 _field(_instructions, 'Instructions pour le transporteur',
                     Icons.notes_outlined, maxLines: 3),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 // Dire ce qui se passe ensuite : sans ça, un brouillon qui
                 // n'atteint personne tant qu'il n'est pas publié passe pour un
                 // dysfonctionnement.
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
                     color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
                   child: const Text(
                     'Cette livraison est enregistrée en brouillon : aucun '
@@ -445,7 +446,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     style: TextStyle(fontSize: 12),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: AppSpacing.xl),
                 ElevatedButton.icon(
                   onPressed: orderState.isLoading ? null : () => _submit(orderState),
                   icon: orderState.isLoading
@@ -457,7 +458,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       : const Icon(Icons.save_outlined),
                   label: const Text('Enregistrer en brouillon'),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: AppSpacing.xxl),
               ],
             ),
           ),
@@ -467,7 +468,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   }
 
   Widget _section(String title) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: Text(title, style: Theme.of(context).textTheme.titleMedium),
       );
 
@@ -480,7 +481,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     ValueChanged<String>? onChanged,
   }) =>
       Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.only(bottom: AppSpacing.md),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,
@@ -505,7 +506,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final point = toPickup ? _pickupPoint : _dropoffPoint;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -519,7 +520,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     label: const Text('Carnet'),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
               ],
               Expanded(
                 child: FilledButton.tonalIcon(
@@ -574,7 +575,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     };
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: DropdownButtonFormField<String?>(
         initialValue: _vehicleType,
         decoration: InputDecoration(
@@ -639,7 +640,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           children: [
             if (_quoting)
               const Padding(
-                padding: EdgeInsets.only(right: 8),
+                padding: EdgeInsets.only(right: AppSpacing.sm),
                 child: SizedBox(
                   height: 12,
                   width: 12,
@@ -693,7 +694,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
     if (_codIncludesDelivery) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
         child: Text(
           'Le destinataire remettra ${goods.toStringAsFixed(0)} DZD.',
           style: theme.textTheme.bodySmall,
@@ -704,7 +705,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final fee = double.tryParse(_price.text.trim());
     if (fee == null || fee <= 0) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.only(bottom: AppSpacing.xs),
         child: Text(
           'Indiquez la rémunération du transporteur : elle sera réclamée au '
           'destinataire en plus de la marchandise.',
@@ -715,7 +716,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     }
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: AppSpacing.xs),
       child: Text(
         'Le destinataire remettra ${(goods + fee).toStringAsFixed(0)} DZD '
         '(${goods.toStringAsFixed(0)} de marchandise + '
@@ -778,7 +779,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           ),
           _codTotalPreview(theme),
           Padding(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
             child: Text(
               'Le transporteur retient sa rémunération sur les espèces et ne '
               'vous remet que la différence, lors de son prochain passage.',
@@ -851,7 +852,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     };
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: DropdownButtonFormField<String>(
         initialValue: _podMethod,
         decoration: const InputDecoration(
@@ -1003,14 +1004,14 @@ class _AddressBookSheetState extends State<_AddressBookSheet> {
               isDense: true,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.md),
           ConstrainedBox(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.of(context).size.height * 0.5,
             ),
             child: visible.isEmpty
                 ? const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
+                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xxl),
                     child: Text('Aucune adresse ne correspond'),
                   )
                 : ListView.separated(

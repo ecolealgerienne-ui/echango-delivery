@@ -11,6 +11,7 @@ import '../../models/vehicle_type.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_spacing.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -139,7 +140,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             }
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 560),
                 child: Column(
@@ -147,7 +148,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   children: [
                     Card(
                       child: Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(AppSpacing.lg),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -160,7 +161,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                     style: Theme.of(context).textTheme.titleMedium,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: AppSpacing.sm),
                                 // Le libellé, pas le code Fleetbase brut :
                                 // cet écran affichait « created » quand la
                                 // liste affichait « En attente », pour la
@@ -169,10 +170,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                               ],
                             ),
                             if (order.trackingNumber != null) ...[
-                              const SizedBox(height: 8),
+                              const SizedBox(height: AppSpacing.sm),
                               Text('Numéro de suivi : ${order.trackingNumber}'),
                             ],
-                            const SizedBox(height: 8),
+                            const SizedBox(height: AppSpacing.sm),
                             Text(
                               'Créée le ${order.createdAt.toLocal().toString().split('.')[0]}',
                               style: Theme.of(context).textTheme.bodySmall,
@@ -181,7 +182,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     // Le commerçant a surtout besoin de savoir « où ça en
                     // est » : l'exprimer en clair plutôt qu'en code de statut.
                     //
@@ -227,32 +228,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     if (order.isCancelled)
                       _banner(Colors.grey.shade200, Icons.cancel_outlined,
                           'Livraison annulée.'),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     _placeCard('Retrait', order.pickup, order.pickupNotes),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     _placeCard('Livraison', order.dropoff, order.dropoffNotes),
                     // Signalements d'échec : le commerçant devra répondre à son
                     // client, et le justificatif n'allait jusqu'ici qu'à celui
                     // qui l'avait produit.
                     if (order.deliveryFailures.isNotEmpty) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                       _FailureHistory(failures: order.deliveryFailures),
                     ],
                     if (order.isCompleted) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                       _proofCard(),
                     ],
                     if (order.codAmount != null) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                       _cashCard(order),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     _orderOptionsCard(order),
                     if (order.isCompleted && order.driverName != null) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                       _favouriteCard(order),
                     ],
-                    const SizedBox(height: 24),
+                    const SizedBox(height: AppSpacing.xl),
                     // Publier passe avant tout le reste sur un brouillon :
                     // c'est l'unique geste qui manque pour que la livraison
                     // existe réellement aux yeux d'un transporteur.
@@ -263,7 +264,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         icon: const Icon(Icons.publish_outlined),
                         label: const Text('Publier'),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: AppSpacing.md),
                     ],
                     // Reprendre passe avant annuler : c'est l'action courante
                     // (une boulangerie livre le même client chaque semaine),
@@ -276,7 +277,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       icon: const Icon(Icons.copy_all_outlined),
                       label: const Text('Refaire cette livraison'),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: AppSpacing.md),
                     if (order.canCancel)
                       OutlinedButton.icon(
                         onPressed:
@@ -285,7 +286,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         label: const Text('Annuler la livraison'),
                         style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
                       ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: AppSpacing.xxl),
                   ],
                 ),
               ),
@@ -338,13 +339,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// qu'ensuite doublerait les allers-retours pour le même résultat.
   Widget _proofCard() => Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Preuve de livraison',
                   style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               ProofImage(url: '/commercant/commandes/${widget.orderId}/preuve'),
             ],
           ),
@@ -405,7 +406,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               : 'Vous devrez au transporteur : ${money(-net)}',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
         Text(
           'Le transporteur retient sa rémunération (${money(price)}) sur ce '
           'qu\'il encaisse et vous remet la différence.',
@@ -419,37 +420,37 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ? Colors.orange.shade50
           : Colors.amber.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 const Icon(Icons.account_balance_wallet_outlined, size: 20),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Text('Paiement à la livraison', style: theme.textTheme.titleSmall),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Text('Montant demandé : '
                 '${order.codAmount!.toStringAsFixed(0)} $currency'.trim()),
             if (collection == null)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Text(
                   'Pas encore encaissé.',
                   style: theme.textTheme.bodySmall,
                 ),
               )
             else ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
                 'Perçu : ${collection.collectedAmount.toStringAsFixed(0)} $currency'
                     .trim(),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               if (collection.hasDiscrepancy) ...[
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   cashDiscrepancyLabels[collection.discrepancyReason] ??
                       collection.discrepancyReason ??
@@ -458,7 +459,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 ),
                 if (collection.notes != null) Text(collection.notes!),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 'Cette somme est détenue par le transporteur jusqu\'à sa remise. '
                 'Suivez-la dans « Encaissements ».',
@@ -473,16 +474,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _banner(Color color, IconData icon, String text) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+        padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
         child: Row(
           children: [
             Icon(icon, size: 20),
-            const SizedBox(width: 12),
+            const SizedBox(width: AppSpacing.md),
             Expanded(child: Text(text)),
           ],
         ),
@@ -566,13 +567,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Votre demande',
                 style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             for (final (icon, label, value) in rows)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
@@ -636,23 +637,23 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(place?.name ?? '—',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             if (place?.address != null && place!.address.isNotEmpty)
               Text(place.address),
             if (notes != null && notes.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Text(notes, style: theme.textTheme.bodySmall),
               ),
             if (contact != null && contact.isNotEmpty) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
                   const Icon(Icons.person_outline, size: 16),
@@ -740,7 +741,7 @@ class _DriverMapState extends State<_DriverMap> {
   Widget build(BuildContext context) {
     if (!_requested) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
         child: OutlinedButton.icon(
           onPressed: _load,
           icon: const Icon(Icons.map_outlined),
@@ -759,7 +760,7 @@ class _DriverMapState extends State<_DriverMap> {
     final position = _position;
     if (position == null) {
       return const Padding(
-        padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+        padding: EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
         child: Text(
           'Position du transporteur non disponible pour le moment.',
           style: TextStyle(fontSize: 12),
@@ -819,7 +820,7 @@ class _DriverMapState extends State<_DriverMap> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.md),
           child: Row(
             children: [
               Icon(
@@ -889,14 +890,14 @@ class _FailureHistory extends StatelessWidget {
     return Card(
       color: Colors.red.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Icon(Icons.error_outline, color: Colors.red.shade700),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
                     multiple
@@ -909,7 +910,7 @@ class _FailureHistory extends StatelessWidget {
               ],
             ),
             for (var i = 0; i < failures.length; i++) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               if (multiple)
                 Text(
                   'Tentative ${failures.length - i}',
@@ -920,11 +921,11 @@ class _FailureHistory extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               if (failures[i].notes != null) Text(failures[i].notes!),
               if (failures[i].photoUrl != null) ...[
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 ProofImage(url: failures[i].photoUrl!),
               ],
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Text(
               'Contactez Echango pour convenir d\'une nouvelle tentative.',
               style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade700),

@@ -5,6 +5,7 @@ import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Transporteurs habituels du commerçant.
 ///
@@ -142,19 +143,19 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 children: [
                   if (_error != null) ...[
                     Text(_error!,
                         style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                   ],
                   // La recherche passe en tête : c'est le seul chemin dont
                   // dispose un commerçant nouveau, dont toutes les autres
                   // listes sont vides.
                   Text('Ajouter un transporteur',
                       style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   TextField(
                     controller: _searchController,
                     onChanged: (_) => _search(),
@@ -165,7 +166,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                       isDense: true,
                       suffixIcon: _searching
                           ? const Padding(
-                              padding: EdgeInsets.all(12),
+                              padding: EdgeInsets.all(AppSpacing.md),
                               child: SizedBox(
                                 height: 16,
                                 width: 16,
@@ -175,7 +176,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                           : null,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: AppSpacing.xs),
                   Text(
                     'Cherchez par le nom ou le téléphone communiqué par '
                     'Echango. Trois caractères minimum.',
@@ -183,7 +184,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                   ),
                   if (_tooMany)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                       child: Text(
                         'Trop de correspondances. Précisez le nom ou saisissez '
                         'le numéro de téléphone.',
@@ -191,7 +192,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     )
                   else if (_searched && _results.isEmpty)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
                       child: Text(
                         'Aucun transporteur ne correspond. Vérifiez le nom, ou '
                         'demandez-lui le numéro qu\'il a donné à Echango.',
@@ -223,12 +224,12 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         ),
                       ),
                     ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   Text('Favoris', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   if (state.favourites.isEmpty)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(
                         'Aucun favori. Vos livraisons sont proposées à '
                         'l\'ensemble du réseau.',
@@ -250,13 +251,13 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         ),
                       ),
                     ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   Text('Déjà intervenus pour vous',
                       style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   if (candidates.isEmpty)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(
                         'Aucun autre transporteur pour l\'instant. La liste se '
                         'remplit au fil de vos livraisons.',

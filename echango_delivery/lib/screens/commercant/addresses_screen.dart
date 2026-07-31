@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
+import '../../theme/app_spacing.dart';
 
 /// Carnet d'adresses du commerçant.
 ///
@@ -109,15 +110,15 @@ class _AddressesScreenState extends State<AddressesScreen> {
       body: orderState.addresses.isEmpty
           ? Center(
               child: Padding(
-                padding: const EdgeInsets.all(32),
+                padding: const EdgeInsets.all(AppSpacing.xxl),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.bookmark_border, size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     Text('Aucune adresse enregistrée',
                         style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
                       'Enregistrez vos points de retrait et destinataires '
                       'fréquents pour remplir une demande en un tap.',
@@ -129,7 +130,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(AppSpacing.sm),
               itemCount: orderState.addresses.length,
               itemBuilder: (context, index) {
                 final a = orderState.addresses[index];
@@ -418,7 +419,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -427,7 +428,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
               _field(_contact, 'Contact', Icons.person_outline),
               _field(_phone, 'Téléphone *', Icons.phone_outlined,
                   keyboard: TextInputType.phone),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               FilledButton.tonalIcon(
                 onPressed: _pickOnMap,
                 icon: const Icon(Icons.map_outlined),
@@ -435,7 +436,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                     ? 'Placer sur la carte'
                     : 'Modifier la position'),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               // Optionnelle, mais son absence a une conséquence concrète à
               // dire : sans elle, cette adresse ne pourra pas servir telle
               // quelle à une commande tant qu'elle n'aura pas été complétée.
@@ -460,7 +461,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _isDefault,
@@ -472,7 +473,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               ElevatedButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: _saving
@@ -498,7 +499,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     TextInputType? keyboard,
   }) =>
       Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.only(bottom: AppSpacing.md),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,

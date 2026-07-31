@@ -6,6 +6,7 @@ import '../../models/merchant_order.dart';
 import '../../state/auth_state.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -89,7 +90,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               Container(
                 width: double.infinity,
                 color: Theme.of(context).colorScheme.errorContainer,
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(AppSpacing.md),
                 child: Text(
                   orderState.errorMessage!,
                   style: TextStyle(
@@ -101,7 +102,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             // laisser croire à une recherche exhaustive ferait conclure « je
             // n'ai jamais livré ce client » sur une liste partielle.
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
               child: TextField(
                 onChanged: orderState.setSearch,
                 decoration: InputDecoration(
@@ -186,13 +187,13 @@ class _OrderList extends StatelessWidget {
                   children: [
                     Icon(Icons.local_shipping_outlined,
                         size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     Text(emptyLabel,
                         style: TextStyle(color: Colors.grey[600], fontSize: 16)),
                     if (emptyHint != null) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppSpacing.sm),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                         child: Text(
                           emptyHint!,
                           textAlign: TextAlign.center,
@@ -218,12 +219,12 @@ class _OrderList extends StatelessWidget {
       onRefresh: refresh,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(AppSpacing.sm),
         itemCount: orders.length + (showMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == orders.length) {
             return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               child: Center(
                 child: state.isLoadingMore
                     ? const CircularProgressIndicator()
@@ -248,14 +249,14 @@ class _OrderList extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   _StatusChip(order: order),
                 ],
               ),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(height: 4),
+                  const SizedBox(height: AppSpacing.xs),
                   Text(
                     order.dropoff?.address ?? '',
                     maxLines: 1,

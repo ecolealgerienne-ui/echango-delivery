@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Sélection d'un point sur la carte, avec recherche d'adresse.
 ///
@@ -224,7 +225,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   }
 
   Widget _searchField() => Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: TextField(
           controller: _searchController,
           onChanged: _onSearchChanged,
@@ -240,7 +241,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   Widget _suggestionList() => ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 220),
         child: Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12),
+          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: _suggestions.length,
@@ -266,14 +267,14 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   Widget _footer(ThemeData theme) => SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
                   const Icon(Icons.place_outlined, size: 18),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: _resolving
                         ? Text('Recherche de l\'adresse…',
@@ -290,7 +291,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               ElevatedButton.icon(
                 onPressed: () => Navigator.pop(
                   context,

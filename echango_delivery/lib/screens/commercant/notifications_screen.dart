@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
+import '../../theme/app_spacing.dart';
 
 /// Journal des évènements de livraison du commerçant.
 ///
@@ -66,12 +67,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         children: [
                           Icon(Icons.notifications_none,
                               size: 64, color: Colors.grey[400]),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.lg),
                           Text('Aucune notification',
                               style: TextStyle(color: Colors.grey[600])),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: AppSpacing.sm),
                           Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                             child: Text(
                               'Vous serez prévenu ici quand un transporteur '
                               'prend une de vos livraisons, et quand elle '
