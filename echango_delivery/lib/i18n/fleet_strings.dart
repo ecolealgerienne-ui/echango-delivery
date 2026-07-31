@@ -79,6 +79,7 @@ const Map<String, String> _fr = {
   // ── Fiche d'une course ──────────────────────────────────────────────────
   'fleet.detail.title': 'Détail de la course',
   'fleet.detail.not_found': 'Cette course n’est plus disponible.',
+  'fleet.detail.section.state': 'La course',
   'fleet.detail.section.money': 'Ce que rapporte cette course',
   'fleet.detail.section.pickup': 'Enlèvement',
   'fleet.detail.section.dropoff': 'Livraison',
@@ -86,6 +87,8 @@ const Map<String, String> _fr = {
   'fleet.detail.contact': 'Contact',
   'fleet.detail.instructions': 'Instructions',
   'fleet.detail.notes': 'Précisions',
+  'fleet.detail.order_notes': 'Notes du commerçant',
+  'fleet.detail.fragile': 'fragile',
   'fleet.detail.items': 'Contenu',
   'fleet.detail.vehicle': 'Véhicule demandé',
   'fleet.detail.distance': 'Distance',
@@ -148,6 +151,7 @@ const Map<String, String> _ar = {
 
   'fleet.detail.title': 'تفاصيل الرحلة',
   'fleet.detail.not_found': 'لم تعد هذه الرحلة متاحة.',
+  'fleet.detail.section.state': 'الرحلة',
   'fleet.detail.section.money': 'ما تدره هذه الرحلة',
   'fleet.detail.section.pickup': 'الاستلام',
   'fleet.detail.section.dropoff': 'التسليم',
@@ -155,6 +159,8 @@ const Map<String, String> _ar = {
   'fleet.detail.contact': 'جهة الاتصال',
   'fleet.detail.instructions': 'تعليمات',
   'fleet.detail.notes': 'توضيحات',
+  'fleet.detail.order_notes': 'ملاحظات التاجر',
+  'fleet.detail.fragile': 'قابل للكسر',
   'fleet.detail.items': 'المحتوى',
   'fleet.detail.vehicle': 'المركبة المطلوبة',
   'fleet.detail.distance': 'المسافة',

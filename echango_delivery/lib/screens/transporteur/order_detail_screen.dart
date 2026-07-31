@@ -181,10 +181,15 @@ class OrderDetailScreen extends StatelessWidget {
                       child: const ListTile(
                         leading: Icon(Icons.lock_outline),
                         title: Text('Course non réclamée'),
+                        // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
+                        // Il annonçait une adresse réduite à la commune, alors
+                        // que l'adresse complète est servie : le transporteur
+                        // cherchait une information déjà sous ses yeux. Un
+                        // libellé qui décrit l'ancienne règle est pire que pas
+                        // de libellé du tout.
                         subtitle: Text(
-                          'Seule la commune de livraison est affichée. '
-                          'L\'adresse exacte, le nom du destinataire et les '
-                          'téléphones apparaissent dès que vous acceptez.',
+                          'Le nom et le téléphone du destinataire apparaissent '
+                          'dès que vous acceptez. Tout le reste est affiché.',
                         ),
                       ),
                     ),
@@ -693,7 +698,8 @@ class _PlaceBlock extends StatelessWidget {
   final String label;
   final Place? place;
 
-  /// Course pas encore réclamée : le serveur n'a transmis que la commune.
+  /// Course pas encore réclamée : le serveur a retiré le nom et le téléphone
+  /// du destinataire, et rien d'autre.
   final bool obscured;
 
   const _PlaceBlock({
@@ -723,26 +729,37 @@ class _PlaceBlock extends StatelessWidget {
       children: [
         Text(label, style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
-        Text(
-          p.name,
-          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        // Une adresse vide sur une course expurgée n'est pas une donnée
-        // manquante : c'est une adresse dont on n'a pas su extraire la
-        // commune. Le dire, sinon le bloc paraît incomplet.
+        // ⚠️ `name` est **absent** sur une course non réclamée (c'est celui du
+        // destinataire), donc `Place.fromJson` rend une chaîne vide : le bloc
+        // commençait par une ligne vide en gras.
+        if (p.name.isNotEmpty)
+          Text(
+            p.name,
+            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
         if (p.address.isNotEmpty)
           Text(p.address)
         else if (obscured)
-          Text('Commune non précisée', style: theme.textTheme.bodySmall),
+          // Ni le nom ni l'adresse : le lieu n'a aucune composante structurée,
+          // ce qui est le cas courant des commandes saisies sans passer par la
+          // carte. L'adresse réelle est dans les précisions ci-dessous, et la
+          // porte dans l'itinéraire.
+          Text('Adresse dans les précisions', style: theme.textTheme.bodySmall),
         if (p.contactName != null) Text('Contact : ${p.contactName}'),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
           children: [
-            // Pas d'itinéraire sur une course non réclamée : le serveur ne
-            // transmet pas les coordonnées, et proposer un bouton qui mènerait
-            // au centre de la carte serait pire que ne rien proposer.
-            if (!obscured)
+            // ⚠️ L'itinéraire est désormais offert **aussi** sur une course non
+            // réclamée : depuis le 31/07/2026 le serveur transmet la position
+            // (seule l'identité est retirée), et c'est le détour qui décide si
+            // la course vaut le déplacement. La garde porte donc sur la donnée
+            // réellement nécessaire — des coordonnées — et non sur un état.
+            //
+            // Sans ça, une entreprise obtenait « Ouvrir dans une carte » sur une
+            // opportunité et un indépendant regardant la MÊME course ne
+            // l'obtenait pas.
+            if (p.latitude != null && p.longitude != null)
               TextButton.icon(
                 onPressed: () => _navigate(context, p),
                 icon: const Icon(Icons.directions_outlined),

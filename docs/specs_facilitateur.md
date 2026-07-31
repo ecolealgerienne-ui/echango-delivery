@@ -737,6 +737,26 @@ par les lots du §13.
   > l'information sans laquelle un conducteur tourne dix minutes dans une cage
   > d'escalier — et que la retirer ne retirait pas le nom, elle retirait
   > l'utilité.
+  >
+  > ⚠️ **Le piège de la mise en œuvre, à retenir pour toute règle de
+  > confidentialité future.** Retirer `name`, `phone`, `contact_name` et
+  > `contact_phone` **ne suffit pas** : `Place.address` n'est pas une colonne
+  > mais un **accesseur** qui recompose « nom, rue, commune, code postal ». Il
+  > contient le nom. Et sur le chemin de création de l'application,
+  > `createPlace()` ne pose jamais `street1` — l'adresse tapée part dans
+  > `meta.dropoff_notes` —, donc le lieu de livraison n'a **que** son nom et
+  > `address` *est* le nom du destinataire, sans rien d'autre.
+  >
+  > L'adresse servie sur une course non réclamée est donc **recomposée à partir
+  > des seules colonnes structurées** (`street1`, `street2`, `neighborhood`,
+  > `city`, `postal_code`, `province`). Vides, il ne reste rien — et c'est
+  > correct : la porte est dans `location`, l'adresse dans les précisions.
+  >
+  > Le fait était écrit **trois fois dans le dépôt**, dont une observation réelle
+  > (« un lieu portant `street1: "test1"` renvoie `address: "BOULANGERIE TEST"`,
+  > le nom seul »). Il n'a pas été cherché parce que le champ portait le bon nom
+  > — c'est la même erreur que `facilitator_uuid`, où un nom plausible a fait
+  > conclure trop vite.
 - **D5 — `facilitator_uuid` est projeté au transporteur sur une course non
   réclamée.** `ORDER_LINK_FIELDS` sort même quand `unclaimed: true` — la branche
   d'expurgation ne touche que `meta` et `payload`. Chaque indépendant apprendrait

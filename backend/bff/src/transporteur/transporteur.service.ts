@@ -537,8 +537,9 @@ export class TransporteurService {
 
     const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
     // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
-    // non Fleetbase (revue M10). `unclaimed` réduit le point de livraison à sa
-    // commune ; l'enlèvement, qui est un commerce, passe en entier.
+    // non Fleetbase (revue M10). `unclaimed` retire le nom et le téléphone du
+    // destinataire, et rien d'autre ; l'enlèvement, qui est un commerce, passe
+    // en entier.
     // Déjà complété ci-dessus — une opportunité dont `meta` a été effacé
     // n'annoncerait ni prix ni montant à encaisser, donc rien sur quoi décider
     // de la prendre.

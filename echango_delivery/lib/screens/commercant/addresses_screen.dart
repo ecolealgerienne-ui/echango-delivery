@@ -293,9 +293,10 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     if (result == null || !mounted) return;
 
     // La commune est retenue même si le commerçant refuse le libellé : elle
-    // ne s'affiche nulle part et ne peut donc rien écraser, mais c'est le
-    // seul champ structuré que nous ayons — il sert à réduire une adresse de
-    // livraison à sa commune sur une course encore non réclamée.
+    // ne s'affiche nulle part et ne peut donc rien écraser, mais c'est un des
+    // rares champs structurés que nous ayons — et depuis le 31/07/2026 c'est
+    // par eux seuls que l'adresse d'une course non réclamée est recomposée,
+    // l'accesseur `address` de Fleetbase contenant le nom du destinataire.
     setState(() {
       _point = result.point;
       _neighborhood = result.neighborhood;

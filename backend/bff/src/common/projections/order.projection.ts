@@ -102,6 +102,38 @@ const PLACE_FULL = [
  */
 const PLACE_IDENTITY_FIELDS = ['name', 'phone', 'contact_name', 'contact_phone'];
 
+/**
+ * Les colonnes qui décrivent **un endroit**, et rien qu'un endroit.
+ *
+ * ⚠️ **`address` n'en fait pas partie, et c'est le piège de tout ce lot.**
+ * `Place.address` n'est pas une colonne : c'est un accesseur Fleetbase qui
+ * recompose « nom, rue, commune, code postal, pays ». Il **contient donc le
+ * nom**. Retirer `name` en laissant `address` ne masque rien du tout — pire,
+ * sur le chemin de création de l'application le lieu de livraison n'a *que*
+ * son nom (`createPlace(dto.dropoffLocationName, …)` sans `street1`, l'adresse
+ * tapée partant dans `meta.dropoff_notes`), donc `address` **est** le nom du
+ * destinataire et rien d'autre.
+ *
+ * L'adresse servie sur une course non réclamée est donc **recomposée ici**, à
+ * partir des seules colonnes structurées. Quand elles sont vides — le cas
+ * courant sur les commandes de l'app — il ne reste rien, et c'est correct :
+ * l'adresse réelle est dans `meta.dropoff_notes`, servi par ailleurs, et la
+ * position dans `location`. Le transporteur a de quoi aller à la porte sans
+ * savoir qui l'ouvre.
+ *
+ * Trouvé par un agent de vérification, pas à la lecture — et il était visible à
+ * l'écran : le titre de chaque ligne de « Courses libres » aurait été le nom du
+ * destinataire, juste au-dessus du bandeau qui promet de ne pas le donner.
+ */
+const PLACE_STRUCTURED_ADDRESS_FIELDS = [
+  'street1',
+  'street2',
+  'neighborhood',
+  'city',
+  'postal_code',
+  'province',
+];
+
 export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   if (!place) return undefined;
 
@@ -130,6 +162,20 @@ export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   // tenir à jour — et un champ ajouté à l'une sans l'autre est exactement le
   // genre d'oubli qui a produit les fuites de la revue M10.
   for (const field of PLACE_IDENTITY_FIELDS) delete projected[field];
+
+  // `address` est recomposé et non supprimé : le supprimer purement laisserait
+  // l'app sans rien à afficher là où une vraie adresse structurée existe (les
+  // lieux du carnet, saisis par la carte, en ont une).
+  const structured = PLACE_STRUCTURED_ADDRESS_FIELDS.map((field) => projected[field])
+    .filter((value) => typeof value === 'string' && value.trim().length > 0)
+    .map((value: string) => value.trim());
+
+  if (structured.length) {
+    projected.address = structured.join(', ');
+  } else {
+    delete projected.address;
+  }
+
   return projected;
 }
 
@@ -505,7 +551,14 @@ export function projectOrderForFleet(
         }
       : undefined,
     ...(unclaimed ? { redacted: true } : {}),
-    driver_assigned: driver ? pick(driver, ['uuid', 'public_id', 'name', 'phone']) : undefined,
+    // ⚠️ Conditionné par `unclaimed` alors qu'une course libre n'a par
+    // définition aucun conducteur (`isClaimable` exige `!driver_assigned_uuid`).
+    // C'était donc le seul champ de cette projection sans garde, protégé par un
+    // invariant posé ailleurs : le jour où « libre » s'assouplit — course adhoc
+    // pré-assignée, réaffectation — nom et téléphone du conducteur d'un
+    // concurrent sortiraient, en silence et sans que personne ne l'ait décidé.
+    driver_assigned:
+      !unclaimed && driver ? pick(driver, ['uuid', 'public_id', 'name', 'phone']) : undefined,
     ...extra,
   };
 }

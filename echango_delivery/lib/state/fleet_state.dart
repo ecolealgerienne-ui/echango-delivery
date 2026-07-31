@@ -6,6 +6,14 @@ import '../errors/error_translator.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
 
+/// Le résultat d'une lecture de fiche : la course, ou la raison de son absence.
+class FleetOrderDetail {
+  const FleetOrderDetail({this.order, this.error});
+
+  final Map<String, dynamic>? order;
+  final String? error;
+}
+
 /// État du profil « entreprise de transport ».
 ///
 /// ── Ce que cette classe répare ──────────────────────────────────────────────
@@ -20,19 +28,11 @@ import 'locale_state.dart';
 ///
 /// **Mes courses** : celles confiées à cette entreprise, complètes, sur
 /// lesquelles elle désigne un conducteur.
-/// **Courses libres** : celles que personne n'a prises, servies **expurgées** —
-/// la livraison réduite à sa commune tant que l'entreprise ne s'est pas engagée.
+/// **Courses libres** : celles que personne n'a prises, servies sans le nom ni
+/// le téléphone du destinataire tant que l'entreprise ne s'est pas engagée.
 /// Les garder séparées n'est pas cosmétique : ce sont deux niveaux de détail
 /// différents, et les fusionner ferait croire à une donnée manquante là où il y
-/// a une expurgation délibérée.
-/// Le résultat d'une lecture de fiche : la course, ou la raison de son absence.
-class FleetOrderDetail {
-  const FleetOrderDetail({this.order, this.error});
-
-  final Map<String, dynamic>? order;
-  final String? error;
-}
-
+/// a un masquage délibéré.
 class FleetState extends ChangeNotifier {
   final BffApiClient _apiClient;
   final LocaleState _localeState;

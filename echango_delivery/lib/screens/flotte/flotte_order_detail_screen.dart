@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'driver_picker.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
@@ -61,8 +63,13 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
 
   Future<void> _load() async {
     if (!mounted) return;
+    // ⚠️ `_loading` ne vaut `true` que sur le **premier** chargement.
+    //
+    // Le mettre à chaque fois faisait disparaître la fiche — et le spinner du
+    // geste en cours — dès qu'on tirait pour rafraîchir : le `RefreshIndicator`
+    // était remplacé par « Chargement… » au premier pixel du geste.
     setState(() {
-      _loading = true;
+      _loading = _order == null;
       _error = null;
     });
 
@@ -72,11 +79,26 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
 
     if (!mounted) return;
     setState(() {
-      _order = result.order;
+      // ⚠️ On ne remplace la fiche que par une fiche. Un rafraîchissement raté
+      // sur un réseau coupé jetait un contenu parfaitement lisible pour
+      // afficher une erreur — l'utilisateur perdait ce qu'il était en train de
+      // lire, à cause d'un geste censé l'enrichir.
+      if (result.order != null) _order = result.order;
       _error = result.error;
       _loading = false;
     });
   }
+
+  /// La réponse décrit-elle une course, ou seulement une enveloppe vide ?
+  ///
+  /// ⚠️ Le client HTTP ne rend **jamais `null`** : un corps vide devient `{}`.
+  /// Sans cette vérification, un `{}` produisait une fiche entièrement blanche —
+  /// aucune section, aucun message — **avec le bouton « Prendre cette course »
+  /// actif**. C'est le motif « une valeur par défaut détruit l'information
+  /// d'absence », ici dans sa forme la plus coûteuse : on propose de s'engager
+  /// sur une course dont on ne sait rien.
+  bool _describesAnOrder(Map<String, dynamic>? order) =>
+      order != null && (order['uuid'] != null || order['public_id'] != null);
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +107,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
     final locale = context.watch<LocaleState>().locale;
     String t(String key) => fleetLabel(key, locale);
 
-    final order = _order;
+    final order = _describesAnOrder(_order) ? _order : null;
 
     return Scaffold(
       appBar: AppBar(title: Text(t('fleet.detail.title'))),
@@ -97,26 +119,56 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
                   ? _Failure(message: t('fleet.detail.not_found'), retry: _load, t: t)
                   : RefreshIndicator(
                       onRefresh: _load,
-                      child: _Body(order: order, unclaimed: widget.unclaimed, t: t),
+                      child: _Body(order: order, t: t),
                     ),
       bottomNavigationBar: order == null ? null : _action(order, t),
     );
   }
 
+  /// L'action du bas dépend de ce que la course attend de l'entreprise :
+  /// la prendre si elle est libre, lui désigner un conducteur si elle n'en a
+  /// pas. Une fiche qui ne permet rien oblige à revenir à la liste pour agir,
+  /// et c'est précisément l'impasse que cet écran existe pour lever.
   Widget? _action(Map<String, dynamic> order, _Translate t) {
-    if (!widget.unclaimed) return null;
-
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: FilledButton(
+    if (widget.unclaimed) {
+      return _bar(
+        FilledButton(
           onPressed: _claiming ? null : () => _claim(t),
           child: Text(
             _claiming ? t('fleet.opportunities.taking') : t('fleet.opportunities.take'),
           ),
         ),
-      ),
-    );
+      );
+    }
+
+    if (order['driver_assigned'] == null) {
+      return _bar(
+        FilledButton.icon(
+          onPressed: () => _assign(order, t),
+          icon: const Icon(Icons.person_add_alt),
+          label: Text(t('fleet.orders.assign')),
+        ),
+      );
+    }
+
+    return null;
+  }
+
+  Widget _bar(Widget child) => SafeArea(
+        child: Padding(padding: const EdgeInsets.all(16), child: child),
+      );
+
+  Future<void> _assign(Map<String, dynamic> order, _Translate t) async {
+    final error = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
+    if (!mounted) return;
+
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    // Le conducteur désigné change la fiche : on la relit plutôt que de la
+    // supposer à jour.
+    await _load();
   }
 
   Future<void> _claim(_Translate t) async {
@@ -129,10 +181,19 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
       SnackBar(content: Text(error ?? t('fleet.opportunities.taken'))),
     );
 
+    if (error != null) return;
+
     // Prise réussie : la course a changé de camp, et cette fiche-ci lit la route
     // des opportunités, où elle n'est plus. Revenir à la liste plutôt que
     // recharger un écran qui répondrait « plus disponible » sur un succès.
-    if (error == null) Navigator.of(context).pop(true);
+    //
+    // ⚠️ `canPop` d'abord : sur un lien profond ou une restauration d'URL, cette
+    // fiche peut être la seule page de la pile, et `pop` lève alors.
+    if (context.canPop()) {
+      context.pop(true);
+    } else {
+      context.go('/flotte');
+    }
   }
 }
 
@@ -161,11 +222,18 @@ class _Failure extends StatelessWidget {
   }
 }
 
+/// ⚠️ **Pas de champ `unclaimed` ici**, alors que l'écran le connaît.
+///
+/// Il était déclaré, transmis, et **jamais lu** : tout le rendu s'appuie sur
+/// `order['redacted']`, posé par le serveur. Un champ public d'une classe privée
+/// n'est signalé par aucun lint, donc l'état mort serait resté — et le jour où
+/// quelqu'un ajoute une branche, il aurait eu deux vérités au choix, celle du
+/// routeur et celle du serveur, qui peuvent diverger dès que la règle de
+/// masquage change en amont. C'est le `is_draft` de CLAUDE.md en miniature.
 class _Body extends StatelessWidget {
-  const _Body({required this.order, required this.unclaimed, required this.t});
+  const _Body({required this.order, required this.t});
 
   final Map<String, dynamic> order;
-  final bool unclaimed;
   final _Translate t;
 
   @override
@@ -176,6 +244,10 @@ class _Body extends StatelessWidget {
     final dropoff = payload['dropoff'] as Map<String, dynamic>?;
 
     return ListView(
+      // Sans ça, une fiche courte — une opportunité sans instructions ni colis
+      // — ne défile pas, donc le geste de tirer-pour-rafraîchir ne part jamais
+      // et le seul moyen de recharger devient de quitter l'écran.
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
         // ⚠️ Le drapeau vient du serveur (`redacted`), il n'est pas déduit de
@@ -194,6 +266,24 @@ class _Body extends StatelessWidget {
             ),
           ),
 
+        // ── L'état de la course ──────────────────────────────────────────
+        //
+        // ⚠️ `status` était dans la section « Ce que rapporte cette course ».
+        // Il ne rapporte rien, et surtout il **neutralisait le masquage des
+        // sections vides** : une course sans montant affichait quand même le
+        // titre « Ce que rapporte cette course » au-dessus d'un « Statut :
+        // created » solitaire, ce qui se lit comme « elle ne rapporte rien ».
+        _Section(
+          title: t('fleet.detail.section.state'),
+          rows: [
+            _Row(t('fleet.orders.status'), order['status']?.toString()),
+            _Row(t('fleet.detail.scheduled'), order['scheduled_at']?.toString()),
+            _Row(t('fleet.detail.distance'), _distance(order['distance'])),
+            _Row(t('fleet.detail.tracking'), _tracking(order['tracking_number'])),
+            _Row(t('fleet.orders.assigned_to'), _driver(order['driver_assigned'])),
+          ],
+        ),
+
         _Section(
           title: t('fleet.detail.section.money'),
           rows: [
@@ -207,7 +297,6 @@ class _Body extends StatelessWidget {
                 t('fleet.detail.goods'),
                 _money(meta['cod_goods_amount'], meta['cod_currency']),
               ),
-            _Row(t('fleet.orders.status'), order['status']?.toString()),
           ],
         ),
 
@@ -228,14 +317,15 @@ class _Body extends StatelessWidget {
         _Section(
           title: t('fleet.detail.section.parcel'),
           rows: [
-            _Row(t('fleet.detail.items'), _items(meta['items'])),
+            _Row(t('fleet.detail.items'), _items(meta['items'], t)),
             _Row(t('fleet.detail.vehicle'), meta['vehicle_type']?.toString()),
             _Row(t('fleet.detail.instructions'), meta['instructions']?.toString()),
-            _Row(t('fleet.detail.distance'), _distance(order['distance'])),
-            _Row(t('fleet.detail.scheduled'), order['scheduled_at']?.toString()),
+            // Le texte libre du commerçant sur la commande. Projeté depuis
+            // toujours et lu nulle part — sur un écran né de « je ne pouvais
+            // rien dire à mon conducteur », c'est le champ le plus direct.
+            _Row(t('fleet.detail.order_notes'), order['notes']?.toString()),
             if (order['pod_required'] == true)
               _Row(t('fleet.detail.pod'), order['pod_method']?.toString() ?? '✓'),
-            _Row(t('fleet.detail.tracking'), _tracking(order['tracking_number'])),
           ],
         ),
 
@@ -308,18 +398,28 @@ class _PlaceSection extends StatelessWidget {
   /// n'affichant que la rue laisse ignorer de quel bout de la ville il s'agit,
   /// ce qui est justement le critère de décision.
   String _address(Map<String, dynamic> raw, Place parsed) {
-    final parts = <String>[
-      if (parsed.address.isNotEmpty) parsed.address,
-      for (final key in ['neighborhood', 'city', 'postal_code', 'province'])
-        if (raw[key] is String && (raw[key] as String).trim().isNotEmpty)
-          (raw[key] as String).trim(),
-    ];
-    // Dédoublonnage : l'accesseur `address` de Fleetbase recompose déjà une
-    // phrase qui contient souvent la commune, et « Alger, Alger » se lit comme
-    // une donnée mal formée.
-    final seen = <String>{};
-    final unique = parts.where((p) => seen.add(p.toLowerCase())).toList();
-    return unique.isEmpty ? '' : unique.join(', ');
+    final parts = <String>[if (parsed.address.isNotEmpty) parsed.address.trim()];
+
+    for (final key in ['neighborhood', 'city', 'postal_code', 'province']) {
+      final value = raw[key];
+      if (value is! String || value.trim().isEmpty) continue;
+      final component = value.trim();
+
+      // ⚠️ Le test est un **`contains`**, pas une égalité.
+      //
+      // `address` est déjà une phrase composée — par l'accesseur de Fleetbase
+      // sur une course engagée, par le BFF sur une course libre — et elle
+      // contient donc souvent la commune et le code postal. Une comparaison
+      // stricte ne voyait pas « Bir Mourad Raïs » à l'intérieur de « 8 rue…,
+      // Bir Mourad Raïs, 16000 » et les rajoutait : l'adresse se terminait par
+      // sa propre fin, répétée.
+      final already = parts.any(
+        (p) => p.toLowerCase().contains(component.toLowerCase()),
+      );
+      if (!already) parts.add(component);
+    }
+
+    return parts.join(', ');
   }
 }
 
@@ -386,6 +486,18 @@ class _Section extends StatelessWidget {
   }
 }
 
+/// Le conducteur désigné, tel que la projection flotte le sert.
+///
+/// Absent sur une course libre — par construction, une course que personne n'a
+/// prise n'a pas de conducteur, et la projection ne l'émet plus dans ce cas.
+String? _driver(Object? assigned) {
+  if (assigned is! Map) return null;
+  final name = assigned['name']?.toString().trim();
+  final phone = assigned['phone']?.toString().trim();
+  if (name == null || name.isEmpty) return phone;
+  return phone == null || phone.isEmpty ? name : '$name — $phone';
+}
+
 String? _money(Object? amount, Object? currency) {
   if (amount == null) return null;
   final unit = currency?.toString();
@@ -399,17 +511,39 @@ String? _money(Object? amount, Object? currency) {
 /// le BFF encode lui-même et tolère le double encodage. La fiche ne peut pas
 /// présumer d'une forme — présumer la liste ferait disparaître le contenu du
 /// colis, sans erreur.
-String? _items(Object? items) {
+String? _items(Object? items, _Translate t) {
   if (items == null) return null;
   if (items is List) {
-    final labels = items
-        .map((item) => item is Map ? (item['name'] ?? item['description'])?.toString() : '$item')
-        .where((label) => label != null && label.isNotEmpty)
-        .join(', ');
+    final labels = items.map((i) => _describeItem(i, t)).where((l) => l.isNotEmpty).join(', ');
     return labels.isEmpty ? null : labels;
   }
   final text = items.toString().trim();
   return text.isEmpty || text == '[]' ? null : text;
+}
+
+/// ⚠️ **Quantité, poids et fragilité compris**, et pas seulement la description.
+///
+/// La version précédente ne joignait que les descriptions : l'entreprise lisait
+/// « Cartons » là où le commerçant avait saisi « Cartons ×8, 45 kg, fragile ».
+/// Ce sont exactement les deux critères qui décident du véhicule — et comme la
+/// description est complète en apparence, **rien ne signalait le manque**. C'est
+/// la forme la plus coûteuse de l'omission : pas un blanc qu'on remarque, un
+/// texte affirmatif incomplet.
+String _describeItem(Object? item, _Translate t) {
+  if (item is! Map) return item?.toString().trim() ?? '';
+
+  final label = (item['name'] ?? item['description'])?.toString().trim() ?? '';
+  if (label.isEmpty) return '';
+
+  final quantity = item['quantity'];
+  final weight = item['weight'];
+  final details = <String>[
+    if (quantity is num && quantity > 1) '×${quantity.toStringAsFixed(0)}',
+    if (weight is num && weight > 0) '${weight.toStringAsFixed(weight % 1 == 0 ? 0 : 1)} kg',
+    if (item['fragile'] == true) t('fleet.detail.fragile'),
+  ];
+
+  return details.isEmpty ? label : '$label (${details.join(', ')})';
 }
 
 String? _distance(Object? metres) {

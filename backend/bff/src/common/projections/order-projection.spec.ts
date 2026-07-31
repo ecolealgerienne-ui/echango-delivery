@@ -73,10 +73,33 @@ describe.each([
     }
   });
 
+  it('ne laisse pas le nom ressortir par `address`', () => {
+    // ⚠️ Le défaut qui a failli passer. `Place.address` n'est pas une colonne :
+    // c'est un accesseur qui recompose « nom, rue, commune, code postal ». Sur
+    // le chemin de création de l'app, le lieu de livraison n'a QUE son nom —
+    // `address` valait donc exactement le nom du destinataire, au-dessus d'un
+    // bandeau promettant de ne pas le donner.
+    const place = projectOrderForFleet(
+      {
+        payload: {
+          dropoff: { uuid: 'p', name: 'Mme Benali', address: 'Mme Benali' },
+        },
+      },
+      {},
+      { unclaimed: true },
+    ) as any;
+
+    expect(JSON.stringify(place.payload.dropoff)).not.toContain('Benali');
+    // Rien de structuré à servir ⇒ pas d'adresse inventée. L'adresse réelle est
+    // dans `meta.dropoff_notes`, et la porte dans `location`.
+    expect(place.payload.dropoff.address).toBeUndefined();
+  });
+
   it("garde l'adresse, qui est le critère de décision", () => {
     const place = dropoff();
 
     expect(place.address).toContain('rue des Frères Bouadou');
+    expect(place.address).not.toContain('Benali');
     expect(place.street1).toBe('8 rue des Frères Bouadou');
     expect(place.city).toBe('Bir Mourad Raïs');
     // Sans coordonnées, pas d'itinéraire — donc pas de détour estimable, donc

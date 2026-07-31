@@ -87,10 +87,10 @@ export class FlotteService {
    * qui donne un rôle à une entreprise **sans obliger le commerçant à la
    * connaître** (`docs/specs_facilitateur.md` §6.2).
    *
-   * Projection expurgée : tant que la course n'est engagée par personne, la
-   * livraison se réduit à sa commune, exactement comme côté transporteur. Le
-   * prix et le montant à encaisser restent, eux — ce sont eux qui permettent de
-   * décider.
+   * Projection expurgée : tant que la course n'est engagée par personne, seuls
+   * le nom et le téléphone du destinataire sont retirés, exactement comme côté
+   * transporteur. L'adresse, les montants et les précisions d'accès restent —
+   * ce sont eux qui permettent de décider.
    */
   async getClaimableOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
     await this.getFleetWithValidation(fleetId);
@@ -172,8 +172,7 @@ export class FlotteService {
 
     let order: any;
     try {
-      const response = await this.fleetbaseClient.getOrder(orderId);
-      order = response?.order || response;
+      order = await this.readOrder(orderId);
     } catch (error: any) {
       this.logger.error(`Prise impossible, commande ${orderId} illisible : ${error.message}`);
       notFound('order.not_found', 'Order not found');
@@ -300,18 +299,40 @@ export class FlotteService {
 
     let order: any;
     try {
-      const response = await this.fleetbaseClient.getOrder(orderId);
-      order = response?.order || response;
+      order = await this.readOrder(orderId);
     } catch (error: any) {
       this.logger.error(`Opportunité ${orderId} illisible : ${error.message}`);
       notFound('order.not_found', 'Order not found');
     }
 
-    if (!order?.uuid) {
+    // ⚠️ L'identifiant relu est comparé à celui demandé — la garde que ce projet
+    // impose à toute lecture unitaire depuis que `GET /vendors/{uuid}` a été
+    // pris à ignorer son paramètre de chemin (journal §2.13). Ici elle compte
+    // doublement : sans elle, un endpoint qui renverrait une liste ferait passer
+    // son premier élément pour la course demandée, et la garde de disponibilité
+    // s'appliquerait à la mauvaise course.
+    //
+    // Les deux identifiants sont acceptés parce que la résolution n'est pas
+    // uniforme chez Fleetbase (`v1` par `public_id`, `int/v1` par `uuid`, avec
+    // des exceptions) : n'en accepter qu'un ferait refuser une course légitime.
+    // Ce qui est vérifié n'est pas la forme, c'est qu'on a bien reçu **celle
+    // qu'on a demandée**.
+    if (!order?.uuid || (order.uuid !== orderId && order.public_id !== orderId)) {
       notFound('order.not_found', 'Order not found');
     }
 
     if (!this.isClaimable(order)) {
+      // La trace : une entreprise qui balaie des identifiants ne doit pas le
+      // faire en silence (règle F14, les refus s'écrivent). `getOrderDetail` en
+      // écrit une, cette route-ci n'en écrivait pas.
+      this.audit.denied({
+        actorType: 'fleet',
+        actorId: fleetId,
+        action: 'order.access',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Course déjà prise ou non diffusée',
+      });
       // Volontairement un `not_found` et non un `forbidden` : une course prise
       // par une autre entreprise ne regarde pas celle-ci, et distinguer les deux
       // réponses lui apprendrait qu'elle existe et qu'elle a été prise.
@@ -329,8 +350,7 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const response = await this.fleetbaseClient.getOrder(orderId);
-      const order = response?.order || response;
+      const order = await this.readOrder(orderId);
 
       if (!order || !order.uuid) {
         notFound('order.not_found', 'Order not found');
@@ -534,8 +554,7 @@ export class FlotteService {
   ): Promise<void> {
     let order: any;
     try {
-      const response = await this.fleetbaseClient.getOrder(orderId);
-      order = this.withEffectiveMeta(response?.order || response);
+      order = this.withEffectiveMeta(await this.readOrder(orderId));
     } catch (error: any) {
       this.logger.warn(`Plafond non vérifié pour ${orderId} : ${error.message}`);
       return;
@@ -625,6 +644,37 @@ export class FlotteService {
     return owned;
   }
 
+
+  /**
+   * Une commande, lue à l'unité, **avec ses relations**.
+   *
+   * ── Pourquoi ce point unique, et pourquoi il porte de l'argent ────────────
+   *
+   * Les quatre lectures unitaires de ce module appelaient `getOrder()`, la
+   * version nue de `GET /int/v1/orders/{uuid}`, sans aucun `with[]`. Les modules
+   * transporteur et commerçant utilisent `getOrderWithRelations()` ; **le module
+   * flotte était le seul à ne pas le faire**, et personne ne s'en apercevait
+   * parce qu'aucun écran ne l'ouvrait.
+   *
+   * Depuis le 30/07, prix et montant à encaisser vivent dans
+   * `custom_field_values`. `readOrderCustomFields()` exige donc la relation ; le
+   * commentaire qui affirmait qu'elle arrive de toute façon (via un
+   * `loadMissing()` de la ressource amont) décrit le chemin de **liste**, et n'a
+   * jamais été éprouvé sur la lecture unitaire.
+   *
+   * Ce n'est pas un problème d'affichage. `assertClaimCashCeiling()` et
+   * `assertDriverCashCeiling()` lisent `meta.cod_amount` par ce chemin : si la
+   * relation manque, le montant vaut `0`, la garde ne se déclenche **jamais**, et
+   * une entreprise accumule des espèces sans plafond — en silence, sans erreur,
+   * avec un plafond qui a l'air de fonctionner. Un défaut d'argent déguisé en
+   * détail de sérialisation.
+   *
+   * Un seul point d'entrée pour que la question ne se repose pas quatre fois.
+   */
+  private async readOrder(orderId: string): Promise<any> {
+    const response = await this.fleetbaseClient.getOrderWithRelations(orderId);
+    return response?.order || response;
+  }
 
   /**
    * La commande, `meta` recomposé depuis les champs personnalisés.

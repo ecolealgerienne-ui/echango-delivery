@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import 'driver_picker.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
@@ -198,7 +199,11 @@ class _OrdersTab extends StatelessWidget {
           // La ligne mène à la fiche. Sans elle, l'entreprise ne voyait jamais
           // ni l'adresse, ni les instructions, ni le contact d'une course
           // pourtant à elle — elle ne pouvait rien dire à son conducteur.
-          onTap: () => context.push('/flotte/commandes/${order['uuid'] ?? ''}'),
+          // ⚠️ Pas de repli `?? ''` : `/flotte/commandes/` ne correspond à
+          // aucune route (le segment `:id` exige un caractère) et go_router
+          // afficherait son écran d'erreur. Ne rien faire est le bon geste
+          // quand il n'y a nulle part où aller.
+          onTap: _openable(order) ? () => context.push('/flotte/commandes/${order['uuid']}') : null,
           trailing: hasDriver
               ? null
               : TextButton(
@@ -238,14 +243,19 @@ class _OpportunitiesTab extends StatelessWidget {
         return ListTile(
           title: Text(_dropoffLabel(order)),
           subtitle: Text(
-            '${_amount(meta, t)}\n${t('fleet.opportunities.masked')}'.trim(),
+            // `redacted` plutôt qu'un affichage inconditionnel : c'est le
+            // serveur qui décide de ce qu'il retire, et la fiche lit déjà ce
+            // drapeau. Deux règles pour une même phrase finiraient par diverger.
+            '${_amount(meta, t)}'
+                '${order['redacted'] == true ? '\n${t('fleet.opportunities.masked')}' : ''}'
+                .trim(),
           ),
           isThreeLine: true,
           // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
           // cette course ? ». La liste ne pouvait pas y répondre seule : le
           // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
           // « Prendre » reste sur la ligne pour ceux qui n'en ont pas besoin.
-          onTap: () => context.push('/flotte/opportunites/$uuid'),
+          onTap: uuid.isEmpty ? null : () => context.push('/flotte/opportunites/$uuid'),
           trailing: FilledButton(
             onPressed: claiming ? null : () => _claim(context, uuid, t),
             child: Text(
@@ -428,52 +438,18 @@ Future<void> _claim(BuildContext context, String uuid, _Translate t) async {
   );
 }
 
-/// Choisir un conducteur parmi ceux de l'entreprise.
-///
-/// La liste vient de `GET /flotte/drivers`, donc déjà bornée aux siens : le
-/// serveur revérifie de toute façon l'appartenance du conducteur ET de la
-/// course avant d'appeler Fleetbase (anti-IDOR validé entre deux flottes le
-/// 28/07). L'écran ne fait que présenter, il n'autorise pas.
+/// Où mène cette ligne, si elle mène quelque part.
+bool _openable(Map<String, dynamic> order) {
+  final uuid = order['uuid'];
+  return uuid is String && uuid.isNotEmpty;
+}
+
 Future<void> _pickDriver(
   BuildContext context,
   Map<String, dynamic> order,
   _Translate t,
 ) async {
-  final state = context.read<FleetState>();
-  final drivers = state.drivers;
-
-  if (drivers.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(t('fleet.drivers.empty'))),
-    );
-    return;
-  }
-
-  final chosen = await showModalBottomSheet<String>(
-    context: context,
-    builder: (sheetContext) => SafeArea(
-      child: ListView(
-        shrinkWrap: true,
-        children: [
-          ListTile(title: Text(t('fleet.drivers.select'))),
-          const Divider(height: 1),
-          for (final driver in drivers)
-            ListTile(
-              title: Text(driver['name'] as String? ?? '—'),
-              subtitle: Text(driver['phone'] as String? ?? ''),
-              onTap: () => Navigator.of(sheetContext).pop(driver['uuid'] as String?),
-            ),
-        ],
-      ),
-    ),
-  );
-
-  if (chosen == null || !context.mounted) return;
-
-  final error = await state.assignDriver(order['uuid'] as String? ?? '', chosen);
-  if (!context.mounted) return;
-
-  if (error != null) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-  }
+  final error = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
+  if (error == null || !context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
 }

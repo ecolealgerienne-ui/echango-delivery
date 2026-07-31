@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/order.dart';
 import '../../models/vehicle_type.dart';
 import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
@@ -372,8 +373,11 @@ class _OrdersListScreenState extends State<OrdersListScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: 4),
+                // ⚠️ Pas `name` seul : il est **absent** sur une course non
+                // réclamée (c'est celui du destinataire), et la ligne se
+                // lisait « MAGASIN1 →  » sur chaque opportunité.
                 Text(
-                  '${order.pickupPlace?.name} → ${order.dropoffPlace?.name}',
+                  '${_placeLabel(order.pickupPlace)} → ${_placeLabel(order.dropoffPlace)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -643,4 +647,20 @@ class _VehicleTypeCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Comment nommer un lieu quand son nom a été retiré.
+///
+/// Sur une course non réclamée, le serveur ne sert plus le nom du destinataire —
+/// il ne le remplace pas non plus par un libellé, il l'omet (31/07/2026). Sans
+/// repli, la ligne affichait « MAGASIN1 →  », un tiret vers rien.
+///
+/// L'ordre suit l'utilité : le nom quand il existe, sinon l'adresse recomposée
+/// à partir des seules composantes structurées, sinon rien plutôt qu'un
+/// point d'interrogation.
+String _placeLabel(Place? place) {
+  if (place == null) return '—';
+  if (place.name.trim().isNotEmpty) return place.name.trim();
+  if (place.address.trim().isNotEmpty) return place.address.trim();
+  return '—';
 }
