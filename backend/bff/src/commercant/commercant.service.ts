@@ -23,6 +23,7 @@ import {
   phoneContains,
   subscriberDigits,
 } from '../common/identity/subscriber-number';
+import { adhocRadiusMetres as configuredAdhocRadius } from '../common/orders/adhoc-radius';
 
 @Injectable()
 export class CommerçantService {
@@ -226,16 +227,15 @@ export class CommerçantService {
   /**
    * Rayon de diffusion d'une course adhoc, en mètres.
    *
-   * Fleetbase porte nativement `adhoc_distance` : inutile de reconstruire un
-   * filtre de proximité côté BFF, c'est son dispatch géospatial qui l'applique.
-   *
-   * ⚠️ La valeur par défaut est un **repli, pas une décision produit** : 15 km
-   * couvre une agglomération sans noyer les transporteurs de courses hors de
-   * portée. À régler au pilote, avec de vraies distances.
+   * La règle vit dans `common/orders/adhoc-radius.ts` : elle était écrite ici
+   * ET dans `TransporteurService`, sous un commentaire qui affirmait que les
+   * deux devaient rester identiques (règle 5).
    */
   private adhocRadiusMetres(): number {
-    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
-    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+    // Aliasé à l'import : sans alias, l'appel se lirait comme une récursion
+    // sur la méthode du même nom. Il n'en est pas une — un identifiant nu
+    // résout le module et non la méthode — mais rien ne le dit à la lecture.
+    return configuredAdhocRadius(this.configService.get('ADHOC_RADIUS_METRES'));
   }
 
   /**

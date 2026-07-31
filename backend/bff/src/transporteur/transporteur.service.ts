@@ -11,6 +11,7 @@ import {
   effectiveOrderMeta,
   projectOrderForDriver,
 } from '../common/projections/order.projection';
+import { adhocRadiusMetres as configuredAdhocRadius } from '../common/orders/adhoc-radius';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -982,14 +983,18 @@ export class TransporteurService {
   /**
    * Rayon de rediffusion d'une course rendue.
    *
-   * Même valeur que celle appliquée à la création (`CommerçantService`) : une
-   * course rendue doit être proposée exactement comme elle l'aurait été si le
-   * favori n'avait pas été sollicité, sans quoi le refus changerait
-   * silencieusement sa portée.
+   * ⚠️ **La même valeur qu'à la création, et c'est maintenant tenu plutôt
+   * qu'affirmé.** Une course rendue doit être proposée exactement comme elle
+   * l'aurait été si le favori n'avait pas été sollicité — sans quoi le refus
+   * changerait silencieusement sa portée. Ce commentaire disait déjà cet
+   * invariant tout en le laissant à deux copies : c'est le signal même de la
+   * règle 5, et il a fallu le lire pour le voir.
    */
   private adhocRadiusMetres(): number {
-    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
-    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+    // Aliasé à l'import : sans alias, l'appel se lirait comme une récursion
+    // sur la méthode du même nom. Il n'en est pas une — un identifiant nu
+    // résout le module et non la méthode — mais rien ne le dit à la lecture.
+    return configuredAdhocRadius(this.configService.get('ADHOC_RADIUS_METRES'));
   }
 
   /**
