@@ -131,6 +131,20 @@ describe('debtBetween — les trois couples de parties', () => {
     expect(backward).toBe(-forward);
   });
 
+  it('la convention servie aux écrans reste « positif = l’amont détient »', async () => {
+    // `debtBetween` fait suivre son signe à l'ordre demandé, mais les DEUX
+    // écrans doivent lire le même nombre : c'est `balancesFor` qui interroge
+    // dans le sens canonique. Le contraire rendait −1300 au commerçant là où le
+    // contrôle de référence et `cash.dart` attendent +1300.
+    const svc = service();
+    const canonical = await svc.debtBetween(driverParty('drv-1'), merchantParty('mer-1'));
+
+    expect(Object.is(canonical, -0) ? 0 : canonical).toBe(0);
+    // Le filtre construit est bien celui du couple canonique, quel que soit
+    // l'écran qui pose la question.
+    expect(collectionWhere).toMatchObject({ driverId: 'drv-1', merchantId: 'mer-1' });
+  });
+
   it('une partie face à elle-même vaut zéro sans interroger la base', async () => {
     const debt = await service().debtBetween(fleetParty('flt-1'), fleetParty('flt-1'));
 

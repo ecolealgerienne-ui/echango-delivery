@@ -844,7 +844,18 @@ export class CashService {
 
     const balances = await Promise.all(
       parties.map(async (party) => {
-        const debt = await this.debtBetween(actor, party);
+        // ⚠️ Interrogé dans le sens CANONIQUE, jamais dans celui de l'acteur.
+        //
+        // `debtBetween` fait suivre son signe à l'ordre demandé — API la moins
+        // surprenante — mais le contrat des écrans veut l'inverse : les deux
+        // parties doivent lire **le même nombre**, positif quand l'amont détient
+        // l'argent de l'aval. C'est ce que fait `cash.dart` (`driverOwes =>
+        // debt > 0`) et ce que vérifie le contrôle de référence des deux côtés.
+        //
+        // Demander `(actor, party)` rendait donc −1300 au commerçant là où il
+        // doit lire +1300 : juste au signe près, et faux à l'écran.
+        const { up, down } = this.orient(actor, party);
+        const debt = await this.debtBetween(up, down);
         const info = described.get(`${party.type}:${party.id}`);
 
         return {
