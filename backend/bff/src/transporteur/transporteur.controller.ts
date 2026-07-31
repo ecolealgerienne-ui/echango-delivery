@@ -139,6 +139,18 @@ export class TransporteurController {
     return this.transporteurService.respondToMembership(req.user.id, id, false);
   }
 
+  /**
+   * Quitter une entreprise à laquelle on est rattaché.
+   *
+   * ⚠️ `:id` est l'identifiant de **l'adhésion**, pas de l'entreprise — comme
+   * sur les deux routes ci-dessus. `listMemberships` rend les deux séparément
+   * (`id` et `fleet_id`) ; envoyer le second ici donne un 404 sans indice.
+   */
+  @Post('entreprises/:id/quitter')
+  async leaveFleet(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.leaveFleet(req.user.id, id);
+  }
+
   @Get('profil')
   async getProfile(@Request() req: any) {
     return this.transporteurService.getProfile(this.driverId(req));

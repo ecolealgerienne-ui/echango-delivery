@@ -131,12 +131,10 @@ class AppError {
   // Un rattachement décide **à qui le conducteur devra les espèces** d'une
   // course : ce ne sont pas des codes administratifs.
   static const String membershipNotFound = 'membership.not_found';
-  static const String membershipForbidden = 'membership.forbidden';
   static const String membershipAlreadyExists = 'membership.already_exists';
   static const String membershipNotPending = 'membership.not_pending';
-  static const String membershipInactive = 'membership.inactive';
-  static const String membershipNoAccount = 'membership.no_account';
-  static const String membershipUpdateFailed = 'membership.update_failed';
+  static const String membershipNotActive = 'membership.not_active';
+  static const String membershipNotSuspended = 'membership.not_suspended';
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   static const String fleetNotFound = 'fleet.not_found';

@@ -75,6 +75,51 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
     }
   }
 
+  /// Quitter une entreprise, après confirmation.
+  ///
+  /// La confirmation dit ce que le geste **ne fait pas** : il coupe les courses
+  /// à venir, il n'éteint pas la dette. Sans cette phrase, un conducteur
+  /// quitterait une entreprise en croyant solder ce qu'il lui doit.
+  Future<void> _leave(String membershipId) async {
+    final locale = context.read<LocaleState>().locale;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        content: Text(fleetLabel('driver.fleets.leave.confirm', locale)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(fleetLabel('fleet.cancel', locale)),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(fleetLabel('driver.fleets.leave', locale)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await context.read<BffApiClient>().leaveFleet(membershipId);
+    } on AppException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(translateErrorCode(e.code, locale))),
+      );
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(translateErrorCode(AppError.unknown, locale))),
+      );
+      return;
+    }
+
+    if (mounted) await _load();
+  }
+
   Future<void> _respond(String membershipId, bool accept) async {
     final locale = context.read<LocaleState>().locale;
     try {
@@ -144,7 +189,8 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
                       subtitle: Text(t('driver.fleets.empty.hint')),
                     ),
 
-                  for (final fleet in _fleets) _FleetRow(fleet: fleet, t: t, onRespond: _respond),
+                  for (final fleet in _fleets)
+                    _FleetRow(fleet: fleet, t: t, onRespond: _respond, onLeave: _leave),
                 ],
               ),
             ),
@@ -153,11 +199,17 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
 }
 
 class _FleetRow extends StatelessWidget {
-  const _FleetRow({required this.fleet, required this.t, required this.onRespond});
+  const _FleetRow({
+    required this.fleet,
+    required this.t,
+    required this.onRespond,
+    required this.onLeave,
+  });
 
   final Map<String, dynamic> fleet;
   final String Function(String key) t;
   final Future<void> Function(String membershipId, bool accept) onRespond;
+  final Future<void> Function(String membershipId) onLeave;
 
   @override
   Widget build(BuildContext context) {
@@ -176,13 +228,17 @@ class _FleetRow extends StatelessWidget {
         subtitle: Text(
           origin ? t('fleet.members.origin') : t('fleet.members.status.$status'),
         ),
-        // Les deux boutons ne s'affichent que sur une demande en attente : sur
-        // une adhésion déjà active, « Refuser » laisserait croire qu'on peut
-        // rompre depuis ici, ce qui n'est pas le cas — la suspension appartient
-        // à l'entreprise.
-        trailing: !pending
-            ? null
-            : Wrap(
+        // Trois cas, trois actions différentes — et « Quitter » n'existait pas.
+        //
+        // Le consentement était à sens unique : un conducteur ayant accepté une
+        // fois restait rattaché indéfiniment, seule l'entreprise pouvant
+        // suspendre. Un engagement qu'on ne peut pas défaire n'est pas un
+        // consentement.
+        //
+        // L'entreprise d'origine (`origin`) n'a aucun bouton : elle ne se quitte
+        // pas depuis l'application.
+        trailing: pending
+            ? Wrap(
                 spacing: 4,
                 children: [
                   TextButton(
@@ -194,7 +250,13 @@ class _FleetRow extends StatelessWidget {
                     child: Text(t('driver.fleets.accept')),
                   ),
                 ],
-              ),
+              )
+            : (!origin && status == 'active' && id != null)
+                ? TextButton(
+                    onPressed: () => onLeave(id),
+                    child: Text(t('driver.fleets.leave')),
+                  )
+                : null,
       ),
     );
   }

@@ -180,13 +180,19 @@ class _SearchResult extends StatelessWidget {
     final status = row['membership'] as String?;
 
     // Déjà des nôtres, ou déjà demandé : on montre l'état plutôt qu'un bouton
-    // qui produirait un refus. Un bouton qui échoue toujours se lit comme une
+    // qui produirait un refus — un bouton qui échoue toujours se lit comme une
     // panne, pas comme une règle.
-    final label = origin
-        ? t('fleet.members.origin')
-        : status != null
-            ? t('fleet.members.status.$status')
-            : null;
+    //
+    // Deux informations distinctes, et la seconde compte au moment de décider :
+    // l'état du rattachement, et le fait que la personne puisse répondre.
+    final parts = <String>[
+      if (origin)
+        t('fleet.members.origin')
+      else if (status != null)
+        t('fleet.members.status.$status'),
+      if (row['has_account'] == false) t('fleet.members.no_account'),
+    ];
+    final label = parts.isEmpty ? null : parts.join(' — ');
 
     return ListTile(
       leading: const Icon(Icons.person_outline),

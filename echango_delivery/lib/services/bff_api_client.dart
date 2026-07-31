@@ -1199,6 +1199,17 @@ class BffApiClient {
     return list.cast<Map<String, dynamic>>();
   }
 
+  /// Quitter une entreprise à laquelle on est rattaché.
+  ///
+  /// ⚠️ Ne solde rien : l'adhésion se ferme, la dette reste écrite.
+  Future<void> leaveFleet(String membershipId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/entreprises/$membershipId/quitter'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
   Future<void> respondToMembership(String membershipId, {required bool accept}) async {
     final action = accept ? 'accepter' : 'refuser';
     final response = await _httpClient.post(

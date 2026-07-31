@@ -145,6 +145,10 @@ const Map<String, String> _fr = {
   'fleet.members.request': 'Demander le rattachement',
   'fleet.members.requested': 'Demande envoyée. En attente de sa réponse.',
   'fleet.members.origin': 'Votre conducteur',
+  // ⚠️ Ce n'est pas un détail d'affichage : un conducteur sans compte ne peut
+  // pas répondre, donc la demande resterait en attente indéfiniment et
+  // l'entreprise attendrait une réponse qui ne viendra jamais.
+  'fleet.members.no_account': 'Pas encore de compte — il ne pourra pas répondre.',
   'fleet.members.create': 'Créer un nouveau conducteur',
   // ⚠️ Le texte explique **pourquoi** on cherche avant de créer : sans lui, un
   // gestionnaire pressé crée un doublon et se demande ensuite pourquoi la
@@ -166,6 +170,12 @@ const Map<String, String> _fr = {
       'Une entreprise qui vous embauche vous enverra une demande ici.',
   'driver.fleets.accept': 'Accepter',
   'driver.fleets.decline': 'Refuser',
+  'driver.fleets.leave': 'Quitter',
+  // ⚠️ Partir coupe les courses à venir, pas ce qu'on doit : le dire évite
+  // qu'un conducteur quitte une entreprise en croyant éteindre sa dette.
+  'driver.fleets.leave.confirm':
+      'Quitter cette entreprise ? Elle ne pourra plus vous confier de course. '
+          'Ce que vous lui devez reste dû.',
   // ⚠️ Ce n'est pas une formalité, et l'écran doit le dire : accepter, c'est
   // s'engager à devoir à cette entreprise les espèces qu'on encaissera pour
   // elle.
@@ -256,6 +266,7 @@ const Map<String, String> _ar = {
   'fleet.members.request': 'طلب الارتباط',
   'fleet.members.requested': 'تم إرسال الطلب. في انتظار رده.',
   'fleet.members.origin': 'سائقك',
+  'fleet.members.no_account': 'لا يملك حساباً بعد — لن يتمكن من الرد.',
   'fleet.members.create': 'إنشاء سائق جديد',
   'fleet.members.create.hint':
       'ابحث عنه أولاً: إذا كان يعمل لدى جهة أخرى، يجب ربطه لا إنشاؤه من جديد.',
@@ -271,6 +282,9 @@ const Map<String, String> _ar = {
   'driver.fleets.empty.hint': 'الشركة التي توظفك سترسل لك طلباً هنا.',
   'driver.fleets.accept': 'قبول',
   'driver.fleets.decline': 'رفض',
+  'driver.fleets.leave': 'مغادرة',
+  'driver.fleets.leave.confirm':
+      'مغادرة هذه الشركة؟ لن تتمكن من إسناد رحلات إليك. ما تدين به لها يبقى مستحقاً.',
   'driver.fleets.explain':
       'القبول يعني السماح لهذه الشركة بإسناد رحلات إليك. الأموال التي تحصّلها '
           'لصالحها تصبح ديناً عليك تجاهها.',

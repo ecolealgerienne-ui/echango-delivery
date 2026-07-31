@@ -172,12 +172,15 @@ export const ErrorCode = {
 
   // ── Adhésions conducteur ↔ entreprise ────────────────────────────────────
   MEMBERSHIP_NOT_FOUND: 'membership.not_found',
-  MEMBERSHIP_FORBIDDEN: 'membership.forbidden',
   MEMBERSHIP_ALREADY_EXISTS: 'membership.already_exists',
+  /// Le conducteur a déjà répondu — l'entreprise ne peut plus décider à sa place.
   MEMBERSHIP_NOT_PENDING: 'membership.not_pending',
-  MEMBERSHIP_INACTIVE: 'membership.inactive',
-  MEMBERSHIP_NO_ACCOUNT: 'membership.no_account',
-  MEMBERSHIP_UPDATE_FAILED: 'membership.update_failed',
+  /// Seul un rattachement actif se suspend, et seul un suspendu se réactive.
+  /// Les deux gardes existent parce que **leur absence d'un seul côté** ouvrait
+  /// un chemin `pending → suspended → active` qui produisait un rattachement
+  /// sans le consentement du conducteur.
+  MEMBERSHIP_NOT_ACTIVE: 'membership.not_active',
+  MEMBERSHIP_NOT_SUSPENDED: 'membership.not_suspended',
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   FLEET_NOT_FOUND: 'fleet.not_found',

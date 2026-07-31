@@ -953,6 +953,19 @@ export class FleetbaseApiClient {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {
         driver_assigned_uuid: null,
+        // ⚠️ **`facilitator_uuid` est effacé aussi**, et son oubli rendait la
+        // course invisible pour tout le monde.
+        //
+        // `isClaimable` (flotte) et `isClaimableAdhoc` (transporteur) exigent
+        // TOUS DEUX que les deux colonnes soient vides. Une course affectée par
+        // une entreprise puis refusée par le conducteur ressortait donc
+        // `adhoc: true` mais toujours rattachée : ni les indépendants ni les
+        // entreprises ne la voyaient, et le commerçant la croyait diffusée.
+        //
+        // Le chemin était rare avant ce chantier ; l'affectation par une
+        // entreprise en fait une opération de routine.
+        facilitator_uuid: null,
+        facilitator_type: null,
         adhoc: true,
         adhoc_distance: adhocDistance,
       },

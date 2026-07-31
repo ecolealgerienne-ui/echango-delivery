@@ -12,7 +12,7 @@ import {
 } from '../common/projections/order.projection';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { effectiveOrderMeta } from '../common/projections/order.projection';
-import { CashService, fleetParty, merchantParty } from '../cash/cash.service';
+import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
 
 /**
  * Une course close ne rend pas son conducteur occupé.
@@ -477,7 +477,7 @@ export class FlotteService {
    * n'offre aucune écriture conditionnelle, et le contrôle est une lecture. Il
    * ferme le cas ordinaire, pas la course critique.
    */
-  private async driverIsBusy(driverUuid: string): Promise<boolean> {
+  private async driverIsBusy(driverUuid: string, exceptOrderUuid?: string): Promise<boolean> {
     try {
       const orders = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
         driver: driverUuid,
@@ -487,11 +487,37 @@ export class FlotteService {
       // Fleetbase abandonne en silence un paramètre qu'il ne reconnaît pas, et
       // une régression de nom rendrait ici **tout le monde occupé** plutôt que
       // personne — le bon côté de l'erreur, mais seulement si on relit.
-      return orders.some((o: any) => {
+      const candidates = orders.filter((o: any) => {
+        // ⚠️ La course qu'on est en train d'affecter ne compte pas contre
+        // elle-même. Sans ça, un rejeu après coupure réseau — l'écriture ayant
+        // en fait abouti — recevait « ce conducteur a déjà une course en
+        // cours », en parlant de celle qu'on lui assigne.
+        if (exceptOrderUuid && o?.uuid === exceptOrderUuid) return false;
         const assigned =
           o?.driver_assigned_uuid === driverUuid || o?.driver_assigned?.uuid === driverUuid;
         return assigned && !TERMINAL_ORDER_STATUSES.includes(o?.status);
       });
+
+      if (candidates.length === 0) return false;
+
+      // ⚠️ **Une course dont l'échec a été signalé ne rend PAS occupé.**
+      //
+      // Fleetbase n'a pas de statut « échec » confirmé (§6.5), donc
+      // `reportDeliveryFailure` ne touche pas au statut : la course reste
+      // `driver_enroute` et **assignée**, pour toujours. Sans cette exception, un
+      // client absent immobilisait le conducteur définitivement, pour toutes les
+      // entreprises, sans message ni issue applicative — le déblocage aurait
+      // demandé un passage d'opérateur en console.
+      //
+      // C'est le prix du statut manquant en amont : le fait vit chez nous, donc
+      // c'est chez nous qu'il faut le lire.
+      const failed = await this.prisma.deliveryFailure.findMany({
+        where: { fleetbaseOrderUuid: { in: candidates.map((o: any) => o.uuid) } },
+        select: { fleetbaseOrderUuid: true },
+      });
+      const reported = new Set(failed.map((f: any) => f.fleetbaseOrderUuid));
+
+      return candidates.some((o: any) => !reported.has(o.uuid));
     } catch (error: any) {
       // ⚠️ Injoignable ⇒ on **laisse passer**.
       //
@@ -543,14 +569,45 @@ export class FlotteService {
       (v): v is string => typeof v === 'string' && v.trim().length > 0,
     );
 
+    // ⚠️ **Sans identifiant, pas de création.**
+    //
+    // `email` et `phone` sont tous deux facultatifs dans le DTO : un
+    // `{ name: 'Ali Benali' }` seul produisait `needles = []`, la boucle ne
+    // s'exécutait pas, et **la garde ne faisait rien**. Le contournement était
+    // le chemin par défaut, pas une astuce.
+    //
+    // Le refus n'est pas qu'un artifice de contrôle : un conducteur sans email
+    // ni téléphone ne peut recevoir aucune invitation, donc jamais de compte
+    // applicatif, donc aucune course. On refuserait plus tard, sans le dire.
+    if (needles.length === 0) {
+      badRequest(
+        'driver.create_failed',
+        'Renseignez au moins un email ou un téléphone — sans quoi ce conducteur ' +
+          'ne pourra jamais recevoir son invitation.',
+      );
+    }
+
     for (const needle of needles) {
       let matches: any[] = [];
       try {
         const response = await this.fleetbaseClient.getAllDrivers({
           query: needle.trim(),
-          limit: 5,
+          limit: 20,
         });
         matches = this.fleetbaseClient.extractCollection(response, 'drivers');
+
+        // ⚠️ Repli par les chiffres seuls, repris de `commercant.searchDrivers`.
+        //
+        // `?query=` est un LIKE SQL : « +213555123456 » ne trouve rien si
+        // l'enregistrement porte « 0555123456 ». Sans ce repli, `matches` est
+        // vide, aucune comparaison n'a lieu, et le doublon que toute cette
+        // fonctionnalité existe pour empêcher est créé — sur le format le plus
+        // courant du pays.
+        const digits = needle.replace(/\D/g, '');
+        if (matches.length === 0 && digits.length >= 6) {
+          const wide = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
+          matches = this.fleetbaseClient.extractCollection(wide, 'drivers');
+        }
       } catch (error: any) {
         // ⚠️ L'annuaire injoignable **ne bloque pas** la création.
         //
@@ -590,11 +647,43 @@ export class FlotteService {
     const b = needle.trim().toLowerCase();
     if (a === b) return true;
 
-    const da = a.replace(/\D/g, '');
-    const db = b.replace(/\D/g, '');
-    // Au moins six chiffres : en deçà, « 12 » se retrouve dans tous les numéros
-    // et le contrôle refuserait des créations légitimes.
-    return da.length >= 6 && db.length >= 6 && (da.endsWith(db) || db.endsWith(da));
+    const na = this.subscriberNumber(a);
+    const nb = this.subscriberNumber(b);
+    return na !== null && na === nb;
+  }
+
+  /**
+   * Le numéro d'abonné, débarrassé de son indicatif et de son zéro de tête.
+   *
+   * ── Pourquoi `endsWith` sur les chiffres bruts ne marchait pas ────────────
+   *
+   * C'était la première version, et elle échouait sur **l'exemple même de son
+   * commentaire** : « 0555 12 34 56 » donne `0555123456`, « +213555123456 »
+   * donne `213555123456`, et le second ne se termine pas par le premier — le
+   * zéro de tête du format local n'est pas dans le format international. Or
+   * c'est exactement le couple le plus fréquent en Algérie : enregistré en
+   * `+213…`, ressaisi en `0…`. Le doublon passait.
+   *
+   * Symétriquement, `endsWith` sur six chiffres déclarait identiques deux
+   * numéros distincts partageant leur fin, et refusait une création légitime.
+   *
+   * On normalise donc vers **les neuf chiffres de l'abonné** : indicatif `213`
+   * retiré, zéro de tête retiré, et une longueur exacte exigée plutôt qu'un
+   * suffixe. Rend `null` quand ce n'est pas un numéro exploitable — un email,
+   * par exemple, que la comparaison littérale au-dessus a déjà traité.
+   */
+  private subscriberNumber(value: string): string | null {
+    let digits = value.replace(/\D/g, '');
+    if (!digits) return null;
+
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    if (digits.startsWith('213')) digits = digits.slice(3);
+    if (digits.startsWith('0')) digits = digits.slice(1);
+
+    // Neuf chiffres est la longueur d'un numéro algérien sans son zéro
+    // (`555123456`). Tout ce qui n'y correspond pas est trop incertain pour
+    // fonder un refus de création.
+    return digits.length === 9 ? digits : null;
   }
 
   /**
@@ -690,7 +779,7 @@ export class FlotteService {
    * depuis leur propre console).
    */
   async searchNetworkDrivers(fleetId: string, query: string) {
-    await this.getFleetWithValidation(fleetId);
+    const fleet = await this.getFleetWithValidation(fleetId);
 
     const q = query.trim();
 
@@ -700,6 +789,22 @@ export class FlotteService {
       // en a trop, et n'est jamais renvoyé.
       const response = await this.fleetbaseClient.getAllDrivers({ query: q, limit: 11 });
       matches = this.fleetbaseClient.extractCollection(response, 'drivers');
+
+      // ⚠️ Repli par les chiffres seuls, comme `commercant.searchDrivers` dont
+      // cette méthode se réclame. `?query=` est un LIKE SQL : « 0555 12 34 »
+      // ne trouve rien si l'enregistrement porte « +213555123456 ». Sans lui,
+      // l'entreprise conclut que la personne n'est pas dans le réseau — et la
+      // recrée, ce que tout ce lot existe pour éviter.
+      const digits = q.replace(/\D/g, '');
+      if (matches.length === 0 && digits.length >= 4) {
+        const wide = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
+        matches = this.fleetbaseClient
+          .extractCollection(wide, 'drivers')
+          .filter((d: any) => {
+            const phone = String(d?.phone ?? '').replace(/\D/g, '');
+            return phone.length > 0 && phone.includes(digits);
+          });
+      }
     } catch (error: any) {
       this.logger.warn(`Annuaire conducteurs indisponible : ${error.message}`);
       badRequest('driver.search_unavailable', 'Recherche indisponible pour le moment');
@@ -715,17 +820,28 @@ export class FlotteService {
     // L'état du rattachement est joint à chaque résultat : sans lui, l'écran
     // proposerait « rattacher » sur quelqu'un déjà rattaché, et l'entreprise
     // découvrirait le refus après coup.
+    const uuids = matches.map((d: any) => d?.uuid).filter(Boolean);
+
     const existing = await this.prisma.driverMembership.findMany({
-      where: {
-        fleetId,
-        fleetbaseDriverUuid: { in: matches.map((d: any) => d?.uuid).filter(Boolean) },
-      },
+      where: { fleetId, fleetbaseDriverUuid: { in: uuids } },
     });
     const byUuid = new Map<string, string>(
       existing.map((m: any) => [m.fleetbaseDriverUuid, m.status]),
     );
 
-    const fleet = await this.getFleetWithValidation(fleetId);
+    // ⚠️ Qui a un compte applicatif, et qui n'en a pas.
+    //
+    // Un `Driver` peut exister chez Fleetbase sans compte Echango — c'est le cas
+    // de tous ceux qu'un opérateur a créés et qui n'ont pas encore répondu à
+    // leur invitation. Leur demander un rattachement produit une adhésion
+    // `pending` que **personne ne pourra jamais accepter**, et l'entreprise
+    // attendrait une réponse qui ne viendra pas. On le dit plutôt que de le
+    // taire, comme le fait déjà la recherche du commerçant.
+    const accounts = await this.prisma.driverAccount.findMany({
+      where: { fleetbaseDriverUuid: { in: uuids } },
+      select: { fleetbaseDriverUuid: true },
+    });
+    const withAccount = new Set(accounts.map((a: any) => a.fleetbaseDriverUuid));
 
     return {
       data: matches.map((driver: any) => ({
@@ -734,6 +850,7 @@ export class FlotteService {
         // Déjà d'origine chez nous : le rattacher n'aurait aucun sens.
         origin: driver?.vendor_uuid === fleet.fleetbaseVendorUuid,
         membership: byUuid.get(driver?.uuid) ?? null,
+        has_account: withAccount.has(driver?.uuid),
       })),
     };
   }
@@ -860,11 +977,37 @@ export class FlotteService {
       notFound('membership.not_found', 'Membership not found');
     }
 
-    // Réactiver ce qui n'a jamais été accepté n'a pas de sens : cela poserait
-    // `active` sans que le conducteur ait jamais consenti, ce que le passage par
-    // `pending` existe précisément pour empêcher.
+    // ⚠️ **Les deux sens sont gardés, et il le faut absolument.**
+    //
+    // Seule la réactivation l'était. La suspension, elle, acceptait n'importe
+    // quel état de départ — d'où un chemin en deux appels, entièrement dans les
+    // droits de l'entreprise, qui produisait un rattachement **actif sans
+    // consentement** :
+    //
+    //     demander        → pending
+    //     suspendre       → suspended   (aucune garde)
+    //     reactiver       → active      (garde satisfaite)
+    //
+    // Le conducteur n'avait jamais répondu, et l'entreprise pouvait lui confier
+    // une course encaissée : exactement l'obligation financière unilatérale que
+    // le passage par `pending` existe pour empêcher. Le même chemin **écrasait
+    // un refus explicite** (`declined` → `suspended` → `active`).
+    //
+    // On ne suspend donc que ce qui est actif, et on ne réactive que ce qui a
+    // été suspendu. `pending` et `declined` n'ont aucune sortie vers `active`
+    // autre que la réponse du conducteur.
+    if (suspended && membership.status !== 'active') {
+      conflict(
+        'membership.not_active',
+        'Seul un rattachement actif peut être suspendu.',
+      );
+    }
+
     if (!suspended && membership.status !== 'suspended') {
-      conflict('membership.not_pending', 'Cette adhésion ne peut pas être réactivée.');
+      conflict(
+        'membership.not_suspended',
+        'Seul un rattachement suspendu peut être réactivé.',
+      );
     }
 
     const updated = await this.prisma.driverMembership.update({
@@ -925,6 +1068,14 @@ export class FlotteService {
 
       await this.fleetbaseClient.assignDriverToVendor(fleet.fleetbaseVendorUuid, driverUuid);
 
+      // ⚠️ Le cache de `fetchOwnedDrivers` (5 s) ignore encore ce conducteur.
+      // Sans cette invalidation, l'entreprise qui crée quelqu'un puis lui
+      // affecte une course dans la foulée recevait un **403 sur un conducteur
+      // qu'elle venait de créer** : `fleetMayUseDriver` lisait la liste périmée,
+      // ne l'y trouvait pas, et aucune adhésion n'existe pour un conducteur
+      // d'origine.
+      this.driverCache.delete(fleet.fleetbaseVendorUuid);
+
       this.logger.log(`Driver ${driverUuid} created and assigned to fleet ${fleetId}`);
       return driver;
     } catch (error) {
@@ -964,7 +1115,7 @@ export class FlotteService {
     // Une course à la fois, toutes entreprises confondues : deux encaissements
     // simultanés se mélangent dans la même poche et l'ordre des remises devient
     // indéterminé. Le refus ne dit pas pour qui il roule — ce serait une fuite.
-    if (await this.driverIsBusy(driverId)) {
+    if (await this.driverIsBusy(driverId, orderId)) {
       conflict(
         'driver.unavailable',
         'Ce conducteur a déjà une course en cours. Attendez qu\'il la termine.',
@@ -1042,6 +1193,40 @@ export class FlotteService {
               `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
           : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
               `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
+      );
+    }
+
+    // ⚠️ **Le plafond du CONDUCTEUR, vérifié ici et pas seulement au démarrage.**
+    //
+    // Le contrôle ci-dessus porte sur l'entreprise. Celui du conducteur
+    // n'existait que sur `acceptOrder`/`startOrder`, c'est-à-dire **après** que
+    // l'entreprise lui a confié la course : elle affectait donc une course qu'il
+    // ne pourrait pas démarrer, sans aucun signal de son côté — et la course
+    // restait assignée à quelqu'un de bloqué.
+    //
+    // Le message ne nomme pas ce que le conducteur détient ailleurs : ce sont
+    // les affaires d'une autre entreprise.
+    const driverAccount = await this.prisma.driverAccount.findUnique({
+      where: { fleetbaseDriverUuid: driverUuid },
+      select: { id: true },
+    });
+
+    // Pas de compte applicatif ⇒ aucune dette possible dans le registre : rien à
+    // vérifier, et bloquer ici ferait échouer une affectation légitime sur une
+    // donnée qui n'existe pas.
+    if (!driverAccount) return;
+
+    const forDriver = await this.cash.canTakeCashOrder(
+      driverParty(driverAccount.id),
+      this.cash.driverCounterparty(fleetId, cached.merchantId),
+      codAmount,
+    );
+
+    if (!forDriver.allowed) {
+      conflict(
+        'cash.ceiling_exceeded',
+        'Ce conducteur détient déjà trop d\'espèces non remises pour prendre ' +
+          'une course encaissée. Faites-lui remettre ce qu\'il doit.',
       );
     }
   }

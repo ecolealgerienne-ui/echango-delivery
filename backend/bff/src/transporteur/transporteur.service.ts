@@ -458,6 +458,47 @@ export class TransporteurService {
     return { id: updated.id, status: updated.status };
   }
 
+  /**
+   * Quitter une entreprise.
+   *
+   * ── Pourquoi il faut une sortie, et pas seulement une entrée ─────────────
+   *
+   * La première version n'avait que l'acceptation : un conducteur ayant dit oui
+   * une fois restait rattaché **indéfiniment**, et l'entreprise pouvait
+   * continuer à lui confier des courses encaissées. Seule elle pouvait
+   * suspendre. Le principe posé par ce chantier — « l'acceptation est une
+   * condition de l'engagement » — n'avait alors aucun pendant en sortie, ce qui
+   * en fait un consentement à sens unique.
+   *
+   * ⚠️ **La dette n'est pas éteinte par le départ.** L'adhésion passe à
+   * `declined`, le lien reste écrit, et le registre continue de dire ce qui est
+   * dû — c'est tout le motif de l'absence de suppression. Partir coupe les
+   * courses à venir, pas ce qu'on doit.
+   */
+  async leaveFleet(driverId: string, membershipId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: { id: membershipId },
+    });
+
+    if (!membership || membership.fleetbaseDriverUuid !== driver.fleetbaseDriverUuid) {
+      notFound('membership.not_found', 'Membership not found');
+    }
+
+    if (membership.status !== 'active') {
+      conflict('membership.not_active', 'Ce rattachement n\'est pas actif.');
+    }
+
+    const updated = await this.prisma.driverMembership.update({
+      where: { id: membership.id },
+      data: { status: 'declined', respondedAt: new Date() },
+    });
+
+    this.logger.log(`Conducteur ${driverId} a quitté l'adhésion ${membershipId}`);
+    return { id: updated.id, status: updated.status };
+  }
+
   async getProfile(driverId: string) {
     const driver = await this.getDriverOrFail(driverId);
 

@@ -149,6 +149,11 @@ export class CashService {
    * n'est ainsi ni avantagé ni pénalisé — il l'est seulement s'il détient
    * réellement plus. La variable existe séparément pour qu'on puisse desserrer
    * l'un sans l'autre au pilote.
+   *
+   * ⚠️ **Ne s'applique qu'aux conducteurs** (voir `canTakeCashOrder`). Le
+   * raisonnement porte sur une personne qui transporte des billets ; l'appliquer
+   * à une entreprise la bornait, tous commerçants confondus, à ce qu'un
+   * indépendant peut détenir.
    */
   private personDebtCeiling(): number {
     const configured = Number(this.configService.get('COD_DEBT_CEILING_PER_PERSON'));
@@ -502,12 +507,30 @@ export class CashService {
       return { allowed: false, debt, ceiling, scope: 'couple' };
     }
 
-    // ⚠️ Les deux plafonds sont vérifiés **ici**, et non chez les appelants.
+    // ⚠️ **Le plafond global ne s'applique qu'à une PERSONNE.**
     //
-    // Il y en a deux — `acceptOrder` côté conducteur, `assignDriver` côté
+    // Il est né de la multi-appartenance : un conducteur rattaché à trois
+    // entreprises porte trois dettes distinctes, donc trois fois le plafond dans
+    // une seule poche. Ce raisonnement vaut pour un être humain qui transporte
+    // des billets ; il ne vaut pas pour une société.
+    //
+    // Appliqué à une entreprise, il bornait son encours **tous commerçants
+    // confondus** à ce qu'un indépendant isolé peut détenir : une société de dix
+    // conducteurs servant cinq commerçants était plafonnée comme une personne
+    // seule, et se bloquait dès le pilote. C'est une exposition réelle, mais
+    // elle se dimensionne autrement — et cette question-là n'est pas tranchée
+    // (`specs_flux_argent_quatre_acteurs.md`, plafond par entreprise).
+    //
+    // Un plafond mal dimensionné qui bloque l'exploitation ne protège rien : il
+    // fait désactiver le garde-fou.
+    if (debtor.type !== 'driver') {
+      return { allowed: true, debt, ceiling, scope: 'couple' };
+    }
+
+    // Les deux plafonds sont vérifiés **ici**, et non chez les appelants. Il y a
+    // deux chemins — `acceptOrder` côté conducteur, `assignDriver` côté
     // entreprise — et une règle d'argent recopiée à deux endroits finit par
-    // diverger. C'est ce que `specs_flux_argent_quatre_acteurs.md` §5 interdit
-    // explicitement, et c'est le motif de `driverCounterparty()` juste au-dessus.
+    // diverger, ce que `specs_flux_argent_quatre_acteurs.md` §5 interdit.
     const total = await this.totalHeldBy(debtor);
     const personCeiling = this.personDebtCeiling();
 
