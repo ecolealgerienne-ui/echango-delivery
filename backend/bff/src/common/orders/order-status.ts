@@ -39,3 +39,54 @@ export const TERMINAL_ORDER_STATUSES = ['completed', 'canceled', 'cancelled'];
 export function isTerminalOrderStatus(status: unknown): boolean {
   return typeof status === 'string' && TERMINAL_ORDER_STATUSES.includes(status);
 }
+
+/**
+ * Cette course est-elle **libre** ?
+ *
+ * ── Pourquoi ce prédicat vit ici, et pas dans les deux services ───────────
+ *
+ * Il était écrit **deux fois** — `isClaimable` côté entreprise,
+ * `isClaimableAdhoc` côté transporteur — avec, dans chacun, un commentaire
+ * affirmant que les deux devaient rester identiques. C'est le défaut dans sa
+ * forme la plus pure : **l'invariant était documenté au lieu d'être appliqué**.
+ * Un commentaire ne peut pas échouer.
+ *
+ * Et il a échoué : les deux copies excluaient `canceled` sans exclure
+ * `completed`, si bien qu'une course livrée s'offrait dans « Courses libres ».
+ * Corriger le 31/07/2026 a d'abord consisté à partager la constante des statuts
+ * terminaux — le symptôme — en laissant les deux copies du prédicat, et le
+ * commentaire « il faut qu'elle reste identique » a été **réécrit dans la
+ * correction elle-même**.
+ *
+ * ── Le critère, pour ne pas tout fusionner non plus ───────────────────────
+ *
+ * La question n'est pas « ces deux bouts de code se ressemblent-ils » mais
+ * **« si l'un change, l'autre doit-il changer ? »**. Ici la réponse est un oui
+ * sans nuance : les deux populations réclament **les mêmes courses**, donc elles
+ * doivent s'accorder sur ce que « libre » veut dire. Une divergence n'est pas
+ * une variante, c'est un défaut.
+ *
+ * À l'inverse, `orderStatusLabel` (commerçant) et `fleetOrderStateKey`
+ * (entreprise) se ressemblent et doivent rester séparés : ils répondent à deux
+ * questions différentes, et l'un peut changer sans l'autre.
+ *
+ * ── Ce que le prédicat exige, et pourquoi les deux colonnes ───────────────
+ *
+ * `driver_assigned_uuid` ET `facilitator_uuid` vides. Un indépendant ne prend
+ * pas une course confiée à une entreprise, une entreprise ne prend pas une
+ * course déjà démarrée par un indépendant — et les deux écrivent des colonnes
+ * différentes, donc aucun conflit ne les départagerait.
+ *
+ * ⚠️ `adhoc` et non `dispatched` : le second dit « a été diffusée un jour », le
+ * premier « l'est encore ».
+ */
+export function isOrderClaimable(order: any): boolean {
+  return (
+    order?.adhoc === true &&
+    !order?.driver_assigned_uuid &&
+    !order?.facilitator_uuid &&
+    // Tous les statuts terminaux, et non le seul `canceled` : terminer une
+    // course n'efface pas `adhoc`, donc rien d'autre ne l'excluait.
+    !isTerminalOrderStatus(order?.status)
+  );
+}

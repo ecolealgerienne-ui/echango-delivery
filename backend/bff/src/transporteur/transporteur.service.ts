@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
-import { isTerminalOrderStatus } from '../common/orders/order-status';
+import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -1244,16 +1244,7 @@ export class TransporteurService {
    * affectée par son employeur, elle ne se réclame pas.
    */
   private isClaimableAdhoc(order: any): boolean {
-    return (
-      order?.adhoc === true &&
-      !order?.driver_assigned_uuid &&
-      !order?.facilitator_uuid &&
-      // Même correction que côté flotte, et il faut qu'elle reste identique :
-      // les deux populations réclament les mêmes courses. Une course LIVRÉE
-      // était offerte au premier qui rafraîchissait — terminer une course
-      // n'efface pas `adhoc`, donc rien d'autre ne l'excluait.
-      !isTerminalOrderStatus(order?.status)
-    );
+    return isOrderClaimable(order);
   }
 
   /**

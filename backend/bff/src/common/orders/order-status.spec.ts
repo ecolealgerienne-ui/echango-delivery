@@ -19,20 +19,17 @@
  * pour couvrir la règle et non seulement la constante.
  */
 
-import { isTerminalOrderStatus, TERMINAL_ORDER_STATUSES } from './order-status';
+import {
+  isOrderClaimable as isClaimable,
+  isTerminalOrderStatus,
+  TERMINAL_ORDER_STATUSES,
+} from './order-status';
 
-/**
- * Reproduction fidèle du prédicat partagé par les deux modules.
- *
- * Les services eux-mêmes dépendent de Prisma, dont le client ne peut pas être
- * généré dans cet environnement. Faire diverger cette copie casserait le test —
- * c'est ce qui la maintient honnête.
- */
-const isClaimable = (order: any): boolean =>
-  order?.adhoc === true &&
-  !order?.driver_assigned_uuid &&
-  !order?.facilitator_uuid &&
-  !isTerminalOrderStatus(order?.status);
+// ⚠️ Ce fichier contenait une **troisième copie** du prédicat, « reproduction
+// fidèle » pour contourner la dépendance à Prisma des deux services. Un test
+// qui recopie ce qu'il vérifie ne vérifie que lui-même : il serait resté vert
+// pendant que les vrais prédicats divergeaient. Depuis l'extraction dans
+// `isOrderClaimable`, il importe celui que le code exécute.
 
 describe('les statuts qui mettent fin à une course', () => {
   it('reconnaît les DEUX orthographes de Fleetbase', () => {

@@ -13,7 +13,7 @@ import {
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
-import { isTerminalOrderStatus } from '../common/orders/order-status';
+import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 
 @Injectable()
 export class FlotteService {
@@ -123,25 +123,12 @@ export class FlotteService {
   /**
    * Cette course est-elle libre ?
    *
-   * Le pendant exact d'`isClaimableAdhoc()` côté transporteur, et il doit le
-   * rester : les deux populations réclament la même chose, donc elles doivent
-   * s'accorder sur ce que « libre » veut dire. **Les deux colonnes doivent être
-   * vides** — un indépendant ne prend pas une course confiée à une entreprise,
-   * une entreprise ne prend pas une course déjà démarrée par un indépendant.
+   * Délégué à `isOrderClaimable` : le prédicat était écrit ici ET côté
+   * transporteur, avec de part et d'autre un commentaire affirmant que les deux
+   * devaient rester identiques. Ils ne l'étaient plus.
    */
   private isClaimable(order: any): boolean {
-    return (
-      order?.adhoc === true &&
-      !order?.driver_assigned_uuid &&
-      !order?.facilitator_uuid &&
-      // ⚠️ **Tous les statuts terminaux**, et non le seul `canceled`.
-      //
-      // La version courte laissait une course **livrée** dans « Courses
-      // libres » — constaté à l'écran le 31/07/2026 : statut « Livrée » et
-      // bouton « Prendre cette course » sur la même ligne. Terminer une course
-      // n'efface pas `adhoc`, donc rien d'autre ne l'excluait.
-      !isTerminalOrderStatus(order?.status)
-    );
+    return isOrderClaimable(order);
   }
 
   /**
