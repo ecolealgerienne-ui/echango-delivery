@@ -135,7 +135,14 @@ Le critère n'est pas « est-ce un littéral » — `maxLines: 1` décrit la nat
 - **Ce qui décrit la nature d'un widget reste littéral.** `maxLines: 1`, `shrinkWrap: true` : rien à centraliser, ce ne sont pas des décisions.
 - **Les nouveaux écrans n'ont aucune excuse**, comme pour les règles 4 et 6.
 
-⚠️ **Dette connue** : les 367 valeurs d'apparence et les 19 valeurs métier ci-dessus. Non traité au 31/07/2026 — les 19 dernières d'abord, ce sont les seules qui peuvent mentir.
+✅ **Traité le 31/07/2026, et tenu par deux vérificateurs exécutés** — parce qu'un chantier de centralisation sans garde n'est pas un chantier, c'est un instantané : il suffit d'un `EdgeInsets.all(16)` dans le prochain écran pour rouvrir la divergence que 308 remplacements viennent de fermer.
+
+- `lib/config/app_rules.dart` — `ServerRules` (copies de règles serveur, chacune nommant son fichier d'origine) et `AppRules` (décisions locales). `dart tool/check_server_rules.dart` **lit les deux fichiers et compare** ; `--self-test` l'éprouve sur 22 cas, dont toutes les formes de divergence qu'il doit refuser.
+- `lib/theme/app_spacing.dart` — `AppSpacing`/`AppRadius`, barème sorti de la mesure et non d'une convention (six valeurs portaient 91 % des 339 occurrences). `dart tool/check_spacing.dart` **refuse** un littéral du barème et **recense** ceux qui n'en font pas partie, sans échouer : les faire converger déplacerait des pixels, c'est une décision de design.
+
+⚠️ **Ce que ces deux scripts ont appris, et qui vaut plus que le lot** : les deux se sont trompés, et **aucune des erreurs n'a été trouvée en les relisant**. `check_server_rules` concluait à l'accord quand la déclaration d'un champ ne matchait pas (`readonly password:`, `password!:`) — un `@MinLength(12)` serveur passait pour un 8 — et acceptait un décorateur mis en commentaire ; `check_spacing` lisait `5` dans `EdgeInsets.all(16.5)`. Toutes trouvées en **faisant tourner le vérificateur sur des mutations**. Un vérificateur au vert n'a montré que sa capacité à dire oui ; il doit prouver qu'il sait dire non, et `--self-test` est là pour ça.
+
+⚠️ **Dette restante** : les 22 littéraux hors barème (1, 2, 6, 10, 14, 20, 36, 48) et les valeurs métier laissées délibérément littérales — bornes serveur sans copie côté app (`@Max(500000)` sur les prix, `@MaxLength(60)` sur les recherches). L'absence ne ment pas, contrairement à une copie divergente ; c'est un choix, pas un oubli.
 
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
@@ -336,13 +343,21 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Prérequis** : `npm run prisma:migrate` puis `prisma generate`, et `COD_DEBT_CEILING_PER_PERSON` (documenté dans `.env.example`). **Non éprouvé** : rien de ce lot n'a tourné en réel — ni la recherche, ni l'acceptation, ni les deux plafonds, ni la sortie. **Non vérifié** : `flutter analyze`.
 
-- [ ] **Trois chantiers de mutualisation, décidés le 31/07/2026** — ils correspondent aux règles 5, 6 et 7, et ils sont écrits ici parce qu'une règle sans chantier est une règle que le code viole en silence. **Ordre recommandé : 3, puis 2, puis 1** — le troisième est le moins risqué et rend les deux autres mécaniques.
+- [ ] **Trois chantiers de mutualisation, décidés le 31/07/2026** — ils correspondent aux règles 5, 6 et 7, et ils sont écrits ici parce qu'une règle sans chantier est une règle que le code viole en silence. **Ordre recommandé : 3, puis 2, puis 1** — le troisième est le moins risqué et rend les deux autres mécaniques. **Le (3) est fait**, restent le (2) et le (1).
+
+  ⚠️ **Aucun `flutter analyze` n'a pu être passé sur le (3)** : pas de toolchain Dart dans ce bac à sable. Les contrôles menés à la place sont mécaniques et nommés (renommage prouvé par resubstitution, équilibre des délimiteurs par un scanner qui comprend l'interpolation Dart), mais ils ne remplacent pas l'analyseur — à passer côté utilisateur avant le lot suivant.
 
   **(1) Mutualisation des fonctions** (règle 5). Fait pour le prédicat de disponibilité et les statuts terminaux. Reste à passer en revue : tout commentaire du dépôt disant « doit rester identique à », « le pendant exact de », « même règle que » est un candidat — `grep` sur ces formules est le point de départ, il en reste une poignée. Pour chacun, appliquer le critère : *si l'un change, l'autre doit-il changer ?* Oui ⇒ extraire ; non ⇒ garder deux endroits et écrire pourquoi ; fusion trop coûteuse ⇒ un test qui vérifie l'invariant, jamais une phrase.
 
   **(2) Mutualisation des composants graphiques** (règle 6). Quatre motifs à extraire dans `lib/widgets/`, mesurés : bandeau d'erreur (8 occurrences, 7 fichiers), état vide avec sa consigne (13, 10), carte de section (69, 14), SnackBar (43, 13). ⚠️ **Chaque composant emporte sa règle métier** — l'état vide impose sa consigne, le bandeau d'erreur se pose au-dessus du contenu sans le remplacer. Extraire la mise en page seule reproduirait les défauts que ces règles corrigent, chacun déjà corrigé deux fois. Ensuite seulement : remplacer les ~130 `Colors.*`/`Color(0x…)` de `commercant/`, `transporteur/` et `cash/` par `Theme.of(context).colorScheme`, **dossier par dossier avec `flutter analyze` entre chaque**.
 
-  **(3) Centraliser les valeurs en dur des écrans** (règle 7). Deux fichiers, deux natures : des jetons d'apparence dans `theme/` (`AppSpacing`, `AppRadius`) pour les 367 littéraux cosmétiques, et un traitement **cas par cas** des 19 valeurs métier — celles-ci ne se centralisent pas dans un fichier de constantes app, elles doivent venir du serveur ou nommer explicitement la règle serveur qu'elles recopient. Commencer par ces 19 : ce sont les seules qui peuvent mentir.
+  **(3) Centraliser les valeurs en dur des écrans** (règle 7) — **✅ fait le 31/07/2026, en deux lots.** Détail et vérificateurs en § Règles §7 ; l'essentiel ci-dessous.
+
+  **Lot 1, les valeurs métier** (celles qui peuvent mentir). Quatre miroirs de règles serveur dans `ServerRules`, dont **une divergence réelle trouvée en instruisant le chantier** : l'écran de caisse laissait passer deux caractères là où le serveur en exige trois, donc un refus incompréhensible sur une saisie que l'application venait d'accepter. Une **troisième** valeur dormait dans `lib/validation/validators.dart` — fichier mort, jamais importé, mais parfaitement utilisable, avec un mot de passe à six caractères contre huit côté serveur ; supprimé. Et `maxPhotoBase64Length`, le miroir le plus cher (cinq mégaoctets envoyés avant un 400), qui vivait sous un commentaire « doit rester alignée sur… ».
+
+  **Lot 2, les valeurs d'apparence** : 320 sites vers `AppSpacing`/`AppRadius`, `app_theme.dart` compris. **Vérifié comme un renommage pur** — en resubstituant chaque jeton par sa valeur et en retirant la ligne d'import, chaque fichier redevient sa version précédente au caractère près. C'est la seule preuve qui distingue un renommage d'une modification, et sans elle un lot de cette taille est impossible à relire.
+
+  ⚠️ **Ce qui reste, et qui est un choix** : 22 littéraux hors barème, laissés parce que les glisser vers le jeton voisin déplacerait des pixels — décision de design, à prendre à l'écran. `check_spacing.dart` les recense pour que la question reste posée.
 
   **Pourquoi cet ordre** : les jetons d'apparence sont un remplacement mécanique et vérifiable par l'analyseur ; les composants s'écrivent naturellement avec ces jetons une fois qu'ils existent ; et la revue des invariants de fonctions demande un jugement au cas par cas, donc du temps et de l'attention, qu'il vaut mieux dépenser en dernier. ⚠️ **Aucun des trois n'est vérifiable dans ce bac à sable** (pas de toolchain Flutter) : chacun demande un `flutter analyze` et un passage à l'écran côté utilisateur, par petits lots.
 
