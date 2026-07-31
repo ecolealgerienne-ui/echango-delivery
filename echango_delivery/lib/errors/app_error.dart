@@ -97,6 +97,7 @@ class AppError {
   static const String orderMissingPublicId = 'order.missing_public_id';
   static const String orderReleaseFailed = 'order.release_failed';
   static const String orderAlreadyTaken = 'order.already_taken';
+  static const String orderClaimFailed = 'order.claim_failed';
   static const String orderCodRequiresPrice = 'order.cod_requires_price';
   static const String orderCustomFieldsUnavailable =
       'order.custom_fields_unavailable';

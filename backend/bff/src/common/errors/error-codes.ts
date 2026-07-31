@@ -131,6 +131,8 @@ export const ErrorCode = {
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
+  /** Le rattachement d'une course à une entreprise a échoué côté Fleetbase. */
+  ORDER_CLAIM_FAILED: 'order.claim_failed',
   /** Encaissement de la marchandise seule sans rémunération connue :
    *  impossible de savoir combien réclamer à la porte. */
   ORDER_COD_REQUIRES_PRICE: 'order.cod_requires_price',

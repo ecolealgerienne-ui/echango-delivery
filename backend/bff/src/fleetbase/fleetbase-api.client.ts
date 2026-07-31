@@ -1017,6 +1017,43 @@ export class FleetbaseApiClient {
    * il ne reste qu'à le journaliser fort — mais l'inverse, ne rien tenter,
    * laisse une course en circulation que personne n'a publiée.
    */
+  /**
+   * Rattache une course à un facilitateur, et la retire de la diffusion.
+   *
+   * ── Les deux écritures sont indissociables ──────────────────────────────
+   *
+   * Poser `facilitator_uuid` ne touche ni `adhoc` ni `driver_assigned_uuid` :
+   * le dispatch adhoc de Fleetbase **continue de notifier les indépendants
+   * toutes les ~4 minutes** tant que personne n'a accepté (validé par test réel
+   * le 26/07, `specs_echango_delivery.md` §3.2). Une course réclamée par une
+   * entreprise resterait donc proposée à tout le réseau, et notre filtre de
+   * liste n'y peut rien — les pings partent de Fleetbase.
+   *
+   * `adhoc: false` est donc écrit **dans le même geste**, et non dans un second
+   * appel : deux appels laisseraient une fenêtre pendant laquelle la course est
+   * à la fois attribuée et diffusée.
+   *
+   * ⚠️ **Aucune clé `meta` dans ce payload.** Le `$record->update($input)` de
+   * Fleetbase remplace `meta` **en entier** dès qu'elle est mentionnée — c'est
+   * le bug qui efface prix et montant à encaisser quand la console affecte un
+   * conducteur. On n'envoie que les colonnes voulues, jamais une commande
+   * re-sérialisée.
+   *
+   * ⚠️ Le `type` polymorphe accompagne l'uuid, comme pour `customer_*` : la
+   * valeur `vendor` est déduite par symétrie et **n'a jamais été éprouvée**
+   * (contrôle C1 de `docs/specs_facilitateur.md` §12).
+   */
+  async attachFacilitator(orderUuid: string, vendorUuid: string) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: {
+        facilitator_uuid: vendorUuid,
+        facilitator_type: 'vendor',
+        adhoc: false,
+      },
+    });
+    return response.data;
+  }
+
   async withdrawFromDispatch(orderUuid: string) {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {

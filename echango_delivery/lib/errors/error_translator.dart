@@ -121,6 +121,7 @@ const Map<String, String> _fr = {
   'order.missing_public_id': 'Commande mal formée côté serveur.',
   'order.release_failed': 'Impossible de rendre cette course pour l\'instant.',
   'order.already_taken': 'Cette course vient d\'être prise par un autre transporteur.',
+  'order.claim_failed': 'Impossible de prendre cette course pour le moment.',
   'order.cod_requires_price':
       'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
   'order.custom_fields_unavailable':
@@ -292,6 +293,7 @@ const Map<String, String> _ar = {
   'order.missing_public_id': 'خطأ في تكوين الطلبية على الخادم.',
   'order.release_failed': 'تعذر إعادة هذه الرحلة حالياً.',
   'order.already_taken': 'تم أخذ هذه الرحلة من قبل سائق آخر.',
+  'order.claim_failed': 'لا يمكن أخذ هذه الرحلة في الوقت الحالي.',
   'order.cod_requires_price':
       'حدّد أجرة الناقل: ستُطلب من المستلم إضافةً إلى ثمن البضاعة.',
   'order.custom_fields_unavailable':

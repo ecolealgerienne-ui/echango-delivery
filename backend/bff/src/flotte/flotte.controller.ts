@@ -77,6 +77,23 @@ export class FlotteController {
     return this.flotteService.getOrders(this.fleetId(req), query);
   }
 
+  /**
+   * Les courses libres, que cette entreprise peut réclamer.
+   *
+   * C'est la porte qui lui donne un rôle **sans obliger le commerçant à la
+   * connaître** — donc sans dépendre des favoris polymorphes.
+   */
+  @Get('opportunites')
+  async getClaimableOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {
+    return this.flotteService.getClaimableOrders(this.fleetId(req), query);
+  }
+
+  /** Prendre une course du pool. Le second arrivant reçoit `order.already_taken`. */
+  @Post('opportunites/:id/prendre')
+  async claimOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
+    return this.flotteService.claimOrder(this.fleetId(req), orderId);
+  }
+
   @Get('commandes/:id')
   async getOrderDetail(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.flotteService.getOrderDetail(this.fleetId(req), orderId);

@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
+import { badRequest, notFound, forbidden, conflict } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -75,6 +75,201 @@ export class FlotteService {
     } catch (error) {
       this.logger.error(`Failed to fetch fleet orders: ${error.message}`);
       badRequest('order.fetch_failed', 'Failed to fetch orders');
+    }
+  }
+
+
+  /**
+   * Les courses **libres**, que cette entreprise peut réclamer.
+   *
+   * Une course diffusée sans conducteur ni facilitateur. Deux populations les
+   * voient — les transporteurs indépendants et les entreprises — et c'est ce
+   * qui donne un rôle à une entreprise **sans obliger le commerçant à la
+   * connaître** (`docs/specs_facilitateur.md` §6.2).
+   *
+   * Projection expurgée : tant que la course n'est engagée par personne, la
+   * livraison se réduit à sa commune, exactement comme côté transporteur. Le
+   * prix et le montant à encaisser restent, eux — ce sont eux qui permettent de
+   * décider.
+   */
+  async getClaimableOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
+    await this.getFleetWithValidation(fleetId);
+
+    try {
+      const free = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
+        without_driver: true,
+      });
+
+      const claimable = free.filter((o: any) => this.isClaimable(o));
+
+      const page = query.page || 1;
+      const limit = query.limit || 25;
+      const total = claimable.length;
+      const paged = claimable.slice((page - 1) * limit, (page - 1) * limit + limit);
+
+      return {
+        data: paged.map((o: any) =>
+          projectOrderForFleet(this.withEffectiveMeta(o), {}, { unclaimed: true }),
+        ),
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      };
+    } catch (error) {
+      this.logger.error(`Failed to fetch claimable orders: ${error.message}`);
+      badRequest('order.fetch_failed', 'Failed to fetch orders');
+    }
+  }
+
+  /**
+   * Cette course est-elle libre ?
+   *
+   * Le pendant exact d'`isClaimableAdhoc()` côté transporteur, et il doit le
+   * rester : les deux populations réclament la même chose, donc elles doivent
+   * s'accorder sur ce que « libre » veut dire. **Les deux colonnes doivent être
+   * vides** — un indépendant ne prend pas une course confiée à une entreprise,
+   * une entreprise ne prend pas une course déjà démarrée par un indépendant.
+   */
+  private isClaimable(order: any): boolean {
+    return (
+      order?.adhoc === true &&
+      !order?.driver_assigned_uuid &&
+      !order?.facilitator_uuid &&
+      order?.status !== 'canceled'
+    );
+  }
+
+  /**
+   * L'entreprise prend une course du pool.
+   *
+   * ── Il n'y a PAS de course critique à arbitrer, et c'est le piège ─────────
+   *
+   * On attendait une compétition entre un indépendant et une entreprise pour la
+   * même course. Elle n'existe pas : **les deux n'écrivent pas la même
+   * colonne**. L'indépendant pose `driver_assigned_uuid` par
+   * `POST /v1/orders/{id}/start`, l'entreprise poserait `facilitator_uuid`. Les
+   * deux écritures réussissent, personne ne perd, et la course finit **démarrée
+   * par l'un et facilitée par l'autre** — l'indépendant part avec le colis, puis
+   * l'entreprise affecte son conducteur, écrase `driver_assigned_uuid`, et celui
+   * qui tient les espèces ne peut plus clôturer.
+   *
+   * Le prédicat exige donc **les deux colonnes libres**, dans les deux sens.
+   *
+   * ── Fleetbase n'offre aucune écriture conditionnelle ─────────────────────
+   *
+   * Pas de `If-Match`, pas de verrou optimiste : `$record->update($input)` est
+   * un dernier-écrivain-gagne, et le perdant reçoit un `2xx`. La seule parade
+   * compatible avec le comportement par défaut est un **compare-and-set
+   * applicatif** : écrire, relire, et refuser si le facilitateur relu n'est pas
+   * le nôtre.
+   *
+   * ⚠️ **C'est best-effort, et la fenêtre n'est pas fermée** (règle 2 : nommer
+   * ce qu'on ne garantit pas). Deux entreprises qui écrivent à la même
+   * milliseconde peuvent toutes deux relire la seconde valeur. La relecture peut
+   * en outre être servie par le cache Redis de Fleetbase — à vérifier, contrôle
+   * C3 de `docs/specs_facilitateur.md` §12.
+   */
+  async claimOrder(fleetId: string, orderId: string) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+
+    let order: any;
+    try {
+      const response = await this.fleetbaseClient.getOrder(orderId);
+      order = response?.order || response;
+    } catch (error: any) {
+      this.logger.error(`Prise impossible, commande ${orderId} illisible : ${error.message}`);
+      notFound('order.not_found', 'Order not found');
+    }
+
+    if (!order?.uuid) {
+      notFound('order.not_found', 'Order not found');
+    }
+
+    // Refusé AVANT toute écriture, et hors de tout `try` qui réemballe.
+    if (!this.isClaimable(order)) {
+      conflict(
+        'order.already_taken',
+        'Cette course vient d\'être prise, ou n\'est plus disponible.',
+      );
+    }
+
+    // Le plafond avant l'écriture : une entreprise qui doit déjà trop ne prend
+    // pas une course encaissée de plus. Vérifié ici plutôt qu'après, pour ne pas
+    // avoir à défaire un rattachement.
+    await this.assertClaimCashCeiling(fleetId, this.withEffectiveMeta(order));
+
+    try {
+      await this.fleetbaseClient.attachFacilitator(order.uuid, fleet.fleetbaseVendorUuid);
+    } catch (error: any) {
+      this.logger.error(`Rattachement de ${orderId} échoué : ${error.message}`);
+      badRequest('order.claim_failed', 'Impossible de prendre cette course pour le moment.');
+    }
+
+    // ── Compare-and-set : relire, et croire la relecture, pas notre écriture ──
+    const after = await this.fleetbaseClient
+      .getOrder(order.uuid)
+      .then((r: any) => r?.order || r)
+      .catch(() => null);
+
+    if (!after) {
+      // On a écrit sans pouvoir vérifier. Le dire plutôt que d'affirmer un
+      // succès : l'entreprise verra la course dans sa liste si elle l'a eue.
+      this.logger.warn(
+        `Prise de ${orderId} écrite mais non vérifiée — relecture impossible`,
+      );
+      return { claimed: true, verified: false };
+    }
+
+    if (after.facilitator_uuid !== fleet.fleetbaseVendorUuid) {
+      this.audit.denied({
+        actorType: 'fleet',
+        actorId: fleetId,
+        action: 'order.claim',
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: `Course rattachée à ${after.facilitator_uuid ?? 'personne'} après écriture`,
+      });
+      conflict('order.already_taken', 'Cette course vient d\'être prise par quelqu\'un d\'autre.');
+    }
+
+    this.audit.succeeded({
+      actorType: 'fleet',
+      actorId: fleetId,
+      action: 'order.claim',
+      resourceType: 'Order',
+      resourceId: orderId,
+    });
+
+    this.logger.log(`Course ${orderId} prise par la flotte ${fleetId}`);
+    return projectOrderForFleet(this.withEffectiveMeta(after));
+  }
+
+  /**
+   * Plafond de dette avant de prendre une course encaissée.
+   *
+   * La contrepartie est le commerçant, et le débiteur l'entreprise : c'est son
+   * exposition à elle qu'on borne, tous conducteurs confondus.
+   */
+  private async assertClaimCashCeiling(fleetId: string, order: any): Promise<void> {
+    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    if (codAmount <= 0) return;
+
+    const cached = await this.prisma.order.findFirst({
+      where: { fleetbaseOrderId: order?.uuid },
+      select: { merchantId: true },
+    });
+    if (!cached) return;
+
+    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+      fleetParty(fleetId),
+      merchantParty(cached.merchantId),
+      codAmount,
+    );
+
+    if (!allowed) {
+      badRequest(
+        'cash.ceiling_exceeded',
+        `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+          `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
+      );
     }
   }
 
