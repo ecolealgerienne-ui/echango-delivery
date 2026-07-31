@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'driver_picker.dart';
+import 'memberships_tab.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
@@ -35,7 +36,7 @@ class FlotteHomeScreen extends StatefulWidget {
 
 class _FlotteHomeScreenState extends State<FlotteHomeScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 3, vsync: this);
+  late final TabController _tabs = TabController(length: 4, vsync: this);
 
   @override
   void initState() {
@@ -92,6 +93,7 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
             Tab(text: t('fleet.tab.orders')),
             Tab(text: t('fleet.tab.opportunities')),
             Tab(text: t('fleet.tab.drivers')),
+            Tab(text: t('fleet.tab.memberships')),
           ],
         ),
       ),
@@ -125,6 +127,10 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
                         _OrdersTab(t: t),
                         _OpportunitiesTab(t: t),
                         _DriversTab(t: t),
+                        MembershipsTab(
+                          t: t,
+                          onCreateDriver: () => _addDriver(context, t),
+                        ),
                       ],
                     ),
                   ),

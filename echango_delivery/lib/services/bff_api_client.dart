@@ -1133,6 +1133,81 @@ class BffApiClient {
     return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
+  /// Chercher un conducteur **déjà dans le réseau**, pour le rattacher.
+  ///
+  /// Le téléphone n'est jamais renvoyé, et au-delà de dix correspondances le
+  /// serveur refuse plutôt que de tronquer : une liste balayable serait
+  /// l'annuaire qu'on refuse d'ouvrir (même règle que les favoris du
+  /// commerçant, 29/07).
+  Future<List<Map<String, dynamic>>> searchNetworkDrivers(String query) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/conducteurs/recherche').replace(
+        queryParameters: {'q': query},
+      ),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Demander le rattachement d'un conducteur existant. Naît en attente de sa
+  /// réponse — l'entreprise ne peut pas se l'attribuer seule.
+  Future<Map<String, dynamic>> requestDriverMembership(String driverUuid) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/conducteurs/$driverUuid/adhesion'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Les rattachements de cette entreprise, tous états confondus.
+  Future<List<Map<String, dynamic>>> getFleetMemberships() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/adhesions'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Suspendre ou réactiver un rattachement.
+  ///
+  /// Il n'existe **aucune suppression**, côté serveur comme ici : la dette d'un
+  /// conducteur envers une entreprise survit à leur séparation.
+  Future<void> setFleetMembershipSuspended(String membershipId, bool suspended) async {
+    final action = suspended ? 'suspendre' : 'reactiver';
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/adhesions/$membershipId/$action'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  // ── Côté conducteur : ses entreprises ───────────────────────────────────
+
+  /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
+  /// demandent. Un rattachement décide à qui il devra les espèces d'une course.
+  Future<List<Map<String, dynamic>>> getMyFleets() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/transporteur/entreprises'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  Future<void> respondToMembership(String membershipId, {required bool accept}) async {
+    final action = accept ? 'accepter' : 'refuser';
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/transporteur/entreprises/$membershipId/$action'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
   Future<List<Map<String, dynamic>>> getFleetDrivers() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/flotte/drivers'),

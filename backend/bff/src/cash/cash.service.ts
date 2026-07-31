@@ -129,6 +129,47 @@ export class CashService {
   }
 
   /**
+   * Ce qu'**une personne** peut détenir, toutes contreparties confondues.
+   *
+   * ── Pourquoi un second plafond, et pourquoi il n'est pas redondant ────────
+   *
+   * Le plafond ci-dessus borne **une relation**. Depuis que la
+   * multi-appartenance existe (31/07/2026), un conducteur rattaché à trois
+   * entreprises porte trois dettes distinctes — `driverCounterparty()` prend le
+   * facilitateur de la course —, donc trois fois le plafond, dans la même poche.
+   * Le garde-fou se contournait par le nombre d'adhésions.
+   *
+   * C'est le défaut déjà nommé dans `specs_flux_argent_quatre_acteurs.md` (« une
+   * entreprise de dix conducteurs accumule dix fois le plafond »), pris par
+   * l'autre bout.
+   *
+   * ⚠️ **Même valeur par défaut que le plafond par couple**, et c'est
+   * intentionnel : un conducteur ne détient jamais plus que le plafond, quel que
+   * soit le nombre d'entreprises pour lesquelles il roule. Un multi-rattaché
+   * n'est ainsi ni avantagé ni pénalisé — il l'est seulement s'il détient
+   * réellement plus. La variable existe séparément pour qu'on puisse desserrer
+   * l'un sans l'autre au pilote.
+   */
+  private personDebtCeiling(): number {
+    const configured = Number(this.configService.get('COD_DEBT_CEILING_PER_PERSON'));
+    return Number.isFinite(configured) && configured > 0 ? configured : this.debtCeiling();
+  }
+
+  /**
+   * Tout ce qu'une partie détient, toutes contreparties confondues.
+   *
+   * ⚠️ Les jambes **négatives ne compensent pas**. Si un commerçant doit 500 au
+   * conducteur et que le conducteur doit 2000 à une entreprise, il a 2000 dans
+   * la poche : les soustraire annoncerait 1500 et laisserait passer une course
+   * de plus. Ce qu'on borne est ce qui est **détenu**, pas une position nette.
+   */
+  async totalHeldBy(actor: Party): Promise<number> {
+    const parties = await this.counterpartiesOf(actor);
+    const legs = await Promise.all(parties.map((p) => this.debtBetween(actor, p)));
+    return legs.reduce((sum, leg) => sum + Math.max(0, leg), 0);
+  }
+
+  /**
    * Position nette entre **deux parties quelconques**.
    *
    * Trois couples existent réellement, et une seule formule les couvre :
@@ -447,10 +488,34 @@ export class CashService {
     debtor: Party,
     creditor: Party,
     amount: number,
-  ): Promise<{ allowed: boolean; debt: number; ceiling: number }> {
+  ): Promise<{
+    allowed: boolean;
+    debt: number;
+    ceiling: number;
+    /** Lequel des deux plafonds a refusé — pour que le message le dise. */
+    scope: 'couple' | 'person';
+  }> {
     const debt = await this.debtBetween(debtor, creditor);
     const ceiling = this.debtCeiling();
-    return { allowed: debt + amount <= ceiling, debt, ceiling };
+
+    if (debt + amount > ceiling) {
+      return { allowed: false, debt, ceiling, scope: 'couple' };
+    }
+
+    // ⚠️ Les deux plafonds sont vérifiés **ici**, et non chez les appelants.
+    //
+    // Il y en a deux — `acceptOrder` côté conducteur, `assignDriver` côté
+    // entreprise — et une règle d'argent recopiée à deux endroits finit par
+    // diverger. C'est ce que `specs_flux_argent_quatre_acteurs.md` §5 interdit
+    // explicitement, et c'est le motif de `driverCounterparty()` juste au-dessus.
+    const total = await this.totalHeldBy(debtor);
+    const personCeiling = this.personDebtCeiling();
+
+    if (total + amount > personCeiling) {
+      return { allowed: false, debt: total, ceiling: personCeiling, scope: 'person' };
+    }
+
+    return { allowed: true, debt, ceiling, scope: 'couple' };
   }
 
   /**

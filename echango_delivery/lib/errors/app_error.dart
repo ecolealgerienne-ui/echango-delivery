@@ -123,6 +123,20 @@ class AppError {
   static const String driverPositionUpdateFailed = 'driver.position_update_failed';
   static const String driverOnlineToggleFailed = 'driver.online_toggle_failed';
   static const String driverSearchUnavailable = 'driver.search_unavailable';
+  static const String driverSearchTooBroad = 'driver.search_too_broad';
+  static const String driverAlreadyInNetwork = 'driver.already_in_network';
+
+  // ── Adhésions conducteur ↔ entreprise ───────────────────────────────────
+  //
+  // Un rattachement décide **à qui le conducteur devra les espèces** d'une
+  // course : ce ne sont pas des codes administratifs.
+  static const String membershipNotFound = 'membership.not_found';
+  static const String membershipForbidden = 'membership.forbidden';
+  static const String membershipAlreadyExists = 'membership.already_exists';
+  static const String membershipNotPending = 'membership.not_pending';
+  static const String membershipInactive = 'membership.inactive';
+  static const String membershipNoAccount = 'membership.no_account';
+  static const String membershipUpdateFailed = 'membership.update_failed';
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   static const String fleetNotFound = 'fleet.not_found';

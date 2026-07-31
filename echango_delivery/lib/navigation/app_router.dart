@@ -14,6 +14,7 @@ import '../screens/flotte/flotte_order_detail_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
+import '../screens/transporteur/my_fleets_screen.dart';
 import '../screens/transporteur/order_detail_screen.dart' as transporteur;
 import '../state/auth_state.dart';
 
@@ -80,6 +81,12 @@ GoRouter buildAppRouter(AuthState authState) {
                     DeliveryFailureScreen(orderId: s.pathParameters['id']!),
               ),
             ],
+          ),
+          // Les entreprises du conducteur. Ce n'est pas un écran administratif :
+          // un rattachement décide à qui il devra les espèces d'une course.
+          GoRoute(
+            path: 'entreprises',
+            builder: (_, __) => const MyFleetsScreen(),
           ),
         ],
       ),

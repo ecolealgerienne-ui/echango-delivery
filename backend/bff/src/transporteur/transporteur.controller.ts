@@ -120,6 +120,25 @@ export class TransporteurController {
     return req.user.id;
   }
 
+  /**
+   * Les entreprises pour lesquelles ce conducteur roule, et celles qui le
+   * demandent. Un rattachement décide à qui il devra les espèces d'une course.
+   */
+  @Get('entreprises')
+  async listMemberships(@Request() req: any) {
+    return this.transporteurService.listMemberships(req.user.id);
+  }
+
+  @Post('entreprises/:id/accepter')
+  async acceptMembership(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.respondToMembership(req.user.id, id, true);
+  }
+
+  @Post('entreprises/:id/refuser')
+  async declineMembership(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.respondToMembership(req.user.id, id, false);
+  }
+
   @Get('profil')
   async getProfile(@Request() req: any) {
     return this.transporteurService.getProfile(this.driverId(req));

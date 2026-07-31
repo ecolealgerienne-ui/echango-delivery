@@ -14,6 +14,15 @@ import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-pos
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { CashService, fleetParty, merchantParty } from '../cash/cash.service';
 
+/**
+ * Une course close ne rend pas son conducteur occupé.
+ *
+ * `cancelled` avec deux « l » figure aussi dans `OrderReconcilerService` : les
+ * deux orthographes circulent chez Fleetbase, et n'en reconnaître qu'une
+ * laisserait un conducteur définitivement « occupé » par une course annulée.
+ */
+const TERMINAL_ORDER_STATUSES = ['completed', 'canceled', 'cancelled'];
+
 @Injectable()
 export class FlotteService {
   private readonly logger = new Logger(FlotteService.name);
@@ -257,17 +266,23 @@ export class FlotteService {
     });
     if (!cached) return;
 
-    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
       fleetParty(fleetId),
       merchantParty(cached.merchantId),
       codAmount,
     );
 
     if (!allowed) {
+      // ⚠️ Le message suit le plafond qui a refusé. Dire « pour ce commerçant »
+      // quand c'est le plafond global qui a mordu enverrait chercher une remise
+      // auprès de quelqu'un qui n'est pour rien dans le blocage.
       badRequest(
         'cash.ceiling_exceeded',
-        `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
-          `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
+        scope === 'person'
+          ? `Votre entreprise détient déjà ${debt} ${this.cash.currency} au total, et cette ` +
+              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
+          : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+              `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
       );
     }
   }
@@ -389,12 +404,197 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-      return { data: owned.map((d: any) => projectDriverForFleet(d)) };
+      const drivers = await this.fleetDrivers(fleetId, fleet.fleetbaseVendorUuid);
+      return { data: drivers.map((d: any) => projectDriverForFleet(d)) };
     } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) throw error;
       this.logger.error(`Failed to fetch fleet drivers: ${error.message}`);
       badRequest('driver.fetch_failed', 'Failed to fetch drivers');
     }
+  }
+
+  /**
+   * Tous les conducteurs de cette entreprise — les siens **et** ses adhérents.
+   *
+   * ── Pourquoi deux sources, et pourquoi il ne faut pas en oublier une ──────
+   *
+   * `?vendor=` chez Fleetbase ne rend que ceux dont l'entreprise est
+   * **l'origine** (`Driver.vendor_uuid`, mono-valué). Depuis que la
+   * multi-appartenance existe, s'en tenir là rendrait une liste **tronquée en
+   * silence** : l'entreprise ne verrait pas les conducteurs qu'elle a rattachés,
+   * et croirait à une liste complète. Ce projet a déjà payé deux fois cette
+   * erreur-là — le plafond `limit=100` sur les commandes, la pagination absente
+   * de `searchDrivers` — et à chaque fois le symptôme était le même : « il
+   * existe, et l'application dit qu'il n'existe pas ».
+   *
+   * Les adhérents sont lus **un par un**. C'est assumé : une entreprise en a
+   * quelques-uns, et `getDriverByUuid()` compare l'uuid rendu à celui demandé,
+   * ce qu'un filtre de liste ne fait pas.
+   */
+  private async fleetDrivers(fleetId: string, vendorUuid: string): Promise<any[]> {
+    const origin = await this.fetchOwnedDrivers(vendorUuid);
+    const memberUuids = await this.activeMemberUuids(fleetId);
+
+    // L'origine gagne : un conducteur ne doit apparaître qu'une fois même si une
+    // adhésion a été créée avant que `vendor_uuid` ne le désigne.
+    const seen = new Set(origin.map((d: any) => d?.uuid));
+    const fetched = await Promise.all(
+      memberUuids
+        .filter((uuid) => !seen.has(uuid))
+        .map((uuid) =>
+          this.fleetbaseClient.getDriverByUuid(uuid).catch((error: any): any => {
+            // Un conducteur illisible ne fait pas disparaître les autres — mais
+            // il est signalé, parce qu'une adhésion active pointant vers un
+            // conducteur introuvable est un état qu'il faut réparer.
+            this.logger.warn(`Adhérent ${uuid} illisible : ${error.message}`);
+            return null;
+          }),
+        ),
+    );
+
+    return [...origin, ...fetched.filter((d: any) => d?.uuid)];
+  }
+
+  /**
+   * Ce conducteur a-t-il déjà une course en cours, **où que ce soit** ?
+   *
+   * ── Pourquoi la règle est « une à la fois » et non « une par entreprise » ─
+   *
+   * Les espèces ne savent pas de quelle entreprise elles viennent. Un conducteur
+   * qui porte simultanément l'encaissement d'un commerçant pour la société A et
+   * celui d'un autre pour la société B a **une seule poche**, et l'ordre dans
+   * lequel il remet devient indéterminé — chaque entreprise réclame le sien sans
+   * moyen de savoir ce qui a déjà été rendu. La multi-appartenance rend ce cas
+   * courant alors qu'il était impossible avant.
+   *
+   * Le contrôle porte donc sur **toutes** les courses du conducteur, y compris
+   * celles d'une autre entreprise, dont celle-ci ne saura rien de plus que
+   * « occupé ». Le dire autrement — nommer le commerçant ou la société — ferait
+   * de ce refus une fuite d'information commerciale.
+   *
+   * ⚠️ **Best-effort, et il faut le dire** (règle 2). Deux affectations
+   * simultanées par deux entreprises passeront toutes les deux : Fleetbase
+   * n'offre aucune écriture conditionnelle, et le contrôle est une lecture. Il
+   * ferme le cas ordinaire, pas la course critique.
+   */
+  private async driverIsBusy(driverUuid: string): Promise<boolean> {
+    try {
+      const orders = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
+        driver: driverUuid,
+      });
+
+      // La vérification en mémoire est conservée malgré le filtre `?driver=` :
+      // Fleetbase abandonne en silence un paramètre qu'il ne reconnaît pas, et
+      // une régression de nom rendrait ici **tout le monde occupé** plutôt que
+      // personne — le bon côté de l'erreur, mais seulement si on relit.
+      return orders.some((o: any) => {
+        const assigned =
+          o?.driver_assigned_uuid === driverUuid || o?.driver_assigned?.uuid === driverUuid;
+        return assigned && !TERMINAL_ORDER_STATUSES.includes(o?.status);
+      });
+    } catch (error: any) {
+      // ⚠️ Injoignable ⇒ on **laisse passer**.
+      //
+      // Refuser transformerait une panne de lecture en impossibilité d'affecter,
+      // alors que le pire cas toléré est deux courses simultanées — visible,
+      // réparable, et sans perte d'argent. Bloquer toute la flotte sur une
+      // lecture ratée serait le mauvais côté de l'erreur.
+      this.logger.warn(`Occupation non vérifiée pour ${driverUuid} : ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Cette entreprise peut-elle confier une course à ce conducteur ?
+   *
+   * Origine **ou** adhésion active. Le rattachement `pending` ne compte pas :
+   * c'est tout l'objet de l'acceptation, sans quoi une entreprise imposerait des
+   * courses — et la dette d'espèces qui va avec — à quelqu'un qui n'a rien
+   * accepté.
+   */
+  private async fleetMayUseDriver(
+    fleetId: string,
+    vendorUuid: string,
+    driverUuid: string,
+  ): Promise<boolean> {
+    const origin = await this.fetchOwnedDrivers(vendorUuid);
+    if (origin.some((d: any) => d?.uuid === driverUuid)) return true;
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: {
+        fleetbaseDriverUuid_fleetId: { fleetbaseDriverUuid: driverUuid, fleetId },
+      },
+    });
+
+    return membership?.status === 'active';
+  }
+
+  /**
+   * Cette personne est-elle déjà dans le réseau ?
+   *
+   * On cherche par **email et par téléphone**, séparément : ce sont les deux
+   * identifiants qu'un humain reconnaît, et une personne réinscrite le sera
+   * souvent avec l'un mais pas l'autre. Le nom ne sert pas — deux personnes
+   * peuvent le partager, et refuser une inscription sur un homonyme serait pire
+   * que le doublon qu'on évite.
+   */
+  private async assertNotAlreadyInNetwork(dto: AddDriverDto): Promise<void> {
+    const needles = [dto.email, dto.phone].filter(
+      (v): v is string => typeof v === 'string' && v.trim().length > 0,
+    );
+
+    for (const needle of needles) {
+      let matches: any[] = [];
+      try {
+        const response = await this.fleetbaseClient.getAllDrivers({
+          query: needle.trim(),
+          limit: 5,
+        });
+        matches = this.fleetbaseClient.extractCollection(response, 'drivers');
+      } catch (error: any) {
+        // ⚠️ L'annuaire injoignable **ne bloque pas** la création.
+        //
+        // Refuser ici transformerait une panne de lecture en impossibilité
+        // d'embaucher, alors que le pire cas toléré est un doublon — réparable,
+        // et signalé dans le log. L'inverse ne l'est pas.
+        this.logger.warn(`Contrôle de doublon impossible (${needle}) : ${error.message}`);
+        return;
+      }
+
+      const exact = matches.find(
+        (d: any) =>
+          this.sameIdentifier(d?.email, needle) || this.sameIdentifier(d?.phone, needle),
+      );
+
+      if (exact) {
+        conflict(
+          'driver.already_in_network',
+          'Cette personne est déjà dans le réseau — demandez son rattachement ' +
+            'plutôt que de la créer une seconde fois.',
+        );
+      }
+    }
+  }
+
+  /**
+   * Deux identifiants désignent-ils la même chose ?
+   *
+   * Les numéros sont comparés **sur leurs chiffres seuls** : « 0555 12 34 56 »
+   * et « +213555123456 » sont la même ligne, et une comparaison littérale ferait
+   * passer le doublon que ce contrôle existe pour attraper.
+   */
+  private sameIdentifier(stored: any, needle: string): boolean {
+    if (typeof stored !== 'string' || !stored.trim()) return false;
+
+    const a = stored.trim().toLowerCase();
+    const b = needle.trim().toLowerCase();
+    if (a === b) return true;
+
+    const da = a.replace(/\D/g, '');
+    const db = b.replace(/\D/g, '');
+    // Au moins six chiffres : en deçà, « 12 » se retrouve dans tous les numéros
+    // et le contrôle refuserait des créations légitimes.
+    return da.length >= 6 && db.length >= 6 && (da.endsWith(db) || db.endsWith(da));
   }
 
   /**
@@ -418,7 +618,9 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
+      // Les adhérents compris : une carte qui n'affiche que les conducteurs
+      // d'origine montrerait la moitié de la flotte sans le dire.
+      const owned = await this.fleetDrivers(fleetId, fleet.fleetbaseVendorUuid);
       const ownedUuids = new Set<string>(owned.map((d: any) => d.uuid));
 
       const targetIds =
@@ -432,7 +634,7 @@ export class FlotteService {
 
       // ── La position vient des conducteurs déjà rapatriés (Lot 6) ─────────
       //
-      // `fetchOwnedDrivers()` ci-dessus renvoie déjà `location` : la version
+      // `fleetDrivers()` ci-dessus renvoie déjà `location` : la version
       // précédente téléchargeait donc la donnée, la jetait, puis allait la
       // relire dans un miroir local. Le miroir a été supprimé, pas remplacé par
       // un second appel.
@@ -462,10 +664,251 @@ export class FlotteService {
   }
 
   /**
+   * Cherche un conducteur **déjà dans le réseau**, par nom ou téléphone.
+   *
+   * ── Pourquoi une recherche, et surtout pourquoi pas un annuaire ───────────
+   *
+   * Une entreprise qui embauche quelqu'un déjà connu du réseau doit pouvoir le
+   * rattacher plutôt que le recréer. Sans ce chemin, la multi-appartenance est
+   * mécaniquement impossible : la seconde entreprise n'a aucun moyen de savoir
+   * que la personne existe, donc elle la crée — deux `Driver` Fleetbase pour un
+   * seul être humain, avec position, disponibilité et historique dupliqués et
+   * désynchronisés (le défaut documenté le 26/07 pour le multi-Organization).
+   *
+   * Le mécanisme est **repris tel quel** de la recherche de transporteur du
+   * commerçant (29/07), y compris ses deux refus :
+   *
+   * - **le téléphone n'est jamais renvoyé** — celui qui cherche le connaît, il
+   *   cherche par là ; le rendre ferait de cette route un moyen de collecter
+   *   les coordonnées de conducteurs qu'on n'a jamais employés ;
+   * - **pas de liste tronquée** — au-delà de dix correspondances on demande de
+   *   préciser, une liste qu'on balaie en changeant une lettre étant exactement
+   *   l'annuaire qu'on refuse d'ouvrir.
+   *
+   * ⚠️ `?query=` et jamais `?phone=` : ce dernier renvoie **500** chez
+   * Fleetbase (`whereHas('phone')` sur un attribut calculé, bug amont reproduit
+   * depuis leur propre console).
+   */
+  async searchNetworkDrivers(fleetId: string, query: string) {
+    await this.getFleetWithValidation(fleetId);
+
+    const q = query.trim();
+
+    let matches: any[] = [];
+    try {
+      // Onze demandés pour dix rendus : le onzième ne sert qu'à savoir qu'il y
+      // en a trop, et n'est jamais renvoyé.
+      const response = await this.fleetbaseClient.getAllDrivers({ query: q, limit: 11 });
+      matches = this.fleetbaseClient.extractCollection(response, 'drivers');
+    } catch (error: any) {
+      this.logger.warn(`Annuaire conducteurs indisponible : ${error.message}`);
+      badRequest('driver.search_unavailable', 'Recherche indisponible pour le moment');
+    }
+
+    if (matches.length > 10) {
+      badRequest(
+        'driver.search_too_broad',
+        'Trop de correspondances — précisez le nom ou le numéro.',
+      );
+    }
+
+    // L'état du rattachement est joint à chaque résultat : sans lui, l'écran
+    // proposerait « rattacher » sur quelqu'un déjà rattaché, et l'entreprise
+    // découvrirait le refus après coup.
+    const existing = await this.prisma.driverMembership.findMany({
+      where: {
+        fleetId,
+        fleetbaseDriverUuid: { in: matches.map((d: any) => d?.uuid).filter(Boolean) },
+      },
+    });
+    const byUuid = new Map<string, string>(
+      existing.map((m: any) => [m.fleetbaseDriverUuid, m.status]),
+    );
+
+    const fleet = await this.getFleetWithValidation(fleetId);
+
+    return {
+      data: matches.map((driver: any) => ({
+        driver_uuid: driver?.uuid,
+        name: driver?.name ?? null,
+        // Déjà d'origine chez nous : le rattacher n'aurait aucun sens.
+        origin: driver?.vendor_uuid === fleet.fleetbaseVendorUuid,
+        membership: byUuid.get(driver?.uuid) ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Demander le rattachement d'un conducteur existant à cette entreprise.
+   *
+   * ── L'adhésion naît `pending`, et ce n'est pas de la politesse ────────────
+   *
+   * La dette d'espèces naît du couple (conducteur, facilitateur). Créer ce
+   * couple sans l'accord du conducteur lui imposerait une **obligation
+   * financière unilatérale** : l'entreprise le rattache, lui confie une course
+   * encaissée, et le voilà débiteur d'un montant qu'il n'a jamais accepté de
+   * porter. L'acceptation est donc une condition de l'engagement, pas une
+   * courtoisie.
+   */
+  async requestMembership(fleetId: string, driverUuid: string) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+
+    let driver: any;
+    try {
+      driver = await this.fleetbaseClient.getDriverByUuid(driverUuid);
+    } catch (error: any) {
+      this.logger.warn(`Conducteur ${driverUuid} illisible : ${error.message}`);
+      notFound('driver.not_found', 'Driver not found');
+    }
+
+    if (!driver?.uuid) {
+      notFound('driver.not_found', 'Driver not found');
+    }
+
+    // Déjà d'origine chez nous : le lien existe par `vendor_uuid`, une adhésion
+    // en doublon ferait apparaître la personne deux fois dans la liste.
+    if (driver.vendor_uuid === fleet.fleetbaseVendorUuid) {
+      conflict('membership.already_exists', 'Ce conducteur fait déjà partie de votre entreprise.');
+    }
+
+    const existing = await this.prisma.driverMembership.findUnique({
+      where: {
+        fleetbaseDriverUuid_fleetId: { fleetbaseDriverUuid: driverUuid, fleetId },
+      },
+    });
+
+    if (existing && ['pending', 'active'].includes(existing.status)) {
+      conflict('membership.already_exists', 'Une demande existe déjà pour ce conducteur.');
+    }
+
+    // Une adhésion refusée ou suspendue se **redemande** : on remet la ligne à
+    // `pending` plutôt que d'en créer une seconde, pour que l'unicité du couple
+    // tienne et que l'historique de la relation reste sur une seule ligne.
+    // ⚠️ Annoté explicitement : le client Prisma n'est pas généré dans cet
+    // environnement (le proxy sortant refuse `binaries.prisma.sh`), donc tout ce
+    // qui traverse un type Prisma y est `any` et `tsc` ne vérifie rien de ces
+    // lignes-là. L'annotation est ce qui reste vérifiable ici.
+    const data: {
+      status: string;
+      driverName: string | null;
+      requestedAt: Date;
+      respondedAt: Date | null;
+      suspendedAt: Date | null;
+    } = {
+      status: 'pending',
+      driverName: driver.name ?? null,
+      requestedAt: new Date(),
+      respondedAt: null,
+      suspendedAt: null,
+    };
+
+    const membership = existing
+      ? await this.prisma.driverMembership.update({ where: { id: existing.id }, data })
+      : await this.prisma.driverMembership.create({
+          data: { ...data, fleetbaseDriverUuid: driverUuid, fleetId },
+        });
+
+    this.logger.log(`Adhésion demandée : conducteur ${driverUuid} → flotte ${fleetId}`);
+
+    return {
+      id: membership.id,
+      driver_uuid: membership.fleetbaseDriverUuid,
+      name: membership.driverName,
+      status: membership.status,
+    };
+  }
+
+  /** Les demandes et rattachements de cette entreprise, tous états confondus. */
+  async listMemberships(fleetId: string) {
+    await this.getFleetWithValidation(fleetId);
+
+    const memberships = await this.prisma.driverMembership.findMany({
+      where: { fleetId },
+      orderBy: { requestedAt: 'desc' },
+    });
+
+    return {
+      data: memberships.map((m: any) => ({
+        id: m.id,
+        driver_uuid: m.fleetbaseDriverUuid,
+        name: m.driverName,
+        status: m.status,
+        requested_at: m.requestedAt,
+        responded_at: m.respondedAt,
+      })),
+    };
+  }
+
+  /**
+   * Suspendre ou réactiver un rattachement.
+   *
+   * ⚠️ **Jamais de suppression.** La dette d'un conducteur envers une entreprise
+   * survit à leur séparation ; effacer la ligne emporterait la seule trace du
+   * lien qui l'explique, et le registre afficherait une dette sans contrepartie
+   * lisible. Une entreprise coupe l'accès, elle n'efface pas le passé.
+   */
+  async setMembershipStatus(fleetId: string, membershipId: string, suspended: boolean) {
+    await this.getFleetWithValidation(fleetId);
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: { id: membershipId },
+    });
+
+    // Un seul refus pour « inexistant » et « pas à vous » : distinguer les deux
+    // apprendrait à une entreprise que l'adhésion existe ailleurs.
+    if (!membership || membership.fleetId !== fleetId) {
+      notFound('membership.not_found', 'Membership not found');
+    }
+
+    // Réactiver ce qui n'a jamais été accepté n'a pas de sens : cela poserait
+    // `active` sans que le conducteur ait jamais consenti, ce que le passage par
+    // `pending` existe précisément pour empêcher.
+    if (!suspended && membership.status !== 'suspended') {
+      conflict('membership.not_pending', 'Cette adhésion ne peut pas être réactivée.');
+    }
+
+    const updated = await this.prisma.driverMembership.update({
+      where: { id: membership.id },
+      data: {
+        status: suspended ? 'suspended' : 'active',
+        suspendedAt: suspended ? new Date() : null,
+      },
+    });
+
+    return { id: updated.id, status: updated.status };
+  }
+
+  /**
+   * Les uuid des conducteurs rattachés par adhésion **active**.
+   *
+   * Séparé de `fetchOwnedDrivers` parce que les deux sources ne se ressemblent
+   * pas : l'une est un filtre Fleetbase sur `vendor_uuid`, l'autre une table
+   * locale. Les composer est le travail de `getDrivers()`.
+   */
+  private async activeMemberUuids(fleetId: string): Promise<string[]> {
+    const memberships = await this.prisma.driverMembership.findMany({
+      where: { fleetId, status: 'active' },
+      select: { fleetbaseDriverUuid: true },
+    });
+    return memberships.map((m: any) => m.fleetbaseDriverUuid as string);
+  }
+
+  /**
    * Create a Driver and attach it to this fleet's Vendor.
+   *
+   * ⚠️ **Refuse une personne déjà présente dans le réseau**, et c'est cette
+   * garde qui fait tenir toute la multi-appartenance.
+   *
+   * Sans elle, l'entreprise B qui embauche quelqu'un que A a déjà inscrit le
+   * crée une seconde fois — elle n'a aucun moyen de savoir qu'il existe. Deux
+   * `Driver` Fleetbase pour une personne, dont la position, la disponibilité et
+   * l'historique divergent aussitôt. L'écran pousse vers la recherche, mais un
+   * écran se contourne : le refus est ici.
    */
   async addDriver(fleetId: string, dto: AddDriverDto) {
     const fleet = await this.getFleetWithValidation(fleetId);
+
+    await this.assertNotAlreadyInNetwork(dto);
 
     try {
       const created = await this.fleetbaseClient.createDriver({
@@ -508,11 +951,24 @@ export class FlotteService {
     // Verifies ownership of the order (throws NotFound/Forbidden otherwise)
     await this.getOrderDetail(fleetId, orderId);
 
-    const owned = await this.fetchOwnedDrivers(fleet.fleetbaseVendorUuid);
-    const ownsDriver = owned.some((d: any) => d.uuid === driverId);
+    // ⚠️ « À moi » ne veut plus dire `vendor_uuid` : un conducteur peut être
+    // rattaché par adhésion, et s'en tenir à l'origine refuserait une
+    // affectation parfaitement légitime — l'entreprise verrait la personne dans
+    // sa liste et ne pourrait rien lui confier.
+    const mayUse = await this.fleetMayUseDriver(fleetId, fleet.fleetbaseVendorUuid, driverId);
 
-    if (!ownsDriver) {
+    if (!mayUse) {
       forbidden('driver.forbidden', 'You do not have access to this driver');
+    }
+
+    // Une course à la fois, toutes entreprises confondues : deux encaissements
+    // simultanés se mélangent dans la même poche et l'ordre des remises devient
+    // indéterminé. Le refus ne dit pas pour qui il roule — ce serait une fuite.
+    if (await this.driverIsBusy(driverId)) {
+      conflict(
+        'driver.unavailable',
+        'Ce conducteur a déjà une course en cours. Attendez qu\'il la termine.',
+      );
     }
 
     // Le plafond de dette, sur un chemin qui ne le traversait pas (défaut D8).
@@ -569,17 +1025,23 @@ export class FlotteService {
     });
     if (!cached) return;
 
-    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
       fleetParty(fleetId),
       merchantParty(cached.merchantId),
       codAmount,
     );
 
     if (!allowed) {
+      // ⚠️ Le message suit le plafond qui a refusé. Dire « pour ce commerçant »
+      // quand c'est le plafond global qui a mordu enverrait chercher une remise
+      // auprès de quelqu'un qui n'est pour rien dans le blocage.
       badRequest(
         'cash.ceiling_exceeded',
-        `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
-          `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
+        scope === 'person'
+          ? `Votre entreprise détient déjà ${debt} ${this.cash.currency} au total, et cette ` +
+              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
+          : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+              `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
       );
     }
   }

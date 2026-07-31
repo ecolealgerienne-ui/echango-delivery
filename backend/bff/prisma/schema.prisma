@@ -75,6 +75,10 @@ model FleetAccount {
   businessName      String
   businessPhone     String?
 
+  /// Les conducteurs rattachés à cette entreprise **en plus** de ceux dont elle
+  /// est l'origine (`Driver.vendor_uuid`). Voir `DriverMembership`.
+  memberships       DriverMembership[]
+
   /// Coupe-circuit applicatif, **distinct de la validation**.
   ///
   /// `Vendor.status` chez Fleetbase porte la validation par un admin ; ce
@@ -519,6 +523,76 @@ model DriverFavourite {
 
   @@unique([merchantId, fleetbaseDriverUuid])
   @@index([merchantId])
+}
+
+
+/// L'appartenance d'un conducteur à une entreprise de transport.
+///
+/// ── Pourquoi une table, alors que Fleetbase a déjà `Driver.vendor_uuid` ────
+///
+/// Parce qu'elle est **mono-valuée**, et que la décision du 31/07/2026 est
+/// qu'un conducteur peut travailler pour plusieurs entreprises. Ce n'est pas un
+/// confort : depuis que « il y a toujours un facilitateur, Echango pour les
+/// indépendants » (§2.2), le cas « indépendant qui roule aussi pour une
+/// société » **est** de la multi-appartenance. Sans cette table, un conducteur
+/// doit choisir entre le pool et une société.
+///
+/// C'est le cas nommé par la règle 1 du projet : le BFF ne conserve que ce que
+/// Fleetbase ne peut **structurellement** pas porter. Une relation n-n en est
+/// une.
+///
+/// ── Ce que `vendor_uuid` garde, et ce que cette table ajoute ───────────────
+///
+/// `Driver.vendor_uuid` reste **l'entreprise d'origine**, celle qui a fait
+/// entrer la personne dans le réseau. La console Fleetbase continue donc
+/// d'afficher quelque chose de vrai — simplement incomplet. Cette table porte
+/// les rattachements **supplémentaires**.
+///
+/// ⚠️ Conséquence à ne pas perdre : la liste des conducteurs d'une entreprise
+/// ne peut plus venir du filtre `?vendor=` de Fleetbase, qui n'en verrait que
+/// la moitié — silencieusement, ce qui est le pire des deux. Elle se compose
+/// dans `getDrivers()`.
+///
+/// ── Pourquoi l'uuid Fleetbase et non un `DriverAccount` ───────────────────
+///
+/// Un conducteur existe dans le réseau **avant** d'avoir une application :
+/// `addDriver()` crée le `Driver`, le compte vient plus tard par invitation.
+/// Référencer un compte qui peut ne pas exister rendrait le rattachement
+/// impossible au moment précis où il est demandé. Même convention que
+/// `DriverFavourite`.
+model DriverMembership {
+  id                  String   @id @default(cuid())
+
+  /// Le conducteur, par son identité dans le réseau.
+  fleetbaseDriverUuid String
+
+  fleetId             String
+  fleet               FleetAccount @relation(fields: [fleetId], references: [id], onDelete: Restrict)
+
+  /// `pending` — demandé par l'entreprise, le conducteur n'a pas répondu.
+  /// `active` — accepté, l'entreprise peut lui confier des courses.
+  /// `declined` — refusé par le conducteur.
+  /// `suspended` — l'entreprise a coupé.
+  ///
+  /// ⚠️ Une adhésion **ne se supprime pas**, elle change d'état. La dette d'un
+  /// conducteur envers une entreprise survit à leur séparation, et une ligne
+  /// effacée emporterait la seule trace du lien qui l'explique.
+  status              String   @default("pending")
+
+  /// Nom au moment de la demande — même motif que `DriverFavourite.driverName` :
+  /// afficher une liste sans un appel Fleetbase par ligne.
+  driverName          String?
+
+  requestedAt         DateTime @default(now())
+  respondedAt         DateTime?
+  suspendedAt         DateTime?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([fleetbaseDriverUuid, fleetId])
+  @@index([fleetId])
+  @@index([fleetbaseDriverUuid])
 }
 
 

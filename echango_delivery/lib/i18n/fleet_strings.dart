@@ -1,6 +1,14 @@
 import 'dart:ui' show Locale;
 
-/// Libellés d'interface du profil « entreprise de transport ».
+/// Libellés d'interface du profil « entreprise de transport » — **et des écrans
+/// de rattachement vus du conducteur**.
+///
+/// Ces derniers vivent ici et non dans une table à part parce que c'est **une
+/// seule fonctionnalité vue des deux bouts** : l'entreprise demande, le
+/// conducteur accepte, et les deux écrans nomment les mêmes états. Deux tables
+/// auraient produit deux vocabulaires pour un même `pending`, ce que ce projet a
+/// déjà payé (« deux tables recopiées ont affiché deux textes différents pour la
+/// même commande »).
 ///
 /// ── Pourquoi ce fichier existe, et pourquoi seulement pour ce profil ───────
 ///
@@ -126,6 +134,45 @@ const Map<String, String> _fr = {
   'fleet.cash.owed_to_merchants': 'Ce que vous devez aux commerçants',
   'fleet.cash.empty': 'Aucun mouvement d’espèces.',
 
+  // ── Rattachements conducteur ↔ entreprise ───────────────────────────────
+  'fleet.tab.memberships': 'Rattachements',
+  'fleet.members.empty': 'Aucun rattachement.',
+  'fleet.members.empty.hint':
+      'Cherchez un conducteur déjà dans le réseau, ou créez-en un nouveau.',
+  'fleet.members.search': 'Chercher un conducteur',
+  'fleet.members.search.hint': 'Nom ou numéro de téléphone',
+  'fleet.members.search.none': 'Personne de ce nom dans le réseau.',
+  'fleet.members.request': 'Demander le rattachement',
+  'fleet.members.requested': 'Demande envoyée. En attente de sa réponse.',
+  'fleet.members.origin': 'Votre conducteur',
+  'fleet.members.create': 'Créer un nouveau conducteur',
+  // ⚠️ Le texte explique **pourquoi** on cherche avant de créer : sans lui, un
+  // gestionnaire pressé crée un doublon et se demande ensuite pourquoi la
+  // position du conducteur ne bouge jamais.
+  'fleet.members.create.hint':
+      'Cherchez-le d’abord : s’il roule déjà pour quelqu’un, il faut le '
+          'rattacher et non le recréer.',
+  'fleet.members.suspend': 'Suspendre',
+  'fleet.members.reactivate': 'Réactiver',
+  'fleet.members.status.pending': 'En attente de sa réponse',
+  'fleet.members.status.active': 'Rattaché',
+  'fleet.members.status.declined': 'Refusé',
+  'fleet.members.status.suspended': 'Suspendu',
+
+  // ── Vu du conducteur ────────────────────────────────────────────────────
+  'driver.fleets.title': 'Mes entreprises',
+  'driver.fleets.empty': 'Vous n’êtes rattaché à aucune entreprise.',
+  'driver.fleets.empty.hint':
+      'Une entreprise qui vous embauche vous enverra une demande ici.',
+  'driver.fleets.accept': 'Accepter',
+  'driver.fleets.decline': 'Refuser',
+  // ⚠️ Ce n'est pas une formalité, et l'écran doit le dire : accepter, c'est
+  // s'engager à devoir à cette entreprise les espèces qu'on encaissera pour
+  // elle.
+  'driver.fleets.explain':
+      'Accepter, c’est autoriser cette entreprise à vous confier des courses. '
+          'Les espèces que vous encaisserez pour elle lui seront dues.',
+
   // ── États partagés ──────────────────────────────────────────────────────
   'fleet.loading': 'Chargement…',
   'fleet.retry': 'Réessayer',
@@ -199,6 +246,34 @@ const Map<String, String> _ar = {
   'fleet.cash.owed_by_drivers': 'ما يدين به سائقوك لك',
   'fleet.cash.owed_to_merchants': 'ما تدين به للتجار',
   'fleet.cash.empty': 'لا توجد حركات نقدية.',
+
+  'fleet.tab.memberships': 'الارتباطات',
+  'fleet.members.empty': 'لا توجد ارتباطات.',
+  'fleet.members.empty.hint': 'ابحث عن سائق موجود في الشبكة، أو أنشئ سائقاً جديداً.',
+  'fleet.members.search': 'البحث عن سائق',
+  'fleet.members.search.hint': 'الاسم أو رقم الهاتف',
+  'fleet.members.search.none': 'لا أحد بهذا الاسم في الشبكة.',
+  'fleet.members.request': 'طلب الارتباط',
+  'fleet.members.requested': 'تم إرسال الطلب. في انتظار رده.',
+  'fleet.members.origin': 'سائقك',
+  'fleet.members.create': 'إنشاء سائق جديد',
+  'fleet.members.create.hint':
+      'ابحث عنه أولاً: إذا كان يعمل لدى جهة أخرى، يجب ربطه لا إنشاؤه من جديد.',
+  'fleet.members.suspend': 'تعليق',
+  'fleet.members.reactivate': 'إعادة التفعيل',
+  'fleet.members.status.pending': 'في انتظار رده',
+  'fleet.members.status.active': 'مرتبط',
+  'fleet.members.status.declined': 'مرفوض',
+  'fleet.members.status.suspended': 'معلّق',
+
+  'driver.fleets.title': 'شركاتي',
+  'driver.fleets.empty': 'لست مرتبطاً بأي شركة.',
+  'driver.fleets.empty.hint': 'الشركة التي توظفك سترسل لك طلباً هنا.',
+  'driver.fleets.accept': 'قبول',
+  'driver.fleets.decline': 'رفض',
+  'driver.fleets.explain':
+      'القبول يعني السماح لهذه الشركة بإسناد رحلات إليك. الأموال التي تحصّلها '
+          'لصالحها تصبح ديناً عليك تجاهها.',
 
   'fleet.loading': 'جاري التحميل…',
   'fleet.retry': 'إعادة المحاولة',

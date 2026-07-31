@@ -148,6 +148,19 @@ const Map<String, String> _fr = {
   'driver.position_update_failed': 'Envoi de la position impossible.',
   'driver.online_toggle_failed': 'Changement de disponibilité impossible.',
   'driver.search_unavailable': 'Recherche indisponible pour le moment.',
+  'driver.search_too_broad':
+      'Trop de résultats — précisez le nom ou le numéro de téléphone.',
+  'driver.already_in_network':
+      'Cette personne est déjà dans le réseau. Recherchez-la et demandez son '
+          'rattachement au lieu de la créer.',
+  'membership.not_found': 'Ce rattachement n’existe pas.',
+  'membership.forbidden': 'Ce rattachement ne vous concerne pas.',
+  'membership.already_exists': 'Une demande existe déjà pour ce conducteur.',
+  'membership.not_pending': 'Cette demande a déjà reçu une réponse.',
+  'membership.inactive': 'Ce rattachement n’est pas actif.',
+  'membership.no_account':
+      'Ce conducteur n’a pas encore de compte dans l’application.',
+  'membership.update_failed': 'Le rattachement n’a pas pu être mis à jour.',
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   'fleet.not_found': 'Compte flotte introuvable.',
@@ -320,6 +333,16 @@ const Map<String, String> _ar = {
   'driver.position_update_failed': 'تعذر إرسال الموقع.',
   'driver.online_toggle_failed': 'تعذر تغيير حالة التوفر.',
   'driver.search_unavailable': 'البحث غير متاح حالياً.',
+  'driver.search_too_broad': 'نتائج كثيرة — حدّد الاسم أو رقم الهاتف.',
+  'driver.already_in_network':
+      'هذا الشخص موجود بالفعل في الشبكة. ابحث عنه واطلب ربطه بدل إنشائه من جديد.',
+  'membership.not_found': 'هذا الارتباط غير موجود.',
+  'membership.forbidden': 'هذا الارتباط لا يخصك.',
+  'membership.already_exists': 'يوجد طلب سابق لهذا السائق.',
+  'membership.not_pending': 'تمت الإجابة على هذا الطلب من قبل.',
+  'membership.inactive': 'هذا الارتباط غير مفعّل.',
+  'membership.no_account': 'هذا السائق ليس لديه حساب في التطبيق بعد.',
+  'membership.update_failed': 'تعذّر تحديث الارتباط.',
 
   // ── الأسطول (ملف مدير الأسطول الصغير) ────────────────────────────────────
   'fleet.not_found': 'حساب الأسطول غير موجود.',

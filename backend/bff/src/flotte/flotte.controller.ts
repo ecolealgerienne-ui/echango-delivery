@@ -4,6 +4,10 @@ import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
 import { ListFleetOrdersQueryDto, AssignDriverDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+// Réutilisé du module commerçant : la contrainte est la même — au moins trois
+// caractères, au plus soixante — et en écrire une copie ferait diverger les deux
+// recherches au premier ajustement.
+import { DriverSearchDto } from '../commercant/dto/driver-search.dto';
 import { CashService, fleetParty } from '../cash/cash.service';
 import { FleetRemittanceDto } from './dto/cash.dto';
 
@@ -118,6 +122,54 @@ export class FlotteController {
   @Get('drivers')
   async getDrivers(@Request() req: any) {
     return this.flotteService.getDrivers(this.fleetId(req));
+  }
+
+  /**
+   * Chercher un conducteur **déjà dans le réseau**, pour le rattacher.
+   *
+   * ⚠️ Déclarée avant `drivers/:id/...` n'a pas d'incidence technique, mais
+   * `recherche` n'est pas un identifiant : la garder distincte évite qu'un jour
+   * quelqu'un la transforme en `drivers/:id` et ouvre l'annuaire par accident.
+   */
+  @Get('conducteurs/recherche')
+  async searchNetworkDrivers(@Request() req: any, @Query() query: DriverSearchDto) {
+    return this.flotteService.searchNetworkDrivers(this.fleetId(req), query.q);
+  }
+
+  /** Demander le rattachement d'un conducteur existant. Naît `pending`. */
+  @Post('conducteurs/:id/adhesion')
+  async requestMembership(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) driverUuid: string,
+  ) {
+    return this.flotteService.requestMembership(this.fleetId(req), driverUuid);
+  }
+
+  @Get('adhesions')
+  async listMemberships(@Request() req: any) {
+    return this.flotteService.listMemberships(this.fleetId(req));
+  }
+
+  /**
+   * Suspendre ou réactiver un rattachement.
+   *
+   * Aucune route de suppression, et c'est délibéré : la dette d'un conducteur
+   * envers une entreprise survit à leur séparation.
+   */
+  @Post('adhesions/:id/suspendre')
+  async suspendMembership(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) membershipId: string,
+  ) {
+    return this.flotteService.setMembershipStatus(this.fleetId(req), membershipId, true);
+  }
+
+  @Post('adhesions/:id/reactiver')
+  async reactivateMembership(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) membershipId: string,
+  ) {
+    return this.flotteService.setMembershipStatus(this.fleetId(req), membershipId, false);
   }
 
   @Post('drivers')

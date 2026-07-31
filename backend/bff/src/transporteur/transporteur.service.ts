@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { badRequest, forbidden, notFound } from '../common/errors/http-errors';
+import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -333,6 +333,131 @@ export class TransporteurService {
    * indéterminé plutôt que d'affirmer « hors ligne », qui serait un mensonge
    * dans le sens dangereux (le driver ne réagit pas à une course reçue).
    */
+  /**
+   * Les entreprises de ce conducteur — rattachements et demandes en attente.
+   *
+   * ── Pourquoi le conducteur doit voir ça, et pas seulement l'entreprise ────
+   *
+   * Un rattachement n'est pas administratif : il décide **à qui il devra les
+   * espèces** d'une course. `driverCounterparty()` prend le facilitateur de la
+   * commande, donc travailler pour deux entreprises, c'est porter deux dettes
+   * distinctes. Un conducteur qui ne sait pas pour qui il roule ne peut pas
+   * savoir à qui remettre l'argent.
+   *
+   * ⚠️ L'entreprise d'origine (`Driver.vendor_uuid`) est incluse et marquée
+   * comme telle. La laisser de côté aurait montré une liste où l'employeur
+   * principal manque — la moitié la plus importante, et celle qu'on ne pense
+   * pas à vérifier parce qu'elle « va de soi ».
+   */
+  async listMemberships(driverId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const memberships = await this.prisma.driverMembership.findMany({
+      where: { fleetbaseDriverUuid: driver.fleetbaseDriverUuid },
+      include: { fleet: true },
+      orderBy: { requestedAt: 'desc' },
+    });
+
+    const rows = memberships.map((m: any) => ({
+      id: m.id,
+      fleet_id: m.fleetId,
+      // Le nom commercial, pas l'email : c'est sous ce nom que le conducteur
+      // connaît l'entreprise.
+      name: m.fleet?.businessName ?? null,
+      status: m.status,
+      origin: false,
+      requested_at: m.requestedAt,
+    }));
+
+    const origin = await this.originFleet(driver.fleetbaseDriverUuid);
+    return { data: origin ? [origin, ...rows] : rows };
+  }
+
+  /**
+   * L'entreprise d'origine, lue chez Fleetbase et non dans notre table.
+   *
+   * `Driver.vendor_uuid` en est la source de vérité (règle 1) ; le `FleetAccount`
+   * n'est là que pour lui donner un nom lisible. Injoignable, on renvoie `null`
+   * plutôt qu'une entrée à moitié remplie : une ligne sans nom dans la liste des
+   * employeurs se lit comme une entreprise inconnue, ce qui est pire qu'une
+   * ligne absente.
+   */
+  private async originFleet(driverUuid: string): Promise<any | null> {
+    let vendorUuid: string | null = null;
+    try {
+      const driver = await this.fleetbaseClient.getDriverByUuid(driverUuid);
+      vendorUuid = driver?.vendor_uuid ?? null;
+    } catch (error: any) {
+      this.logger.warn(`Entreprise d'origine illisible pour ${driverUuid} : ${error.message}`);
+      return null;
+    }
+
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+    });
+    if (!fleet) return null;
+
+    return {
+      id: null,
+      fleet_id: fleet.id,
+      name: fleet.businessName,
+      status: 'active',
+      // Ce qui distingue l'origine d'une adhésion : elle ne se refuse pas et ne
+      // se suspend pas depuis l'application. L'écran doit le savoir pour ne pas
+      // offrir un bouton sans effet.
+      origin: true,
+      requested_at: null,
+    };
+  }
+
+  /**
+   * Accepter ou refuser un rattachement.
+   *
+   * ── Ce que l'acceptation engage réellement ───────────────────────────────
+   *
+   * Elle autorise l'entreprise à confier des courses — donc à faire porter au
+   * conducteur les espèces d'un commerçant, sous forme d'une dette envers elle.
+   * C'est pour cela que le rattachement naît `pending` et non `active` : sans ce
+   * passage, une entreprise imposerait une obligation financière à quelqu'un qui
+   * n'a rien accepté.
+   */
+  async respondToMembership(driverId: string, membershipId: string, accept: boolean) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: { id: membershipId },
+    });
+
+    // Un seul refus pour « inexistante » et « pas la vôtre » : les distinguer
+    // apprendrait au conducteur qu'une adhésion existe pour quelqu'un d'autre.
+    if (!membership || membership.fleetbaseDriverUuid !== driver.fleetbaseDriverUuid) {
+      notFound('membership.not_found', 'Membership not found');
+    }
+
+    if (membership.status !== 'pending') {
+      conflict(
+        'membership.not_pending',
+        'Cette demande a déjà reçu une réponse.',
+      );
+    }
+
+    const updated = await this.prisma.driverMembership.update({
+      where: { id: membership.id },
+      data: {
+        status: accept ? 'active' : 'declined',
+        respondedAt: new Date(),
+      },
+    });
+
+    this.logger.log(
+      `Adhésion ${membershipId} ${accept ? 'acceptée' : 'refusée'} par ${driverId}`,
+    );
+
+    return { id: updated.id, status: updated.status };
+  }
+
   async getProfile(driverId: string) {
     const driver = await this.getDriverOrFail(driverId);
 
@@ -1156,18 +1281,25 @@ export class TransporteurService {
     // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
     const facilitatorId = await this.resolveFacilitatorId(order);
 
-    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
       driverParty(driverId),
       this.cash.driverCounterparty(facilitatorId, cached.merchantId),
       codAmount,
     );
 
     if (!allowed) {
+      // ⚠️ « pour ce commerçant » est faux quand c'est le plafond par personne
+      // qui a mordu : le conducteur irait remettre à celui-là, sans se
+      // débloquer, et conclurait à un défaut de l'application.
       badRequest(
         'cash.ceiling_exceeded',
-        `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
-          `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-          'Remettez les espèces avant de reprendre une course encaissée pour lui.',
+        scope === 'person'
+          ? `Vous détenez déjà ${debt} ${this.cash.currency} au total, toutes entreprises et ` +
+              `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
+              `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
+          : `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
+              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
+              'Remettez les espèces avant de reprendre une course encaissée pour lui.',
       );
     }
   }

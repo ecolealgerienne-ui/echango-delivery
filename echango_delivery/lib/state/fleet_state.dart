@@ -44,6 +44,8 @@ class FleetState extends ChangeNotifier {
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _opportunities = [];
   List<Map<String, dynamic>> _drivers = [];
+  List<Map<String, dynamic>> _memberships = [];
+  bool _membershipsUnavailable = false;
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -66,6 +68,8 @@ class FleetState extends ChangeNotifier {
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
   bool get isLoading => _isLoading;
   bool get driversUnavailable => _driversUnavailable;
+  List<Map<String, dynamic>> get memberships => List.unmodifiable(_memberships);
+  bool get membershipsUnavailable => _membershipsUnavailable;
   String? get errorMessage => _errorMessage;
   String? get claimingOrderId => _claimingOrderId;
 
@@ -175,6 +179,74 @@ class FleetState extends ChangeNotifier {
     } catch (_) {
       _errorMessage = translateErrorCode(AppError.unknown, _locale);
       return _errorMessage;
+    }
+  }
+
+  /// Chercher un conducteur déjà dans le réseau.
+  ///
+  /// Rend la liste, ou lève le message traduit — la distinction compte : « aucun
+  /// résultat » et « recherche trop large » sont deux réponses différentes, et
+  /// les confondre ferait chercher plus longtemps quelqu'un qu'on a déjà trouvé
+  /// dix fois.
+  Future<({List<Map<String, dynamic>> results, String? error})> searchNetworkDrivers(
+    String query,
+  ) async {
+    try {
+      final results = await _apiClient.searchNetworkDrivers(query);
+      return (results: results, error: null);
+    } on AppException catch (e) {
+      return (results: <Map<String, dynamic>>[], error: translateErrorCode(e.code, _locale));
+    } catch (_) {
+      return (
+        results: <Map<String, dynamic>>[],
+        error: translateErrorCode(AppError.unknown, _locale),
+      );
+    }
+  }
+
+  /// Demander le rattachement d'un conducteur existant.
+  Future<String?> requestMembership(String driverUuid) async {
+    try {
+      await _apiClient.requestDriverMembership(driverUuid);
+      await loadMemberships();
+      return null;
+    } on AppException catch (e) {
+      return translateErrorCode(e.code, _locale);
+    } catch (_) {
+      return translateErrorCode(AppError.unknown, _locale);
+    }
+  }
+
+  /// Les rattachements — demandés, actifs, refusés, suspendus.
+  ///
+  /// ⚠️ Distinct de `drivers` et il faut que ça le reste : `drivers` répond « à
+  /// qui puis-je confier une course », les adhésions répondent « où en est ma
+  /// demande ». Les fusionner ferait apparaître dans le sélecteur de conducteur
+  /// des gens qui n'ont pas encore accepté.
+  Future<void> loadMemberships() async {
+    try {
+      _memberships = await _apiClient.getFleetMemberships();
+      _membershipsUnavailable = false;
+    } on AppException catch (e) {
+      _membershipsUnavailable = true;
+      _errorMessage = translateErrorCode(e.code, _locale);
+    } catch (_) {
+      _membershipsUnavailable = true;
+      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+    }
+    notifyListeners();
+  }
+
+  Future<String?> setMembershipSuspended(String membershipId, bool suspended) async {
+    try {
+      await _apiClient.setFleetMembershipSuspended(membershipId, suspended);
+      await load();
+      await loadMemberships();
+      return null;
+    } on AppException catch (e) {
+      return translateErrorCode(e.code, _locale);
+    } catch (_) {
+      return translateErrorCode(AppError.unknown, _locale);
     }
   }
 

@@ -46,6 +46,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: const Icon(Icons.account_balance_wallet_outlined),
             onPressed: () => context.push('/transporteur/caisse'),
           ),
+          // Les entreprises pour lesquelles il roule — et surtout **les demandes
+          // en attente**. Sans accès depuis l'accueil, une demande de
+          // rattachement resterait invisible : le conducteur ne la découvrirait
+          // qu'en cherchant un écran dont il ignore l'existence, et l'entreprise
+          // conclurait à un refus.
+          IconButton(
+            tooltip: 'Mes entreprises',
+            icon: const Icon(Icons.business_outlined),
+            onPressed: () => context.push('/transporteur/entreprises'),
+          ),
           const LanguageSelector(),
           const _AvailabilitySwitch(),
         ],

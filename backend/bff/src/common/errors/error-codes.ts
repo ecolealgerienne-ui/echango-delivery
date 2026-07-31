@@ -161,6 +161,23 @@ export const ErrorCode = {
   DRIVER_POSITION_UPDATE_FAILED: 'driver.position_update_failed',
   DRIVER_ONLINE_TOGGLE_FAILED: 'driver.online_toggle_failed',
   DRIVER_SEARCH_UNAVAILABLE: 'driver.search_unavailable',
+  /// Recherche trop large : on demande de préciser plutôt que de tronquer, une
+  /// liste balayable étant l'annuaire qu'on refuse d'ouvrir (29/07).
+  DRIVER_SEARCH_TOO_BROAD: 'driver.search_too_broad',
+  /// Cette personne est déjà dans le réseau : on ne la crée pas une seconde
+  /// fois, on demande son rattachement. C'est la garde qui fait tenir toute la
+  /// multi-appartenance — sans elle, deux entreprises créent deux conducteurs
+  /// pour une seule personne, avec position et historique désynchronisés.
+  DRIVER_ALREADY_IN_NETWORK: 'driver.already_in_network',
+
+  // ── Adhésions conducteur ↔ entreprise ────────────────────────────────────
+  MEMBERSHIP_NOT_FOUND: 'membership.not_found',
+  MEMBERSHIP_FORBIDDEN: 'membership.forbidden',
+  MEMBERSHIP_ALREADY_EXISTS: 'membership.already_exists',
+  MEMBERSHIP_NOT_PENDING: 'membership.not_pending',
+  MEMBERSHIP_INACTIVE: 'membership.inactive',
+  MEMBERSHIP_NO_ACCOUNT: 'membership.no_account',
+  MEMBERSHIP_UPDATE_FAILED: 'membership.update_failed',
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   FLEET_NOT_FOUND: 'fleet.not_found',
