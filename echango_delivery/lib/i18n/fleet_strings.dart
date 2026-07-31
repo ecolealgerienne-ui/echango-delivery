@@ -70,6 +70,12 @@ const Map<String, String> _fr = {
   'fleet.orders.price': 'Rémunération',
   'fleet.orders.cod': 'À encaisser à la porte',
   'fleet.orders.status': 'Statut',
+  // ⚠️ « Trajet » et non « Distance » : sur une ligne de liste, « 12 km » se lit
+  // spontanément « à 12 km de moi ». Le serveur ignore où se trouve
+  // l'entreprise et ne peut rien dire de tel — l'ambiguïté ferait refuser des
+  // courses proches et accepter des courses lointaines.
+  'fleet.orders.trip_distance': 'Trajet',
+  'fleet.orders.scheduled': 'Pour le',
   'fleet.orders.refresh': 'Actualiser',
 
   // ── État d'une course, composé de quatre champs ─────────────────────────
@@ -95,6 +101,9 @@ const Map<String, String> _fr = {
   'fleet.opportunities.take.short': 'Prendre',
   'fleet.opportunities.taking': 'Prise en cours…',
   'fleet.opportunities.taken': 'Course prise. Désignez un conducteur.',
+  // Quand le commerçant n'a renseigné ni prix, ni distance, ni échéance. Le
+  // dire vaut mieux qu'une ligne vide, qui se lit comme un défaut d'affichage.
+  'fleet.opportunities.no_detail': 'Aucun détail communiqué — ouvrez la fiche.',
   // ⚠️ Ce libellé n'est pas décoratif : le nom et le téléphone du destinataire
   // sont volontairement absents tant que personne ne s'est engagé, et sans
   // phrase l'entreprise croirait à une donnée manquante — donc à un défaut.
@@ -273,6 +282,8 @@ const Map<String, String> _ar = {
   'fleet.orders.price': 'الأجرة',
   'fleet.orders.cod': 'المبلغ المطلوب عند الباب',
   'fleet.orders.status': 'الحالة',
+  'fleet.orders.trip_distance': 'المسار',
+  'fleet.orders.scheduled': 'ليوم',
   'fleet.orders.refresh': 'تحديث',
 
   'fleet.state.draft': 'لم ينشرها التاجر',
@@ -290,6 +301,7 @@ const Map<String, String> _ar = {
   'fleet.opportunities.take.short': 'خذها',
   'fleet.opportunities.taking': 'جاري الأخذ…',
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
+  'fleet.opportunities.no_detail': 'لا توجد تفاصيل — افتح البطاقة.',
   'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
 
   'fleet.detail.title': 'تفاصيل الرحلة',

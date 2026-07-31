@@ -408,7 +408,23 @@ export class FleetbaseApiClient {
     name: string,
     latitude: number,
     longitude: number,
-    contact?: { name?: string; phone?: string; address?: string },
+    contact?: {
+      name?: string;
+      phone?: string;
+      address?: string;
+      /**
+       * Commune et quartier issus du géocodage inverse.
+       *
+       * ⚠️ **Le lieu n'avait, jusqu'au 31/07/2026, que son nom et un point.**
+       * Aucune colonne d'adresse structurée n'était renseignée, alors que
+       * l'application les avait sous la main. Sur une course non réclamée,
+       * `projectPlace(…, 'anonymous')` recompose l'adresse à partir de ces
+       * colonnes-là uniquement : il n'y en avait aucune, donc l'entreprise
+       * lisait un identifiant technique en titre de ligne.
+       */
+      city?: string;
+      neighborhood?: string;
+    },
   ) {
     try {
       const response = await this.callFleetOps('POST', '/places', {
@@ -418,6 +434,8 @@ export class FleetbaseApiClient {
           coordinates: [longitude, latitude],
         },
         ...(contact?.address ? { street1: contact.address } : {}),
+        ...(contact?.city ? { city: contact.city } : {}),
+        ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
         ...(contact?.phone ? { phone: contact.phone } : {}),
         ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
       });

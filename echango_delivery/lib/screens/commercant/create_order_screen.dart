@@ -107,6 +107,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   LatLng? _pickupPoint;
   LatLng? _dropoffPoint;
 
+  /// Commune et quartier de chaque bout, tels que le géocodage les a rendus.
+  ///
+  /// ⚠️ **Ils étaient jetés.** Le sélecteur de carte renvoie un
+  /// `PickedLocation` complet et le carnet d'adresses porte les mêmes colonnes ;
+  /// le formulaire n'en gardait que le libellé, qui part dans les *précisions*.
+  /// Le lieu créé n'avait donc aucune colonne d'adresse structurée — et sur une
+  /// course non réclamée, où l'identité est masquée, il ne restait plus rien à
+  /// afficher : l'entreprise lisait `order_1sn4fzn6e2` en titre de ligne.
+  String? _pickupCity;
+  String? _pickupNeighborhood;
+  String? _dropoffCity;
+  String? _dropoffNeighborhood;
+
   @override
   void initState() {
     super.initState();
@@ -259,12 +272,16 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _pickupContact.text = a.contactName ?? '';
         _pickupPhone.text = a.contactPhone ?? '';
         _pickupPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
+        _pickupCity = a.city;
+        _pickupNeighborhood = a.neighborhood;
       } else {
         _dropoffName.text = a.name;
         _dropoffAddress.text = a.street1;
         _dropoffContact.text = a.contactName ?? '';
         _dropoffPhone.text = a.contactPhone ?? '';
         _dropoffPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
+        _dropoffCity = a.city;
+        _dropoffNeighborhood = a.neighborhood;
       }
     });
 
@@ -302,6 +319,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'pickupLocationName': _pickupName.text.trim(),
       'pickupLatitude': _pickupPoint!.latitude,
       'pickupLongitude': _pickupPoint!.longitude,
+      if (_pickupCity != null) 'pickupCity': _pickupCity,
+      if (_pickupNeighborhood != null) 'pickupNeighborhood': _pickupNeighborhood,
       'pickupContactName':
           _pickupContact.text.trim().isEmpty ? 'Commerce' : _pickupContact.text.trim(),
       'pickupContactPhone': _pickupPhone.text.trim(),
@@ -310,6 +329,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'dropoffLocationName': _dropoffName.text.trim(),
       'dropoffLatitude': _dropoffPoint!.latitude,
       'dropoffLongitude': _dropoffPoint!.longitude,
+      // Commune et quartier, jamais la rue : c'est ce qui rend une course libre
+      // jugeable sans désigner une porte.
+      if (_dropoffCity != null) 'dropoffCity': _dropoffCity,
+      if (_dropoffNeighborhood != null) 'dropoffNeighborhood': _dropoffNeighborhood,
       'dropoffContactName':
           _dropoffContact.text.trim().isEmpty ? _dropoffName.text.trim() : _dropoffContact.text.trim(),
       'dropoffContactPhone': _dropoffPhone.text.trim(),
@@ -925,9 +948,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     setState(() {
       if (toPickup) {
         _pickupPoint = result.point;
+        _pickupCity = result.city;
+        _pickupNeighborhood = result.neighborhood;
         if (_pickupAddress.text.trim().isEmpty) _pickupAddress.text = result.label;
       } else {
         _dropoffPoint = result.point;
+        _dropoffCity = result.city;
+        _dropoffNeighborhood = result.neighborhood;
         if (_dropoffAddress.text.trim().isEmpty) _dropoffAddress.text = result.label;
       }
     });

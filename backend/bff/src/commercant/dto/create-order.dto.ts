@@ -43,6 +43,34 @@ export class CreateOrderDto {
   @IsNumber()
   pickupLongitude: number;
 
+  /**
+   * Commune et quartier, tels que le géocodage inverse les a rendus.
+   *
+   * ⚠️ **L'application les avait et les jetait.** `MapPickerScreen` renvoie un
+   * `PickedLocation` complet — quartier, commune, wilaya, code postal — et le
+   * formulaire n'en gardait que le libellé, qui partait dans les *précisions*.
+   * Le `Place` créé n'avait donc **que son nom et un point** : pas une seule
+   * colonne d'adresse structurée.
+   *
+   * Conséquence, mesurée à l'écran le 31/07/2026 : sur une course non
+   * réclamée, `projectPlace(…, 'anonymous')` recompose l'adresse à partir des
+   * seules colonnes structurées — il n'y en avait aucune, donc l'entreprise
+   * lisait `order_1sn4fzn6e2` en titre de ligne, quatre lignes sur cinq. Le
+   * masquage fonctionnait ; il ne restait simplement rien à masquer.
+   *
+   * Commune et quartier, et rien de plus : c'est ce qui permet de juger un
+   * détour sans désigner une porte.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupCity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupNeighborhood?: string;
+
   @IsString()
   pickupContactName: string;
 
@@ -61,6 +89,17 @@ export class CreateOrderDto {
 
   @IsNumber()
   dropoffLongitude: number;
+
+  /** Voir [pickupCity]. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dropoffCity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dropoffNeighborhood?: string;
 
   @IsString()
   dropoffContactName: string;

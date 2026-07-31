@@ -17,6 +17,7 @@ import '../../widgets/load_more_footer.dart';
 import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
 
 /// Espace « entreprise de transport ».
 ///
@@ -268,8 +269,34 @@ class _OpportunitiesTab extends StatelessWidget {
     }
 
     final showMore = state.hasMoreOpportunities;
+    // La règle du masquage vaut pour toute la liste : elle se dit **une fois**,
+    // en tête. Répétée sur chaque ligne, elle occupait la place des chiffres
+    // sur lesquels on décide — et cinq fois la même phrase se cesse d'être lue
+    // dès la deuxième.
+    final masked = state.opportunities.any((o) => o['redacted'] == true);
 
-    return ListView.separated(
+    return Column(
+      children: [
+        if (masked)
+          Container(
+            width: double.infinity,
+            // ⚠️ `secondaryContainer` et non `surfaceContainerHighest` : ce
+            // dernier est arrivé en Flutter 3.22 et `pubspec.yaml` déclare
+            // `>=3.20.0`. Je venais de l'écrire après l'avoir moi-même consigné
+            // comme indisponible — la contrainte est dans le dépôt, pas dans ma
+            // mémoire.
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            child: Text(
+              t('fleet.opportunities.masked'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        Expanded(
+          child: ListView.separated(
       itemCount: state.opportunities.length + (showMore ? 1 : 0),
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
@@ -286,20 +313,20 @@ class _OpportunitiesTab extends StatelessWidget {
         final uuid = order['uuid'] as String? ?? '';
         final claiming = state.claimingOrderId == uuid;
 
+        // ── Ce qui permet de décider, et rien d'autre ──────────────────────
+        //
+        // ⚠️ La ligne ne portait que la phrase de masquage, **identique sur
+        // toutes les lignes** — cinq fois le même texte, et pas un chiffre. La
+        // question posée le 31/07 (« sur quels critères je dois accepter cette
+        // course ? ») restait donc sans réponse dans la liste, alors que le
+        // serveur sert tout ce qu'il faut depuis le début.
+        //
+        // La phrase est remontée **une fois** en tête de liste : elle décrit la
+        // règle, pas la course, et la répéter mangeait la place des chiffres.
         return ListTile(
-          title: Text(_dropoffLabel(order)),
-          subtitle: Text(
-            // `redacted` plutôt qu'un affichage inconditionnel : c'est le
-            // serveur qui décide de ce qu'il retire, et la fiche lit déjà ce
-            // drapeau. Deux règles pour une même phrase finiraient par diverger.
-            '${_amount(meta, t)}'
-                '${order['redacted'] == true ? '\n${t('fleet.opportunities.masked')}' : ''}'
-                .trim(),
-          ),
-          // ⚠️ Suit le contenu : une opportunité sans montant ET non masquée
-          // produisait un sous-titre vide, donc une ligne haute de trois lignes
-          // sous un titre seul.
-          isThreeLine: order['redacted'] == true || meta['price'] != null,
+          title: Text(_journey(order), maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(_opportunityFacts(order, meta, t)),
+          isThreeLine: true,
           // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
           // cette course ? ». La liste ne pouvait pas y répondre seule : le
           // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
@@ -324,6 +351,9 @@ class _OpportunitiesTab extends StatelessWidget {
           ),
         );
       },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -564,6 +594,110 @@ class _AddDriverDialogState extends State<_AddDriverDialog> {
 ///
 /// L'ordre a son importance : `name` porte le libellé du carnet d'adresses,
 /// plus parlant qu'une adresse formatée quand il existe.
+/// Le TRAJET, et non la destination seule.
+///
+/// ── Pourquoi le trajet ────────────────────────────────────────────────────
+///
+/// Une entreprise ne décide pas sur une adresse d'arrivée : elle décide sur un
+/// **détour**. « Belcourt → Hydra » se juge d'un coup d'œil, « Hydra » seul ne
+/// se juge pas — il manque d'où l'on part.
+///
+/// ⚠️ Le repli sur `public_id` a été **retiré** : c'est lui qui affichait
+/// `order_1sn4fzn6e2` en titre, quatre lignes sur cinq. Un identifiant
+/// technique n'aide personne à décider ; l'absence, dite en toutes lettres,
+/// au moins ne trompe pas.
+String _journey(Map<String, dynamic> order) {
+  final payload = order['payload'] as Map<String, dynamic>?;
+  final from = _placeLabel(payload?['pickup'] as Map<String, dynamic>?);
+  final to = _placeLabel(payload?['dropoff'] as Map<String, dynamic>?);
+
+  if (from != null && to != null) return '$from → $to';
+  return to ?? from ?? '—';
+}
+
+/// Le nom court d'un lieu : quartier, commune, ou ce que l'adresse en dit.
+///
+/// ⚠️ **`name` n'est pas lu**, et c'est délibéré : sur un lieu de livraison il
+/// porte le nom du destinataire (`createPlace(dto.dropoffLocationName, …)`),
+/// que la course non réclamée masque justement. Le lire ici rouvrirait par
+/// l'affichage ce que la projection ferme côté serveur.
+String? _placeLabel(Map<String, dynamic>? place) {
+  for (final candidate in [
+    place?['neighborhood'],
+    place?['city'],
+    place?['address'],
+  ]) {
+    if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
+  }
+  return null;
+}
+
+/// Ce qui décide : rémunération, encaissement, distance, échéance, véhicule.
+///
+/// Deux lignes au plus, l'argent d'abord. Chaque élément n'apparaît que s'il
+/// est connu — une ligne qui annoncerait « 0 km » ou « — DZD » ferait douter du
+/// chiffre voisin, qui est juste.
+String _opportunityFacts(
+  Map<String, dynamic> order,
+  Map<String, dynamic> meta,
+  _Translate t,
+) {
+  final money = <String>[];
+  final price = meta['price'];
+  final cod = meta['cod_amount'];
+  final currency = meta['currency'] ?? meta['cod_currency'] ?? '';
+  if (price is num && price > 0) {
+    money.add('${t('fleet.orders.price')} : ${price.toStringAsFixed(0)} $currency'.trim());
+  }
+  // ⚠️ Servi même quand il vaut zéro ? Non : une course sans encaissement ne
+  // doit pas afficher « à encaisser : 0 », qui se lit comme une anomalie. Son
+  // absence dit déjà qu'il n'y a rien à percevoir.
+  if (cod is num && cod > 0) {
+    money.add('${t('fleet.orders.cod')} : ${cod.toStringAsFixed(0)} $currency'.trim());
+  }
+
+  final facts = <String>[];
+  final distance = _distanceLabel(order['distance'], t);
+  if (distance != null) facts.add(distance);
+  final scheduled = _scheduledLabel(order['scheduled_at'], t);
+  if (scheduled != null) facts.add(scheduled);
+  final vehicle = meta['vehicle_type'];
+  if (vehicle is String && vehicle.trim().isNotEmpty) facts.add(vehicle.trim());
+
+  return [
+    if (money.isNotEmpty) money.join('  ·  '),
+    if (facts.isNotEmpty) facts.join('  ·  '),
+    if (money.isEmpty && facts.isEmpty) t('fleet.opportunities.no_detail'),
+  ].join('\n');
+}
+
+/// La longueur du TRAJET, pas une distance depuis le lecteur.
+///
+/// ⚠️ Le libellé le dit (`fleet.orders.trip_distance`), et ce n'est pas un
+/// détail : « 12 km » sur une ligne de liste se lit spontanément comme « à 12 km
+/// de moi ». Le serveur ne sait pas où se trouve l'entreprise, et ne peut donc
+/// rien dire de tel — laisser l'ambiguïté ferait refuser des courses proches et
+/// accepter des courses lointaines.
+String? _distanceLabel(Object? metres, _Translate t) {
+  if (metres is! num || metres <= 0) return null;
+  final value = metres >= 1000
+      ? '${(metres / 1000).toStringAsFixed(1)} ${t('fleet.unit.km')}'
+      : '${metres.round()} ${t('fleet.unit.m')}';
+  return '${t('fleet.orders.trip_distance')} $value';
+}
+
+/// L'échéance, en clair.
+///
+/// ⚠️ Rien du tout quand la course est immédiate : afficher « dès que possible »
+/// sur chaque ligne remettrait exactement le bruit qu'on vient d'enlever. C'est
+/// la mention d'une heure qui est une information ; son absence est la norme.
+String? _scheduledLabel(Object? raw, _Translate t) {
+  if (raw is! String || raw.trim().isEmpty) return null;
+  final at = DateTime.tryParse(raw);
+  if (at == null) return null;
+  return '${t('fleet.orders.scheduled')} ${formatDayTime(at)}';
+}
+
 String _dropoffLabel(Map<String, dynamic> order) {
   final payload = order['payload'] as Map<String, dynamic>?;
   final dropoff = payload?['dropoff'] as Map<String, dynamic>?;

@@ -1267,13 +1267,26 @@ export class CommerçantService {
           dto.pickupLocationName,
           dto.pickupLatitude,
           dto.pickupLongitude,
-          { name: dto.pickupContactName, phone: dto.pickupContactPhone },
+          {
+            name: dto.pickupContactName,
+            phone: dto.pickupContactPhone,
+            city: dto.pickupCity,
+            neighborhood: dto.pickupNeighborhood,
+          },
         ),
         this.fleetbaseClient.createPlace(
           dto.dropoffLocationName,
           dto.dropoffLatitude,
           dto.dropoffLongitude,
-          { name: dto.dropoffContactName, phone: dto.dropoffContactPhone },
+          {
+            name: dto.dropoffContactName,
+            phone: dto.dropoffContactPhone,
+            // ⚠️ Commune et quartier, jamais la rue : sur une course non
+            // réclamée, ces deux-là suffisent à juger un détour et ne
+            // désignent aucune porte.
+            city: dto.dropoffCity,
+            neighborhood: dto.dropoffNeighborhood,
+          },
         ),
       ]);
 
