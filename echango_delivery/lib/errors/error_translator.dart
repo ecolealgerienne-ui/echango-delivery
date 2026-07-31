@@ -37,6 +37,10 @@ const Map<String, String> _fr = {
   'auth.merchant_not_found': 'Aucun compte commerçant ne correspond.',
   'auth.merchant_registration_failed': 'Inscription impossible pour le moment.',
   'auth.fleet_registration_failed': 'Inscription impossible pour le moment.',
+  'fleet_pending':
+      'Votre entreprise est en attente de validation par Echango.',
+  'auth.driver_not_in_fleet':
+      "Ce transporteur n'appartient pas à votre entreprise.",
   'auth.driver_registration_failed': 'Inscription impossible pour le moment.',
   'auth.driver_not_found': 'Ce transporteur est introuvable.',
   'auth.driver_unknown': 'Invitation invalide : transporteur inconnu.',
@@ -209,6 +213,8 @@ const Map<String, String> _ar = {
   'auth.merchant_not_found': 'لا يوجد حساب تاجر مطابق.',
   'auth.merchant_registration_failed': 'التسجيل غير ممكن حالياً.',
   'auth.fleet_registration_failed': 'التسجيل غير ممكن حالياً.',
+  'fleet_pending': 'شركتك في انتظار موافقة Echango.',
+  'auth.driver_not_in_fleet': 'هذا السائق لا ينتمي إلى شركتك.',
   'auth.driver_registration_failed': 'التسجيل غير ممكن حالياً.',
   'auth.driver_not_found': 'هذا السائق غير موجود.',
   'auth.driver_unknown': 'دعوة غير صالحة: سائق غير معروف.',

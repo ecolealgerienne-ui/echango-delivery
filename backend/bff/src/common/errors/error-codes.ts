@@ -41,6 +41,23 @@ export const ErrorCode = {
   AUTH_MERCHANT_NOT_FOUND: 'auth.merchant_not_found',
   AUTH_MERCHANT_REGISTRATION_FAILED: 'auth.merchant_registration_failed',
   AUTH_FLEET_REGISTRATION_FAILED: 'auth.fleet_registration_failed',
+  /**
+   * Entreprise de transport inscrite, pas encore validée par un admin Echango.
+   *
+   * Le pendant exact de `merchant_pending`, et il suit la même exception de
+   * nommage pour que les deux se lisent en parallèle — l'un sans point et
+   * l'autre avec aurait laissé croire à deux mécanismes différents.
+   */
+  AUTH_FLEET_PENDING: 'fleet_pending',
+  /**
+   * Une entreprise tente d'inviter un conducteur qui n'est pas le sien.
+   *
+   * Le garde `@Persona('fleet')` dit **qui** a le droit d'émettre une
+   * invitation, jamais **pour quel conducteur** : sans ce refus, un compte
+   * flotte pouvait inviter n'importe quel `Driver` du réseau non encore
+   * inscrit, et créer son compte applicatif à sa place.
+   */
+  AUTH_DRIVER_NOT_IN_FLEET: 'auth.driver_not_in_fleet',
   AUTH_DRIVER_REGISTRATION_FAILED: 'auth.driver_registration_failed',
   AUTH_DRIVER_NOT_FOUND: 'auth.driver_not_found',
   AUTH_DRIVER_UNKNOWN: 'auth.driver_unknown',

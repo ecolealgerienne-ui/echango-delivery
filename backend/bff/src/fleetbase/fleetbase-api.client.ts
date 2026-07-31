@@ -245,9 +245,69 @@ export class FleetbaseApiClient {
     const single = data?.vendor ?? (data?.uuid ? data : null);
     if (single) return single.uuid === vendorUuid ? single : null;
 
-    return (
-      this.extractCollection(data, 'vendors').find((v: any) => v?.uuid === vendorUuid) ?? null
-    );
+    // ── Le repli sur collection doit paginer, sinon le garde s'éteint tout seul
+    //
+    // La variante « liste » de cet endpoint renvoie une **page**, pas la
+    // totalité. Chercher l'uuid dans cette seule page marche tant que le réseau
+    // est petit, puis cesse de marcher sans rien signaler : la méthode rend
+    // `null`, et `assertVendorApproved()` a décidé qu'un vendor introuvable
+    // **laisse passer** (à raison — un vendor supprimé à la main ne doit pas
+    // priver quelqu'un de son compte). Le garde de validation se désactiverait
+    // donc de lui-même à mesure que des commerçants et des entreprises
+    // s'inscrivent, ce qui est exactement le mode de panne qu'on ne remarque
+    // jamais : rien n'échoue, tout devient permissif.
+    //
+    // Même famille que les plafonds silencieux des §21.5/§22 — le premier
+    // lecteur voyait ses données, donc personne ne cherchait plus loin.
+    const first = this.extractCollection(data, 'vendors');
+    const found = first.find((v: any) => v?.uuid === vendorUuid);
+    if (found || first.length === 0) return found ?? null;
+
+    return this.findVendorAcrossPages(vendorUuid);
+  }
+
+  /**
+   * Parcourt les pages de `/vendors` à la recherche d'un uuid.
+   *
+   * Appelé seulement quand la première réponse était une collection ne le
+   * contenant pas — donc jamais sur le chemin nominal, où `GET /vendors/{uuid}`
+   * rend l'objet ou une première page qui suffit.
+   */
+  private async findVendorAcrossPages(
+    vendorUuid: string,
+    pageSize = 200,
+    maxPages = 25,
+  ): Promise<any | null> {
+    for (let page = 1; page <= maxPages; page++) {
+      let vendors: any[];
+      try {
+        const response = await this.callFleetOps('GET', '/vendors', undefined, {
+          page,
+          limit: pageSize,
+        });
+        vendors = this.extractCollection(response.data, 'vendors');
+      } catch (error: any) {
+        this.logger.error(`Parcours des vendors échoué (page ${page}) : ${error.message}`);
+        throw error;
+      }
+
+      const found = vendors.find((v: any) => v?.uuid === vendorUuid);
+      if (found) return found;
+
+      if (vendors.length < pageSize) return null;
+
+      if (page === maxPages) {
+        // Ne pas rendre `null` en silence : au-delà du garde-fou, « introuvable »
+        // ne veut plus dire « n'existe pas », et l'appelant en tire une décision
+        // d'accès.
+        this.logger.warn(
+          `Vendor ${vendorUuid} non trouvé après ${maxPages} pages — la recherche est tronquée, ` +
+            'le statut renvoyé ne fait pas foi',
+        );
+      }
+    }
+
+    return null;
   }
 
   /**

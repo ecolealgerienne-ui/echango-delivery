@@ -27,6 +27,11 @@ class AppError {
   static const String authMerchantNotFound = 'auth.merchant_not_found';
   static const String authMerchantRegistrationFailed = 'auth.merchant_registration_failed';
   static const String authFleetRegistrationFailed = 'auth.fleet_registration_failed';
+  /// Pendant exact de `merchant_pending`, et il suit la même exception de
+  /// nommage : l'un sans point et l'autre avec aurait laissé croire à deux
+  /// mécanismes différents.
+  static const String authFleetPending = 'fleet_pending';
+  static const String authDriverNotInFleet = 'auth.driver_not_in_fleet';
   static const String authDriverRegistrationFailed = 'auth.driver_registration_failed';
   static const String authDriverNotFound = 'auth.driver_not_found';
   static const String authDriverUnknown = 'auth.driver_unknown';

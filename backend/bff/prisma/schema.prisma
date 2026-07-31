@@ -75,8 +75,40 @@ model FleetAccount {
   businessName      String
   businessPhone     String?
 
-  // Status
+  /// Coupe-circuit applicatif, **distinct de la validation**.
+  ///
+  /// `Vendor.status` chez Fleetbase porte la validation par un admin ; ce
+  /// booléen-ci coupe l'accès à l'application, immédiatement et localement.
+  /// Fleetbase ne peut pas l'exprimer : il ne connaît pas nos comptes. Les
+  /// trois personas portent le même couple depuis le Lot 4 — ce n'est pas un
+  /// état parallèle, ce sont deux faits différents.
   active            Boolean  @default(true)
+
+  /// Ce prestataire est-il Echango lui-même ? **Exactement un enregistrement.**
+  ///
+  /// ── Ce que ce drapeau décide, et ce qu'il ne décide PAS ──────────────────
+  ///
+  /// Il ne décide **pas** qui répond de ses conducteurs : depuis la décision du
+  /// 31/07/2026 (`docs/specs_facilitateur.md` §2.3), **tout facilitateur en
+  /// répond**, Echango compris, adossé à un contrat avec les indépendants. Un
+  /// drapeau `answersForItsDrivers` avait été proposé pour ça et retiré : il
+  /// aurait valu `true` partout, et un drapeau toujours vrai finit par être lu
+  /// comme une permission de le mettre à `false`.
+  ///
+  /// Il décide **uniquement de ce que le conducteur retient sur les espèces**,
+  /// et c'est une différence d'information, pas de responsabilité :
+  ///
+  ///   `true`  (Echango)    — la rémunération du conducteur est `meta.price`,
+  ///                          un montant qui nous appartient. Il la retient.
+  ///   `false` (entreprise) — sa paie est interne à l'entreprise et ne nous
+  ///                          sera jamais communiquée. Il retient 0 et remet
+  ///                          tout ; la course se règle entre l'entreprise et
+  ///                          le commerçant.
+  ///
+  /// Posé par un admin Echango uniquement, jamais par une route du BFF : un
+  /// compte flotte qui pourrait se déclarer plateforme ferait retenir à ses
+  /// conducteurs une rémunération qui ne leur revient pas.
+  isPlatform        Boolean  @default(false)
 
   // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
   tokenVersion      Int      @default(0)
@@ -88,6 +120,7 @@ model FleetAccount {
 
   @@index([fleetbaseVendorUuid])
   @@index([active])
+  @@index([isPlatform])
 }
 
 // Driver ("transporteur") Account - not a Fleetbase User either.
