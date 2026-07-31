@@ -57,7 +57,11 @@ class _CashScreenState extends State<CashScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isDriver ? 'Ma caisse' : 'Encaissements'),
+        title: Text(switch (widget.persona) {
+          'driver' => 'Ma caisse',
+          'fleet' => 'Caisse de l\'entreprise',
+          _ => 'Encaissements',
+        }),
       ),
       body: RefreshIndicator(
         onRefresh: state.load,
@@ -98,7 +102,6 @@ class _CashScreenState extends State<CashScreen> {
               for (final r in state.awaitingMyConfirmation)
                 _PendingRemittanceCard(
                   remittance: r,
-                  isDriver: _isDriver,
                   onConfirm: () => _confirm(state, r),
                   onDispute: () => _dispute(state, r),
                 ),
@@ -128,7 +131,11 @@ class _CashScreenState extends State<CashScreen> {
               const SizedBox(height: AppSpacing.lg),
             ],
 
-            _sectionTitle(_isDriver ? 'Mes comptes' : 'Mes transporteurs'),
+            // « Mes transporteurs » est faux pour une entreprise : sa liste
+            // mêle ses conducteurs et les commerçants qu'elle sert.
+            _sectionTitle(_isDriver || widget.persona == 'fleet'
+                ? 'Mes comptes'
+                : 'Mes transporteurs'),
             if (state.isLoading && state.ledger == null)
               const Padding(
                 padding: EdgeInsets.all(AppSpacing.xxl),
@@ -144,7 +151,7 @@ class _CashScreenState extends State<CashScreen> {
                 _BalanceCard(
                   balance: balance,
                   currency: state.currency,
-                  isDriver: _isDriver,
+                  persona: widget.persona,
                   onDeclare: () => _declare(state, balance),
                 ),
 
@@ -165,7 +172,7 @@ class _CashScreenState extends State<CashScreen> {
               const SizedBox(height: AppSpacing.lg),
               _sectionTitle('Détail des encaissements'),
               for (final c in state.collections.take(AppRules.cashCollectionsPreview))
-                _CollectionCard(entry: c, isDriver: _isDriver),
+                _CollectionCard(entry: c, persona: widget.persona),
               if (state.collections.length > AppRules.cashCollectionsPreview)
                 Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.xs),
@@ -189,11 +196,16 @@ class _CashScreenState extends State<CashScreen> {
                   child: ListTile(
                     leading: const Icon(Icons.hourglass_empty),
                     title: Text(r.formattedAmount),
-                    subtitle: Text(
-                      _isDriver
-                          ? 'Le commerçant n\'a pas encore confirmé la réception.'
-                          : 'Le transporteur n\'a pas encore confirmé.',
-                    ),
+                    subtitle: Text(switch (widget.persona) {
+                      'driver' => 'Le commerçant n\'a pas encore confirmé la '
+                          'réception.',
+                      // `CashRemittance` ne porte pas le type de la
+                      // contrepartie : une entreprise remet à un commerçant et
+                      // reçoit d'un conducteur, et on ne peut pas dire lequel
+                      // ici. On reste neutre plutôt que de deviner.
+                      'fleet' => 'L\'autre partie n\'a pas encore confirmé.',
+                      _ => 'Le transporteur n\'a pas encore confirmé.',
+                    }),
                   ),
                 ),
             ],
@@ -211,36 +223,80 @@ class _CashScreenState extends State<CashScreen> {
 
   Widget _totalCard(CashState state) {
     final theme = Theme.of(context);
+    // ⚠️ **Deux totaux, pas un — parce qu'une entreprise de transport est au
+    // MILIEU de la chaîne.** Ses conducteurs lui doivent, elle doit aux
+    // commerçants : `CashLedger.total` soustrayait donc sa créance de sa dette
+    // et affichait leur différence sous le libellé « Espèces encaissées pour
+    // vous ». Un nombre qui ne désignait rien.
+    //
+    // La structure suit la DONNÉE et non le profil : `totalOn` rend `null`
+    // quand personne ne se trouve de ce côté, donc le conducteur et le
+    // commerçant — qui ne font face qu'à un seul côté — gardent exactement leur
+    // ligne unique d'avant.
+    final owedToMe = state.totalOn(CashSide.upstream);
+    final iHold = state.totalOn(CashSide.downstream);
+    final bothSides = owedToMe != null && iHold != null;
+
+    Widget line(String label, double amount) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: theme.textTheme.bodyMedium),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '${amount.toStringAsFixed(0)} ${state.currency}',
+              style: theme.textTheme.headlineMedium,
+            ),
+          ],
+        );
+
     return AppSectionCard(
-      color: _isDriver
-          ? context.semantic.warningContainer
-          : context.semantic.successContainer,
+      // Un ton unique ne peut pas décrire les deux côtés à la fois : ce que
+      // l'entreprise détient appelle une action, ce qu'on lui doit non. Neutre
+      // pour elle, plutôt qu'une couleur qui affirmerait l'un des deux.
+      color: bothSides
+          ? Theme.of(context).colorScheme.secondaryContainer
+          : _isDriver
+              ? context.semantic.warningContainer
+              : context.semantic.successContainer,
       child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              _isDriver
-                  ? 'Espèces que vous détenez'
-                  : 'Espèces encaissées pour vous',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              '${state.total.toStringAsFixed(0)} ${state.currency}',
-              style: theme.textTheme.headlineMedium,
-            ),
+            if (owedToMe != null)
+              line(
+                bothSides
+                    ? 'Ce que vos conducteurs vous doivent'
+                    : 'Espèces encaissées pour vous',
+                owedToMe,
+              ),
+            if (bothSides) const Divider(height: 24),
+            if (iHold != null)
+              line(
+                bothSides
+                    ? 'Ce que vous devez aux commerçants'
+                    : 'Espèces que vous détenez',
+                iHold,
+              ),
+            // Aucun côté renseigné : le serveur n'a pas typé les contreparties.
+            // On sert le total brut plutôt qu'un écran vide, en le disant.
+            if (owedToMe == null && iHold == null)
+              line('Position totale', state.total),
             const SizedBox(height: AppSpacing.sm),
             Text(
               // Dire que ce total ne se règle pas d'un coup : il est dû à
               // plusieurs personnes, et c'est le point qui distingue ce modèle
               // d'un compte chez un transporteur classique.
-              _isDriver
-                  ? 'Votre rémunération est déjà déduite. Le reste est à remettre '
-                      'à chaque commerçant lors de votre prochain enlèvement chez '
-                      'lui. Echango ne détient jamais cet argent.'
-                  : 'Détenues par vos transporteurs, rémunération déduite, '
-                      'jusqu\'à leur prochain passage. Echango ne détient jamais '
-                      'cet argent.',
+              bothSides
+                  ? 'Ce que vous détenez est à remettre à chaque commerçant, ce '
+                      'que vos conducteurs détiennent vous revient à leur '
+                      'prochain passage. Echango ne détient jamais cet argent.'
+                  : _isDriver
+                      ? 'Votre rémunération est déjà déduite. Le reste est à '
+                          'remettre à chaque commerçant lors de votre prochain '
+                          'enlèvement chez lui. Echango ne détient jamais cet '
+                          'argent.'
+                      : 'Détenues par vos transporteurs, rémunération déduite, '
+                          'jusqu\'à leur prochain passage. Echango ne détient '
+                          'jamais cet argent.',
               style: theme.textTheme.bodySmall,
             ),
             // ── Ce qui est attendu, et qui n'est encore à personne ───────────
@@ -299,6 +355,20 @@ class _CashScreenState extends State<CashScreen> {
     // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus, « aucune somme
     // en attente » contredirait la bannière qui vient d'annoncer des
     // livraisons non enregistrées.
+    if (widget.persona == 'fleet') {
+      // `hasPending`/`hasUnrecorded` sont toujours faux ici : « l'argent
+      // attendu aux portes » est une lecture propre au commerçant, et
+      // `CashState.load()` ne la demande pas pour une entreprise. Les brancher
+      // aurait affiché une consigne sur une donnée jamais chargée.
+      return const AppEmptyState(
+        title: 'Aucun mouvement d\'espèces',
+        hint: 'Ce que vos conducteurs encaissent apparaîtra ici, avec ce que '
+            'vous devez reverser à chaque commerçant.',
+        icon: Icons.payments_outlined,
+        scrollable: false,
+      );
+    }
+
     final (String title, String hint) = _isDriver
         ? (
             'Vous ne détenez aucune somme',
@@ -530,28 +600,74 @@ class _CashScreenState extends State<CashScreen> {
 class _BalanceCard extends StatelessWidget {
   final CashBalance balance;
   final String currency;
-  final bool isDriver;
+
+  /// Le profil qui regarde — `driver`, `fleet` ou `merchant`.
+  ///
+  /// ⚠️ Remplace un `bool isDriver`. Un booléen ne peut pas distinguer trois
+  /// positions dans une chaîne, et c'est exactement ce qui rangeait
+  /// l'entreprise de transport du côté du commerçant.
+  final String persona;
   final VoidCallback onDeclare;
 
   const _BalanceCard({
     required this.balance,
     required this.currency,
-    required this.isDriver,
+    required this.persona,
     required this.onDeclare,
   });
 
+  bool get isDriver => persona == 'driver';
+
+  /// « J'ai remis » ou « J'ai reçu » : qui verse dépend de qui détient.
+  ///
+  /// Une entreprise **reçoit** de son conducteur et **verse** à un commerçant,
+  /// sur le même écran — d'où un libellé calculé par solde et non par profil.
+  String _declareLabel(CashBalance balance) {
+    final holdsIt = switch (cashSide(persona, balance.counterpartyType)) {
+      // La contrepartie encaisse : c'est elle qui détient quand la dette est
+      // positive, donc c'est moi qui reçois.
+      CashSide.upstream => !balance.upstreamHolds,
+      // C'est moi qui encaisse pour elle.
+      CashSide.downstream => balance.upstreamHolds,
+      // Sans type de contrepartie, on retombe sur l'ancien raisonnement par
+      // profil plutôt que d'inventer : le conducteur détient, les autres non.
+      CashSide.unknown => isDriver == balance.upstreamHolds,
+    };
+    return holdsIt ? 'J\'ai remis' : 'J\'ai reçu';
+  }
+
   /// Qui doit à qui, en toutes lettres. Un montant nu sur un solde signé se
   /// lit dans le mauvais sens une fois sur deux.
+  ///
+  /// ⚠️ **Le sens vient de la POSITION de la contrepartie, plus du profil qui
+  /// regarde.** L'écran testait `isDriver`, donc toute entreprise de transport
+  /// était traitée comme un commerçant — or elle est au milieu de la chaîne, et
+  /// ses soldes face à un commerçant se lisaient exactement à l'envers :
+  /// « Détenue par ce transporteur » alors que c'est elle qui détient, et
+  /// qu'elle doit.
+  ///
+  /// La règle tient en une ligne et vaut pour les trois profils : une dette
+  /// positive signifie que la partie **en amont** détient l'argent.
   String _sense(CashBalance balance) {
-    if (balance.merchantOwes) {
-      return isDriver
-          ? 'Ce commerçant vous doit cette somme (course non couverte par '
-              'l\'encaissement).'
-          : 'Vous devez cette somme à ce transporteur.';
+    final who = cashPartyLabel(balance.counterpartyType);
+    switch (cashSide(persona, balance.counterpartyType)) {
+      case CashSide.upstream:
+        return balance.upstreamHolds
+            ? 'Détenue par $who.'
+            : 'Vous devez cette somme à $who.';
+      case CashSide.downstream:
+        return balance.upstreamHolds
+            ? 'Vous détenez cette somme pour $who.'
+            : '${who[0].toUpperCase()}${who.substring(1)} vous doit cette somme '
+                '(course non couverte par l\'encaissement).';
+      case CashSide.unknown:
+        // Le serveur n'a pas dit de quel type est la contrepartie : on montre
+        // le montant sans affirmer un sens. Se tromper de sens sur de l'argent
+        // coûte plus cher que de ne rien dire.
+        return balance.upstreamHolds
+            ? 'Somme détenue en amont, en attente de remise.'
+            : 'Somme due en sens inverse.';
     }
-    return isDriver
-        ? 'Vous détenez cette somme pour ce commerçant.'
-        : 'Détenue par ce transporteur.';
   }
 
   @override
@@ -575,9 +691,9 @@ class _BalanceCard extends StatelessWidget {
                         // Le sens se lit à la couleur avant le texte : ce que je
                         // dois n'est pas ce qu'on me doit, même quand c'est le
                         // même nombre.
-                        color: balance.merchantOwes
-                            ? context.semantic.success
-                            : null,
+                        color: balance.upstreamHolds
+                            ? null
+                            : context.semantic.success,
                       ),
                 ),
               ],
@@ -597,7 +713,8 @@ class _BalanceCard extends StatelessWidget {
                       isDriver
                           ? 'Plafond atteint : plus de course encaissée pour ce '
                               'commerçant avant votre remise.'
-                          : 'Plafond atteint pour ce transporteur.',
+                          : 'Plafond atteint pour '
+                              '${cashPartyLabel(balance.counterpartyType)}.',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.error,
@@ -627,11 +744,10 @@ class _BalanceCard extends StatelessWidget {
                   // Le libellé suit le sens réel du versement, pas le profil :
                   // un transporteur à qui le commerçant doit de l'argent
                   // *reçoit*, il ne remet pas.
-                  child: Text(
-                    balance.driverOwes
-                        ? (isDriver ? 'J\'ai remis' : 'J\'ai reçu')
-                        : (isDriver ? 'J\'ai reçu' : 'J\'ai versé'),
-                  ),
+                  // Qui remet dépend de qui détient, donc du CÔTÉ de la
+                  // contrepartie : une entreprise reçoit de son conducteur et
+                  // verse à un commerçant, sur le même écran.
+                  child: Text(_declareLabel(balance)),
                 ),
               ],
             ),
@@ -643,13 +759,11 @@ class _BalanceCard extends StatelessWidget {
 
 class _PendingRemittanceCard extends StatelessWidget {
   final CashRemittance remittance;
-  final bool isDriver;
   final VoidCallback onConfirm;
   final VoidCallback onDispute;
 
   const _PendingRemittanceCard({
     required this.remittance,
-    required this.isDriver,
     required this.onConfirm,
     required this.onDispute,
   });
@@ -665,9 +779,19 @@ class _PendingRemittanceCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              isDriver
-                  ? 'Le commerçant déclare vous avoir remis cette somme.'
-                  : 'Le transporteur déclare vous avoir remis cette somme.',
+              // Le déclarant est NOMMÉ par la donnée (`declared_by`), pas
+              // déduit du profil qui regarde. L'ancienne version disait
+              // « Le transporteur déclare… » à toute entreprise de transport,
+              // y compris quand c'était un commerçant qui avait déclaré.
+              switch (remittance.declaredBy) {
+                'driver' => 'Le transporteur déclare vous avoir remis cette '
+                    'somme.',
+                'fleet' => 'L\'entreprise de transport déclare vous avoir remis '
+                    'cette somme.',
+                'merchant' => 'Le commerçant déclare vous avoir remis cette '
+                    'somme.',
+                _ => 'L\'autre partie déclare vous avoir remis cette somme.',
+              },
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -791,9 +915,14 @@ class _AmountDialogState extends State<_AmountDialog> {
 /// course, et afficher le prix théorique ferait mentir la soustraction.
 class _CollectionCard extends StatelessWidget {
   final CashCollectionEntry entry;
-  final bool isDriver;
+  /// `driver`, `fleet` ou `merchant`. Un booléen ne suffisait pas : le net
+  /// d'un encaissement **revient** au commerçant, il ne fait que **transiter**
+  /// par l'entreprise qui a facilité la course.
+  final String persona;
 
-  const _CollectionCard({required this.entry, required this.isDriver});
+  const _CollectionCard({required this.entry, required this.persona});
+
+  bool get isDriver => persona == 'driver';
 
   @override
   Widget build(BuildContext context) {
@@ -831,7 +960,11 @@ class _CollectionCard extends StatelessWidget {
               ),
             _line(
               theme,
-              isDriver ? 'Reste à remettre' : 'Vous revient',
+              switch (persona) {
+                'driver' => 'Reste à remettre',
+                'fleet' => 'À remettre au commerçant',
+                _ => 'Vous revient',
+              },
               money(entry.netAmount),
               strong: true,
             ),

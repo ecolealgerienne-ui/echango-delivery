@@ -99,6 +99,12 @@ class CashState extends ChangeNotifier {
   /// coup, puisqu'elle est due à plusieurs personnes différentes.
   double get total => _ledger?.total ?? 0;
 
+  /// Le total d'un seul côté de la chaîne, `null` s'il n'y a personne de ce
+  /// côté. Voir [CashLedger.totalOn] — c'est ce qui permet à l'entreprise de
+  /// transport de lire sa créance et sa dette séparément au lieu de leur
+  /// différence.
+  double? totalOn(CashSide side) => _ledger?.totalOn(side, _persona);
+
   String get currency => _ledger?.currency ?? '';
 
   void setPersona(String persona) {

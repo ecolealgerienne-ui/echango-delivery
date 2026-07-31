@@ -154,6 +154,15 @@ const Map<String, String> _fr = {
       'Vos conducteurs sont toujours enregistrés. Réessayez dans un instant.',
 
   // ── Caisse ──────────────────────────────────────────────────────────────
+  // ⚠️ **Ces quatre clés ne sont branchées nulle part.** `CashScreen` est servi
+  // en français en dur, comme tous les écrans du dépôt — c'est la dette i18n
+  // assumée de `docs/audit_i18n_erreurs.md`, pas un oubli propre à la caisse.
+  //
+  // Leur formulation, elle, EST employée : le 31/07/2026, l'écran s'est mis à
+  // distinguer ce que les conducteurs doivent à l'entreprise de ce qu'elle doit
+  // aux commerçants — la lecture que ces clés décrivaient depuis leur création
+  // sans que rien ne l'affiche. Elles restent ici pour le jour où l'écran sera
+  // traduit ; les retirer perdrait un arabe déjà relu.
   'fleet.cash.title': 'Caisse de l’entreprise',
   'fleet.cash.owed_by_drivers': 'Ce que vos conducteurs vous doivent',
   'fleet.cash.owed_to_merchants': 'Ce que vous devez aux commerçants',

@@ -1,5 +1,55 @@
 import 'package:equatable/equatable.dart';
 
+/// La chaîne de l'argent : `conducteur → entreprise → commerçant`.
+///
+/// Le conducteur encaisse à la porte, l'entreprise perçoit de son conducteur,
+/// le commerçant est le destinataire final. Le rang situe chaque acteur ; il
+/// décide, à lui seul, dans quel sens se lit une dette.
+///
+/// `null` sur un type inconnu — le serveur pourrait en ajouter un, et deviner
+/// serait pire que se taire (l'appelant retombe alors sur un libellé neutre).
+int? cashChainRank(String? party) => switch (party) {
+      'driver' => 0,
+      'fleet' => 1,
+      'merchant' => 2,
+      _ => null,
+    };
+
+/// Où se situe la contrepartie par rapport à celui qui regarde.
+enum CashSide {
+  /// Elle est en amont : c'est elle qui encaisse. Une dette positive veut dire
+  /// qu'elle **détient** de l'argent qui me revient.
+  upstream,
+
+  /// Elle est en aval : c'est moi qui encaisse pour elle. Une dette positive
+  /// veut dire que **je détiens** de l'argent qui lui revient.
+  downstream,
+
+  /// Type de contrepartie non renseigné ou inconnu. L'écran doit alors rester
+  /// neutre plutôt que d'affirmer un sens.
+  unknown,
+}
+
+/// De quel côté de la chaîne se trouve [counterpartyType] pour [viewer].
+CashSide cashSide(String viewer, String? counterpartyType) {
+  final me = cashChainRank(viewer);
+  final other = cashChainRank(counterpartyType);
+  if (me == null || other == null || me == other) return CashSide.unknown;
+  return other < me ? CashSide.upstream : CashSide.downstream;
+}
+
+/// Comment nommer la contrepartie dans une phrase.
+///
+/// Une entreprise voit à la fois des conducteurs et des commerçants dans la
+/// même liste : les appeler tous « ce transporteur », comme le faisait l'écran,
+/// est faux pour la moitié d'entre eux.
+String cashPartyLabel(String? type) => switch (type) {
+      'driver' => 'ce transporteur',
+      'fleet' => 'cette entreprise',
+      'merchant' => 'ce commerçant',
+      _ => 'cette contrepartie',
+    };
+
 /// Dette d'un transporteur envers un commerçant, ou l'inverse selon le profil
 /// qui regarde.
 ///
@@ -24,12 +74,20 @@ class CashBalance extends Equatable {
   /// sera confiée à ce transporteur pour ce commerçant tant qu'il n'a pas remis.
   final bool blocked;
 
-  /// La position est **signée**. Positive : le transporteur détient des espèces
-  /// du commerçant. Négative : le commerçant lui doit une rémunération que
-  /// l'encaissement n'a pas couverte — course sans encaissement, ou client qui
-  /// n'a payé qu'une partie. Les deux appellent une action, en sens inverse.
-  bool get driverOwes => debt > 0;
-  bool get merchantOwes => debt < 0;
+  /// La position est **signée**, et son signe a un sens absolu : positif quand
+  /// la partie **en amont** de la chaîne détient l'argent de celle en aval.
+  ///
+  /// ⚠️ **`driverOwes`/`merchantOwes` ont été retirés, parce que leurs noms
+  /// mentaient dès qu'une entreprise de transport regardait.** L'entreprise est
+  /// au MILIEU de la chaîne : ses conducteurs lui doivent, elle doit aux
+  /// commerçants. Un même `debt > 0` désignait donc, sur le même écran, tantôt
+  /// « mon conducteur détient » et tantôt « je détiens et je dois » — et
+  /// l'écran, qui traitait toute non-conducteur comme un commerçant, décrivait
+  /// **la moitié des soldes d'une entreprise à l'envers**.
+  ///
+  /// Le sens ne se déduit pas du profil qui regarde, mais de la POSITION de la
+  /// contrepartie par rapport à lui : voir [cashSide].
+  bool get upstreamHolds => debt > 0;
 
   /// Somme due, quel que soit le sens.
   double get outstanding => debt.abs();
@@ -104,8 +162,28 @@ class CashLedger {
 
   /// Somme des positions, signée. Un repère, jamais un montant à régler d'un
   /// coup : il est dû à — ou par — plusieurs personnes différentes.
+  ///
+  /// ⚠️ **N'a de sens que pour un acteur situé à un bout de la chaîne.** Le
+  /// conducteur ne fait face qu'à des parties en aval, le commerçant qu'à des
+  /// parties en amont : leur total va donc dans un seul sens. L'entreprise de
+  /// transport, elle, est au milieu — ses conducteurs lui doivent et elle doit
+  /// aux commerçants —, et ce total **soustrait sa créance de sa dette** pour
+  /// n'en donner qu'un nombre qui ne désigne rien. Voir [totalOn].
   double get total =>
       balances.fold<double>(0, (sum, b) => sum + b.debt);
+
+  /// Somme signée des positions dont la contrepartie est du côté [side] pour
+  /// [viewer]. `null` si aucune contrepartie ne s'y trouve.
+  ///
+  /// Le `null` compte : il permet à l'écran de n'afficher une ligne que
+  /// lorsqu'elle existe, sans avoir à savoir quel profil regarde. Un `0` aurait
+  /// affiché « vous devez 0 » à un conducteur qui ne doit à personne.
+  double? totalOn(CashSide side, String viewer) {
+    final rows =
+        balances.where((b) => cashSide(viewer, b.counterpartyType) == side);
+    if (rows.isEmpty) return null;
+    return rows.fold<double>(0, (sum, b) => sum + b.debt);
+  }
 
   bool get isEmpty => balances.isEmpty;
 }
@@ -121,7 +199,13 @@ class CashRemittance extends Equatable {
   final double amount;
   final String currency;
 
-  /// `driver` ou `merchant`. Détermine qui doit confirmer : l'autre, toujours.
+  /// `driver`, `fleet` ou `merchant` — le serveur y écrit un `PartyType`
+  /// complet depuis le chantier facilitateur. Détermine qui doit confirmer :
+  /// l'autre, toujours.
+  ///
+  /// ⚠️ Ce commentaire disait « `driver` ou `merchant` », et l'écran s'y fiait
+  /// pour nommer le déclarant à partir du profil qui regarde. Une entreprise de
+  /// transport déclare pourtant des remises, dans les deux sens.
   final String declaredBy;
   final DateTime declaredAt;
   final DateTime? confirmedAt;
