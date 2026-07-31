@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import {
   effectiveOrderMeta,
@@ -1013,6 +1013,11 @@ export class TransporteurService {
       return;
     }
 
+    // Résolu UNE fois, puis figé dans les deux écritures : la partie ne doit
+    // pas pouvoir différer entre l'encaissement et la rémunération de la même
+    // course (exception §3.3 d'`architecture_bff_fleetbase.md`).
+    const facilitator = await this.resolveFacilitator(order);
+
     let collected = 0;
     if (codAmount > 0 && cash) {
       const result = await this.cash.declareCollection(
@@ -1021,6 +1026,7 @@ export class TransporteurService {
         order.uuid,
         codAmount,
         cash,
+        facilitator?.id ?? null,
       );
       collected = result.collectedAmount;
     }
@@ -1035,7 +1041,51 @@ export class TransporteurService {
       order.uuid,
       price,
       collected,
+      facilitator,
     );
+  }
+
+  /**
+   * Le facilitateur de cette course, ou `null` si elle n'en porte pas.
+   *
+   * ── Où vit l'information ────────────────────────────────────────────────
+   *
+   * Sur `Order.facilitator_uuid` chez Fleetbase, natif et prévu pour ça. Le BFF
+   * ne le recopie nulle part : il le lit, et ne conserve que le lien vers le
+   * compte Echango correspondant, une fois figé dans une écriture comptable.
+   *
+   * ⚠️ Rend `null` quand le fournisseur n'a **aucun compte Echango**. Ce cas
+   * est réel : un opérateur peut rattacher une commande à un `Vendor` en
+   * console sans que ce fournisseur soit une entreprise inscrite chez nous. La
+   * course se comporte alors comme une course sans facilitateur — le conducteur
+   * règle avec le commerçant — plutôt que de créer une dette envers une partie
+   * qui n'existe pas dans le registre.
+   */
+  private async resolveFacilitator(
+    order: any,
+  ): Promise<{ id: string; isPlatform: boolean } | null> {
+    const vendorUuid = order?.facilitator_uuid;
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+      select: { id: true, isPlatform: true },
+    });
+
+    if (!fleet) {
+      this.logger.warn(
+        `Commande ${order?.uuid} rattachée au fournisseur ${vendorUuid}, qui n'a pas de compte ` +
+          'Echango — traitée comme une course sans facilitateur',
+      );
+      return null;
+    }
+
+    return fleet;
+  }
+
+  /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
+  private async resolveFacilitatorId(order: any): Promise<string | null> {
+    return (await this.resolveFacilitator(order))?.id ?? null;
   }
 
   /**
@@ -1063,9 +1113,15 @@ export class TransporteurService {
     });
     if (!cached) return;
 
+    // La contrepartie du conducteur est son facilitateur quand la course en
+    // porte un — c'est LUI qui borne son exposition, et non plus le commerçant
+    // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
+    // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
+    const facilitatorId = await this.resolveFacilitatorId(order);
+
     const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
-      driverId,
-      cached.merchantId,
+      driverParty(driverId),
+      this.cash.driverCounterparty(facilitatorId, cached.merchantId),
       codAmount,
     );
 

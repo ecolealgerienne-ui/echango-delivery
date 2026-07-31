@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Param, Query, Request, Res } from '@nestjs
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -89,9 +89,11 @@ export class TransporteurController {
   /** « J'ai remis X à ce commerçant. » Reste en attente jusqu'à sa confirmation. */
   @Post('caisse/remises')
   async declareRemittance(@Request() req: any, @Body() dto: DeclareRemittanceDto) {
-    return this.cash.declareRemittance(
-      'driver',
-      this.driverId(req),
+    // `dto.merchantId` garde son nom — il est gelé par le contrôle de
+    // référence — mais désigne désormais **la contrepartie**, que le serveur
+    // type lui-même : le commerçant, ou le facilitateur du conducteur.
+    return this.cash.declareRemittanceTo(
+      driverParty(this.driverId(req)),
       dto.merchantId,
       dto.amount,
     );

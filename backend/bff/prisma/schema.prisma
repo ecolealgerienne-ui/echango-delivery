@@ -113,6 +113,10 @@ model FleetAccount {
   // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
   tokenVersion      Int      @default(0)
 
+  // Relations — le facilitateur est désormais une partie du registre de caisse.
+  cashCollections   CashCollection[]
+  driverEarnings    DriverEarning[]
+
   // Timestamps
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -594,13 +598,45 @@ model OrderDecline {
 model CashCollection {
   id                  String   @id @default(cuid())
 
+  /// ⚠️ `Restrict` et non `Cascade` (défaut D14).
+  ///
+  /// En `Cascade`, supprimer un conducteur effaçait les lignes d'encaissement
+  /// qui le nomment — **y compris la dette que son facilitateur doit au
+  /// commerçant**, puisqu'elle se calcule sur ces mêmes lignes. C'est
+  /// exactement le scénario que §7.5 promet de tenir : « la perte d'un
+  /// conducteur ne change rien au solde que voit le commerçant ». Un compte
+  /// portant des écritures ne se supprime pas ; il se désactive.
   driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
 
   merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
 
   fleetbaseOrderUuid  String   @unique
+
+  /// Facilitateur de la course, **figé à l'encaissement**.
+  ///
+  /// ── Ce que cette colonne rend possible ──────────────────────────────────
+  ///
+  /// Une même ligne d'encaissement porte **deux** obligations : le conducteur
+  /// doit à son facilitateur, le facilitateur doit au commerçant
+  /// (`docs/specs_facilitateur.md` §7.1). Les trois parties étant nommées ici —
+  /// `driverId`, `facilitatorId`, `merchantId` — les deux dettes se calculent
+  /// depuis les mêmes lignes, sans second registre et sans solde stocké.
+  ///
+  /// ── Pourquoi figée, et pourquoi nullable ────────────────────────────────
+  ///
+  /// Figée : c'est l'exception §3.3 d'`architecture_bff_fleetbase.md`, la même
+  /// que `expectedAmount`. Si un admin change `facilitator_uuid` demain, la
+  /// dette d'hier ne doit pas changer de débiteur.
+  ///
+  /// Nullable : une colonne obligatoire sur une table non vide fait échouer la
+  /// migration, et **`null` a ici un sens précis** — pas de facilitateur sur
+  /// cette course, donc le conducteur règle directement avec le commerçant.
+  /// C'est le comportement d'avant ce chantier, et c'est celui de toutes les
+  /// lignes existantes : la reprise de données n'a rien à écrire.
+  facilitatorId       String?
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
 
   /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
   /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
@@ -675,11 +711,41 @@ model CashCollection {
 model CashRemittance {
   id                  String   @id @default(cuid())
 
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  /// ── Les deux bouts sont typés, et il le fallait ─────────────────────────
+  ///
+  /// Une remise ne relie plus fatalement un conducteur à un commerçant : la
+  /// chaîne compte deux maillons (`docs/specs_facilitateur.md` §7.1), et le
+  /// premier — conducteur → facilitateur — **n'a aucun commerçant à nommer**.
+  /// Avec `merchantId` obligatoire, cette remise n'avait littéralement pas de
+  /// forme de ligne ; c'est ce qui rendait la chaîne interne impossible à
+  /// écrire, et non seulement pénible.
+  ///
+  /// `from` doit, `to` reçoit. Les combinaisons réelles :
+  ///   driver   → fleet     (le conducteur remet à son facilitateur)
+  ///   fleet    → merchant  (le facilitateur reverse au commerçant)
+  ///   driver   → merchant  (pas de facilitateur : le cas d'avant ce chantier)
+  ///   et les trois sens inverses, quand la position est négative.
+  fromType            String?  // 'driver' | 'fleet' | 'merchant'
+  fromId              String?
+  toType              String?
+  toId                String?
 
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  /// ⚠️ Devenues **nullables**, et jamais renommées ni supprimées.
+  ///
+  /// Les lignes écrites avant ce chantier les portent toutes les deux, et
+  /// c'est d'elles que se déduisent `from`/`to` quand ces derniers sont nuls —
+  /// une colonne ajoutée ne doit jamais changer le sens des lignes d'avant,
+  /// surtout quand ce sens est une somme d'argent (leçon du journal §30.4).
+  ///
+  /// Elles restent renseignées quand elles ont un sens : `driverId` sur toute
+  /// remise où un conducteur est partie, `merchantId` de même. Elles ne
+  /// décident de rien — ce sont `from`/`to` qui font foi dès qu'ils existent —
+  /// mais elles gardent les index et les jointures existants opérants.
+  driverId            String?
+  driver              DriverAccount? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  merchantId          String?
+  merchant            MerchantAccount? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
 
   amount              Float
   currency            String
@@ -745,13 +811,39 @@ model CashRemittance {
 model DriverEarning {
   id                  String   @id @default(cuid())
 
+  /// `Restrict` pour la même raison que sur `CashCollection` (défaut D14).
   driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
 
   merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
 
   fleetbaseOrderUuid  String   @unique
+
+  /// Facilitateur de la course, figé — voir `CashCollection.facilitatorId`.
+  facilitatorId       String?
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
+
+  /// Qui **encaisse** cette rémunération : `driver` ou `fleet`.
+  ///
+  /// ── Ce n'est pas une redite de `facilitatorId` ──────────────────────────
+  ///
+  /// La course rapporte `grossAmount`, et ce montant ne va pas toujours à la
+  /// même personne. Sur une course du pool, il revient au **conducteur** — sa
+  /// rémunération, un montant que nous connaissons puisque le commerçant l'a
+  /// saisi. Sur une course confiée à une entreprise, il revient à
+  /// **l'entreprise**, qui paie ensuite son conducteur selon un contrat interne
+  /// que nous ne verrons jamais.
+  ///
+  /// C'est exactement ce que décide `FleetAccount.isPlatform`, et c'est la
+  /// seule variation du modèle (`docs/specs_facilitateur.md` §7.2). Sans cette
+  /// colonne, `recordEarning` créditerait la course au conducteur d'une
+  /// entreprise : un salarié empocherait le chiffre d'affaires de son
+  /// employeur, et Echango facturerait l'employeur au salarié.
+  ///
+  /// `null` = ligne antérieure à ce chantier ⇒ le conducteur, comme alors.
+  earnerType          String?
+  earnerId            String?
 
   /// Rémunération brute de la course, telle qu'annoncée au transporteur.
   grossAmount         Float

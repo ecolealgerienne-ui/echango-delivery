@@ -11,7 +11,7 @@ import { DriverSearchDto } from './dto/driver-search.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import {
   MerchantRemittanceDto,
   DisputeRemittanceDto,
@@ -84,7 +84,7 @@ export class CommerçantController {
   /** « J'ai reçu X de ce transporteur. » En attente de sa confirmation. */
   @Post('encaissements/remises')
   async declareRemittance(@Request() req: any, @Body() dto: MerchantRemittanceDto) {
-    return this.cash.declareRemittance('merchant', dto.driverId, req.user.id, dto.amount);
+    return this.cash.declareRemittanceTo(merchantParty(req.user.id), dto.driverId, dto.amount);
   }
 
   /** Confirme une remise déclarée par le transporteur — jamais une des siennes. */

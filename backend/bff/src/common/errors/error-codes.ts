@@ -101,6 +101,14 @@ export const ErrorCode = {
   /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
   /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
   CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
+  /**
+   * L'identifiant de contrepartie d'une remise ne correspond à aucun compte.
+   *
+   * Le serveur type lui-même la contrepartie à partir de son identifiant (voir
+   * `declareRemittanceTo`) : ne rien trouver signifie que l'appelant a envoyé
+   * un identifiant qui n'existe dans aucune des trois tables.
+   */
+  CASH_COUNTERPARTY_NOT_FOUND: 'cash.counterparty_not_found',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   ORDER_NOT_FOUND: 'order.not_found',

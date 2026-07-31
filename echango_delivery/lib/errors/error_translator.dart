@@ -95,6 +95,7 @@ const Map<String, String> _fr = {
       'Indiquez quel transporteur a effectué cette livraison.',
   'cash.driver_not_in_network':
       'Transporteur inconnu du réseau.',
+  'cash.counterparty_not_found': 'Contrepartie introuvable.',
   'cash.driver_no_account':
       'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
 
@@ -265,6 +266,7 @@ const Map<String, String> _ar = {
       'حدّد الناقل الذي قام بهذا التوصيل.',
   'cash.driver_not_in_network':
       'ناقل غير معروف في الشبكة.',
+  'cash.counterparty_not_found': 'الطرف المقابل غير موجود.',
   'cash.driver_no_account':
       'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
 

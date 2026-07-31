@@ -73,6 +73,7 @@ class AppError {
   static const String cashOrderHasNoCod = 'cash.order_has_no_cod';
   static const String cashDriverRequired = 'cash.driver_required';
   static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
+  static const String cashCounterpartyNotFound = 'cash.counterparty_not_found';
   static const String cashDriverNoAccount = 'cash.driver_no_account';
 
   // ── Commandes ────────────────────────────────────────────────────────────

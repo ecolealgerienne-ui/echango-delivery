@@ -15,7 +15,7 @@ import {
   projectPlace,
 } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
 
@@ -422,9 +422,12 @@ export class CommerçantService {
     // confier des espèces à qui en doit déjà trop est le seul instrument de
     // limitation du risque dont nous disposions.
     for (const account of available) {
+      // À la création, la course ne porte pas encore de facilitateur : la
+      // contrepartie est donc le commerçant, comme avant ce chantier. Le
+      // plafond sera revérifié à l'acceptation, contre la contrepartie réelle.
       const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
-        account.id,
-        merchantId,
+        driverParty(account.id),
+        merchantParty(merchantId),
         codAmount,
       );
       if (allowed) return account;
