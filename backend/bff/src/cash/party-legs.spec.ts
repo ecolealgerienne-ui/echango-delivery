@@ -99,13 +99,36 @@ describe('debtBetween — les trois couples de parties', () => {
     expect(earningWhere.earnerType).toBeUndefined();
   });
 
-  it('un couple sans signification ne matche rien plutôt que tout', async () => {
-    // Le sens de l'échec se choisit : sur des sommes d'argent, une paire
-    // inattendue doit donner zéro, jamais une agrégation trop large.
+  it('un couple donné à l’envers est ORIENTÉ, pas ignoré', async () => {
+    // ⚠️ Ce test vérifiait l'inverse, et il célébrait un défaut bloquant.
+    //
+    // La chaîne va toujours dans le même sens — `driver → fleet → merchant` —
+    // donc `legScope()` ne connaît que ces trois couples. Sans orientation,
+    // `balancesFor()` interrogeait `(merchant, driver)` pour TOUT écran
+    // commerçant : filtre vide, dette lue à 0 au lieu de 1300, puis +1300
+    // fantôme une fois la remise confirmée, parce qu'il ne restait dans le
+    // calcul que les remises avec le signe inversé.
+    //
+    // Le couple est donc réordonné avant tout calcul, et c'est le SIGNE qui
+    // porte le sens demandé.
     await service().debtBetween(merchantParty('mer-1'), driverParty('drv-1'));
 
-    expect(collectionWhere).toEqual({ id: '__aucune__' });
-    expect(earningWhere).toEqual({ id: '__aucune__' });
+    expect(collectionWhere).toMatchObject({
+      driverId: 'drv-1',
+      merchantId: 'mer-1',
+      facilitatorId: null,
+    });
+  });
+
+  it('les deux vues d’une même dette sont opposées, jamais divergentes', async () => {
+    // L'invariant qu'aucun test ne couvrait : le conducteur et le commerçant
+    // doivent lire le MÊME nombre, au signe près. C'est ce qui manquait pour
+    // attraper le défaut ci-dessus, tous les tests n'inspectant qu'un bout.
+    const svc = service();
+    const forward = await svc.debtBetween(driverParty('drv-1'), merchantParty('mer-1'));
+    const backward = await svc.debtBetween(merchantParty('mer-1'), driverParty('drv-1'));
+
+    expect(backward).toBe(-forward);
   });
 
   it('une partie face à elle-même vaut zéro sans interroger la base', async () => {

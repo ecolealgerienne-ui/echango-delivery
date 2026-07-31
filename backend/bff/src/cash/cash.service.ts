@@ -148,24 +148,56 @@ export class CashService {
    * que ce projet évite entre `price` et `cod_amount` — et changerait la valeur
    * lue par un contrôle qui n'a pas à bouger.
    */
+  /**
+   * Ordonne un couple dans le sens **canonique** de la chaîne.
+   *
+   * ── Le défaut que ceci répare ───────────────────────────────────────────
+   *
+   * La chaîne va toujours dans le même sens : `driver → fleet → merchant`.
+   * `legScope()` ne connaît donc que ces trois couples-là, et rend `null` pour
+   * `(merchant, driver)` — ce qui, faute d'orientation, faisait interroger
+   * `balancesFor()` à l'envers **pour tout acteur qui n'est pas le conducteur**.
+   *
+   * Le commerçant lisait alors 0 au lieu de 1300 avant remise ; et une fois la
+   * remise confirmée, il ne restait dans le calcul que les remises, avec le
+   * signe inversé — donc **+1300 sur une dette pourtant éteinte**, à chaque
+   * cycle. Pire, `declareRemittance` déduit le sens du versement de ce même
+   * nombre : le commerçant pouvait déclarer un versement fantôme et
+   * **ressusciter une dette soldée**.
+   *
+   * Un nombre plausible et faux — le seul mode de défaut qui compte ici.
+   */
+  private orient(a: Party, b: Party): { up: Party; down: Party; flipped: boolean } {
+    const rank: Record<PartyType, number> = { driver: 0, fleet: 1, merchant: 2 };
+    return rank[a.type] <= rank[b.type]
+      ? { up: a, down: b, flipped: false }
+      : { up: b, down: a, flipped: true };
+  }
+
   async debtBetween(a: Party, b: Party): Promise<number> {
     if (samePartyAs(a, b)) return 0;
 
+    // Orienté ici, et non chez les appelants : c'est la seule façon d'être sûr
+    // qu'aucun ne l'oublie. La valeur rendue garde le sens demandé — positif
+    // veut dire « `a` doit à `b` » quel que soit l'ordre des arguments.
+    const { up, down, flipped } = this.orient(a, b);
+    const [first, second] = [up, down];
+
     const [collected, earned, out, back] = await Promise.all([
       this.prisma.cashCollection.aggregate({
-        where: this.collectionsBetween(a, b),
+        where: this.collectionsBetween(first, second),
         _sum: { collectedAmount: true },
       }),
       this.prisma.driverEarning.aggregate({
-        where: this.earningsBetween(a, b),
+        where: this.earningsBetween(first, second),
         _sum: { grossAmount: true },
       }),
       this.prisma.cashRemittance.aggregate({
-        where: this.remittancesFromTo(a, b),
+        where: this.remittancesFromTo(first, second),
         _sum: { amount: true },
       }),
       this.prisma.cashRemittance.aggregate({
-        where: this.remittancesFromTo(b, a),
+        where: this.remittancesFromTo(second, first),
         _sum: { amount: true },
       }),
     ]);
@@ -178,7 +210,8 @@ export class CashService {
 
     // Arrondi au centime : les flottants accumulent un résidu sur des sommes
     // d'argent, et une dette affichée « 0.000000001 » n'est jamais soldée.
-    return Math.round(total * 100) / 100;
+    // Le signe suit l'ordre DEMANDÉ, pas l'ordre canonique.
+    return (flipped ? -1 : 1) * (Math.round(total * 100) / 100);
   }
 
   /**
@@ -287,7 +320,23 @@ export class CashService {
    */
   async platformCommissionOwed(driverId: string): Promise<number> {
     const result = await this.prisma.driverEarning.aggregate({
-      where: { driverId },
+      // ⚠️ Filtré sur le BÉNÉFICIAIRE, pas sur `driverId`.
+      //
+      // Une ligne de course d'entreprise porte quand même le `driverId` de
+      // celui qui a livré : filtrer dessus facturait au salarié la commission
+      // due sur un chiffre d'affaires qu'il n'a jamais touché. La correction
+      // avait été appliquée à la retenue et oubliée sur cet agrégat — c'est
+      // exactement ce que le commentaire de `earnerType` promet d'éviter.
+      //
+      // La seconde branche couvre les lignes d'avant ce chantier : elles
+      // naissent avec `earnerType` nul, et le conducteur en est bien le
+      // bénéficiaire.
+      where: {
+        OR: [
+          { earnerType: 'driver', earnerId: driverId },
+          { earnerType: null, driverId },
+        ],
+      },
       _sum: { commissionAmount: true },
     });
     return Math.round(Number(result._sum.commissionAmount ?? 0) * 100) / 100;
@@ -345,8 +394,16 @@ export class CashService {
     // sens — un salarié aurait empoché le chiffre d'affaires de son employeur,
     // et Echango aurait facturé l'employeur au salarié
     // (`docs/specs_facilitateur.md` §7.2).
+    // ⚠️ `=== false` et non `!isPlatform`.
+    //
+    // Avec `isPlatform: undefined`, `!undefined` vaut `true` : une course du
+    // pool aurait été traitée comme une course d'entreprise, le conducteur
+    // aurait remis 1950 au lieu de 1300, et sa rémunération aurait été créditée
+    // au facilitateur — donc jamais déduite de son maillon. Le seul appelant
+    // sélectionne bien le champ aujourd'hui, mais Prisma est un `any` ici :
+    // rien ne le tiendra demain.
     const earner: Party =
-      facilitator && !facilitator.isPlatform
+      facilitator && facilitator.isPlatform === false
         ? fleetParty(facilitator.id)
         : driverParty(driverId);
 
@@ -648,8 +705,19 @@ export class CashService {
     }
 
     // Facilitateur : ses conducteurs d'un côté, ses commerçants de l'autre.
-    const [collections, remittances] = await Promise.all([
+    // ⚠️ `driverEarning` est lu ici AUSSI, comme dans les deux autres branches.
+    //
+    // Une course d'entreprise **sans encaissement** — prépayée — ne produit
+    // qu'une ligne de rémunération. Sans cette lecture, le commerçant n'est
+    // jamais listé comme contrepartie de l'entreprise, et les 650 qu'il lui
+    // doit ne sont calculés nulle part : une créance réelle, invisible des deux
+    // côtés.
+    const [collections, earnings, remittances] = await Promise.all([
       this.prisma.cashCollection.findMany({
+        where: { facilitatorId: actor.id },
+        select: { driverId: true, merchantId: true },
+      }),
+      this.prisma.driverEarning.findMany({
         where: { facilitatorId: actor.id },
         select: { driverId: true, merchantId: true },
       }),
@@ -659,7 +727,7 @@ export class CashService {
       }),
     ]);
 
-    for (const row of collections as any[]) {
+    for (const row of [...collections, ...earnings] as any[]) {
       add(driverParty(row.driverId));
       add(merchantParty(row.merchantId));
     }
@@ -1107,9 +1175,23 @@ export class CashService {
   }
 
   /** Remises d'un compte, en attente d'abord — ce sont elles qui appellent une action. */
-  async listRemittances(persona: 'driver' | 'merchant', actorId: string) {
+  async listRemittances(persona: PartyType, actorId: string) {
+    // Le filtre porte sur la PARTIE, pas sur une colonne historique : une
+    // remise conducteur → entreprise n'a pas de `merchantId`, et une entreprise
+    // n'apparaît dans aucune des deux colonnes d'origine.
+    const legacy =
+      persona === 'driver' ? { driverId: actorId }
+      : persona === 'merchant' ? { merchantId: actorId }
+      : null;
+
     const remittances = await this.prisma.cashRemittance.findMany({
-      where: persona === 'driver' ? { driverId: actorId } : { merchantId: actorId },
+      where: {
+        OR: [
+          { fromType: persona, fromId: actorId },
+          { toType: persona, toId: actorId },
+          ...(legacy ? [{ fromType: null, ...legacy }] : []),
+        ],
+      },
       orderBy: [{ confirmedAt: 'asc' }, { declaredAt: 'desc' }],
       take: 100,
     });
@@ -1137,9 +1219,12 @@ export class CashService {
    * a réellement pu prélever, plafonné à ce qu'il a perçu — et non la
    * rémunération théorique, qui différerait sur une course payée en partie.
    */
-  async listCollections(persona: 'driver' | 'merchant', actorId: string) {
+  async listCollections(persona: PartyType, actorId: string) {
     const collections = await this.prisma.cashCollection.findMany({
-      where: persona === 'driver' ? { driverId: actorId } : { merchantId: actorId },
+      where:
+        persona === 'driver' ? { driverId: actorId }
+        : persona === 'merchant' ? { merchantId: actorId }
+        : { facilitatorId: actorId },
       orderBy: { collectedAt: 'desc' },
       take: 100,
     });
@@ -1218,6 +1303,15 @@ export class CashService {
     fleetbaseOrderUuid: string,
     expectedAmount: number,
     input: DeclareCollectionInput,
+    /**
+     * Facilitateur de la course, figé ici comme sur le chemin nominal.
+     *
+     * Sans lui, une course d'entreprise close en console puis régularisée par
+     * le commerçant — c'est-à-dire **le cas exact pour lequel cette
+     * fonctionnalité existe** — imputait la dette au conducteur et lui laissait
+     * retenir une rémunération qui revient à son employeur.
+     */
+    facilitatorId?: string | null,
   ) {
     const collected = Math.round(input.collectedAmount * 100) / 100;
 
@@ -1261,6 +1355,7 @@ export class CashService {
         fleetbaseOrderUuid,
         expectedAmount,
         collectedAmount: collected,
+        facilitatorId: facilitatorId ?? null,
         discrepancyReason: differs ? input.discrepancyReason : null,
         notes: input.notes,
         currency: this.currency,
@@ -1291,6 +1386,8 @@ export class CashService {
    * séparer laisserait, entre les deux, un état où la dette est fausse.
    */
   async confirmCollection(driverId: string, collectionId: string, grossAmount: number) {
+    // Le facilitateur est relu sur la ligne, jamais redemandé à l'appelant :
+    // il a été figé à la déclaration, et c'est lui qui décide de la retenue.
     const collection = await this.prisma.cashCollection.findFirst({
       where: { id: collectionId, driverId },
     });
@@ -1320,15 +1417,26 @@ export class CashService {
     // `fleetbaseOrderUuid`, donc une course qui en aurait déjà une — cas
     // improbable mais possible si la clôture applicative a fini par passer —
     // n'en crée pas une seconde.
+    const facilitator = collection.facilitatorId
+      ? await this.prisma.fleetAccount.findUnique({
+          where: { id: collection.facilitatorId },
+          select: { id: true, isPlatform: true },
+        })
+      : null;
+
     await this.recordEarning(
       driverId,
       collection.merchantId,
       collection.fleetbaseOrderUuid,
       grossAmount,
       updated.collectedAmount,
+      facilitator,
     );
 
-    const debt = await this.debtBetween(driverParty(driverId), merchantParty(collection.merchantId));
+    const debt = await this.debtBetween(
+      driverParty(driverId),
+      this.driverCounterparty(collection.facilitatorId, collection.merchantId),
+    );
     this.logger.log(
       `Encaissement ${collection.fleetbaseOrderUuid} confirmé par le transporteur — dette ${debt}`,
     );

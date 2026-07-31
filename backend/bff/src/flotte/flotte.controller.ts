@@ -4,11 +4,73 @@ import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
 import { ListFleetOrdersQueryDto, AssignDriverDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+import { CashService, fleetParty } from '../cash/cash.service';
+import { FleetRemittanceDto } from './dto/cash.dto';
 
 @Persona('fleet')
 @Controller('flotte')
 export class FlotteController {
-  constructor(private flotteService: FlotteService) {}
+  constructor(
+    private flotteService: FlotteService,
+    private cash: CashService,
+  ) {}
+
+  // ── Caisse ────────────────────────────────────────────────────────────────
+  //
+  // ⚠️ Ces routes ne sont pas un supplément d'agrément : **sans elles, une dette
+  // envers une entreprise n'est confirmable par personne.**
+  //
+  // Une remise ne réduit la dette qu'après confirmation par l'autre partie.
+  // Dès qu'une course porte un facilitateur, le conducteur doit à son
+  // entreprise — et si l'entreprise n'a aucune route pour confirmer, la dette
+  // reste ouverte indéfiniment, en silence, jusqu'à ce que le plafond bloque le
+  // conducteur pour de bon. Le cas est atteignable dès aujourd'hui : il suffit
+  // qu'un opérateur rattache une commande à un fournisseur en console.
+  //
+  // Symétriquement, l'entreprise doit au commerçant, et c'est elle qui déclare
+  // ce reversement.
+
+  /** Ce que l'entreprise doit, et ce que ses conducteurs lui doivent. */
+  @Get('caisse')
+  async cashBalances(@Request() req: any) {
+    return this.cash.fleetBalances(this.fleetId(req));
+  }
+
+  /** Les encaissements des courses qu'elle a facilitées. */
+  @Get('caisse/encaissements')
+  async cashCollections(@Request() req: any) {
+    return this.cash.listCollections('fleet', this.fleetId(req));
+  }
+
+  @Get('caisse/remises')
+  async listRemittances(@Request() req: any) {
+    return this.cash.listRemittances('fleet', this.fleetId(req));
+  }
+
+  /** « J'ai remis X au commerçant », ou « j'ai reçu X de mon conducteur ». */
+  @Post('caisse/remises')
+  async declareRemittance(@Request() req: any, @Body() dto: FleetRemittanceDto) {
+    return this.cash.declareRemittanceTo(
+      fleetParty(this.fleetId(req)),
+      dto.counterpartyId,
+      dto.amount,
+    );
+  }
+
+  /** Confirme une remise déclarée par l'autre partie — jamais une des siennes. */
+  @Post('caisse/remises/:id/confirmer')
+  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.cash.confirmRemittance('fleet', this.fleetId(req), id);
+  }
+
+  @Post('caisse/remises/:id/contester')
+  async disputeRemittance(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) id: string,
+    @Body() dto: { reason?: string },
+  ) {
+    return this.cash.disputeRemittance('fleet', this.fleetId(req), id, dto?.reason);
+  }
 
   @Get('commandes')
   async getOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {

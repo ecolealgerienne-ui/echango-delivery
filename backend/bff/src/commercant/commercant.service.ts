@@ -340,6 +340,25 @@ export class CommerçantService {
     return Object.keys(meta).length ? meta : undefined;
   }
 
+
+  /**
+   * Identifiant du compte Echango du facilitateur d'une course, ou `null`.
+   *
+   * Rend `null` quand le fournisseur n'a pas de compte chez nous : la course se
+   * comporte alors comme une course sans facilitateur, plutôt que de créer une
+   * dette envers une partie qui n'existe pas dans le registre.
+   */
+  private async resolveFacilitatorId(live: any): Promise<string | null> {
+    const vendorUuid = live?.facilitator_uuid;
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+      select: { id: true },
+    });
+    return fleet?.id ?? null;
+  }
+
   /**
    * Premier transporteur favori actuellement en ligne, ou `null`.
    *
@@ -1940,6 +1959,12 @@ export class CommerçantService {
         discrepancyReason: input.discrepancyReason,
         notes: input.notes,
       },
+      // Le facilitateur de la course, résolu depuis Fleetbase et figé avec
+      // l'écriture. Sans lui, une course d'entreprise régularisée imputait la
+      // dette au conducteur et lui laissait retenir la rémunération de son
+      // employeur — sur le chemin qui existe précisément pour les courses
+      // closes hors application.
+      await this.resolveFacilitatorId(live),
     );
 
     // ⚠️ **Le transporteur n'est pas notifié**, et c'est une limite, pas un
