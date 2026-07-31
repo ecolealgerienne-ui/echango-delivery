@@ -334,117 +334,150 @@ class _DriversTab extends StatelessWidget {
 /// Le BFF fait les deux d'un geste. Le conducteur devra ensuite recevoir une
 /// invitation pour créer son compte applicatif — il existe chez Fleetbase, il
 /// n'a pas encore d'accès.
+///
+/// ⚠️ **Le serveur exige au moins un email ou un téléphone.** Sans identifiant,
+/// il ne peut ni détecter un doublon ni envoyer l'invitation : le conducteur
+/// serait créé pour ne jamais servir. Le formulaire le vérifie avant l'appel
+/// pour dire pourquoi plutôt que d'attendre un refus.
 Future<void> _addDriver(BuildContext context, _Translate t) async {
-  final nameCtrl = TextEditingController();
-  final emailCtrl = TextEditingController();
-  final phoneCtrl = TextEditingController();
-
-  final submitted = await showDialog<bool>(
+  final input = await showDialog<_NewDriver>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(t('fleet.drivers.add')),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: nameCtrl,
-            decoration: InputDecoration(labelText: t('fleet.drivers.name')),
-          ),
-          TextField(
-            controller: emailCtrl,
-            keyboardType: TextInputType.emailAddress,
-            decoration: InputDecoration(labelText: t('fleet.drivers.email')),
-          ),
-          TextField(
-            controller: phoneCtrl,
-            keyboardType: TextInputType.phone,
-            decoration: InputDecoration(labelText: t('fleet.drivers.phone')),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(false),
-          child: Text(t('fleet.cancel')),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: Text(t('fleet.confirm')),
-        ),
-      ],
-    ),
+    builder: (_) => _AddDriverDialog(t: t),
   );
 
-  final name = nameCtrl.text.trim();
-  final email = emailCtrl.text.trim();
-  final phone = phoneCtrl.text.trim();
-  nameCtrl.dispose();
-  emailCtrl.dispose();
-  phoneCtrl.dispose();
-
-  if (submitted != true || !context.mounted) return;
-  if (name.isEmpty || email.isEmpty) return;
+  if (input == null || !context.mounted) return;
 
   final error = await context
       .read<FleetState>()
-      .addDriver(name: name, email: email, phone: phone);
+      .addDriver(name: input.name, email: input.email, phone: input.phone);
 
   if (!context.mounted || error == null) return;
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
 }
 
-/// Où va la course.
-///
-/// ⚠️ **Plus de branche `unclaimed`** (31/07/2026). L'expurgation posait
-/// `name: 'Destinataire'` en dur sur une course libre, ce qui titrait toutes les
-/// lignes du même mot ; il fallait donc lire `address` d'abord dans ce cas-là et
-/// `name` dans l'autre. Depuis que le serveur ne masque plus que l'identité,
-/// `name` est **absent** sur une course libre au lieu d'être remplacé — la
-/// chaîne de replis suffit, et une seule règle vaut pour les deux onglets.
-///
-/// L'ordre a son importance : `name` porte le libellé du carnet d'adresses,
-/// plus parlant qu'une adresse formatée quand il existe.
-String _dropoffLabel(Map<String, dynamic> order) {
-  final payload = order['payload'] as Map<String, dynamic>?;
-  final dropoff = payload?['dropoff'] as Map<String, dynamic>?;
+/// Ce que le formulaire a saisi. Rendu par valeur plutôt que lu depuis des
+/// contrôleurs après coup — ceux-ci n'existent plus à ce moment-là.
+class _NewDriver {
+  const _NewDriver({required this.name, required this.email, required this.phone});
 
-  for (final candidate in [
-    dropoff?['name'],
-    dropoff?['address'],
-    dropoff?['street1'],
-    dropoff?['city'],
-    order['public_id'],
-  ]) {
-    // ⚠️ `??` ne suffit pas : `address` vaut `''` quand le commerçant a saisi
-    // une adresse sans passer par la carte, et une chaîne vide n'est pas nulle.
-    // La ligne restait alors titrée par du blanc.
-    if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
+  final String name;
+  final String email;
+  final String phone;
+}
+
+/// Le formulaire de création, **avec ses propres contrôleurs**.
+///
+/// ── Pourquoi un widget, et non trois contrôleurs dans une fonction ────────
+///
+/// La version précédente créait les `TextEditingController` dans `_addDriver`,
+/// attendait `showDialog`, puis les libérait juste après. Or `showDialog` rend
+/// la main dès le `Navigator.pop` — **l'animation de fermeture, elle, continue**,
+/// et reconstruit les `TextField` avec des contrôleurs déjà libérés :
+///
+///     A TextEditingController was used after being disposed.
+///
+/// Suivi d'un `_dependents.isEmpty is not true` et d'un « dirty widget in the
+/// wrong build scope » — la même faute qui cascade. `flutter analyze` ne voit
+/// rien : c'est une règle de cycle de vie, pas de typage, et elle ne se déclenche
+/// qu'à l'écran.
+///
+/// La règle qui évite d'y revenir : **un contrôleur appartient au `State` du
+/// widget qui l'utilise**, et meurt avec lui. Ici le `State` du dialogue vit
+/// aussi longtemps que son animation.
+class _AddDriverDialog extends StatefulWidget {
+  const _AddDriverDialog({required this.t});
+
+  final _Translate t;
+
+  @override
+  State<_AddDriverDialog> createState() => _AddDriverDialogState();
+}
+
+class _AddDriverDialogState extends State<_AddDriverDialog> {
+  final _name = TextEditingController();
+  final _email = TextEditingController();
+  final _phone = TextEditingController();
+
+  String? _problem;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _email.dispose();
+    _phone.dispose();
+    super.dispose();
   }
-  return '—';
-}
 
-/// Les deux montants, quand ils existent.
-///
-/// ⚠️ Ils viennent des **champs personnalisés** recomposés par le serveur, et
-/// non du `meta` brut de Fleetbase : c'est le défaut D6, corrigé au Lot 2. Sans
-/// cette recomposition, une entreprise décidait de prendre une course sans voir
-/// ni ce qu'elle rapporte ni ce qu'il faudra encaisser.
-String _amount(Map<String, dynamic> meta, _Translate t) {
-  final price = meta['price'];
-  final cod = meta['cod_amount'];
-  final parts = <String>[];
-  if (price != null) parts.add('${t('fleet.orders.price')} : $price');
-  if (cod != null) parts.add('${t('fleet.orders.cod')} : $cod');
-  return parts.isEmpty ? '' : '\n${parts.join(' — ')}';
-}
+  void _submit() {
+    final name = _name.text.trim();
+    final email = _email.text.trim();
+    final phone = _phone.text.trim();
 
-Future<void> _claim(BuildContext context, String uuid, _Translate t) async {
-  final error = await context.read<FleetState>().claim(uuid);
-  if (!context.mounted) return;
+    if (name.isEmpty) {
+      setState(() => _problem = widget.t('fleet.drivers.name_required'));
+      return;
+    }
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(error ?? t('fleet.opportunities.taken'))),
-  );
+    // La même règle que le serveur, dite avant l'appel plutôt qu'après le refus.
+    if (email.isEmpty && phone.isEmpty) {
+      setState(() => _problem = widget.t('fleet.drivers.contact_required'));
+      return;
+    }
+
+    Navigator.of(context).pop(_NewDriver(name: name, email: email, phone: phone));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+
+    return AlertDialog(
+      title: Text(t('fleet.drivers.add')),
+      // ⚠️ Défilant : sans ça, le clavier ouvert réduisait la hauteur
+      // disponible et la colonne débordait de dizaines de milliers de pixels
+      // (« A RenderFlex overflowed by 99392 pixels on the bottom »).
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _name,
+              autofocus: true,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(labelText: t('fleet.drivers.name')),
+            ),
+            TextField(
+              controller: _email,
+              keyboardType: TextInputType.emailAddress,
+              textInputAction: TextInputAction.next,
+              decoration: InputDecoration(labelText: t('fleet.drivers.email')),
+            ),
+            TextField(
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(labelText: t('fleet.drivers.phone')),
+            ),
+            if (_problem != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _problem!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(t('fleet.cancel')),
+        ),
+        FilledButton(onPressed: _submit, child: Text(t('fleet.confirm'))),
+      ],
+    );
+  }
 }
 
 /// Où mène cette ligne, si elle mène quelque part.

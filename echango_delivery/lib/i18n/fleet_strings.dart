@@ -122,6 +122,13 @@ const Map<String, String> _fr = {
   'fleet.drivers.online': 'En ligne',
   'fleet.drivers.offline': 'Hors ligne',
   'fleet.drivers.select': 'Choisir un conducteur',
+  'fleet.drivers.name_required': 'Le nom est obligatoire.',
+  // ⚠️ Dit la RAISON, pas seulement la règle : sans email ni téléphone, le
+  // serveur ne peut ni détecter un doublon ni envoyer l'invitation, donc le
+  // conducteur serait créé pour ne jamais servir.
+  'fleet.drivers.contact_required':
+      'Renseignez un email ou un téléphone — sans quoi ce conducteur ne pourra '
+          'jamais recevoir son invitation.',
   // ⚠️ Distinct de `fleet.drivers.empty` : « aucun conducteur » est une
   // affirmation sur l'entreprise, celui-ci un aveu sur nous. Les confondre
   // faisait dire à une entreprise qui a des conducteurs qu'elle n'en a pas.
@@ -250,6 +257,9 @@ const Map<String, String> _ar = {
   'fleet.drivers.online': 'متصل',
   'fleet.drivers.offline': 'غير متصل',
   'fleet.drivers.select': 'اختر سائقاً',
+  'fleet.drivers.name_required': 'الاسم إلزامي.',
+  'fleet.drivers.contact_required':
+      'أدخل بريداً إلكترونياً أو رقم هاتف — وإلا لن يتمكن هذا السائق من تلقي دعوته.',
   'fleet.drivers.unavailable': 'تعذّر تحميل قائمة سائقيك حالياً.',
 
   'fleet.cash.title': 'صندوق الشركة',
