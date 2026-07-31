@@ -8,6 +8,7 @@ import '../../widgets/photo_field.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/section_card.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
   final String orderId;
@@ -69,10 +70,8 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Column(
+            AppSectionCard(
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -92,7 +91,6 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                     ),
                   ],
                 ),
-              ),
             ),
             const SizedBox(height: AppSpacing.xl),
             // Reason Selection

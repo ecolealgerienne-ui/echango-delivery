@@ -12,6 +12,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
 import 'status_colors.dart';
+import '../../widgets/section_card.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -579,10 +580,8 @@ class _VehicleTypeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Consumer<DriverPresenceState>(
-      builder: (context, presence, _) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
+      builder: (context, presence, _) => AppSectionCard(
+  child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
@@ -623,8 +622,7 @@ class _VehicleTypeCard extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
+),
     );
   }
 }

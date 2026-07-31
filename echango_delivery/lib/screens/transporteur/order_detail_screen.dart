@@ -13,6 +13,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import 'status_colors.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final String orderId;
@@ -51,10 +52,8 @@ class OrderDetailScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Order Header
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      child: Column(
+                  AppSectionCard(
+                    child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Expanded + ellipsis : le titre et la puce se
@@ -152,14 +151,11 @@ class OrderDetailScreen extends StatelessWidget {
                           _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),
                         ],
                       ),
-                    ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   // Locations
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      child: Column(
+                  AppSectionCard(
+                    child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // L'enlèvement est un commerce : rien n'y est
@@ -176,7 +172,6 @@ class OrderDetailScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                    ),
                   ),
                   // Dire pourquoi les contacts manquent. Sans ce message, une
                   // fiche expurgée se lit comme une commande mal saisie, et le
@@ -815,11 +810,9 @@ class _FailureHistory extends StatelessWidget {
     final theme = Theme.of(context);
     final multiple = failures.length > 1;
 
-    return Card(
-      color: theme.colorScheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  color: theme.colorScheme.errorContainer,
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -867,8 +860,7 @@ class _FailureHistory extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 
   static String _formatDate(DateTime date) {

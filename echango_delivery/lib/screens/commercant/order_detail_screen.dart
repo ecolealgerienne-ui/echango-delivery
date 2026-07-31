@@ -14,6 +14,7 @@ import '../../widgets/proof_image.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -138,10 +139,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(AppSpacing.lg),
-                        child: Column(
+                    AppSectionCard(
+                      child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
@@ -172,7 +171,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ),
                           ],
                         ),
-                      ),
                     ),
                     const SizedBox(height: AppSpacing.md),
                     // Le commerçant a surtout besoin de savoir « où ça en
@@ -331,10 +329,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// une preuve existe, et il répond 404 sinon — ce que [ProofImage] affiche
   /// comme un chargement impossible. Interroger d'abord pour n'afficher
   /// qu'ensuite doublerait les allers-retours pour le même résultat.
-  Widget _proofCard() => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          child: Column(
+  Widget _proofCard() => AppSectionCard(
+  child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Preuve de livraison',
@@ -343,8 +339,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ProofImage(url: '/commercant/commandes/${widget.orderId}/preuve'),
             ],
           ),
-        ),
-      );
+);
 
   /// Paiement à la livraison : ce qui était demandé, et ce qui a été perçu.
   ///
@@ -409,13 +404,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       ]);
     }
 
-    return Card(
-      // Même rôle des deux côtés : l'écart se signale par son libellé, pas par
+    return AppSectionCard(
+  // Même rôle des deux côtés : l'écart se signale par son libellé,
+  pas par
       // une nuance d'orange que personne ne sait nommer.
       color: context.semantic.warningContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -463,8 +457,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ...settlement,
           ],
         ),
-      ),
-    );
+);
   }
 
   Widget _banner(Color color, IconData icon, String text) => Container(
@@ -559,10 +552,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (Icons.notes_outlined, 'Instructions', order.instructions!),
     ];
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Votre demande',
@@ -587,8 +578,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
           ],
         ),
-      ),
-    );
+);
   }
 
   /// Proposer la mise en favori au moment où elle a du sens : la livraison
@@ -629,10 +619,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final contact = place?.contactName;
     final phone = place?.contactPhone;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
@@ -674,8 +662,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
           ],
         ),
-      ),
-    );
+);
   }
 }
 
@@ -884,11 +871,9 @@ class _FailureHistory extends StatelessWidget {
     final theme = Theme.of(context);
     final multiple = failures.length > 1;
 
-    return Card(
-      color: theme.colorScheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  color: theme.colorScheme.errorContainer,
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -931,7 +916,6 @@ class _FailureHistory extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 }

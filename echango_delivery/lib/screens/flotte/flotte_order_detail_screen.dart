@@ -11,6 +11,7 @@ import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/section_card.dart';
 
 /// La fiche d'une course, vue par une entreprise de transport.
 ///
@@ -521,11 +522,9 @@ class _Section extends StatelessWidget {
     if (filled.isEmpty && actions.isEmpty) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
@@ -551,8 +550,7 @@ class _Section extends StatelessWidget {
               Wrap(spacing: 8, children: actions),
           ],
         ),
-      ),
-    );
+);
   }
 }
 

@@ -13,6 +13,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/section_card.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
 ///
@@ -209,13 +210,11 @@ class _CashScreenState extends State<CashScreen> {
 
   Widget _totalCard(CashState state) {
     final theme = Theme.of(context);
-    return Card(
-      color: _isDriver
+    return AppSectionCard(
+  color: _isDriver
           ? context.semantic.warningContainer
           : context.semantic.successContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -286,8 +285,7 @@ class _CashScreenState extends State<CashScreen> {
             ],
           ],
         ),
-      ),
-    );
+);
   }
 
   /// Aucun solde ouvert. [hasPending] change le texte du tout au tout.
@@ -557,10 +555,8 @@ class _BalanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
+    return AppSectionCard.dense(
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -640,8 +636,7 @@ class _BalanceCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 }
 
@@ -660,11 +655,9 @@ class _PendingRemittanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: context.semantic.warningContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
+    return AppSectionCard.dense(
+  color: context.semantic.warningContainer,
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(remittance.formattedAmount,
@@ -695,8 +688,7 @@ class _PendingRemittanceCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 }
 
@@ -808,11 +800,9 @@ class _CollectionCard extends StatelessWidget {
     String money(double amount) =>
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
+    return AppSectionCard.dense(
+  margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -859,8 +849,7 @@ class _CollectionCard extends StatelessWidget {
             ],
           ],
         ),
-      ),
-    );
+);
   }
 
   Widget _line(ThemeData theme, String label, String value, {bool strong = false}) =>
@@ -980,12 +969,10 @@ class _CollectionToConfirmCard extends StatelessWidget {
     String money(double amount) =>
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
-    return Card(
-      color: context.semantic.warningContainer,
-      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
+    return AppSectionCard.dense(
+  color: context.semantic.warningContainer,
+  margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -1017,8 +1004,7 @@ class _CollectionToConfirmCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 }
 
@@ -1043,11 +1029,9 @@ class _UnrecordedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      color: context.semantic.warningContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
+    return AppSectionCard(
+  color: context.semantic.warningContainer,
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
@@ -1075,8 +1059,7 @@ class _UnrecordedBanner extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+);
   }
 }
 
