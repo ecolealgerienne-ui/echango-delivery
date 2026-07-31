@@ -7,7 +7,9 @@ import '../../i18n/fleet_strings.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/locale_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
 /// demandent.
@@ -106,15 +108,11 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
       await context.read<BffApiClient>().leaveFleet(membershipId);
     } on AppException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(translateErrorCode(e.code, locale))),
-      );
+      showAppError(context, translateErrorCode(e.code, locale));
       return;
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(translateErrorCode(AppError.unknown, locale))),
-      );
+      showAppError(context, translateErrorCode(AppError.unknown, locale));
       return;
     }
 
@@ -127,15 +125,11 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
       await context.read<BffApiClient>().respondToMembership(membershipId, accept: accept);
     } on AppException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(translateErrorCode(e.code, locale))),
-      );
+      showAppError(context, translateErrorCode(e.code, locale));
       return;
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(translateErrorCode(AppError.unknown, locale))),
-      );
+      showAppError(context, translateErrorCode(AppError.unknown, locale));
       return;
     }
 
@@ -223,7 +217,9 @@ class _FleetRow extends StatelessWidget {
       child: ListTile(
         leading: Icon(
           status == 'active' ? Icons.business : Icons.pending_outlined,
-          color: status == 'active' ? Colors.green : Theme.of(context).colorScheme.outline,
+          color: status == 'active'
+              ? context.semantic.success
+              : Theme.of(context).colorScheme.outline,
         ),
         title: Text(fleet['name'] as String? ?? '—'),
         subtitle: Text(

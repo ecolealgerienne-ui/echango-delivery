@@ -6,6 +6,8 @@ import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/error_banner.dart';
+import '../../widgets/app_snack_bar.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
   final String orderId;
@@ -85,7 +87,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                     Text(
                       'Report the reason for delivery failure',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey[600],
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -155,17 +157,16 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                 return ElevatedButton(
                   onPressed: orderState.isLoading ? null : () => _submitFailureReport(context, orderState),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
                     padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                   ),
                   child: orderState.isLoading
                       ? const SizedBox(
                           height: 20,
                           width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
+                          // La couleur suit le `foregroundColor` du bouton.
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text(
                           'Signaler l\'échec',
@@ -176,17 +177,8 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
             if (context.watch<OrderState>().errorMessage != null)
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  border: Border.all(color: Colors.red),
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: Text(
-                  context.watch<OrderState>().errorMessage!,
-                  style: TextStyle(color: Colors.red.shade700),
-                ),
+              AppErrorBanner(
+                message: context.watch<OrderState>().errorMessage!,
               ),
           ],
         ),
@@ -212,13 +204,15 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       // être jointe. Le taire laisserait le transporteur croire qu'il a fourni
       // un justificatif absent du dossier.
       final photoLost = _photo != null && orderState.lastPhotoUploaded == false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(photoLost
-              ? 'Signalement enregistré, mais la photo n\'a pas pu être jointe.'
-              : 'Échec de livraison signalé'),
-          backgroundColor: photoLost ? Colors.orange.shade800 : null,
-        ),
+      // Ni un succès muet, ni un échec : le signalement est enregistré, mais
+      // il manque son justificatif. C'est le cas pour lequel `SnackTone.warning`
+      // existe.
+      showAppSnackBar(
+        context,
+        photoLost
+            ? 'Signalement enregistré, mais la photo n\'a pas pu être jointe.'
+            : 'Échec de livraison signalé',
+        tone: photoLost ? SnackTone.warning : SnackTone.success,
       );
       // Un seul pop : revenir au détail, qui recharge et affiche désormais le
       // signalement. Deux pops renvoyaient à la liste, où rien ne change —
@@ -227,12 +221,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
     } else {
       // Sans ça, un échec du signalement ne produisait STRICTEMENT rien à
       // l'écran : ni message, ni navigation. Indiscernable d'un bouton mort.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Signalement impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? 'Signalement impossible');
     }
   }
 }

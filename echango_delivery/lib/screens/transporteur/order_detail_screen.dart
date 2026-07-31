@@ -9,7 +9,10 @@ import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import 'status_colors.dart';
+import '../../widgets/app_snack_bar.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final String orderId;
@@ -72,9 +75,13 @@ class OrderDetailScreen extends StatelessWidget {
                               const SizedBox(width: AppSpacing.sm),
                               Chip(
                                 label: Text(order.status),
-                                backgroundColor: _getStatusColor(order.status),
-                                labelStyle: const TextStyle(
-                                  color: Colors.white,
+                                backgroundColor:
+                                    driverStatusColor(context, order.status),
+                                // Le texte suit le fond : un blanc unique sur
+                                // cinq teintes laissait le contraste au hasard.
+                                labelStyle: TextStyle(
+                                  color: onDriverStatusColor(
+                                      context, order.status),
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -85,14 +92,14 @@ class OrderDetailScreen extends StatelessWidget {
                             Row(
                               children: [
                                 Icon(Icons.payments_outlined,
-                                    color: Colors.green.shade800),
+                                    color: context.semantic.success),
                                 const SizedBox(width: AppSpacing.sm),
                                 Text(
                                   order.formattedPrice!,
                                   style: Theme.of(context)
                                       .textTheme
                                       .titleLarge
-                                      ?.copyWith(color: Colors.green.shade800),
+                                      ?.copyWith(color: context.semantic.success),
                                 ),
                               ],
                             ),
@@ -108,7 +115,7 @@ class OrderDetailScreen extends StatelessWidget {
                               width: double.infinity,
                               padding: const EdgeInsets.all(AppSpacing.md),
                               decoration: BoxDecoration(
-                                color: Colors.amber.shade100,
+                                color: context.semantic.warningContainer,
                                 borderRadius: BorderRadius.circular(AppRadius.md),
                               ),
                               child: Column(
@@ -261,7 +268,9 @@ class OrderDetailScreen extends StatelessWidget {
                   ? _applyActivityWithProof(context, order, activity, orderState)
                   : _applyActivity(context, order, activity, orderState),
           style: ElevatedButton.styleFrom(
-            backgroundColor: code == 'completed' ? Colors.green : Colors.orange,
+            backgroundColor: code == 'completed'
+                ? context.semantic.success
+                : context.semantic.warning,
           ),
           child: Text(requiresPod ? '$label (preuve requise)' : label),
         ),
@@ -290,7 +299,9 @@ class OrderDetailScreen extends StatelessWidget {
                   assigned: returnable),
           icon: const Icon(Icons.do_not_disturb_on_outlined),
           label: Text(claimable ? 'Refuser cette course' : 'Rendre cette course'),
-          style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
         ),
       );
     }
@@ -303,7 +314,10 @@ class OrderDetailScreen extends StatelessWidget {
           onPressed: busy
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/echec'),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+            foregroundColor: Theme.of(context).colorScheme.onError,
+          ),
           child: const Text('Signaler un échec de livraison'),
         ),
       );
@@ -345,11 +359,9 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!sent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Envoi de la preuve impossible'),
-          backgroundColor: Colors.red,
-        ),
+      showAppError(
+        context,
+        orderState.errorMessage ?? 'Envoi de la preuve impossible',
       );
       return;
     }
@@ -406,16 +418,9 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (success) {
       final label = (activity['_resolved_status'] ?? activity['code'] ?? '') as String;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Étape appliquée : $label')),
-      );
+      showAppSnackBar(context, 'Étape appliquée : $label');
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Échec de la mise à jour'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? 'Échec de la mise à jour');
     }
   }
 
@@ -441,7 +446,6 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (choice == null || !context.mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final success = await orderState.declineOrder(
       orderId: orderId,
       reason: choice.reason,
@@ -450,23 +454,15 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!success) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Refus impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? 'Refus impossible');
       return;
     }
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          orderState.lastDeclineReleasedToPool == true
-              ? 'Course rendue au réseau. Le commerçant en a été informé.'
-              : 'Course écartée. Elle ne vous sera plus proposée.',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      orderState.lastDeclineReleasedToPool == true
+          ? 'Course rendue au réseau. Le commerçant en a été informé.'
+          : 'Course écartée. Elle ne vous sera plus proposée.',
     );
 
     // Retour à la liste : la fiche d'une course qu'on vient d'écarter n'a plus
@@ -483,31 +479,10 @@ class OrderDetailScreen extends StatelessWidget {
     final success = await orderState.acceptOrder(orderId);
     if (success) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Course acceptée')),
-      );
+      showAppSnackBar(context, 'Course acceptée');
     }
   }
 
-  /// Couleurs alignées sur les statuts Fleetbase réels. L'ancienne version
-  /// testait 'accepted' et 'picked_up', qui n'existent pas : tout tombait
-  /// dans le gris par défaut.
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'created':
-      case 'dispatched':
-        return Colors.orange;
-      case 'started':
-      case 'enroute':
-        return Colors.blue;
-      case 'completed':
-        return Colors.green;
-      case 'canceled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
 }
 
 /// Feuille de refus : motif obligatoire, précision facultative.
@@ -588,7 +563,8 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                 leading: Icon(icon),
                 title: Text(label),
                 trailing: _reason == code
-                    ? const Icon(Icons.check_circle, color: Colors.red)
+                    ? Icon(Icons.check_circle,
+                        color: Theme.of(context).colorScheme.error)
                     : null,
                 selected: _reason == code,
                 contentPadding: EdgeInsets.zero,
@@ -616,8 +592,8 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                         ),
                       ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               child: Text(widget.assigned ? 'Rendre la course' : 'Refuser'),
@@ -782,19 +758,16 @@ class _PlaceBlock extends StatelessWidget {
     final ok = await NavigationLauncher.navigateTo(p);
     if (!context.mounted || ok) return;
     // Un bouton qui ne fait rien est indiscernable d'une application figée.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Aucune application de navigation trouvée sur cet appareil.'),
-      ),
+    showAppError(
+      context,
+      'Aucune application de navigation trouvée sur cet appareil.',
     );
   }
 
   Future<void> _call(BuildContext context, String phone) async {
     final ok = await NavigationLauncher.call(phone);
     if (!context.mounted || ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Impossible de lancer l\'appel.')),
-    );
+    showAppError(context, 'Impossible de lancer l\'appel.');
   }
 }
 
@@ -843,7 +816,7 @@ class _FailureHistory extends StatelessWidget {
     final multiple = failures.length > 1;
 
     return Card(
-      color: Colors.red.shade50,
+      color: theme.colorScheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -851,7 +824,8 @@ class _FailureHistory extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.error_outline, color: Colors.red.shade700),
+                Icon(Icons.error_outline,
+                    color: theme.colorScheme.onErrorContainer),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
@@ -859,7 +833,7 @@ class _FailureHistory extends StatelessWidget {
                         ? '${failures.length} échecs de livraison signalés'
                         : 'Échec de livraison signalé',
                     style: theme.textTheme.titleMedium
-                        ?.copyWith(color: Colors.red.shade700),
+                        ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
                 ),
               ],
@@ -875,7 +849,7 @@ class _FailureHistory extends StatelessWidget {
                   // avoir à comparer les dates.
                   'Tentative ${failures.length - i} — ${_formatDate(failures[i].createdAt)}',
                   style: theme.textTheme.labelLarge
-                      ?.copyWith(color: Colors.red.shade700),
+                      ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
                 const SizedBox(height: AppSpacing.sm),
               ],
@@ -888,7 +862,8 @@ class _FailureHistory extends StatelessWidget {
             Text(
               'La commande conserve son statut : le signalement est transmis '
               'à l\'opérateur, qui décide de la suite.',
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade700),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ],
         ),
@@ -1022,7 +997,8 @@ class _CashSheetState extends State<_CashSheet> {
                   onTap: () => setState(() => _reason = entry.key),
                   title: Text(entry.value),
                   trailing: _reason == entry.key
-                      ? const Icon(Icons.check_circle, color: Colors.orange)
+                      ? Icon(Icons.check_circle,
+                          color: context.semantic.warning)
                       : null,
                   selected: _reason == entry.key,
                   contentPadding: EdgeInsets.zero,

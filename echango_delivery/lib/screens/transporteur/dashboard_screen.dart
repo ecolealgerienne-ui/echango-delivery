@@ -8,7 +8,10 @@ import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/empty_state.dart';
+import 'status_colors.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -278,10 +281,17 @@ class _OrdersListScreenState extends State<OrdersListScreen>
               _buildOrdersList(
                 context.watch<OrderState>().activeOrders,
                 emptyLabel: 'Aucune commande en cours',
+                // Consignes écrites parce que le composant les exige : ces
+                // deux onglets n'en avaient aucune, et un écran vide sans un
+                // mot se lit comme une panne plutôt que comme un début.
+                emptyHint: 'Acceptez une course depuis l\'onglet '
+                    '« Opportunités » pour la voir apparaître ici.',
               ),
               _buildOrdersList(
                 context.watch<OrderState>().historyOrders,
                 emptyLabel: 'Aucune commande terminée',
+                emptyHint: 'Vos courses livrées ou annulées se rangeront ici, '
+                    'avec leur preuve de remise.',
               ),
             ],
           ),
@@ -293,7 +303,9 @@ class _OrdersListScreenState extends State<OrdersListScreen>
   Widget _buildOrdersList(
     List<dynamic> orders, {
     String emptyLabel = 'Aucune commande',
-    String? emptyHint,
+    // Non nullable : `AppEmptyState` exige sa consigne, et une liste vide sans
+    // explication se lit comme une panne.
+    required String emptyHint,
   }) {
     // RefreshIndicator exige un enfant défilable pour capter le geste : sans
     // AlwaysScrollableScrollPhysics sur une liste vide, tirer vers le bas ne
@@ -319,38 +331,12 @@ class _OrdersListScreenState extends State<OrdersListScreen>
     );
   }
 
-  Widget _emptyState(String emptyLabel, String? emptyHint) {
-    return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.inbox_outlined,
-              size: 64,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(
-              emptyLabel,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Colors.grey[600],
-                  ),
-            ),
-            if (emptyHint != null) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
-                child: Text(
-                  emptyHint,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey[500],
-                      ),
-                ),
-              ),
-            ],
-          ],
-      ),
+  Widget _emptyState(String emptyLabel, String emptyHint) {
+    return AppEmptyState(
+      title: emptyLabel,
+      hint: emptyHint,
+      // Déjà placé dans le `ListView` qui capte le tirer-pour-rafraîchir.
+      scrollable: false,
     );
   }
 
@@ -374,7 +360,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                   Text(
                     order.formattedPrice!,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.green.shade800,
+                          color: context.semantic.success,
                           fontWeight: FontWeight.bold,
                         ),
                   ),
@@ -396,7 +382,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 Text(
                   'Statut : ${order.status}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: _getStatusColor(order.status),
+                        color: driverStatusColor(context, order.status),
                       ),
                 ),
               ],
@@ -412,25 +398,6 @@ class _OrdersListScreenState extends State<OrdersListScreen>
     );
   }
 
-  /// Couleurs alignées sur les statuts Fleetbase réels. L'ancienne version
-  /// testait 'accepted' et 'picked_up', qui n'existent pas : tout tombait
-  /// dans le gris par défaut.
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'created':
-      case 'dispatched':
-        return Colors.orange;
-      case 'started':
-      case 'enroute':
-        return Colors.blue;
-      case 'completed':
-        return Colors.green;
-      case 'canceled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
 }
 
 /// Écran de la carte.
@@ -446,7 +413,7 @@ class MapScreen extends StatelessWidget {
           Icon(
             Icons.map_outlined,
             size: 80,
-            color: Colors.grey[400],
+            color: Theme.of(context).colorScheme.outline,
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
@@ -458,7 +425,7 @@ class MapScreen extends StatelessWidget {
             'La carte des courses n\'est pas encore implémentée.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.grey[600],
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -504,7 +471,10 @@ class ProfileScreen extends StatelessWidget {
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
-                                ?.copyWith(color: Colors.grey[600]),
+                                ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
                           ),
                         ],
                       );
@@ -524,18 +494,17 @@ class ProfileScreen extends StatelessWidget {
                     ? null
                     : () => _handleLogout(context, authState),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
                   padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                 ),
                 child: authState.isLoading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
+                        // La couleur suit le `foregroundColor` du bouton :
+                        // la poser en dur la désaccordait du thème.
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text(
                         'Se déconnecter',
