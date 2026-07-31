@@ -53,6 +53,15 @@ export interface DriverFilters {
   limit?: number;
 }
 
+/**
+ * Alias de morphologie polymorphe d'un `Vendor` chez Fleetbase.
+ *
+ * **Mesuré, pas déduit** : `scripts/verify-facilitator.sh` (31/07/2026) montre
+ * que `facilitator_type` est stocké `fleet-ops:vendor`. La valeur `vendor` est
+ * acceptée et normalisée, mais on écrit ce que le serveur stocke.
+ */
+export const FACILITATOR_TYPE_VENDOR = 'fleet-ops:vendor';
+
 @Injectable()
 export class FleetbaseApiClient {
   private readonly logger = new Logger(FleetbaseApiClient.name);
@@ -1039,15 +1048,32 @@ export class FleetbaseApiClient {
    * conducteur. On n'envoie que les colonnes voulues, jamais une commande
    * re-sérialisée.
    *
-   * ⚠️ Le `type` polymorphe accompagne l'uuid, comme pour `customer_*` : la
-   * valeur `vendor` est déduite par symétrie et **n'a jamais été éprouvée**
-   * (contrôle C1 de `docs/specs_facilitateur.md` §12).
+   * ── `fleet-ops:vendor`, et non `vendor` — mesuré, pas déduit ─────────────
+   *
+   * Contrôle C1 joué en réel le 31/07/2026 (`scripts/verify-facilitator.sh`) :
+   * Fleetbase **stocke `fleet-ops:vendor`**, son alias de morphologie
+   * polymorphe. Envoyer `vendor` fonctionne — la valeur est normalisée, la
+   * relation `with[]=facilitator` résout le bon Vendor, et le filtre
+   * `?facilitator=` rend la commande avec un témoin à 0 — mais on envoie
+   * désormais la forme canonique.
+   *
+   * Le motif n'est pas cosmétique : dépendre d'une normalisation observée **une
+   * seule fois** est plus faible que d'écrire la valeur que le serveur stocke
+   * de toute façon. Si cette normalisation disparaissait, `vendor` deviendrait
+   * un type inconnu, la relation cesserait de résoudre, et rien ne le
+   * signalerait — le rattachement continuerait de renvoyer 2xx.
+   *
+   * ⚠️ Asymétrie à connaître : nous envoyons `customer_type: 'vendor'` à la
+   * création, et le journal §2.10 l'a relu tel quel. Les deux colonnes ne sont
+   * donc peut-être pas traitées à l'identique en amont — raison de plus pour
+   * ne pas raisonner de l'une vers l'autre, ce que la première version de
+   * `docs/specs_facilitateur.md` faisait et que sa revue a démenti.
    */
   async attachFacilitator(orderUuid: string, vendorUuid: string) {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {
         facilitator_uuid: vendorUuid,
-        facilitator_type: 'vendor',
+        facilitator_type: FACILITATOR_TYPE_VENDOR,
         adhoc: false,
       },
     });

@@ -104,10 +104,18 @@ got_type="$(echo "$node" | jq -r '.facilitator_type // "absent"')"
 # ⚠️ Comparaison au caractère près : c'est exactement ici qu'un
 # `\Fleetbase\FleetOps\Models\Vendor` passerait pour un succès si on se
 # contentait de vérifier que le champ est « rempli ».
-if [ "$got_type" = "vendor" ]; then
-  pass "facilitator_type stocké « vendor », sans réécriture par Fleetbase"
+# ⚠️ La forme canonique est `fleet-ops:vendor` — l'alias de morphologie
+# polymorphe, mesuré le 31/07/2026 et non déduit. `vendor` est accepté puis
+# normalisé ; les deux mènent à une relation qui résout, mais nous écrivons
+# celle que le serveur stocke.
+EXPECTED_TYPE="${EXPECTED_TYPE:-fleet-ops:vendor}"
+if [ "$got_type" = "$EXPECTED_TYPE" ]; then
+  pass "facilitator_type stocké « $got_type », sans réécriture par Fleetbase"
+elif [ "$got_type" = "vendor" ]; then
+  fail "facilitator_type stocké « vendor » et non « $EXPECTED_TYPE »" \
+       "Fleetbase ne normalise plus : ajuster FACILITATOR_TYPE_VENDOR."
 else
-  fail "facilitator_type renvoyé « $got_type » et non « vendor »" \
+  fail "facilitator_type renvoyé « $got_type », inattendu" \
        "C'est la forme que Fleetbase attend réellement : à reporter dans attachFacilitator()."
 fi
 

@@ -207,7 +207,7 @@ export class FlotteService {
     const after = await this.fleetbaseClient
       .getOrder(order.uuid)
       .then((r: any) => r?.order || r)
-      .catch(() => null);
+      .catch((): any => null);
 
     if (!after) {
       // On a écrit sans pouvoir vérifier. Le dire plutôt que d'affirmer un

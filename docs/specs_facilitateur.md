@@ -135,7 +135,7 @@ l'autre »).
 | Affecter un conducteur | `driver_assigned_uuid` | ✅ **appel réel**, isolation deux flottes (A 201 / B 403) |
 | Valider / suspendre | `Vendor.status` ∈ {`active`,`inactive`,`suspended`} | ✅ **appel réel** (Lot 4, sur le commerçant) |
 | Écrire `facilitator_uuid` à la création | colonne `$fillable` | ⚠️ **vérifié indirectement** — voir §3.1 |
-| `facilitator_type` accepte `"vendor"` | colonne polymorphe | ❌ **déduit par analogie** — voir §3.1 |
+| `facilitator_type` | colonne polymorphe | ✅ **appel réel** — la valeur stockée est `fleet-ops:vendor`, voir §12 C1 |
 | Lister les conducteurs d'une entreprise | `GET /drivers?vendor=<uuid>` | ⚠️ **lu dans le source**, jamais testé — absent de `verify-fleetbase-filters.sh` |
 | `Fleet` = groupe de conducteurs | — | ❌ **déduit d'un nom de filtre** relevé dans l'onglet réseau |
 
@@ -814,13 +814,17 @@ et le registre côté entreprise (D13).
 
 Aucun ne prend plus de trente minutes, et chacun remplace une hypothèse.
 
-- **C1 — `facilitator_type`.** Créer une commande avec `facilitator_uuid` +
-  `facilitator_type`, puis prouver la **résolution** et non le stockage :
-  (a) relire avec `with[]=facilitator` et vérifier que la relation rend le
-  `Vendor` attendu ; (b) vérifier que la commande remonte par
-  `GET /orders?facilitator=<uuid>` **avec témoin** ; (c) vérifier que la console
-  affiche l'entreprise sur la fiche. Un `2xx` et un écho de colonne ne prouvent
-  rien — le contre-exemple du backslash est dans le dépôt (§3.1).
+- **C1 — `facilitator_type` : ✅ PASSÉ le 31/07/2026**
+  (`scripts/verify-facilitator.sh`). Résultat, et il corrige ce document :
+  **Fleetbase stocke `fleet-ops:vendor`**, son alias de morphologie polymorphe,
+  et non `vendor`. La valeur `vendor` est acceptée puis normalisée — la relation
+  `with[]=facilitator` résout le bon Vendor, et `?facilitator=` rend la commande
+  avec un **témoin à 0** — mais le code écrit désormais la forme canonique
+  plutôt que de dépendre d'une normalisation observée une seule fois.
+  ⚠️ Asymétrie relevée au passage : nous envoyons `customer_type: 'vendor'` et
+  le journal §2.10 l'a relu tel quel. Les deux colonnes ne sont donc peut-être
+  pas traitées à l'identique — raison de plus pour ne jamais raisonner de l'une
+  vers l'autre, ce que la première version de ce document faisait.
 - **C2 — `GET /drivers?vendor=`** avec témoin, à ajouter à
   `scripts/verify-fleetbase-filters.sh`, qui n'en teste que quatre.
 - **C3 — Écriture concurrente de `facilitator_uuid`.** Deux `PUT` rapprochés,
