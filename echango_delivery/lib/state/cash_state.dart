@@ -121,21 +121,32 @@ class CashState extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Trois personas et non plus deux : l'entreprise de transport est une
+      // partie du registre au même titre que les deux autres, et sans ses
+      // routes une dette envers elle ne serait confirmable par personne.
       final isDriver = _persona == 'driver';
+      final isFleet = _persona == 'fleet';
       _ledger = isDriver
           ? await _apiClient.getDriverCashLedger()
-          : await _apiClient.getMerchantCashLedger();
+          : isFleet
+              ? await _apiClient.getFleetCashLedger()
+              : await _apiClient.getMerchantCashLedger();
       _remittances = isDriver
           ? await _apiClient.getDriverRemittances()
-          : await _apiClient.getMerchantRemittances();
+          : isFleet
+              ? await _apiClient.getFleetRemittances()
+              : await _apiClient.getMerchantRemittances();
       // Le détail ne conditionne pas l'écran : un total sans son détail reste
       // lisible, alors qu'une page en erreur ne l'est pas. On l'affiche donc
       // s'il arrive, et on se tait s'il manque.
       _collections = isDriver
           ? await _apiClient.getDriverCollections().catchError(
               (_) => <CashCollectionEntry>[])
-          : await _apiClient.getMerchantCollections().catchError(
-              (_) => <CashCollectionEntry>[]);
+          : isFleet
+              ? await _apiClient.getFleetCollections().catchError(
+                  (_) => <CashCollectionEntry>[])
+              : await _apiClient.getMerchantCollections().catchError(
+                  (_) => <CashCollectionEntry>[]);
 
       // ⚠️ Pas de `catchError` silencieux ici, contrairement au détail.
       //
@@ -143,7 +154,10 @@ class CashState extends ChangeNotifier {
       // laisse l'écran affirmer qu'aucune somme n'est en attente, ce qui est
       // exactement l'erreur qu'on corrige. Mieux vaut le message d'erreur que
       // la fausse tranquillité — d'où la liste vidée ET l'erreur remontée.
-      _pending = isDriver
+      // « L'argent attendu aux portes » est une lecture propre au commerçant :
+      // c'est SA marchandise qui est en route. Ni le conducteur ni l'entreprise
+      // n'ont d'équivalent — leur exposition se lit dans les soldes.
+      _pending = isDriver || isFleet
           ? const PendingCollections()
           : await _apiClient.getMerchantPendingCollections();
     } on AppException catch (e) {
@@ -208,6 +222,11 @@ class CashState extends ChangeNotifier {
             merchantId: counterpartyId,
             amount: amount,
           );
+        } else if (_persona == 'fleet') {
+          await _apiClient.declareFleetRemittance(
+            counterpartyId: counterpartyId,
+            amount: amount,
+          );
         } else {
           await _apiClient.declareMerchantRemittance(
             driverId: counterpartyId,
@@ -219,6 +238,8 @@ class CashState extends ChangeNotifier {
   Future<bool> confirmRemittance(String id) => _mutate(() async {
         if (_persona == 'driver') {
           await _apiClient.confirmDriverRemittance(id);
+        } else if (_persona == 'fleet') {
+          await _apiClient.confirmFleetRemittance(id);
         } else {
           await _apiClient.confirmMerchantRemittance(id);
         }
@@ -227,6 +248,8 @@ class CashState extends ChangeNotifier {
   Future<bool> disputeRemittance(String id, {String? reason}) => _mutate(() async {
         if (_persona == 'driver') {
           await _apiClient.disputeDriverRemittance(id, reason: reason);
+        } else if (_persona == 'fleet') {
+          await _apiClient.disputeFleetRemittance(id, reason: reason);
         } else {
           await _apiClient.disputeMerchantRemittance(id, reason: reason);
         }

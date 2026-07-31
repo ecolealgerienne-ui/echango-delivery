@@ -1003,6 +1003,140 @@ class BffApiClient {
     return MerchantOrder.fromJson(map as Map<String, dynamic>);
   }
 
+  // ── Caisse de l'entreprise ───────────────────────────────────────────────
+  //
+  // ⚠️ Ces routes ne sont pas un supplément d'agrément : sans elles, une dette
+  // envers une entreprise n'est **confirmable par personne**, et elle reste
+  // ouverte jusqu'à ce que le plafond bloque le conducteur.
+
+  Future<CashLedger> getFleetCashLedger() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/caisse'),
+      headers: _buildHeaders(),
+    );
+    return CashLedger.fromMerchantJson(
+      (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>,
+    );
+  }
+
+  Future<List<CashRemittanceEntry>> getFleetRemittances() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/caisse/remises'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list
+        .map((e) => CashRemittanceEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<CashCollectionEntry>> getFleetCollections() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/caisse/encaissements'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list
+        .map((e) => CashCollectionEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> declareFleetRemittance({
+    required String counterpartyId,
+    required double amount,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/caisse/remises'),
+      headers: _buildHeaders(),
+      body: jsonEncode({'counterpartyId': counterpartyId, 'amount': amount}),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> confirmFleetRemittance(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/caisse/remises/$id/confirmer'),
+      headers: _buildHeaders(),
+    );
+    _parseResponse(response);
+  }
+
+  Future<void> disputeFleetRemittance(String id, {String? reason}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/caisse/remises/$id/contester'),
+      headers: _buildHeaders(),
+      body: jsonEncode({'reason': reason}),
+    );
+    _parseResponse(response);
+  }
+
+  // ── Profil entreprise de transport (« flotte ») ─────────────────────────
+  //
+  // Le module BFF existait depuis le 28/07 et **aucune de ces routes n'était
+  // appelée** : l'application affichait « Espace non disponible » (défaut D20).
+  // C'est le fil rouge du projet pris à l'envers — ici l'app ignorait ce que le
+  // serveur savait déjà faire.
+
+  /// Les courses confiées à cette entreprise.
+  Future<Map<String, dynamic>> getFleetOrders({int page = 1, int limit = 25}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/commandes').replace(
+        queryParameters: {'page': '$page', 'limit': '$limit'},
+      ),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Les courses **libres**, réclamables par cette entreprise.
+  ///
+  /// Servies expurgées : la livraison est réduite à sa commune tant que
+  /// personne ne s'est engagé. Le prix et le montant à encaisser restent — ce
+  /// sont eux qui permettent de décider.
+  Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = 25}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/opportunites').replace(
+        queryParameters: {'page': '$page', 'limit': '$limit'},
+      ),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Prendre une course du pool.
+  ///
+  /// Le second arrivant reçoit `order.already_taken` : le serveur relit après
+  /// écriture, Fleetbase n'offrant aucune écriture conditionnelle.
+  Future<Map<String, dynamic>> claimFleetOrder(String orderId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/opportunites/$orderId/prendre'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> getFleetDrivers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/drivers'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Désigner un conducteur sur une course de l'entreprise.
+  Future<Map<String, dynamic>> assignFleetDriver(String orderId, String driverUuid) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/commandes/$orderId/assigner'),
+      headers: _buildHeaders(),
+      body: jsonEncode({'driverId': driverUuid}),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> getMerchantTracking(String id) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/commandes/$id/suivi'),

@@ -9,7 +9,7 @@ import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
-import '../screens/flotte/flotte_placeholder_screen.dart';
+import '../screens/flotte/flotte_home_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
@@ -126,12 +126,21 @@ GoRouter buildAppRouter(AuthState authState) {
         ],
       ),
 
-      // Le rôle existe côté serveur et son espace n'est pas construit : lui
-      // donner un écran qui l'explique, plutôt que l'écran d'erreur de
-      // go_router sur une route absente.
+      // L'espace entreprise de transport. `FlottePlaceholderScreen` disait
+      // « Espace non disponible » alors que six routes BFF l'attendaient depuis
+      // le 28/07 — le serveur savait, l'app ignorait (défaut D20).
       GoRoute(
         path: '/flotte',
-        builder: (_, __) => const FlottePlaceholderScreen(),
+        builder: (_, __) => const FlotteHomeScreen(),
+        routes: [
+          // Le registre vu de l'entreprise : ce que ses conducteurs lui doivent,
+          // ce qu'elle doit aux commerçants. Même écran que les deux autres
+          // personas — c'est le même registre, vu d'un troisième bout.
+          GoRoute(
+            path: 'caisse',
+            builder: (_, __) => const CashScreen(persona: 'fleet'),
+          ),
+        ],
       ),
     ],
   );

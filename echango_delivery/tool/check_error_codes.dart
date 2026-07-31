@@ -78,8 +78,42 @@ void main() {
   report('Traductions FR sans code dans AppError', frSet.difference(declared));
   report('Traductions AR sans code dans AppError', arSet.difference(declared));
 
+  // ── Libellés d'interface du profil flotte ────────────────────────────────
+  //
+  // Même contrainte, même vérificateur. Les écrans existants portent ~575
+  // chaînes en dur, assumées comme dette ; un écran **neuf** n'a pas à la faire
+  // grandir (CLAUDE.md, règle 4). Sans ce contrôle, la table arabe se
+  // désynchroniserait dès le premier libellé ajouté à la va-vite — c'est
+  // exactement ce qui m'est arrivé deux fois sur les codes d'erreur, le même
+  // jour, en insérant une clé par `replace` sur la mauvaise occurrence.
+  final fleetFile = File('lib/i18n/fleet_strings.dart');
+  if (fleetFile.existsSync()) {
+    final fleet = fleetFile.readAsStringSync();
+    final fleetFr = fleet.indexOf('const Map<String, String> _fr');
+    final fleetAr = fleet.indexOf('const Map<String, String> _ar');
+
+    if (fleetFr < 0 || fleetAr < 0) {
+      stderr.writeln('Tables de libellés flotte introuvables.');
+      exit(2);
+    }
+
+    final labelsFr = keysOf(fleet.substring(fleetFr, fleetAr));
+    final labelsAr = keysOf(fleet.substring(fleetAr));
+
+    duplicates('Libellés flotte FR', labelsFr);
+    duplicates('Libellés flotte AR', labelsAr);
+    report('Libellés flotte FR sans équivalent AR',
+        labelsFr.toSet().difference(labelsAr.toSet()));
+    report('Libellés flotte AR sans équivalent FR',
+        labelsAr.toSet().difference(labelsFr.toSet()));
+
+    if (!failed) {
+      stdout.writeln('✅ ${labelsFr.length} libellés flotte — FR et AR coïncident.');
+    }
+  }
+
   if (failed) {
-    stdout.writeln('\nLes trois ensembles doivent être identiques (règle 4).');
+    stdout.writeln('\nLes ensembles doivent être identiques (règle 4).');
     exit(1);
   }
 
