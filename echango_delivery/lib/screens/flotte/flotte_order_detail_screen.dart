@@ -605,12 +605,12 @@ String? _items(Object? items, _Translate t) {
 /// la forme la plus coûteuse de l'omission : pas un blanc qu'on remarque, un
 /// texte affirmatif incomplet.
 ///
-/// ⚠️ **La quantité, elle, n'est encore saisie nulle part** : le formulaire
-/// commerçant envoie `quantity: 1` en dur, et le DTO l'exige sans jamais
-/// l'exposer. La branche ci-dessous est donc morte pour toute commande née de
-/// l'app — elle est conservée parce que le contrat serveur la porte et qu'un
-/// autre émetteur peut la remplir, mais **c'est le formulaire qu'il faut
-/// corriger**, pas cette fonction (consigné dans CLAUDE.md).
+/// ✅ **La quantité est saisie depuis le 31/07/2026.** Elle ne l'était nulle
+/// part : le formulaire commerçant envoyait `quantity: 1` en dur et le DTO
+/// l'exigeait sans jamais l'exposer, donc la branche ci-dessous était morte
+/// pour toute commande née de l'app — deux cartons partaient annoncés comme un
+/// seul, et le transporteur le découvrait devant la porte. Le formulaire porte
+/// désormais le champ ; cette fonction n'a pas changé, elle était juste.
 String _describeItem(Object? item, _Translate t) {
   if (item is! Map) return item?.toString().trim() ?? '';
 

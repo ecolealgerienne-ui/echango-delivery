@@ -58,6 +58,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final _instructions = TextEditingController();
   final _itemDescription = TextEditingController();
   final _itemWeight = TextEditingController();
+  final _itemQuantity = TextEditingController(text: '1');
   final _price = TextEditingController();
   final _codAmount = TextEditingController();
 
@@ -183,6 +184,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (description is String) _itemDescription.text = description;
       final weight = item['weight'];
       if (weight is num) _itemWeight.text = weight.toString();
+      // ⚠️ Repris comme les autres champs. L'omettre ferait retomber une copie
+      // sur le défaut « 1 » — et c'est exactement le défaut de duplication
+      // corrigé le 30/07 sur `podMethod` et `preferFavourites` : un champ que
+      // le formulaire ne relit pas revient à sa valeur d'usine, en silence.
+      final quantity = item['quantity'];
+      if (quantity is num && quantity > 0) {
+        _itemQuantity.text = quantity.toStringAsFixed(0);
+      }
       _fragile = item['fragile'] == true;
     }
 
@@ -223,7 +232,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
-      _instructions, _itemDescription, _itemWeight, _price, _codAmount,
+      _instructions, _itemDescription, _itemWeight, _itemQuantity, _price,
+      _codAmount,
     ]) {
       c.dispose();
     }
@@ -328,7 +338,16 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         'items': [
           {
             'description': _itemDescription.text.trim(),
-            'quantity': 1,
+            // ⚠️ Le champ était **envoyé en dur** : le DTO l'exige et le
+            // formulaire ne l'exposait pas, donc deux cartons partaient
+            // annoncés comme un seul. Le transporteur le découvrait devant
+            // la porte — au moment où il n'a plus le choix qu'entre porter
+            // deux fois ou refuser une course déjà acceptée.
+            //
+            // Aucune borne côté app, délibérément : le serveur porte
+            // `@IsInt() @Min(1)`, et une copie ici serait une règle de plus à
+            // tenir accordée. L'absence ne ment pas (règle 7).
+            'quantity': int.tryParse(_itemQuantity.text.trim()) ?? 1,
             if (double.tryParse(_itemWeight.text.trim()) != null)
               'weight': double.parse(_itemWeight.text.trim()),
             if (_fragile) 'fragile': true,
@@ -392,6 +411,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _section('Colis'),
                 _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
                     Icons.inventory_2_outlined),
+                _field(_itemQuantity, 'Nombre de colis',
+                    Icons.numbers_outlined, keyboard: TextInputType.number),
                 _field(_itemWeight, 'Poids approximatif (kg)',
                     Icons.scale_outlined, keyboard: TextInputType.number),
                 // Case à cocher plutôt qu'une consigne écrite : une mention

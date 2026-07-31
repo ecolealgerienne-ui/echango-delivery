@@ -197,7 +197,20 @@ export class OrderItemDto {
   @MaxLength(200)
   description: string;
 
-  @IsNumber()
+  /**
+   * Nombre de colis.
+   *
+   * ⚠️ `@IsInt()` et `@Min(1)` ajoutés le 31/07/2026, en même temps que le
+   * champ apparaissait enfin dans le formulaire commerçant — qui envoyait
+   * `quantity: 1` en dur depuis l'origine. Tant que la seule valeur possible
+   * était `1`, `@IsNumber()` suffisait ; dès qu'un humain saisit le nombre,
+   * `0`, `-2` et `1.5` deviennent des entrées plausibles, et un colis se
+   * compte en entiers positifs. `@Max` borne une saisie erronée à la frappe
+   * plutôt qu'une exigence métier — personne ne confie mille colis à une moto.
+   */
+  @IsInt()
+  @Min(1)
+  @Max(999)
   quantity: number;
 
   /** Poids en kilogrammes. */
