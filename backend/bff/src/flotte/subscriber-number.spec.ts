@@ -15,31 +15,22 @@
  * relecture. La leçon tient en une ligne : une règle de comparaison ne se relit
  * pas, elle se joue sur ses cas.
  *
- * Le test porte sur une copie de la logique plutôt que sur le service : ce
- * dernier dépend de Prisma, dont le client ne peut pas être généré dans cet
- * environnement. La copie est fidèle et la faire diverger casserait ce test.
+ * ⚠️ **Ce test portait une COPIE de la logique**, et l'invoquait ainsi : le
+ * service dépend de Prisma, dont le client ne peut pas être généré ici. La
+ * justification tenait, la conclusion non — il suffisait d'extraire les deux
+ * fonctions dans un module qui n'importe rien.
+ *
+ * Et la copie **avait déjà divergé** au moment où on l'a relue : le service
+ * commençait par `if (typeof stored !== 'string' || !stored.trim()) return
+ * false;`, la copie non. Un `null` en base — cas courant, `email` et `phone`
+ * étant tous deux facultatifs — passait donc par un chemin que ce test ne
+ * parcourait pas. Un test qui recopie ce qu'il vérifie ne vérifie que
+ * lui-même : il serait resté vert pendant que les deux versions s'éloignaient.
+ *
+ * Il importe désormais ce que le service exécute (règle 5).
  */
 
-function subscriberNumber(value: string): string | null {
-  let digits = value.replace(/\D/g, '');
-  if (!digits) return null;
-
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.startsWith('213')) digits = digits.slice(3);
-  if (digits.startsWith('0')) digits = digits.slice(1);
-
-  return digits.length === 9 ? digits : null;
-}
-
-function sameIdentifier(stored: string, needle: string): boolean {
-  const a = stored.trim().toLowerCase();
-  const b = needle.trim().toLowerCase();
-  if (a === b) return true;
-
-  const na = subscriberNumber(a);
-  const nb = subscriberNumber(b);
-  return na !== null && na === nb;
-}
+import { sameIdentifier, subscriberNumber } from '../common/identity/subscriber-number';
 
 describe('reconnaître deux fois la même personne', () => {
   it('reconnaît le format local et le format international', () => {
@@ -68,6 +59,30 @@ describe('reconnaître deux fois la même personne', () => {
     expect(subscriberNumber('0555')).toBeNull();
     expect(subscriberNumber('12')).toBeNull();
     expect(sameIdentifier('0555', '0555')).toBe(true); // égalité littérale, elle
+
+    // ⚠️ Cas ajouté après avoir MUTÉ la fonction : assouplir la longueur
+    // exigée (`=== 9` en `>= 6`) laissait les cinq autres cas au vert. Deux
+    // fragments trop courts mais dont les chiffres coïncident après
+    // normalisation — ici `00123456` et `123456` — se seraient déclarés la
+    // même personne, et une embauche légitime aurait été refusée.
+    expect(sameIdentifier('00123456', '123456')).toBe(false);
+    expect(sameIdentifier('0213456789', '213456789')).toBe(false);
+  });
+
+  it('ne rapproche rien d’une valeur absente', () => {
+    // ⚠️ **Le cas que la copie masquait.** `email` et `phone` sont tous deux
+    // facultatifs sur un conducteur Fleetbase : `stored` vaut donc souvent
+    // `null`, parfois une chaîne vide, et rien n'interdit un nombre. Sans ce
+    // contrôle, `null.trim()` lèverait au milieu d'un contrôle de doublon —
+    // c'est-à-dire qu'une création légitime échouerait par une erreur 500.
+    //
+    // Le service le testait, la copie du test non. C'est exactement le trou
+    // qu'un test auto-recopié laisse ouvert.
+    expect(sameIdentifier(null, '0555123456')).toBe(false);
+    expect(sameIdentifier(undefined, '0555123456')).toBe(false);
+    expect(sameIdentifier('', '0555123456')).toBe(false);
+    expect(sameIdentifier('   ', '0555123456')).toBe(false);
+    expect(sameIdentifier(213555123456, '0555123456')).toBe(false);
   });
 
   it('compare les emails littéralement, casse comprise', () => {

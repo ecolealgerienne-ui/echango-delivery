@@ -14,6 +14,7 @@ import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-pos
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
+import { sameIdentifier } from '../common/identity/subscriber-number';
 
 @Injectable()
 export class FlotteService {
@@ -605,7 +606,7 @@ export class FlotteService {
 
       const exact = matches.find(
         (d: any) =>
-          this.sameIdentifier(d?.email, needle) || this.sameIdentifier(d?.phone, needle),
+          sameIdentifier(d?.email, needle) || sameIdentifier(d?.phone, needle),
       );
 
       if (exact) {
@@ -618,58 +619,6 @@ export class FlotteService {
     }
   }
 
-  /**
-   * Deux identifiants désignent-ils la même chose ?
-   *
-   * Les numéros sont comparés **sur leurs chiffres seuls** : « 0555 12 34 56 »
-   * et « +213555123456 » sont la même ligne, et une comparaison littérale ferait
-   * passer le doublon que ce contrôle existe pour attraper.
-   */
-  private sameIdentifier(stored: any, needle: string): boolean {
-    if (typeof stored !== 'string' || !stored.trim()) return false;
-
-    const a = stored.trim().toLowerCase();
-    const b = needle.trim().toLowerCase();
-    if (a === b) return true;
-
-    const na = this.subscriberNumber(a);
-    const nb = this.subscriberNumber(b);
-    return na !== null && na === nb;
-  }
-
-  /**
-   * Le numéro d'abonné, débarrassé de son indicatif et de son zéro de tête.
-   *
-   * ── Pourquoi `endsWith` sur les chiffres bruts ne marchait pas ────────────
-   *
-   * C'était la première version, et elle échouait sur **l'exemple même de son
-   * commentaire** : « 0555 12 34 56 » donne `0555123456`, « +213555123456 »
-   * donne `213555123456`, et le second ne se termine pas par le premier — le
-   * zéro de tête du format local n'est pas dans le format international. Or
-   * c'est exactement le couple le plus fréquent en Algérie : enregistré en
-   * `+213…`, ressaisi en `0…`. Le doublon passait.
-   *
-   * Symétriquement, `endsWith` sur six chiffres déclarait identiques deux
-   * numéros distincts partageant leur fin, et refusait une création légitime.
-   *
-   * On normalise donc vers **les neuf chiffres de l'abonné** : indicatif `213`
-   * retiré, zéro de tête retiré, et une longueur exacte exigée plutôt qu'un
-   * suffixe. Rend `null` quand ce n'est pas un numéro exploitable — un email,
-   * par exemple, que la comparaison littérale au-dessus a déjà traité.
-   */
-  private subscriberNumber(value: string): string | null {
-    let digits = value.replace(/\D/g, '');
-    if (!digits) return null;
-
-    if (digits.startsWith('00')) digits = digits.slice(2);
-    if (digits.startsWith('213')) digits = digits.slice(3);
-    if (digits.startsWith('0')) digits = digits.slice(1);
-
-    // Neuf chiffres est la longueur d'un numéro algérien sans son zéro
-    // (`555123456`). Tout ce qui n'y correspond pas est trop incertain pour
-    // fonder un refus de création.
-    return digits.length === 9 ? digits : null;
-  }
 
   /**
    * Dernière position connue des conducteurs de cette flotte.
