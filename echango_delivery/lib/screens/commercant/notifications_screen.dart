@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../utils/dates.dart';
@@ -140,7 +141,14 @@ class _NotificationTile extends StatelessWidget {
           Text(notification.body),
           const SizedBox(height: 2),
           Text(
-            formatRelative(notification.createdAt),
+            // La locale est exigée depuis que cette fonction produit des mots :
+            // « il y a 12 min » ne se lit pas dans un écran arabe. Le reste de
+            // cet écran est encore en français en dur (dette assumée), mais on
+            // n'ajoute pas un site qui *ne pourrait pas* suivre.
+            formatRelative(
+              notification.createdAt,
+              context.watch<LocaleState>().locale,
+            ),
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],

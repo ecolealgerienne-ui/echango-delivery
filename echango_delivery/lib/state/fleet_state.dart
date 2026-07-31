@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Locale;
 
+import '../models/fleet_driver_position.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
 import 'paged_list.dart';
@@ -56,6 +57,9 @@ class FleetState extends ChangeNotifier {
   final PagedList<Map<String, dynamic>> _opportunitiesPage =
       PagedList<Map<String, dynamic>>();
   List<Map<String, dynamic>> _drivers = [];
+  List<FleetDriverPosition> _positions = [];
+  bool _positionsLoading = false;
+  String? _positionsError;
   List<Map<String, dynamic>> _memberships = [];
   bool _membershipsUnavailable = false;
 
@@ -78,6 +82,10 @@ class FleetState extends ChangeNotifier {
   List<Map<String, dynamic>> get orders => _ordersPage.items;
   List<Map<String, dynamic>> get opportunities => _opportunitiesPage.items;
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
+
+  List<FleetDriverPosition> get driverPositions => List.unmodifiable(_positions);
+  bool get driverPositionsLoading => _positionsLoading;
+  String? get driverPositionsError => _positionsError;
 
   bool get hasMoreOrders => _ordersPage.hasMore;
   bool get isLoadingMoreOrders => _ordersPage.isLoadingMore;
@@ -144,6 +152,37 @@ class FleetState extends ChangeNotifier {
       _errorMessage = messageForError(e, _locale);
     } finally {
       _ordersPage.endLoadMore();
+      notifyListeners();
+    }
+  }
+
+  /// Où sont les conducteurs, maintenant.
+  ///
+  /// ── Chargée à la demande, et jamais avec le reste ─────────────────────────
+  ///
+  /// `load()` sert les trois listes à l'ouverture de l'écran. Y ajouter les
+  /// positions ferait télécharger la flotte entière — et les tuiles de carte
+  /// avec elle — à chaque visite, y compris pour consulter une course. C'est le
+  /// défaut corrigé le 30/07 côté commerçant, où la carte se chargeait à chaque
+  /// ouverture de fiche : la position est une question qu'on pose, pas une
+  /// donnée qu'on ramène en passant.
+  ///
+  /// ⚠️ **L'échec ne se confond pas avec l'absence.** Rendre une liste vide sur
+  /// erreur ferait afficher « aucun conducteur n'a remonté de position » à une
+  /// entreprise dont le BFF est injoignable — une affirmation possiblement
+  /// fausse, au moment précis où elle cherche quelqu'un. C'est le défaut le
+  /// plus répété de ce projet, et il a déjà été payé deux fois sur cet écran.
+  Future<void> loadDriverPositions() async {
+    _positionsLoading = true;
+    _positionsError = null;
+    notifyListeners();
+
+    try {
+      _positions = await _apiClient.getFleetDriverPositions();
+    } catch (e) {
+      _positionsError = messageForError(e, _locale);
+    } finally {
+      _positionsLoading = false;
       notifyListeners();
     }
   }

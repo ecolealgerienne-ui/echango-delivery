@@ -9,6 +9,7 @@ import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
+import '../screens/flotte/driver_map_screen.dart';
 import '../screens/flotte/flotte_home_screen.dart';
 import '../screens/flotte/flotte_order_detail_screen.dart';
 import '../screens/splash_screen.dart';
@@ -147,6 +148,14 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'caisse',
             builder: (_, __) => const CashScreen(persona: 'fleet'),
+          ),
+          // Une route et non un cinquième onglet : les positions se chargent à
+          // la demande. Un onglet les chargerait — flotte entière et tuiles de
+          // carte comprises — à chaque ouverture de l'espace entreprise, y
+          // compris pour venir consulter une course.
+          GoRoute(
+            path: 'carte',
+            builder: (_, __) => const FlotteDriverMapScreen(),
           ),
           // Deux chemins pour un écran, et non un drapeau dans l'URL : ils
           // n'interrogent pas la même route serveur et n'obéissent pas à la

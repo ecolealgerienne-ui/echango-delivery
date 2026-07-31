@@ -31,6 +31,8 @@
 /// droit de ne plus y penser.
 library;
 
+import 'dart:ui' show Locale;
+
 String _two(int n) => n.toString().padLeft(2, '0');
 
 /// « 31/07 à 15h23 » — jour et heure, sans l'année.
@@ -62,11 +64,32 @@ String formatFull(DateTime date) {
 /// Répond à une autre question que les précédentes — *depuis combien de temps*
 /// plutôt que *quand* —, d'où une fonction distincte et non un paramètre. Elle
 /// retombe sur [formatDay] pour que le basculement ne change pas de format.
-String formatRelative(DateTime date) {
+///
+/// ── Pourquoi celle-ci prend une locale, et les trois autres non ───────────
+///
+/// Parce qu'elle est la seule à produire des **mots**. `formatDayTime`,
+/// `formatDay` et `formatFull` ne rendent que des chiffres et deux séparateurs :
+/// elles se lisent aussi bien dans les deux langues. Celle-ci écrit « il y a »,
+/// ce qu'un écran arabe ne peut pas afficher.
+///
+/// ⚠️ **La locale est exigée, pas optionnelle.** Un paramètre facultatif qui
+/// vaut « français » par défaut aurait laissé chaque nouvel appelant introduire
+/// silencieusement une phrase française dans un écran arabe — et personne
+/// n'aurait relu. Le compilateur pose la question à chaque site, ce qu'un
+/// commentaire ne sait pas faire (règle 5).
+String formatRelative(DateTime date, Locale locale) {
+  final ar = locale.languageCode == 'ar';
   final delta = DateTime.now().difference(date.toLocal());
-  if (delta.inMinutes < 1) return 'à l\'instant';
-  if (delta.inMinutes < 60) return 'il y a ${delta.inMinutes} min';
-  if (delta.inHours < 24) return 'il y a ${delta.inHours} h';
-  if (delta.inDays < 7) return 'il y a ${delta.inDays} j';
+
+  if (delta.inMinutes < 1) return ar ? 'الآن' : 'à l\'instant';
+  if (delta.inMinutes < 60) {
+    return ar ? 'منذ ${delta.inMinutes} د' : 'il y a ${delta.inMinutes} min';
+  }
+  if (delta.inHours < 24) {
+    return ar ? 'منذ ${delta.inHours} س' : 'il y a ${delta.inHours} h';
+  }
+  if (delta.inDays < 7) {
+    return ar ? 'منذ ${delta.inDays} ي' : 'il y a ${delta.inDays} j';
+  }
   return formatDay(date);
 }

@@ -1,3 +1,5 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:echango_delivery/utils/dates.dart';
@@ -78,22 +80,58 @@ void main() {
   });
 
   group('formatRelative', () {
+    const fr = Locale('fr');
+    const ar = Locale('ar');
+
     test('dit le délai en deçà d’une semaine', () {
       final now = DateTime.now();
-      expect(formatRelative(now.subtract(const Duration(seconds: 10))),
+      expect(formatRelative(now.subtract(const Duration(seconds: 10)), fr),
           'à l\'instant');
-      expect(formatRelative(now.subtract(const Duration(minutes: 12))),
+      expect(formatRelative(now.subtract(const Duration(minutes: 12)), fr),
           'il y a 12 min');
-      expect(formatRelative(now.subtract(const Duration(hours: 5))), 'il y a 5 h');
-      expect(formatRelative(now.subtract(const Duration(days: 3))), 'il y a 3 j');
+      expect(
+          formatRelative(now.subtract(const Duration(hours: 5)), fr), 'il y a 5 h');
+      expect(
+          formatRelative(now.subtract(const Duration(days: 3)), fr), 'il y a 3 j');
     });
 
     test('retombe sur formatDay au-delà, et pas sur un autre format', () {
       final old = DateTime.now().subtract(const Duration(days: 40));
-      expect(formatRelative(old), formatDay(old));
+      expect(formatRelative(old, fr), formatDay(old));
       // Le basculement ne doit pas changer de convention : c'est la raison
       // d'être du repli sur `formatDay` plutôt que sur une chaîne recopiée.
-      expect(formatRelative(old), matches(r'^\d{2}/\d{2}/\d{4}$'));
+      expect(formatRelative(old, fr), matches(r'^\d{2}/\d{2}/\d{4}$'));
+    });
+
+    // ── L'arabe, parce que c'est la raison d'être du paramètre ─────────────
+    //
+    // C'est la seule des quatre fonctions de ce fichier qui produise des MOTS.
+    // Les trois autres ne rendent que des chiffres, donc se lisent dans les
+    // deux langues ; celle-ci écrivait « il y a » dans un écran arabe.
+    test('rend l’arabe quand la locale le demande', () {
+      final now = DateTime.now();
+      expect(formatRelative(now.subtract(const Duration(seconds: 10)), ar),
+          'الآن');
+      expect(formatRelative(now.subtract(const Duration(minutes: 12)), ar),
+          'منذ 12 د');
+      expect(formatRelative(now.subtract(const Duration(hours: 5)), ar),
+          'منذ 5 س');
+      expect(formatRelative(now.subtract(const Duration(days: 3)), ar),
+          'منذ 3 ي');
+    });
+
+    test('la date de repli reste la même dans les deux langues', () {
+      // Des chiffres et deux barres obliques : rien à traduire, et deux
+      // formats de date selon la langue seraient une divergence gratuite.
+      final old = DateTime.now().subtract(const Duration(days: 40));
+      expect(formatRelative(old, ar), formatRelative(old, fr));
+    });
+
+    test('une locale inconnue ne rend pas une langue au hasard', () {
+      // Le repli est le français, langue par défaut du produit — mais il est
+      // explicite ici plutôt que déduit d'une lecture du code.
+      final now = DateTime.now().subtract(const Duration(minutes: 12));
+      expect(formatRelative(now, const Locale('en')), 'il y a 12 min');
     });
   });
 }

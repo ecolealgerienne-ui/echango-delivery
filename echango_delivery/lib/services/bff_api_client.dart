@@ -9,6 +9,7 @@ import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
+import '../models/fleet_driver_position.dart';
 import '../models/cash.dart';
 
 const _tokenKey = 'echango_session_token';
@@ -1233,6 +1234,33 @@ class BffApiClient {
     final data = _parseResponse(response);
     final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
     return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Où sont les conducteurs de cette entreprise, en ce moment.
+  ///
+  /// ⚠️ **La route existait depuis le 28/07 et n'était appelée nulle part.**
+  /// C'est le fil rouge du projet — le serveur savait, l'app ignorait — et il
+  /// portait ici la fonction même du persona : la vision produit décrit
+  /// l'entreprise de transport comme « une vue dispatch minimaliste (commandes
+  /// entrantes, assignation à un conducteur disponible, **position des
+  /// conducteurs**) ».
+  ///
+  /// Le serveur ne renvoie **que** ceux qui ont une position exploitable, et il
+  /// se charge lui-même de n'exposer que les conducteurs de cette entreprise —
+  /// adhérents compris, sans quoi la carte montrerait la moitié de la flotte
+  /// sans le dire.
+  Future<List<FleetDriverPosition>> getFleetDriverPositions() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/drivers/positions'),
+      headers: _buildHeaders(),
+    );
+    final data = _parseResponse(response);
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(FleetDriverPosition.tryFromJson)
+        .whereType<FleetDriverPosition>()
+        .toList();
   }
 
   /// Créer un conducteur et le rattacher à cette entreprise.

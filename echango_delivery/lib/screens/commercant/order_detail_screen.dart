@@ -15,6 +15,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/consultation_map.dart';
 import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -751,50 +752,36 @@ class _DriverMapState extends State<_DriverMap> {
       children: [
         SizedBox(
           height: 200,
-          child: FlutterMap(
-            options: MapOptions(
-              initialCenter: driver,
-              initialZoom: 14,
-              // Carte de consultation : ni sélection ni rotation, seulement
-              // déplacement et zoom. Une rotation accidentelle sur une carte
-              // qu'on ne fait que regarder désoriente sans rien apporter.
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+          // Les tuiles, leur agent OSM et l'absence de rotation vivent dans le
+          // composant partagé : ce sont les deux seules choses qui doivent
+          // rester identiques sur toutes les cartes de consultation. Les
+          // repères, eux, répondent à la question de cet écran-ci.
+          child: AppConsultationMap(
+            center: driver,
+            markers: [
+              Marker(
+                point: driver,
+                width: 40,
+                height: 40,
+                child: Icon(
+                  Icons.local_shipping,
+                  // Le gris dit « ce point n'est plus frais » sans texte à
+                  // lire : c'est la première chose qu'on voit sur une
+                  // carte, avant la légende.
+                  color: position.isStale
+                      ? Theme.of(context).colorScheme.outline
+                      : Theme.of(context).colorScheme.primary,
+                  size: 32,
+                ),
               ),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                // Exigé par la politique d'usage des tuiles OSM.
-                userAgentPackageName: 'com.echango.echango_delivery',
-              ),
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: driver,
-                    width: 40,
-                    height: 40,
-                    child: Icon(
-                      Icons.local_shipping,
-                      // Le gris dit « ce point n'est plus frais » sans texte à
-                      // lire : c'est la première chose qu'on voit sur une
-                      // carte, avant la légende.
-                      color: position.isStale
-                          ? Theme.of(context).colorScheme.outline
-                          : Theme.of(context).colorScheme.primary,
-                      size: 32,
-                    ),
-                  ),
-                  if (dropoff != null)
-                    Marker(
-                      point: dropoff,
-                      width: 40,
-                      height: 40,
-                      child: Icon(Icons.flag,
-                          color: Theme.of(context).colorScheme.error, size: 28),
-                    ),
-                ],
-              ),
+              if (dropoff != null)
+                Marker(
+                  point: dropoff,
+                  width: 40,
+                  height: 40,
+                  child: Icon(Icons.flag,
+                      color: Theme.of(context).colorScheme.error, size: 28),
+                ),
             ],
           ),
         ),

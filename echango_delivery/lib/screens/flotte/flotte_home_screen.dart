@@ -82,6 +82,16 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
       appBar: AppBar(
         title: Text(t('fleet.title')),
         actions: [
+          // ⚠️ La route `GET /flotte/drivers/positions` existait depuis le
+          // 28/07 et n'était appelée nulle part — alors que la vision produit
+          // définit ce persona par « commandes entrantes, assignation à un
+          // conducteur disponible, **position des conducteurs** ». Le tiers
+          // manquant était côté app, pas côté serveur.
+          IconButton(
+            icon: const Icon(Icons.map_outlined),
+            tooltip: t('fleet.map.open'),
+            onPressed: () => context.push('/flotte/carte'),
+          ),
           IconButton(
             icon: const Icon(Icons.account_balance_wallet_outlined),
             tooltip: t('fleet.tab.cash'),

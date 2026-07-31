@@ -155,6 +155,28 @@ const Map<String, String> _fr = {
   'fleet.drivers.unavailable.hint':
       'Vos conducteurs sont toujours enregistrés. Réessayez dans un instant.',
 
+  // ── Carte des conducteurs ───────────────────────────────────────────────
+  // ⚠️ Le vocabulaire dit ce que la carte EST et n'est pas : « vu il y a X »
+  // plutôt que « position datant de X », parce que la fraîcheur vient
+  // d'`updated_at`, qui bouge aussi sur un simple passage en ligne. Promettre
+  // une précision qu'on n'a pas ferait envoyer quelqu'un à une adresse sur la
+  // foi d'un horodatage qui décrit autre chose.
+  'fleet.map.open': 'Où sont mes conducteurs',
+  'fleet.map.title': 'Où sont mes conducteurs',
+  'fleet.map.refresh': 'Actualiser les positions',
+  'fleet.map.empty': 'Aucune position remontée',
+  'fleet.map.empty.hint':
+      'Une position apparaît dès qu’un conducteur se met en ligne dans l’application.',
+  'fleet.map.unavailable': 'Positions indisponibles',
+  'fleet.map.unavailable.hint':
+      'La lecture a échoué — vos conducteurs peuvent très bien être en route. Réessayez.',
+  'fleet.map.shown': 'conducteur(s) situé(s)',
+  'fleet.map.stale': 'position ancienne',
+  'fleet.map.tap': 'Touchez un repère pour savoir de qui il s’agit.',
+  'fleet.map.unnamed': 'Conducteur sans nom',
+  'fleet.map.seen': 'Vu',
+  'fleet.map.seen.unknown': 'Date du relevé inconnue',
+
   // ── Caisse ──────────────────────────────────────────────────────────────
   // ⚠️ **Ces quatre clés ne sont branchées nulle part.** `CashScreen` est servi
   // en français en dur, comme tous les écrans du dépôt — c'est la dette i18n
@@ -302,6 +324,21 @@ const Map<String, String> _ar = {
   'fleet.drivers.unavailable': 'تعذّر تحميل قائمة سائقيك حالياً.',
   'fleet.drivers.unavailable.hint':
       'سائقوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',
+
+  'fleet.map.open': 'أين سائقيّ',
+  'fleet.map.title': 'أين سائقيّ',
+  'fleet.map.refresh': 'تحديث المواقع',
+  'fleet.map.empty': 'لم يُرسَل أي موقع',
+  'fleet.map.empty.hint': 'يظهر الموقع بمجرد أن يتصل سائق عبر التطبيق.',
+  'fleet.map.unavailable': 'المواقع غير متاحة',
+  'fleet.map.unavailable.hint':
+      'فشلت القراءة — قد يكون سائقوك في الطريق فعلاً. أعد المحاولة.',
+  'fleet.map.shown': 'سائق محدَّد الموقع',
+  'fleet.map.stale': 'موقع قديم',
+  'fleet.map.tap': 'المس علامة لمعرفة صاحبها.',
+  'fleet.map.unnamed': 'سائق بلا اسم',
+  'fleet.map.seen': 'شوهد',
+  'fleet.map.seen.unknown': 'تاريخ التسجيل غير معروف',
 
   'fleet.cash.title': 'صندوق الشركة',
   'fleet.cash.owed_by_drivers': 'ما يدين به سائقوك لك',
