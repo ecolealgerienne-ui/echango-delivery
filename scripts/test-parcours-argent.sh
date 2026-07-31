@@ -266,11 +266,23 @@ mtotal="$(echo "$mledger" | jq -r '[.balances[].debt] | add // 0')"
   || fail "Le commerçant doit voir $due dû, il voit $mtotal" "$(echo "$mledger" | jq -c '.')"
 pass "Commerçant : $mtotal DZD détenus pour lui"
 
+# ⚠️ On cherche la dette envers LE commerçant de ce run, et non la somme de
+# toutes les contreparties du conducteur.
+#
+# Sommer supposait qu'il démarre à zéro : vrai au premier run, faux ensuite. Un
+# conducteur réutilisé porte les dettes des runs précédents — constaté en réel,
+# 2600 au lieu de 1300, sur un code parfaitement juste. Le contrôle mesurait le
+# résidu de la base, pas ce que ce run venait de créer.
+#
+# La vérification côté commerçant, elle, est exacte sans précaution : chaque run
+# crée un commerçant neuf. C'est bien pour ça qu'elle passait pendant que
+# celle-ci échouait.
 dledger="$(dapi GET /transporteur/caisse)"
-dtotal="$(echo "$dledger" | jq -r '[.balances[].debt] | add // 0')"
-[ "$(printf '%.0f' "$dtotal")" = "$due" ] \
-  || fail "Le transporteur doit voir $due à remettre, il voit $dtotal"
-pass "Transporteur : $dtotal DZD à remettre — les deux vues concordent"
+dmine="$(echo "$dledger" | jq -r --argjson d "$due" \
+  '[.balances[] | select((.debt | floor) == $d)] | length')"
+[ "${dmine:-0}" -ge 1 ] \
+  || fail "Le transporteur doit voir une contrepartie à $due, il voit $(echo "$dledger" | jq -c '[.balances[].debt]')"
+pass "Transporteur : $due DZD à remettre — les deux vues concordent"
 
 details="$(mapi GET /commercant/encaissements/details)"
 net="$(echo "$details" | jq -r '.data[0].net_amount // "absent"')"
@@ -286,7 +298,10 @@ step "5. Remise"
 # que `driverBalances()` projette. Le repli sur `counterparty_id` anticipe la
 # généralisation aux entreprises (§4.1) : le jour où la contrepartie devient
 # typée, ce script continuera de passer sans retouche.
-MERCHANT_ID="$(echo "$dledger" | jq -r '.balances[0].counterparty_id // .balances[0].merchant_id // empty')"
+# La contrepartie de CE run, désignée par son montant — `balances[0]` prenait la
+# dette la plus élevée, donc celle d'un run précédent dès qu'il y en avait un.
+MERCHANT_ID="$(echo "$dledger" | jq -r --argjson d "$due" \
+  'first(.balances[] | select((.debt | floor) == $d)) | .counterparty_id // .merchant_id // empty')"
 [ -n "$MERCHANT_ID" ] || fail "Contrepartie introuvable côté transporteur" "$(echo "$dledger" | jq -c '.balances')"
 
 declared="$(dapi POST /transporteur/caisse/remises \

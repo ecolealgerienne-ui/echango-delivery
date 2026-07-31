@@ -117,6 +117,39 @@ _operator_token() { # -> token sur stdout
     return 0
   fi
 
+  # ── Réutiliser le prestataire plateforme déjà posé ────────────────────────
+  #
+  # Le premier passage promeut un compte jetable en prestataire plateforme.
+  # Les suivants trouvaient donc un prestataire existant et **refusaient**, ce
+  # qui rendait le script utilisable une seule fois par base — un contrôle de
+  # référence qu'on ne peut rejouer ne contrôle rien.
+  #
+  # Un compte d'opérateur de test a été créé avec `$PASSWORD` : on tente donc de
+  # s'y connecter. Si ça marche, c'est le nôtre et on s'en sert ; si ça échoue,
+  # c'est un vrai prestataire Echango, et le message actionnable reste dû.
+  local existing_platform
+  existing_platform=$(docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
+    "SELECT email FROM \"FleetAccount\" WHERE \"isPlatform\" = true LIMIT 1;" \
+    2>/dev/null | tr -d '[:space:]' || true)
+
+  if [ -n "$existing_platform" ]; then
+    local reused
+    reused=$(curl -sS -X POST "$BFF_URL/auth/flotte/login" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg e "$existing_platform" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
+      | jq -r '.token // empty')
+
+    if [ -n "$reused" ]; then
+      echo "$reused"
+      return 0
+    fi
+
+    echo "prestataire plateforme existant ($existing_platform) non connectable avec le mot de passe de test.
+   Fournissez ses identifiants :
+     ECHANGO_PLATFORM_EMAIL='$existing_platform' ECHANGO_PLATFORM_PASSWORD='<mdp>' \$0 …" >&2
+    return 0
+  fi
+
   local email="operateur-test-$RANDOM@echango.local"
 
   # La bibliothèque Fleetbase n'est pas toujours déjà chargée : les scripts qui
