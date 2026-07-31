@@ -98,6 +98,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
   late final OrderState _orderState;
   late final MerchantOrderState _merchantOrderState;
   late final CashState _cashState;
+  late final FleetState _fleetState;
   late final DriverPresenceState _presence;
 
   bool _presenceStarted = false;
@@ -114,8 +115,8 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     );
     _cashState =
         CashState(apiClient: widget.apiClient, localeState: widget.localeState);
-  late final _fleetState =
-      FleetState(apiClient: widget.apiClient, localeState: widget.localeState);
+    _fleetState =
+        FleetState(apiClient: widget.apiClient, localeState: widget.localeState);
     _presence = DriverPresenceState(
       apiClient: widget.apiClient,
       orderState: _orderState,

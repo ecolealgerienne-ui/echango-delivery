@@ -1014,21 +1014,19 @@ class BffApiClient {
       Uri.parse('$baseUrl/flotte/caisse'),
       headers: _buildHeaders(),
     );
-    return CashLedger.fromMerchantJson(
-      (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>,
-    );
+    // ⚠️ `fromMerchantJson` et non un désérialiseur dédié : le champ qui compte
+    // est `counterparty_*`, servi identiquement aux trois personas depuis la
+    // généralisation du registre. Les deux fabriques ne diffèrent que par leur
+    // repli sur les anciens noms — et l'entreprise n'en a aucun à replier.
+    return _ledgerFrom(_parseResponse(response), CashBalance.fromMerchantJson);
   }
 
-  Future<List<CashRemittanceEntry>> getFleetRemittances() async {
+  Future<List<CashRemittance>> getFleetRemittances() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/flotte/caisse/remises'),
       headers: _buildHeaders(),
     );
-    final data = _parseResponse(response);
-    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
-    return list
-        .map((e) => CashRemittanceEntry.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return _listOf(_parseResponse(response), 'data', CashRemittance.fromJson);
   }
 
   Future<List<CashCollectionEntry>> getFleetCollections() async {
@@ -1036,11 +1034,7 @@ class BffApiClient {
       Uri.parse('$baseUrl/flotte/caisse/encaissements'),
       headers: _buildHeaders(),
     );
-    final data = _parseResponse(response);
-    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
-    return list
-        .map((e) => CashCollectionEntry.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
   }
 
   Future<void> declareFleetRemittance({
