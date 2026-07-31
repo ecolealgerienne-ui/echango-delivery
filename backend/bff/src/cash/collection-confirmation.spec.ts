@@ -1,4 +1,4 @@
-import { CashService } from './cash.service';
+import { CashService, driverParty, merchantParty } from './cash.service';
 
 /**
  * Quelles lignes d'encaissement comptent dans une dette.
@@ -54,7 +54,7 @@ describe('debtBetween — les encaissements retenus', () => {
   };
 
   beforeAll(async () => {
-    await service().debtBetween('drv-1', 'mer-1');
+    await service().debtBetween(driverParty('drv-1'), merchantParty('mer-1'));
   });
 
   it('compte un encaissement déclaré par le transporteur : c\'est sa propre dette', () => {
@@ -62,6 +62,9 @@ describe('debtBetween — les encaissements retenus', () => {
       matches(captured, {
         driverId: 'drv-1',
         merchantId: 'mer-1',
+        // `facilitatorId` nul fait partie du couple « conducteur → commerçant » :
+        // sans lui, une course confiée à une entreprise compterait deux fois.
+        facilitatorId: null,
         declaredBy: 'driver',
         confirmedAt: new Date(),
       }),

@@ -572,25 +572,149 @@ export class CashService {
    * qui a livré sans encaisser n'apparaîtrait nulle part, alors que c'est
    * précisément le cas où le commerçant lui doit quelque chose.
    */
-  private async counterparties(
-    persona: 'driver' | 'merchant',
-    actorId: string,
-  ): Promise<string[]> {
-    const field = persona === 'driver' ? 'merchantId' : 'driverId';
-    const where = persona === 'driver' ? { driverId: actorId } : { merchantId: actorId };
+  private async counterpartiesOf(actor: Party): Promise<Party[]> {
+    const found = new Map<string, Party>();
+    const add = (p: Party | null) => {
+      if (p && !(p.type === actor.type && p.id === actor.id)) found.set(`${p.type}:${p.id}`, p);
+    };
 
-    const [collections, earnings, remittances] = await Promise.all([
-      this.prisma.cashCollection.groupBy({ by: [field as any], where }),
-      this.prisma.driverEarning.groupBy({ by: [field as any], where }),
-      this.prisma.cashRemittance.groupBy({ by: [field as any], where }),
+    if (actor.type === 'driver') {
+      // Un conducteur fait face à son facilitateur quand la course en porte un,
+      // au commerçant sinon. Les deux populations sont disjointes ligne à
+      // ligne — c'est `facilitatorId` qui tranche — donc on lit les deux.
+      const [collections, earnings, remittances] = await Promise.all([
+        this.prisma.cashCollection.findMany({
+          where: { driverId: actor.id },
+          select: { merchantId: true, facilitatorId: true },
+        }),
+        this.prisma.driverEarning.findMany({
+          where: { driverId: actor.id },
+          select: { merchantId: true, facilitatorId: true },
+        }),
+        this.prisma.cashRemittance.findMany({
+          where: { OR: [{ fromType: 'driver', fromId: actor.id }, { toType: 'driver', toId: actor.id }, { fromType: null, driverId: actor.id }] },
+          select: { merchantId: true, fromType: true, fromId: true, toType: true, toId: true },
+        }),
+      ]);
+
+      for (const row of [...collections, ...earnings] as any[]) {
+        add(this.driverCounterparty(row.facilitatorId, row.merchantId));
+      }
+      for (const r of remittances as any[]) {
+        if (r.fromType && r.fromId && !(r.fromType === 'driver' && r.fromId === actor.id)) {
+          add({ type: r.fromType, id: r.fromId });
+        }
+        if (r.toType && r.toId && !(r.toType === 'driver' && r.toId === actor.id)) {
+          add({ type: r.toType, id: r.toId });
+        }
+        if (!r.fromType && r.merchantId) add(merchantParty(r.merchantId));
+      }
+
+      return [...found.values()];
+    }
+
+    if (actor.type === 'merchant') {
+      // Face au commerçant : le facilitateur quand la course en porte un, le
+      // conducteur sinon. Même bascule, lue depuis l'autre bout.
+      const [collections, earnings, remittances] = await Promise.all([
+        this.prisma.cashCollection.findMany({
+          where: { merchantId: actor.id },
+          select: { driverId: true, facilitatorId: true },
+        }),
+        this.prisma.driverEarning.findMany({
+          where: { merchantId: actor.id },
+          select: { driverId: true, facilitatorId: true },
+        }),
+        this.prisma.cashRemittance.findMany({
+          where: { OR: [{ fromType: 'merchant', fromId: actor.id }, { toType: 'merchant', toId: actor.id }, { fromType: null, merchantId: actor.id }] },
+          select: { driverId: true, fromType: true, fromId: true, toType: true, toId: true },
+        }),
+      ]);
+
+      for (const row of [...collections, ...earnings] as any[]) {
+        add(row.facilitatorId ? fleetParty(row.facilitatorId) : driverParty(row.driverId));
+      }
+      for (const r of remittances as any[]) {
+        if (r.fromType && r.fromId && !(r.fromType === 'merchant' && r.fromId === actor.id)) {
+          add({ type: r.fromType, id: r.fromId });
+        }
+        if (r.toType && r.toId && !(r.toType === 'merchant' && r.toId === actor.id)) {
+          add({ type: r.toType, id: r.toId });
+        }
+        if (!r.fromType && r.driverId) add(driverParty(r.driverId));
+      }
+
+      return [...found.values()];
+    }
+
+    // Facilitateur : ses conducteurs d'un côté, ses commerçants de l'autre.
+    const [collections, remittances] = await Promise.all([
+      this.prisma.cashCollection.findMany({
+        where: { facilitatorId: actor.id },
+        select: { driverId: true, merchantId: true },
+      }),
+      this.prisma.cashRemittance.findMany({
+        where: { OR: [{ fromType: 'fleet', fromId: actor.id }, { toType: 'fleet', toId: actor.id }] },
+        select: { fromType: true, fromId: true, toType: true, toId: true },
+      }),
     ]);
 
-    const ids = new Set<string>();
-    for (const row of [...collections, ...earnings, ...remittances]) {
-      const value = (row as any)[field];
-      if (value) ids.add(value);
+    for (const row of collections as any[]) {
+      add(driverParty(row.driverId));
+      add(merchantParty(row.merchantId));
     }
-    return [...ids];
+    for (const r of remittances as any[]) {
+      if (r.fromType && r.fromId) add({ type: r.fromType, id: r.fromId });
+      if (r.toType && r.toId) add({ type: r.toType, id: r.toId });
+    }
+
+    return [...found.values()];
+  }
+
+  /**
+   * Nom et téléphone d'une contrepartie, quelle que soit sa table.
+   *
+   * ── Pourquoi ce n'était pas un détail d'affichage ───────────────────────
+   *
+   * `merchantBalances` lisait `driverAccount` en dur. Une contrepartie de type
+   * entreprise y donnait `driver_name: null` **sans la moindre erreur** : le
+   * commerçant aurait lu « 1300 DZD dus » sans nom ni téléphone, donc sans
+   * personne à appeler pour organiser la remise. Une panne silencieuse sur
+   * l'écran qui sert précisément à réclamer de l'argent (défaut D15).
+   */
+  private async describeParties(parties: Party[]): Promise<Map<string, { name: string | null; phone: string | null }>> {
+    const key = (p: Party) => `${p.type}:${p.id}`;
+    const ids = (type: PartyType) => parties.filter((p) => p.type === type).map((p) => p.id);
+
+    const [merchants, fleets, drivers] = await Promise.all([
+      this.prisma.merchantAccount.findMany({
+        where: { id: { in: ids('merchant') } },
+        select: { id: true, businessName: true, phone: true, businessPhone: true },
+      }),
+      this.prisma.fleetAccount.findMany({
+        where: { id: { in: ids('fleet') } },
+        select: { id: true, businessName: true, phone: true, businessPhone: true },
+      }),
+      this.prisma.driverAccount.findMany({
+        where: { id: { in: ids('driver') } },
+        select: { id: true, firstName: true, lastName: true, phone: true },
+      }),
+    ]);
+
+    const out = new Map<string, { name: string | null; phone: string | null }>();
+    for (const m of merchants as any[]) {
+      out.set(key(merchantParty(m.id)), { name: m.businessName ?? null, phone: m.businessPhone ?? m.phone ?? null });
+    }
+    for (const f of fleets as any[]) {
+      out.set(key(fleetParty(f.id)), { name: f.businessName ?? null, phone: f.businessPhone ?? f.phone ?? null });
+    }
+    for (const d of drivers as any[]) {
+      out.set(key(driverParty(d.id)), {
+        name: [d.firstName, d.lastName].filter(Boolean).join(' ') || null,
+        phone: d.phone ?? null,
+      });
+    }
+    return out;
   }
 
   /**
@@ -607,69 +731,84 @@ export class CashService {
    * fois, au prochain enlèvement.
    */
   async driverBalances(driverId: string) {
-    const merchantIds = await this.counterparties('driver', driverId);
-    const ceiling = this.debtCeiling();
-
-    const merchants = await this.prisma.merchantAccount.findMany({
-      where: { id: { in: merchantIds } },
-      select: { id: true, businessName: true, phone: true, businessPhone: true },
-    });
-    const byId = new Map<string, any>(merchants.map((m: any) => [m.id, m]));
-
-    const balances = await Promise.all(
-      merchantIds.map(async (merchantId) => {
-        const debt = await this.debtBetween(driverParty(driverId), merchantParty(merchantId));
-        const merchant = byId.get(merchantId);
-        return {
-          merchant_id: merchantId,
-          merchant_name: merchant?.businessName ?? null,
-          merchant_phone: merchant?.businessPhone ?? merchant?.phone ?? null,
-          debt,
-          blocked: debt >= ceiling,
-        };
-      }),
-    );
-
-    return {
-      currency: this.currency,
-      ceiling,
-      /** Commission cumulée due à Echango. Son recouvrement n'est pas construit. */
-      platform_commission: await this.platformCommissionOwed(driverId),
-      // Les soldes nuls disparaissent, les négatifs restent : ils disent que le
-      // commerçant doit quelque chose au transporteur, ce qui appelle une
-      // action tout autant qu'une dette dans l'autre sens.
-      balances: balances
-        .filter((b) => b.debt !== 0)
-        .sort((a, b) => b.debt - a.debt),
-    };
+    return this.balancesFor(driverParty(driverId), { withCeiling: true });
   }
 
-  /** Soldes du commerçant, un par transporteur. Symétrique du précédent. */
+  /** Soldes du commerçant, un par contrepartie. Symétrique du précédent. */
   async merchantBalances(merchantId: string) {
-    const driverIds = await this.counterparties('merchant', merchantId);
+    return this.balancesFor(merchantParty(merchantId));
+  }
 
-    const drivers = await this.prisma.driverAccount.findMany({
-      where: { id: { in: driverIds } },
-      select: { id: true, firstName: true, lastName: true, phone: true },
-    });
-    const byId = new Map<string, any>(drivers.map((d: any) => [d.id, d]));
+  /** Soldes d'un facilitateur : ses conducteurs d'un côté, ses commerçants de l'autre. */
+  async fleetBalances(fleetId: string) {
+    return this.balancesFor(fleetParty(fleetId), { withCeiling: true });
+  }
+
+  /**
+   * Soldes d'un compte, un par contrepartie.
+   *
+   * ── Une seule fonction pour les trois personas ──────────────────────────
+   *
+   * Les trois versions précédentes ne différaient que par la table où elles
+   * allaient chercher le nom de la contrepartie — et c'est précisément ce qui
+   * faisait le défaut D15 : le commerçant lisait toujours `driverAccount`, donc
+   * une contrepartie de type entreprise donnait `driver_name: null` **sans la
+   * moindre erreur**. Un montant dû par personne, sans personne à appeler.
+   *
+   * Chaque solde passe par `debtBetween()` plutôt que par une agrégation
+   * parallèle : deux façons de calculer la même dette finiraient par en donner
+   * deux valeurs, et sur de l'argent la divergence n'est pas un détail
+   * d'affichage.
+   *
+   * ── Le contrat des champs est conservé ──────────────────────────────────
+   *
+   * `merchant_id`/`merchant_name` côté conducteur, `driver_id`/`driver_name`
+   * côté commerçant : ces noms sont lus par l'application et par le contrôle de
+   * référence. Ils sont servis **en plus** de `counterparty_*`, jamais à la
+   * place — et ils ne portent une valeur que lorsque la contrepartie est
+   * effectivement du type que leur nom annonce. Mentir sur un identifiant
+   * serait pire que ne rien dire.
+   */
+  private async balancesFor(actor: Party, opts: { withCeiling?: boolean } = {}) {
+    const parties = await this.counterpartiesOf(actor);
+    const described = await this.describeParties(parties);
+    const ceiling = this.debtCeiling();
 
     const balances = await Promise.all(
-      driverIds.map(async (driverId) => {
-        const debt = await this.debtBetween(driverParty(driverId), merchantParty(merchantId));
-        const driver = byId.get(driverId);
+      parties.map(async (party) => {
+        const debt = await this.debtBetween(actor, party);
+        const info = described.get(`${party.type}:${party.id}`);
+
         return {
-          driver_id: driverId,
-          driver_name:
-            [driver?.firstName, driver?.lastName].filter(Boolean).join(' ') || null,
-          driver_phone: driver?.phone ?? null,
+          counterparty_type: party.type,
+          counterparty_id: party.id,
+          counterparty_name: info?.name ?? null,
+          counterparty_phone: info?.phone ?? null,
+          // Champs historiques, servis seulement quand ils ne mentent pas.
+          merchant_id: party.type === 'merchant' ? party.id : null,
+          merchant_name: party.type === 'merchant' ? (info?.name ?? null) : null,
+          merchant_phone: party.type === 'merchant' ? (info?.phone ?? null) : null,
+          driver_id: party.type === 'driver' ? party.id : null,
+          driver_name: party.type === 'driver' ? (info?.name ?? null) : null,
+          driver_phone: party.type === 'driver' ? (info?.phone ?? null) : null,
           debt,
+          blocked: opts.withCeiling ? debt >= ceiling : undefined,
         };
       }),
     );
 
     return {
       currency: this.currency,
+      ...(opts.withCeiling ? { ceiling } : {}),
+      ...(actor.type === 'driver'
+        ? {
+            /** Commission cumulée due à Echango. Son recouvrement n'est pas construit. */
+            platform_commission: await this.platformCommissionOwed(actor.id),
+          }
+        : {}),
+      // Les soldes nuls disparaissent, les négatifs restent : ils disent que la
+      // contrepartie doit quelque chose, ce qui appelle une action tout autant
+      // qu'une dette dans l'autre sens.
       balances: balances.filter((b) => b.debt !== 0).sort((a, b) => b.debt - a.debt),
     };
   }

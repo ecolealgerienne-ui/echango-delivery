@@ -13,6 +13,9 @@ class CashBalance extends Equatable {
   /// Identifiant de la contrepartie : le commerçant vu du transporteur, le
   /// transporteur vu du commerçant.
   final String counterpartyId;
+
+  /// `driver`, `fleet` ou `merchant` — null si le serveur ne le renseigne pas.
+  final String? counterpartyType;
   final String? name;
   final String? phone;
   final double debt;
@@ -34,25 +37,38 @@ class CashBalance extends Equatable {
   const CashBalance({
     required this.counterpartyId,
     required this.debt,
+    this.counterpartyType,
     this.name,
     this.phone,
     this.blocked = false,
   });
 
-  /// Vu du transporteur : la contrepartie est un commerçant.
+  /// Vu du transporteur : la contrepartie est son facilitateur, ou le
+  /// commerçant quand la course n'en porte pas.
+  ///
+  /// ⚠️ `counterparty_*` d'abord, `merchant_*` en repli. Le serveur ne
+  /// renseigne les seconds que lorsque la contrepartie est effectivement un
+  /// commerçant — ils valent `null` face à une entreprise, et les lire seuls
+  /// affichait « Compte  » sans identifiant ni nom. Le repli reste pour les
+  /// réponses d'un serveur antérieur à la généralisation.
   factory CashBalance.fromDriverJson(Map<String, dynamic> json) => CashBalance(
-        counterpartyId: (json['merchant_id'] ?? '') as String,
-        name: json['merchant_name'] as String?,
-        phone: json['merchant_phone'] as String?,
+        counterpartyId:
+            (json['counterparty_id'] ?? json['merchant_id'] ?? '') as String,
+        counterpartyType: json['counterparty_type'] as String?,
+        name: (json['counterparty_name'] ?? json['merchant_name']) as String?,
+        phone: (json['counterparty_phone'] ?? json['merchant_phone']) as String?,
         debt: (json['debt'] as num?)?.toDouble() ?? 0,
         blocked: json['blocked'] == true,
       );
 
-  /// Vu du commerçant : la contrepartie est un transporteur.
+  /// Vu du commerçant : la contrepartie est le facilitateur de la course, ou
+  /// le transporteur lui-même quand elle n'en porte pas.
   factory CashBalance.fromMerchantJson(Map<String, dynamic> json) => CashBalance(
-        counterpartyId: (json['driver_id'] ?? '') as String,
-        name: json['driver_name'] as String?,
-        phone: json['driver_phone'] as String?,
+        counterpartyId:
+            (json['counterparty_id'] ?? json['driver_id'] ?? '') as String,
+        counterpartyType: json['counterparty_type'] as String?,
+        name: (json['counterparty_name'] ?? json['driver_name']) as String?,
+        phone: (json['counterparty_phone'] ?? json['driver_phone']) as String?,
         debt: (json['debt'] as num?)?.toDouble() ?? 0,
       );
 
@@ -60,7 +76,7 @@ class CashBalance extends Equatable {
       (name != null && name!.isNotEmpty) ? name! : 'Compte $counterpartyId';
 
   @override
-  List<Object?> get props => [counterpartyId, debt, blocked];
+  List<Object?> get props => [counterpartyId, counterpartyType, debt, blocked];
 }
 
 /// Ensemble des dettes d'un compte, avec la devise et le plafond.
