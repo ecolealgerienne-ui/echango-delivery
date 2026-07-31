@@ -8,7 +8,11 @@ import '../../models/merchant_order.dart' show KnownDriver, orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_banner.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
 ///
@@ -60,12 +64,9 @@ class _CashScreenState extends State<CashScreen> {
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
             if (state.errorMessage != null)
-              Card(
-                color: Theme.of(context).colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Text(state.errorMessage!),
-                ),
+              AppErrorBanner(
+                message: state.errorMessage!,
+                onRetry: () => context.read<CashState>().load(),
               ),
             _totalCard(state),
             const SizedBox(height: AppSpacing.lg),
@@ -209,7 +210,9 @@ class _CashScreenState extends State<CashScreen> {
   Widget _totalCard(CashState state) {
     final theme = Theme.of(context);
     return Card(
-      color: _isDriver ? Colors.orange.shade50 : Colors.green.shade50,
+      color: _isDriver
+          ? context.semantic.warningContainer
+          : context.semantic.successContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -293,34 +296,43 @@ class _CashScreenState extends State<CashScreen> {
   /// en route : rien n'était *détenu*, mais de l'argent était bel et bien
   /// attendu. C'est la formulation qui rassure à tort — celle qui coûte le plus
   /// cher, parce qu'on ne va pas vérifier ce qu'un écran déclare tranquille.
-  Widget _empty({bool hasPending = false, bool hasUnrecorded = false}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
-        child: Column(
-          children: [
-            Icon(
-              hasPending ? Icons.schedule_outlined : Icons.payments_outlined,
-              size: 56,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              _isDriver
-                  ? 'Vous ne détenez aucune somme'
-                  // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus,
-                  // « aucune somme en attente » contredirait la bannière qui
-                  // vient d'annoncer des livraisons non enregistrées.
-                  : hasUnrecorded
-                      ? 'Aucun solde ouvert — mais voir l\'alerte ci-dessus'
-                      : hasPending
-                          ? 'Rien à récupérer pour l\'instant :\n'
-                              'les livraisons en cours ne sont pas encore encaissées'
-                          : 'Aucune somme en attente',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
-      );
+  Widget _empty({bool hasPending = false, bool hasUnrecorded = false}) {
+    // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus, « aucune somme
+    // en attente » contredirait la bannière qui vient d'annoncer des
+    // livraisons non enregistrées.
+    final (String title, String hint) = _isDriver
+        ? (
+            'Vous ne détenez aucune somme',
+            'Les encaissements que vous déclarez à la livraison apparaîtront '
+                'ici, avec ce que vous devez à chaque commerçant.',
+          )
+        : hasUnrecorded
+            ? (
+                'Aucun solde ouvert',
+                'Mais des livraisons closes hors application n\'ont laissé '
+                    'aucun encaissement : régularisez-les depuis l\'alerte '
+                    'ci-dessus.',
+              )
+            : hasPending
+                ? (
+                    'Rien à récupérer pour l\'instant',
+                    'Les livraisons en cours ne sont pas encore encaissées : '
+                        'la somme apparaîtra à la remise du colis.',
+                  )
+                : (
+                    'Aucune somme en attente',
+                    'Vous verrez ici ce que chaque transporteur vous doit, dès '
+                        'qu\'une livraison sera encaissée à la porte.',
+                  );
+
+    return AppEmptyState(
+      title: title,
+      hint: hint,
+      icon: hasPending ? Icons.schedule_outlined : Icons.payments_outlined,
+      // Déjà dans un `ListView` : une seconde liste imbriquée ne défilerait pas.
+      scrollable: false,
+    );
+  }
 
   Future<void> _declare(CashState state, CashBalance balance) async {
     final amount = await showDialog<double>(
@@ -336,32 +348,24 @@ class _CashScreenState extends State<CashScreen> {
 
     if (amount == null || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.declareRemittance(balance.counterpartyId, amount);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise déclarée. Elle sera déduite après confirmation.'
-            : state.errorMessage ?? 'Déclaration impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Déclaration impossible',
+      'Remise déclarée. Elle sera déduite après confirmation.',
     );
   }
 
   Future<void> _confirm(CashState state, CashRemittance r) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.confirmRemittance(r.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise confirmée — ${r.formattedAmount} déduits.'
-            : state.errorMessage ?? 'Confirmation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Confirmation impossible',
+      'Remise confirmée — ${r.formattedAmount} déduits.',
     );
   }
 
@@ -428,7 +432,6 @@ class _CashScreenState extends State<CashScreen> {
       if (reason == null || !mounted) return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.declareMissingCollection(
       orderId: p.orderUuid,
       collectedAmount: amount,
@@ -437,28 +440,21 @@ class _CashScreenState extends State<CashScreen> {
     );
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Déclaré. En attente de confirmation du transporteur.'
-            : state.errorMessage ?? 'Déclaration impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Déclaration impossible',
+      'Déclaré. En attente de confirmation du transporteur.',
     );
   }
 
   Future<void> _confirmCollection(CashState state, CashCollectionEntry c) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.confirmCollection(c.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Encaissement confirmé — il entre dans votre caisse.'
-            : state.errorMessage ?? 'Confirmation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Confirmation impossible',
+      'Encaissement confirmé — il entre dans votre caisse.',
     );
   }
 
@@ -487,17 +483,13 @@ class _CashScreenState extends State<CashScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.disputeCollection(c.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Encaissement contesté.'
-            : state.errorMessage ?? 'Contestation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Contestation impossible',
+      'Encaissement contesté.',
     );
   }
 
@@ -525,17 +517,13 @@ class _CashScreenState extends State<CashScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.disputeRemittance(r.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise contestée. La somme reste due.'
-            : state.errorMessage ?? 'Contestation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? 'Contestation impossible',
+      'Remise contestée. La somme reste due.',
     );
   }
 }
@@ -591,7 +579,7 @@ class _BalanceCard extends StatelessWidget {
                         // dois n'est pas ce qu'on me doit, même quand c'est le
                         // même nombre.
                         color: balance.merchantOwes
-                            ? Colors.green.shade800
+                            ? context.semantic.success
                             : null,
                       ),
                 ),
@@ -604,7 +592,8 @@ class _BalanceCard extends StatelessWidget {
               const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
-                  Icon(Icons.block, size: 16, color: Colors.red.shade700),
+                  Icon(Icons.block,
+                      size: 16, color: Theme.of(context).colorScheme.error),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -612,7 +601,10 @@ class _BalanceCard extends StatelessWidget {
                           ? 'Plafond atteint : plus de course encaissée pour ce '
                               'commerçant avant votre remise.'
                           : 'Plafond atteint pour ce transporteur.',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ],
@@ -669,7 +661,7 @@ class _PendingRemittanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: Colors.amber.shade50,
+      color: context.semantic.warningContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
@@ -689,7 +681,9 @@ class _PendingRemittanceCard extends StatelessWidget {
               children: [
                 TextButton(
                   onPressed: onDispute,
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.error,
+                  ),
                   child: const Text('Je n\'ai rien reçu'),
                 ),
                 const Spacer(),
@@ -855,7 +849,10 @@ class _CollectionCard extends StatelessWidget {
               Text(
                 '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? 'Écart signalé'}'
                 ' — ${money(entry.expectedAmount)} étaient attendus.',
-                style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
+                style: TextStyle(
+                  color: context.semantic.onWarningContainer,
+                  fontSize: 12,
+                ),
               ),
               if (entry.notes != null && entry.notes!.isNotEmpty)
                 Text(entry.notes!, style: theme.textTheme.bodySmall),
@@ -914,7 +911,7 @@ class _PendingCard extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-      color: isAnomaly ? Colors.orange.shade50 : null,
+      color: isAnomaly ? context.semantic.warningContainer : null,
       child: ListTile(
         leading: Icon(
           isAnomaly
@@ -922,7 +919,9 @@ class _PendingCard extends StatelessWidget {
               : entry.isUnderway
                   ? Icons.local_shipping_outlined
                   : Icons.search,
-          color: isAnomaly ? Colors.orange.shade800 : Colors.grey[600],
+          color: isAnomaly
+              ? context.semantic.warning
+              : theme.colorScheme.onSurfaceVariant,
         ),
         title: Text(entry.dropoffName ?? 'Livraison'),
         subtitle: Text(
@@ -945,7 +944,9 @@ class _PendingCard extends StatelessWidget {
             fontWeight: FontWeight.w600,
             // Gris et non vert : cet argent n'est pas encore là — et sur une
             // anomalie, on ignore même s'il a été perçu.
-            color: isAnomaly ? Colors.orange.shade900 : Colors.grey[700],
+            color: isAnomaly
+                ? context.semantic.onWarningContainer
+                : theme.colorScheme.onSurfaceVariant,
           ),
         ),
         // Le geste vit sur la ligne et non dans la bannière : chaque livraison
@@ -980,7 +981,7 @@ class _CollectionToConfirmCard extends StatelessWidget {
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
     return Card(
-      color: Colors.orange.shade50,
+      color: context.semantic.warningContainer,
       margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -1043,7 +1044,7 @@ class _UnrecordedBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
-      color: Colors.orange.shade100,
+      color: context.semantic.warningContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -1051,7 +1052,8 @@ class _UnrecordedBanner extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.report_problem_outlined, color: Colors.orange.shade900),
+                Icon(Icons.report_problem_outlined,
+                    color: context.semantic.onWarningContainer),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
