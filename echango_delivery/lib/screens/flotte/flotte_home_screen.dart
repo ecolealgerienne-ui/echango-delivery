@@ -9,7 +9,11 @@ import '../../models/fleet_order_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 
 /// Espace « entreprise de transport ».
@@ -108,17 +112,10 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
                 // confiée à votre entreprise » — un message qui affirme un
                 // fait faux. Le même défaut a été corrigé deux fois ailleurs.
                 if (state.errorMessage != null)
-                  Card(
-                    margin: const EdgeInsets.all(AppSpacing.md),
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: ListTile(
-                      leading: const Icon(Icons.error_outline),
-                      title: Text(state.errorMessage!),
-                      trailing: TextButton(
-                        onPressed: () => context.read<FleetState>().load(),
-                        child: Text(t('fleet.retry')),
-                      ),
-                    ),
+                  AppErrorBanner(
+                    message: state.errorMessage!,
+                    onRetry: () => context.read<FleetState>().load(),
+                    retryLabel: t('fleet.retry'),
                   ),
                 Expanded(
                   child: RefreshIndicator(
@@ -147,32 +144,6 @@ typedef _Translate = String Function(String key);
 
 /// Message d'absence, toujours accompagné de ce qu'il faut faire.
 ///
-/// Une liste vide sans explication se lit comme une panne — c'est le défaut
-/// des deux impasses d'écran corrigées le 29/07 (« Mes transporteurs » sans
-/// moyen d'en trouver un).
-class _Empty extends StatelessWidget {
-  const _Empty({required this.title, required this.hint});
-
-  final String title;
-  final String hint;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.xxl),
-      children: [
-        const SizedBox(height: 48),
-        Icon(Icons.inbox_outlined, size: 64, color: theme.colorScheme.outline),
-        const SizedBox(height: AppSpacing.lg),
-        Text(title, textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
-        const SizedBox(height: AppSpacing.sm),
-        Text(hint, textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
-      ],
-    );
-  }
-}
-
 class _OrdersTab extends StatelessWidget {
   const _OrdersTab({required this.t});
 
@@ -182,7 +153,7 @@ class _OrdersTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<FleetState>();
     if (state.orders.isEmpty) {
-      return _Empty(
+      return AppEmptyState(
         title: t('fleet.orders.empty'),
         hint: t('fleet.orders.empty.hint'),
       );
@@ -237,7 +208,7 @@ class _OpportunitiesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<FleetState>();
     if (state.opportunities.isEmpty) {
-      return _Empty(
+      return AppEmptyState(
         title: t('fleet.opportunities.empty'),
         hint: t('fleet.opportunities.empty.hint'),
       );
@@ -302,9 +273,29 @@ class _DriversTab extends StatelessWidget {
       label: Text(t('fleet.drivers.add')),
     );
 
+    // ⚠️ Défaut réel corrigé en extrayant le composant, pas un simple
+    // remplacement de mise en page : `FleetState.load()` avale l'échec de
+    // `getFleetDrivers()` en rendant une liste vide, donc cet écran affirmait
+    // « Aucun conducteur rattaché à votre entreprise » à une entreprise dont
+    // le BFF était injoignable. `driversUnavailable` existait et n'était lu
+    // que par `driver_picker` — l'écran, lui, ne posait pas la question.
+    if (state.driversUnavailable) {
+      return Scaffold(
+        body: AppEmptyState.unavailable(
+          title: t('fleet.drivers.unavailable'),
+          hint: t('fleet.drivers.unavailable.hint'),
+          onRetry: () => context.read<FleetState>().load(),
+        ),
+        floatingActionButton: add,
+      );
+    }
+
     if (state.drivers.isEmpty) {
       return Scaffold(
-        body: _Empty(title: t('fleet.drivers.empty'), hint: t('fleet.drivers.add')),
+        body: AppEmptyState(
+          title: t('fleet.drivers.empty'),
+          hint: t('fleet.drivers.add'),
+        ),
         floatingActionButton: add,
       );
     }
@@ -321,7 +312,9 @@ class _DriversTab extends StatelessWidget {
           leading: Icon(
             Icons.circle,
             size: 12,
-            color: online ? Colors.green : Colors.grey,
+            color: online
+                ? context.semantic.success
+                : Theme.of(context).colorScheme.outline,
           ),
           title: Text(driver['name'] as String? ?? '—'),
           subtitle: Text(driver['phone'] as String? ?? ''),
@@ -358,7 +351,7 @@ Future<void> _addDriver(BuildContext context, _Translate t) async {
       .addDriver(name: input.name, email: input.email, phone: input.phone);
 
   if (!context.mounted || error == null) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+  showAppError(context, error);
 }
 
 /// Ce que le formulaire a saisi. Rendu par valeur plutôt que lu depuis des
@@ -546,9 +539,7 @@ Future<void> _claim(BuildContext context, String uuid, _Translate t) async {
   final error = await context.read<FleetState>().claim(uuid);
   if (!context.mounted) return;
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(error ?? t('fleet.opportunities.taken'))),
-  );
+  showAppOutcome(context, error, t('fleet.opportunities.taken'));
 }
 
 /// Où mène cette ligne, si elle mène quelque part.
@@ -565,7 +556,5 @@ Future<void> _pickDriver(
   final result = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
   if (!context.mounted) return;
   if (result.outcome != DriverAssignment.failed) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(result.message ?? t('fleet.detail.not_found'))),
-  );
+  showAppError(context, result.message ?? t('fleet.detail.not_found'));
 }

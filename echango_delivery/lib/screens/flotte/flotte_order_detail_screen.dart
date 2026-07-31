@@ -10,6 +10,7 @@ import '../../services/navigation_launcher.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// La fiche d'une course, vue par une entreprise de transport.
 ///
@@ -201,9 +202,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
         // Rien n'a changé : ni message, ni rechargement.
         return;
       case DriverAssignment.failed:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.message ?? t('fleet.detail.not_found'))),
-        );
+        showAppError(context, result.message ?? t('fleet.detail.not_found'));
         return;
       case DriverAssignment.assigned:
         // Le conducteur désigné change la fiche : on la relit plutôt que de la
@@ -218,9 +217,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
     if (!mounted) return;
     setState(() => _claiming = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error ?? t('fleet.opportunities.taken'))),
-    );
+    showAppOutcome(context, error, t('fleet.opportunities.taken'));
 
     if (error != null) return;
 
@@ -449,9 +446,7 @@ class _PlaceSection extends StatelessWidget {
             onPressed: () async {
               final ok = await NavigationLauncher.navigateTo(parsed);
               if (!context.mounted || ok) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(t('fleet.detail.no_map_app'))),
-              );
+              showAppError(context, t('fleet.detail.no_map_app'));
             },
             icon: const Icon(Icons.map_outlined),
             label: Text(t('fleet.detail.open_map')),

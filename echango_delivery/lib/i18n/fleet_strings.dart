@@ -148,6 +148,10 @@ const Map<String, String> _fr = {
   // faisait dire à une entreprise qui a des conducteurs qu'elle n'en a pas.
   'fleet.drivers.unavailable':
       'Impossible de charger vos conducteurs pour le moment.',
+  // La consigne dit quoi faire, et surtout ce qu'il ne faut PAS conclure : la
+  // liste n'est pas vide, elle est inconnue.
+  'fleet.drivers.unavailable.hint':
+      'Vos conducteurs sont toujours enregistrés. Réessayez dans un instant.',
 
   // ── Caisse ──────────────────────────────────────────────────────────────
   'fleet.cash.title': 'Caisse de l’entreprise',
@@ -283,6 +287,8 @@ const Map<String, String> _ar = {
   'fleet.drivers.contact_required':
       'أدخل بريداً إلكترونياً أو رقم هاتف — وإلا لن يتمكن هذا السائق من تلقي دعوته.',
   'fleet.drivers.unavailable': 'تعذّر تحميل قائمة سائقيك حالياً.',
+  'fleet.drivers.unavailable.hint':
+      'سائقوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',
 
   'fleet.cash.title': 'صندوق الشركة',
   'fleet.cash.owed_by_drivers': 'ما يدين به سائقوك لك',

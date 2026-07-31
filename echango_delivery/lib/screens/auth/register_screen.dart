@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../../state/auth_state.dart';
 import '../../config/app_rules.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/error_banner.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -34,24 +36,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final password = _passwordController.text;
 
     if (business.isEmpty || email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Commerce, email et mot de passe sont requis')),
-      );
+      showAppError(context, 'Commerce, email et mot de passe sont requis');
       return;
     }
     // Contrainte serveur : la vérifier ici évite un aller-retour pour un
     // message que l'on connaît d'avance. La valeur vit dans `ServerRules`, et
     // `tool/check_server_rules.dart` vérifie qu'elle n'a pas dérivé du DTO.
     if (password.length < ServerRules.passwordMinLength) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        // `const` conservé : `passwordMinLength` est une constante de
-        // compilation, donc l'interpolation l'est aussi. Le retirer aurait
-        // déclenché `prefer_const_constructors`, activé dans
-        // `analysis_options.yaml`.
-        const SnackBar(
-          content: Text('Le mot de passe doit faire au moins '
-              '${ServerRules.passwordMinLength} caractères'),
-        ),
+      showAppError(
+        context,
+        'Le mot de passe doit faire au moins '
+        '${ServerRules.passwordMinLength} caractères',
       );
       return;
     }
@@ -142,18 +137,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                   if (authState.errorMessage != null) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    Container(
-                      padding: const EdgeInsets.all(AppSpacing.md),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        border: Border.all(color: Colors.red),
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      child: Text(
-                        authState.errorMessage!,
-                        style: TextStyle(color: Colors.red.shade700),
-                      ),
-                    ),
+                    AppErrorBanner(message: authState.errorMessage!),
                   ],
                 ],
               ),

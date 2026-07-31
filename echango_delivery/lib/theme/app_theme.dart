@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_semantic_colors.dart';
 import 'app_spacing.dart';
 
 /// Thème Echango Delivery — couleurs, typographie, et styles cohérents.
@@ -11,6 +12,10 @@ ThemeData buildAppTheme() {
       seedColor: primaryColor,
       brightness: Brightness.light,
     ),
+    // Les rôles que Material 3 ne fournit pas — succès et avertissement. Sans
+    // eux, la règle 6 (« la couleur vient du thème ») n'a pas d'endroit où
+    // envoyer un `Colors.green`.
+    extensions: const [AppSemanticColors.light],
     primaryColor: primaryColor,
     appBarTheme: const AppBarTheme(
       backgroundColor: primaryColor,
@@ -75,6 +80,7 @@ ThemeData buildAppDarkTheme() {
       seedColor: primaryColor,
       brightness: Brightness.dark,
     ),
+    extensions: const [AppSemanticColors.dark],
     primaryColor: primaryColor,
     appBarTheme: const AppBarTheme(
       backgroundColor: Color(0xFF1a1a1a),

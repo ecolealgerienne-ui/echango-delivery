@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/dev_accounts.dart';
 import '../../state/auth_state.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_spacing.dart';
 
@@ -58,9 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = account?.password ?? _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Renseigner l\'email et le mot de passe')),
-      );
+      showAppError(context, 'Renseigner l\'email et le mot de passe');
       return;
     }
 
@@ -177,18 +177,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   if (authState.errorMessage != null) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    Container(
-                      padding: const EdgeInsets.all(AppSpacing.md),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        border: Border.all(color: Colors.red),
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                      child: Text(
-                        authState.errorMessage!,
-                        style: TextStyle(color: Colors.red.shade700),
-                      ),
-                    ),
+                    AppErrorBanner(message: authState.errorMessage!),
                   ],
                   _buildDevAccounts(authState),
                 ],
@@ -213,10 +202,9 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: AppSpacing.xl),
         Text(
           'Comptes de test (debug)',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: Colors.grey[600]),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
         ),
         const SizedBox(height: AppSpacing.sm),
         Wrap(

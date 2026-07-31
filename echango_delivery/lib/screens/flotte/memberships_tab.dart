@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../../state/fleet_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// Les rattachements de l'entreprise, et le moyen d'en demander un nouveau.
 ///
@@ -89,9 +91,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
     final error = await context.read<FleetState>().requestMembership(driverUuid);
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error ?? t('fleet.members.requested'))),
-    );
+    showAppOutcome(context, error, t('fleet.members.requested'));
 
     if (error == null) await _runSearch();
   }
@@ -100,7 +100,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
     final error =
         await context.read<FleetState>().setMembershipSuspended(membershipId, suspended);
     if (!mounted || error == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+    showAppError(context, error);
   }
 
   @override
@@ -251,7 +251,9 @@ class _MembershipRow extends StatelessWidget {
     return ListTile(
       leading: Icon(
         status == 'active' ? Icons.link : Icons.link_off,
-        color: status == 'active' ? Colors.green : Theme.of(context).colorScheme.outline,
+        color: status == 'active'
+            ? context.semantic.success
+            : Theme.of(context).colorScheme.outline,
       ),
       title: Text(membership['name'] as String? ?? '—'),
       subtitle: Text(t('fleet.members.status.$status')),
