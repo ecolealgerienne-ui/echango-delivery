@@ -25,6 +25,14 @@ import 'locale_state.dart';
 /// Les garder séparées n'est pas cosmétique : ce sont deux niveaux de détail
 /// différents, et les fusionner ferait croire à une donnée manquante là où il y
 /// a une expurgation délibérée.
+/// Le résultat d'une lecture de fiche : la course, ou la raison de son absence.
+class FleetOrderDetail {
+  const FleetOrderDetail({this.order, this.error});
+
+  final Map<String, dynamic>? order;
+  final String? error;
+}
+
 class FleetState extends ChangeNotifier {
   final BffApiClient _apiClient;
   final LocaleState _localeState;
@@ -118,6 +126,24 @@ class FleetState extends ChangeNotifier {
     } finally {
       _claimingOrderId = null;
       notifyListeners();
+    }
+  }
+
+  /// La fiche d'une course, et **ce qui a manqué** si elle n'a pas pu être lue.
+  ///
+  /// Rendre `null` sans distinguer l'absence de l'erreur ferait afficher « cette
+  /// course n'est plus disponible » sur un simple réseau coupé — un message qui
+  /// affirme un fait faux, et le défaut le plus répété de ce projet.
+  Future<FleetOrderDetail> fetchOrder(String orderId, {required bool unclaimed}) async {
+    try {
+      final order = unclaimed
+          ? await _apiClient.getFleetOpportunityDetail(orderId)
+          : await _apiClient.getFleetOrderDetail(orderId);
+      return FleetOrderDetail(order: order);
+    } on AppException catch (e) {
+      return FleetOrderDetail(error: translateErrorCode(e.code, _locale));
+    } catch (_) {
+      return FleetOrderDetail(error: translateErrorCode(AppError.unknown, _locale));
     }
   }
 

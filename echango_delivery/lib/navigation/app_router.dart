@@ -10,6 +10,7 @@ import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
 import '../screens/flotte/flotte_home_screen.dart';
+import '../screens/flotte/flotte_order_detail_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
@@ -139,6 +140,25 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'caisse',
             builder: (_, __) => const CashScreen(persona: 'fleet'),
+          ),
+          // Deux chemins pour un écran, et non un drapeau dans l'URL : ils
+          // n'interrogent pas la même route serveur et n'obéissent pas à la
+          // même garde (appartenance d'un côté, disponibilité de l'autre).
+          // Un `?unclaimed=true` laisserait croire à un affichage qui se
+          // paramètre, alors que ce sont deux lectures distinctes.
+          GoRoute(
+            path: 'commandes/:id',
+            builder: (_, s) => FlotteOrderDetailScreen(
+              orderId: s.pathParameters['id']!,
+              unclaimed: false,
+            ),
+          ),
+          GoRoute(
+            path: 'opportunites/:id',
+            builder: (_, s) => FlotteOrderDetailScreen(
+              orderId: s.pathParameters['id']!,
+              unclaimed: true,
+            ),
           ),
         ],
       ),

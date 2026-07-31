@@ -1084,11 +1084,33 @@ class BffApiClient {
     return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
+  /// Le détail d'une course confiée à cette entreprise.
+  Future<Map<String, dynamic>> getFleetOrderDetail(String orderId) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/commandes/$orderId'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Le détail d'une course **libre**, avant de décider de la prendre.
+  ///
+  /// Route distincte de la précédente, et non un assouplissement de sa garde :
+  /// `GET /flotte/commandes/:id` exige que la course soit déjà celle de
+  /// l'entreprise. Celle-ci exige au contraire qu'elle ne soit à personne.
+  Future<Map<String, dynamic>> getFleetOpportunityDetail(String orderId) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/flotte/opportunites/$orderId'),
+      headers: _buildHeaders(),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   /// Les courses **libres**, réclamables par cette entreprise.
   ///
-  /// Servies expurgées : la livraison est réduite à sa commune tant que
-  /// personne ne s'est engagé. Le prix et le montant à encaisser restent — ce
-  /// sont eux qui permettent de décider.
+  /// Servies avec l'adresse complète, le prix et le montant à encaisser — ce
+  /// sont eux qui permettent de décider. Seule l'identité du destinataire (nom,
+  /// téléphone) attend l'engagement.
   Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = 25}) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/flotte/opportunites').replace(

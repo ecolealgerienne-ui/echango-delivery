@@ -274,6 +274,54 @@ export class FlotteService {
   }
 
   /**
+   * Le détail d'une course **libre**, avant de décider de la prendre.
+   *
+   * ── Pourquoi une route séparée de `getOrderDetail` ────────────────────────
+   *
+   * `getOrderDetail` exige `facilitator_uuid === le nôtre` : appelée sur une
+   * opportunité, elle répond 403 — précisément sur les courses que l'entreprise
+   * a le droit de consulter. Fusionner les deux en assouplissant la garde
+   * reviendrait à rendre la vérification d'appartenance **conditionnelle**, et
+   * une garde conditionnelle est une garde qu'on finit par contourner sans le
+   * vouloir. Deux routes, deux règles explicites.
+   *
+   * La règle ici n'est pas l'appartenance mais la **disponibilité** : n'importe
+   * quelle entreprise active peut lire n'importe quelle course que personne n'a
+   * prise, puisque c'est exactement ce que la liste lui sert déjà. Dès qu'elle
+   * ne l'est plus, la lecture s'arrête — sans quoi il suffirait de garder un
+   * identifiant sous la main pour suivre une course prise par un concurrent.
+   *
+   * Projection expurgée, la même que la liste : l'identité du destinataire
+   * n'apparaît qu'à l'engagement. Sans ça, ouvrir le détail rendrait ce que la
+   * liste retire — c'est le trou exact trouvé côté transporteur le 28/07.
+   */
+  async getClaimableOrderDetail(fleetId: string, orderId: string) {
+    await this.getFleetWithValidation(fleetId);
+
+    let order: any;
+    try {
+      const response = await this.fleetbaseClient.getOrder(orderId);
+      order = response?.order || response;
+    } catch (error: any) {
+      this.logger.error(`Opportunité ${orderId} illisible : ${error.message}`);
+      notFound('order.not_found', 'Order not found');
+    }
+
+    if (!order?.uuid) {
+      notFound('order.not_found', 'Order not found');
+    }
+
+    if (!this.isClaimable(order)) {
+      // Volontairement un `not_found` et non un `forbidden` : une course prise
+      // par une autre entreprise ne regarde pas celle-ci, et distinguer les deux
+      // réponses lui apprendrait qu'elle existe et qu'elle a été prise.
+      notFound('order.not_found', 'Order not found');
+    }
+
+    return projectOrderForFleet(this.withEffectiveMeta(order), {}, { unclaimed: true });
+  }
+
+  /**
    * Get a single order, verifying it belongs to this fleet before returning
    * anything (anti-IDOR - never trust the id alone).
    */

@@ -260,8 +260,8 @@ class Place extends Equatable {
   final String id;
   final String name;
   final String address;
-  /// Nulles quand le BFF les a retirées — course non réclamée. Une valeur par
-  /// défaut à 0 aurait placé le point au large du golfe de Guinée, et
+  /// Nulles quand l'adresse a été saisie sans passer par la carte. Une valeur
+  /// par défaut à 0 aurait placé le point au large du golfe de Guinée, et
   /// l'itinéraire y aurait mené sans rien signaler.
   final double? latitude;
   final double? longitude;

@@ -88,6 +88,22 @@ export class FlotteController {
     return this.flotteService.getClaimableOrders(this.fleetId(req), query);
   }
 
+  /**
+   * Le détail d'une course libre, avant de décider.
+   *
+   * ⚠️ Déclarée **avant** `opportunites/:id/prendre` n'aurait rien changé (Nest
+   * apparie sur la méthode ET le chemin), mais elle doit rester avant
+   * `commandes/:id` dans l'esprit du lecteur : ce sont deux gardes différentes
+   * sur deux populations de courses, et les confondre ouvre l'une par l'autre.
+   */
+  @Get('opportunites/:id')
+  async getClaimableOrderDetail(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) orderId: string,
+  ) {
+    return this.flotteService.getClaimableOrderDetail(this.fleetId(req), orderId);
+  }
+
   /** Prendre une course du pool. Le second arrivant reçoit `order.already_taken`. */
   @Post('opportunites/:id/prendre')
   async claimOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {

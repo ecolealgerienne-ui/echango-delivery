@@ -195,6 +195,10 @@ class _OrdersTab extends StatelessWidget {
             '${_amount(meta, t)}',
           ),
           isThreeLine: true,
+          // La ligne mène à la fiche. Sans elle, l'entreprise ne voyait jamais
+          // ni l'adresse, ni les instructions, ni le contact d'une course
+          // pourtant à elle — elle ne pouvait rien dire à son conducteur.
+          onTap: () => context.push('/flotte/commandes/${order['uuid'] ?? ''}'),
           trailing: hasDriver
               ? null
               : TextButton(
@@ -232,11 +236,16 @@ class _OpportunitiesTab extends StatelessWidget {
         final claiming = state.claimingOrderId == uuid;
 
         return ListTile(
-          title: Text(_dropoffLabel(order, unclaimed: true)),
+          title: Text(_dropoffLabel(order)),
           subtitle: Text(
-            '${_amount(meta, t)}\n${t('fleet.opportunities.masked')}',
+            '${_amount(meta, t)}\n${t('fleet.opportunities.masked')}'.trim(),
           ),
           isThreeLine: true,
+          // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
+          // cette course ? ». La liste ne pouvait pas y répondre seule : le
+          // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
+          // « Prendre » reste sur la ligne pour ceux qui n'en ont pas besoin.
+          onTap: () => context.push('/flotte/opportunites/$uuid'),
           trailing: FilledButton(
             onPressed: claiming ? null : () => _claim(context, uuid, t),
             child: Text(
@@ -365,22 +374,34 @@ Future<void> _addDriver(BuildContext context, _Translate t) async {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
 }
 
-/// Où va la course, selon ce que la projection a bien voulu donner.
+/// Où va la course.
 ///
-/// ⚠️ Sur une course **non réclamée**, `projectPlace(place, 'locality')` pose
-/// `name: 'Destinataire'` **en dur** et met la commune dans `address`. Lire
-/// `name` d'abord donnait donc « Destinataire » sur *toutes* les lignes de
-/// l'onglet « Courses libres » — et le repli sur `locality`, qu'aucune
-/// projection n'émet, n'était jamais atteint.
-String _dropoffLabel(Map<String, dynamic> order, {bool unclaimed = false}) {
+/// ⚠️ **Plus de branche `unclaimed`** (31/07/2026). L'expurgation posait
+/// `name: 'Destinataire'` en dur sur une course libre, ce qui titrait toutes les
+/// lignes du même mot ; il fallait donc lire `address` d'abord dans ce cas-là et
+/// `name` dans l'autre. Depuis que le serveur ne masque plus que l'identité,
+/// `name` est **absent** sur une course libre au lieu d'être remplacé — la
+/// chaîne de replis suffit, et une seule règle vaut pour les deux onglets.
+///
+/// L'ordre a son importance : `name` porte le libellé du carnet d'adresses,
+/// plus parlant qu'une adresse formatée quand il existe.
+String _dropoffLabel(Map<String, dynamic> order) {
   final payload = order['payload'] as Map<String, dynamic>?;
   final dropoff = payload?['dropoff'] as Map<String, dynamic>?;
 
-  final value = unclaimed
-      ? (dropoff?['address'] ?? dropoff?['city'] ?? order['public_id'])
-      : (dropoff?['name'] ?? dropoff?['address'] ?? order['public_id']);
-
-  return (value ?? '—').toString();
+  for (final candidate in [
+    dropoff?['name'],
+    dropoff?['address'],
+    dropoff?['street1'],
+    dropoff?['city'],
+    order['public_id'],
+  ]) {
+    // ⚠️ `??` ne suffit pas : `address` vaut `''` quand le commerçant a saisi
+    // une adresse sans passer par la carte, et une chaîne vide n'est pas nulle.
+    // La ligne restait alors titrée par du blanc.
+    if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
+  }
+  return '—';
 }
 
 /// Les deux montants, quand ils existent.

@@ -65,11 +65,37 @@ const Map<String, String> _fr = {
   'fleet.opportunities.take': 'Prendre cette course',
   'fleet.opportunities.taking': 'Prise en cours…',
   'fleet.opportunities.taken': 'Course prise. Désignez un conducteur.',
-  // ⚠️ Ce libellé n'est pas décoratif : la livraison est volontairement
-  // réduite à sa commune tant que personne ne s'est engagé, et sans phrase
-  // l'entreprise croirait à une donnée manquante.
+  // ⚠️ Ce libellé n'est pas décoratif : le nom et le téléphone du destinataire
+  // sont volontairement absents tant que personne ne s'est engagé, et sans
+  // phrase l'entreprise croirait à une donnée manquante — donc à un défaut.
+  //
+  // Il a changé le 31/07/2026 en même temps que la règle qu'il décrit : il
+  // annonçait une adresse masquée, alors que c'est désormais l'identité seule
+  // qui l'est. Un libellé qui décrit l'ancienne règle est pire que pas de
+  // libellé : il fait chercher une adresse qui est déjà à l'écran.
   'fleet.opportunities.masked':
-      'Adresse exacte communiquée une fois la course prise.',
+      'Nom et téléphone du destinataire communiqués une fois la course prise.',
+
+  // ── Fiche d'une course ──────────────────────────────────────────────────
+  'fleet.detail.title': 'Détail de la course',
+  'fleet.detail.not_found': 'Cette course n’est plus disponible.',
+  'fleet.detail.section.money': 'Ce que rapporte cette course',
+  'fleet.detail.section.pickup': 'Enlèvement',
+  'fleet.detail.section.dropoff': 'Livraison',
+  'fleet.detail.section.parcel': 'Colis et contraintes',
+  'fleet.detail.contact': 'Contact',
+  'fleet.detail.instructions': 'Instructions',
+  'fleet.detail.notes': 'Précisions',
+  'fleet.detail.items': 'Contenu',
+  'fleet.detail.vehicle': 'Véhicule demandé',
+  'fleet.detail.distance': 'Distance',
+  'fleet.detail.scheduled': 'Prévue pour',
+  'fleet.detail.tracking': 'Suivi',
+  'fleet.detail.goods': 'Dont marchandise',
+  'fleet.detail.pod': 'Preuve de livraison exigée',
+  'fleet.detail.address': 'Adresse',
+  'fleet.detail.open_map': 'Ouvrir dans une carte',
+  'fleet.detail.no_map_app': 'Aucune application de carte sur cet appareil.',
 
   // ── Conducteurs ─────────────────────────────────────────────────────────
   'fleet.drivers.empty': 'Aucun conducteur rattaché à votre entreprise.',
@@ -118,7 +144,27 @@ const Map<String, String> _ar = {
   'fleet.opportunities.take': 'خذ هذه الرحلة',
   'fleet.opportunities.taking': 'جاري الأخذ…',
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
-  'fleet.opportunities.masked': 'يُكشف العنوان الدقيق بعد أخذ الرحلة.',
+  'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
+
+  'fleet.detail.title': 'تفاصيل الرحلة',
+  'fleet.detail.not_found': 'لم تعد هذه الرحلة متاحة.',
+  'fleet.detail.section.money': 'ما تدره هذه الرحلة',
+  'fleet.detail.section.pickup': 'الاستلام',
+  'fleet.detail.section.dropoff': 'التسليم',
+  'fleet.detail.section.parcel': 'الطرد والقيود',
+  'fleet.detail.contact': 'جهة الاتصال',
+  'fleet.detail.instructions': 'تعليمات',
+  'fleet.detail.notes': 'توضيحات',
+  'fleet.detail.items': 'المحتوى',
+  'fleet.detail.vehicle': 'المركبة المطلوبة',
+  'fleet.detail.distance': 'المسافة',
+  'fleet.detail.scheduled': 'مقررة في',
+  'fleet.detail.tracking': 'التتبع',
+  'fleet.detail.goods': 'منها قيمة البضاعة',
+  'fleet.detail.pod': 'إثبات التسليم مطلوب',
+  'fleet.detail.address': 'العنوان',
+  'fleet.detail.open_map': 'فتح في الخريطة',
+  'fleet.detail.no_map_app': 'لا يوجد تطبيق خرائط على هذا الجهاز.',
 
   'fleet.drivers.empty': 'لا يوجد سائقون مرتبطون بشركتك.',
   'fleet.drivers.add': 'إضافة سائق',

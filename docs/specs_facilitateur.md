@@ -708,6 +708,35 @@ par les lots du §13.
   commune, `price` et `cod_amount` conservés (ce sont eux qui permettent de
   décider), notes et instructions retirées. `facilitator_uuid` posé ⇒ l'entreprise
   passe en complet ; conducteur affecté ⇒ le conducteur aussi.
+
+  > ⚠️ **Ce que ce paragraphe propose a été appliqué, puis corrigé par
+  > l'usage (31/07/2026).** Mis à l'écran, il donnait une liste de huit courses
+  > toutes titrées « Destinataire » — le libellé anonyme que la réduction à la
+  > commune posait à la place du nom du lieu —, sans adresse, sans détour
+  > estimable, et sans fiche à ouvrir. La question de l'utilisateur devant cet
+  > écran est celle qui tranche : *« sur quels critères je dois accepter cette
+  > course ou non ? »*
+  >
+  > **Décision produit : on protégeait la mauvaise chose.** L'adresse est le
+  > critère de décision — elle dit le détour, le quartier, l'étage — et elle
+  > n'identifie personne à elle seule. Ce qui identifie, ce sont **le nom et le
+  > téléphone**. La règle devient donc : *tout est servi, sauf l'identité du
+  > destinataire, jusqu'à l'engagement.*
+  >
+  > **Ce qui rend l'arbitrage tenable** n'est pas un pari : c'est le même fait
+  > qui a levé la réservation aux favoris le 29/07 — transporteurs et
+  > entreprises **ne s'inscrivent pas d'eux-mêmes**, ils sont invités
+  > nominativement par Echango. Le contrôle a lieu à l'entrée du réseau, sur
+  > l'identité réelle, et il est plus fort que ce qu'une expurgation par écran
+  > peut offrir.
+  >
+  > **Risque résiduel nommé** : `instructions` et `dropoff_notes` sont du texte
+  > libre, donc un commerçant peut y écrire « demander Karim, 0555… ». Le
+  > masquage porte sur les champs structurés ; il ne peut rien contre une saisie
+  > libre. Accepté, parce que « sonner au 3e, porte gauche » est justement
+  > l'information sans laquelle un conducteur tourne dix minutes dans une cage
+  > d'escalier — et que la retirer ne retirait pas le nom, elle retirait
+  > l'utilité.
 - **D5 — `facilitator_uuid` est projeté au transporteur sur une course non
   réclamée.** `ORDER_LINK_FIELDS` sort même quand `unclaimed: true` — la branche
   d'expurgation ne touche que `meta` et `payload`. Chaque indépendant apprendrait

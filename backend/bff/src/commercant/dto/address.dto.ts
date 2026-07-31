@@ -38,11 +38,11 @@ export class SaveAddressDto {
    * commerçant a posé son point.
    *
    * Facultative, et pas seulement par prudence : elle n'existe que si le
-   * commerçant est passé par la carte. Elle est enregistrée parce qu'elle
-   * alimente `coarseLocality()`, qui réduit une adresse de livraison à sa
-   * commune sur une course diffusée mais pas encore réclamée. Sans champ
-   * structuré, cette réduction repose sur un découpage de la chaîne formatée
-   * — une heuristique qui, en cas de doute, ne renvoie rien.
+   * commerçant est passé par la carte. Elle est enregistrée parce qu'elle est
+   * la seule composante d'adresse **exploitable sans découper une chaîne** —
+   * tri par commune, recherche, et affichage court d'une course. Sans elle, il
+   * ne reste que l'adresse formatée, dont tout usage structuré repose sur une
+   * heuristique de segmentation.
    */
   @IsOptional()
   @IsString()
