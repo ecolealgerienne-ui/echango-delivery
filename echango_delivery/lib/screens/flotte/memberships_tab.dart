@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../i18n/fleet_strings.dart';
 import '../../state/fleet_state.dart';
 
 /// Les rattachements de l'entreprise, et le moyen d'en demander un nouveau.
@@ -23,6 +22,12 @@ import '../../state/fleet_state.dart';
 /// divergent aussitôt. Le serveur refuse le doublon de toute façon
 /// (`driver.already_in_network`), mais un refus après coup se vit comme un bug ;
 /// une phrase avant se vit comme une consigne.
+///
+/// ⚠️ Cet écran n'importe pas `fleet_strings.dart` : il reçoit `t` de son
+/// parent, qui capture la locale dans son `build` (`context.watch` hors phase de
+/// build lève chez Provider, et l'analyseur ne le voit pas). La règle 4
+/// s'applique néanmoins — aucune chaîne d'interface en dur ici, toutes passent
+/// par `t`.
 class MembershipsTab extends StatefulWidget {
   const MembershipsTab({super.key, required this.t, required this.onCreateDriver});
 
