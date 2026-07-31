@@ -250,7 +250,10 @@ class _OpportunitiesTab extends StatelessWidget {
                 '${order['redacted'] == true ? '\n${t('fleet.opportunities.masked')}' : ''}'
                 .trim(),
           ),
-          isThreeLine: true,
+          // ⚠️ Suit le contenu : une opportunité sans montant ET non masquée
+          // produisait un sous-titre vide, donc une ligne haute de trois lignes
+          // sous un titre seul.
+          isThreeLine: order['redacted'] == true || meta['price'] != null,
           // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
           // cette course ? ». La liste ne pouvait pas y répondre seule : le
           // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
@@ -449,7 +452,10 @@ Future<void> _pickDriver(
   Map<String, dynamic> order,
   _Translate t,
 ) async {
-  final error = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
-  if (error == null || !context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+  final result = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
+  if (!context.mounted) return;
+  if (result.outcome != DriverAssignment.failed) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(result.message ?? t('fleet.detail.not_found'))),
+  );
 }

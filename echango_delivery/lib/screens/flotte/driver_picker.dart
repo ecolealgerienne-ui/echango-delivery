@@ -13,24 +13,56 @@ import '../../state/fleet_state.dart';
 /// deux textes pour la même commande, deux désérialiseurs Dart divergents sur
 /// `tracking_number`). Une seule copie, deux appelants.
 ///
-/// Rend `null` en cas de succès ou d'abandon, le message d'erreur traduit
-/// sinon. L'abandon et le succès se ressemblent volontairement : dans les deux
-/// cas il n'y a rien à dire à l'utilisateur, qui vient de voir le résultat.
+/// ── Trois issues, et elles ne se confondent pas ──────────────────────────
+///
+/// Une première version rendait `null` pour le succès **et** pour l'abandon.
+/// L'appelant rechargeait donc la fiche quand l'utilisateur avait simplement
+/// fermé la feuille — un aller-retour réseau par geste annulé, et un commentaire
+/// qui affirmait « le conducteur désigné change la fiche » sur une branche
+/// atteinte alors que personne n'avait été désigné.
 ///
 /// La liste vient de `GET /flotte/drivers`, donc déjà bornée aux conducteurs de
 /// l'entreprise ; le serveur revérifie de toute façon l'appartenance du
 /// conducteur **et** de la course avant d'appeler Fleetbase (anti-IDOR validé
 /// entre deux flottes le 28/07). Cet écran présente, il n'autorise pas.
-Future<String?> pickAndAssignDriver(
+enum DriverAssignment { assigned, cancelled, failed }
+
+class DriverAssignmentResult {
+  const DriverAssignmentResult(this.outcome, [this.message]);
+
+  final DriverAssignment outcome;
+  final String? message;
+}
+
+Future<DriverAssignmentResult> pickAndAssignDriver(
   BuildContext context,
   String orderId,
   String Function(String key) t,
 ) async {
   final state = context.read<FleetState>();
-  final drivers = state.drivers;
 
-  if (drivers.isEmpty) return t('fleet.drivers.empty');
-  if (orderId.isEmpty) return t('fleet.detail.not_found');
+  // ⚠️ L'identifiant d'abord : une course sans `uuid` n'a rien à voir avec le
+  // nombre de conducteurs, et l'ordre inverse répondait « aucun conducteur »
+  // à une flotte qui en a.
+  if (orderId.isEmpty) {
+    return DriverAssignmentResult(DriverAssignment.failed, t('fleet.detail.not_found'));
+  }
+
+  // ⚠️ « Aucun conducteur » n'est affirmé que si c'est **vrai**.
+  //
+  // `FleetState.load()` avale l'échec de `getFleetDrivers()` par un
+  // `catchError` qui rend une liste vide — un BFF injoignable était donc
+  // indiscernable d'une entreprise sans conducteur. On affirmait un fait
+  // possiblement faux au moment précis où l'entreprise veut agir, ce qui est le
+  // défaut le plus répété de ce projet.
+  if (state.driversUnavailable) {
+    return DriverAssignmentResult(DriverAssignment.failed, t('fleet.drivers.unavailable'));
+  }
+
+  final drivers = state.drivers;
+  if (drivers.isEmpty) {
+    return DriverAssignmentResult(DriverAssignment.failed, t('fleet.drivers.empty'));
+  }
 
   final chosen = await showModalBottomSheet<String>(
     context: context,
@@ -51,7 +83,12 @@ Future<String?> pickAndAssignDriver(
     ),
   );
 
-  if (chosen == null || !context.mounted) return null;
+  if (chosen == null || !context.mounted) {
+    return const DriverAssignmentResult(DriverAssignment.cancelled);
+  }
 
-  return state.assignDriver(orderId, chosen);
+  final error = await state.assignDriver(orderId, chosen);
+  return error == null
+      ? const DriverAssignmentResult(DriverAssignment.assigned)
+      : DriverAssignmentResult(DriverAssignment.failed, error);
 }

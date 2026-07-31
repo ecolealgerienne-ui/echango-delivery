@@ -89,6 +89,11 @@ const Map<String, String> _fr = {
   'fleet.detail.notes': 'Précisions',
   'fleet.detail.order_notes': 'Notes du commerçant',
   'fleet.detail.fragile': 'fragile',
+  // Les unités sont traduites comme le reste : « kg » s'écrit « كغ » en arabe,
+  // et une unité latine au milieu d'une phrase arabe se lit comme un défaut.
+  'fleet.unit.kg': 'kg',
+  'fleet.unit.km': 'km',
+  'fleet.unit.m': 'm',
   'fleet.detail.items': 'Contenu',
   'fleet.detail.vehicle': 'Véhicule demandé',
   'fleet.detail.distance': 'Distance',
@@ -109,6 +114,11 @@ const Map<String, String> _fr = {
   'fleet.drivers.online': 'En ligne',
   'fleet.drivers.offline': 'Hors ligne',
   'fleet.drivers.select': 'Choisir un conducteur',
+  // ⚠️ Distinct de `fleet.drivers.empty` : « aucun conducteur » est une
+  // affirmation sur l'entreprise, celui-ci un aveu sur nous. Les confondre
+  // faisait dire à une entreprise qui a des conducteurs qu'elle n'en a pas.
+  'fleet.drivers.unavailable':
+      'Impossible de charger vos conducteurs pour le moment.',
 
   // ── Caisse ──────────────────────────────────────────────────────────────
   'fleet.cash.title': 'Caisse de l’entreprise',
@@ -161,6 +171,9 @@ const Map<String, String> _ar = {
   'fleet.detail.notes': 'توضيحات',
   'fleet.detail.order_notes': 'ملاحظات التاجر',
   'fleet.detail.fragile': 'قابل للكسر',
+  'fleet.unit.kg': 'كغ',
+  'fleet.unit.km': 'كم',
+  'fleet.unit.m': 'م',
   'fleet.detail.items': 'المحتوى',
   'fleet.detail.vehicle': 'المركبة المطلوبة',
   'fleet.detail.distance': 'المسافة',
@@ -180,6 +193,7 @@ const Map<String, String> _ar = {
   'fleet.drivers.online': 'متصل',
   'fleet.drivers.offline': 'غير متصل',
   'fleet.drivers.select': 'اختر سائقاً',
+  'fleet.drivers.unavailable': 'تعذّر تحميل قائمة سائقيك حالياً.',
 
   'fleet.cash.title': 'صندوق الشركة',
   'fleet.cash.owed_by_drivers': 'ما يدين به سائقوك لك',

@@ -53,6 +53,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
   Map<String, dynamic>? _order;
   String? _error;
   bool _loading = true;
+  bool _reloading = false;
   bool _claiming = false;
 
   @override
@@ -63,13 +64,19 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
 
   Future<void> _load() async {
     if (!mounted) return;
-    // ⚠️ `_loading` ne vaut `true` que sur le **premier** chargement.
+    // ⚠️ Deux indicateurs, et il en faut deux.
     //
-    // Le mettre à chaque fois faisait disparaître la fiche — et le spinner du
-    // geste en cours — dès qu'on tirait pour rafraîchir : le `RefreshIndicator`
-    // était remplacé par « Chargement… » au premier pixel du geste.
+    // `_loading` est le **premier** chargement, celui qui n'a rien à afficher.
+    // Le poser à chaque fois faisait disparaître la fiche — et le spinner du
+    // geste en cours — dès qu'on tirait pour rafraîchir.
+    //
+    // Mais n'en garder qu'un rendait « Réessayer » muet : une fois la fiche
+    // chargée, plus aucun rechargement ne changeait un pixel avant la réponse,
+    // et le bouton était indiscernable d'un bouton mort. `_reloading` porte ce
+    // second état, celui d'un écran qui a déjà quelque chose à montrer.
     setState(() {
       _loading = _order == null;
+      _reloading = _order != null;
       _error = null;
     });
 
@@ -86,6 +93,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
       if (result.order != null) _order = result.order;
       _error = result.error;
       _loading = false;
+      _reloading = false;
     });
   }
 
@@ -110,17 +118,41 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
     final order = _describesAnOrder(_order) ? _order : null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(t('fleet.detail.title'))),
+      appBar: AppBar(
+        title: Text(t('fleet.detail.title')),
+        // Le rechargement se voit ici, et pas en remplaçant la fiche : c'est le
+        // seul endroit qui reste visible dans les deux états.
+        bottom: _reloading
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(2),
+                child: LinearProgressIndicator(minHeight: 2),
+              )
+            : null,
+      ),
+      // ⚠️ **La fiche passe AVANT l'erreur**, et cet ordre n'est pas cosmétique.
+      //
+      // La version précédente testait `_error` en premier : le contenu était
+      // bien retenu en mémoire par `_load()` mais **jamais rendu**, donc la
+      // correction censée le préserver était inerte. Pire, `bottomNavigationBar`
+      // ne regardait que `order`, non nul : un rafraîchissement raté affichait
+      // un écran d'erreur **avec « Prendre cette course » actif en dessous**.
+      // On proposait de s'engager sur une course pendant qu'on annonçait une
+      // panne — l'inverse exact de ce que la correction cherchait.
+      //
+      // L'erreur devient donc un bandeau au-dessus de la fiche : elle informe
+      // sans effacer, comme sur l'écran d'accueil.
       body: _loading
           ? Center(child: Text(t('fleet.loading')))
-          : _error != null
-              ? _Failure(message: _error!, retry: _load, t: t)
-              : order == null
-                  ? _Failure(message: t('fleet.detail.not_found'), retry: _load, t: t)
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      child: _Body(order: order, t: t),
-                    ),
+          : order != null
+              ? RefreshIndicator(
+                  onRefresh: _load,
+                  child: _Body(order: order, t: t, error: _error, retry: _load),
+                )
+              : _Failure(
+                  message: _error ?? t('fleet.detail.not_found'),
+                  retry: _load,
+                  t: t,
+                ),
       bottomNavigationBar: order == null ? null : _action(order, t),
     );
   }
@@ -159,16 +191,23 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
       );
 
   Future<void> _assign(Map<String, dynamic> order, _Translate t) async {
-    final error = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
+    final result = await pickAndAssignDriver(context, order['uuid'] as String? ?? '', t);
     if (!mounted) return;
 
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
-      return;
+    switch (result.outcome) {
+      case DriverAssignment.cancelled:
+        // Rien n'a changé : ni message, ni rechargement.
+        return;
+      case DriverAssignment.failed:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message ?? t('fleet.detail.not_found'))),
+        );
+        return;
+      case DriverAssignment.assigned:
+        // Le conducteur désigné change la fiche : on la relit plutôt que de la
+        // supposer à jour.
+        await _load();
     }
-    // Le conducteur désigné change la fiche : on la relit plutôt que de la
-    // supposer à jour.
-    await _load();
   }
 
   Future<void> _claim(_Translate t) async {
@@ -231,10 +270,20 @@ class _Failure extends StatelessWidget {
 /// routeur et celle du serveur, qui peuvent diverger dès que la règle de
 /// masquage change en amont. C'est le `is_draft` de CLAUDE.md en miniature.
 class _Body extends StatelessWidget {
-  const _Body({required this.order, required this.t});
+  const _Body({
+    required this.order,
+    required this.t,
+    required this.error,
+    required this.retry,
+  });
 
   final Map<String, dynamic> order;
   final _Translate t;
+
+  /// Le dernier rechargement a échoué. La fiche affichée reste valide — elle est
+  /// simplement peut-être périmée, et le dire vaut mieux que l'effacer.
+  final String? error;
+  final Future<void> Function() retry;
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +299,22 @@ class _Body extends StatelessWidget {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.error_outline),
+                title: Text(error!),
+                trailing: TextButton(
+                  onPressed: retry,
+                  child: Text(t('fleet.retry')),
+                ),
+              ),
+            ),
+          ),
+
         // ⚠️ Le drapeau vient du serveur (`redacted`), il n'est pas déduit de
         // `unclaimed` : c'est le serveur qui décide de ce qu'il retire, et lui
         // seul sait s'il l'a fait. Le déduire ici afficherait la phrase même le
@@ -278,7 +343,7 @@ class _Body extends StatelessWidget {
           rows: [
             _Row(t('fleet.orders.status'), order['status']?.toString()),
             _Row(t('fleet.detail.scheduled'), order['scheduled_at']?.toString()),
-            _Row(t('fleet.detail.distance'), _distance(order['distance'])),
+            _Row(t('fleet.detail.distance'), _distance(order['distance'], t)),
             _Row(t('fleet.detail.tracking'), _tracking(order['tracking_number'])),
             _Row(t('fleet.orders.assigned_to'), _driver(order['driver_assigned'])),
           ],
@@ -524,11 +589,18 @@ String? _items(Object? items, _Translate t) {
 /// ⚠️ **Quantité, poids et fragilité compris**, et pas seulement la description.
 ///
 /// La version précédente ne joignait que les descriptions : l'entreprise lisait
-/// « Cartons » là où le commerçant avait saisi « Cartons ×8, 45 kg, fragile ».
-/// Ce sont exactement les deux critères qui décident du véhicule — et comme la
+/// « Cartons » là où le commerçant avait saisi « Cartons, 45 kg, fragile ». Ce
+/// sont exactement les deux critères qui décident du véhicule — et comme la
 /// description est complète en apparence, **rien ne signalait le manque**. C'est
 /// la forme la plus coûteuse de l'omission : pas un blanc qu'on remarque, un
 /// texte affirmatif incomplet.
+///
+/// ⚠️ **La quantité, elle, n'est encore saisie nulle part** : le formulaire
+/// commerçant envoie `quantity: 1` en dur, et le DTO l'exige sans jamais
+/// l'exposer. La branche ci-dessous est donc morte pour toute commande née de
+/// l'app — elle est conservée parce que le contrat serveur la porte et qu'un
+/// autre émetteur peut la remplir, mais **c'est le formulaire qu'il faut
+/// corriger**, pas cette fonction (consigné dans CLAUDE.md).
 String _describeItem(Object? item, _Translate t) {
   if (item is! Map) return item?.toString().trim() ?? '';
 
@@ -539,18 +611,19 @@ String _describeItem(Object? item, _Translate t) {
   final weight = item['weight'];
   final details = <String>[
     if (quantity is num && quantity > 1) '×${quantity.toStringAsFixed(0)}',
-    if (weight is num && weight > 0) '${weight.toStringAsFixed(weight % 1 == 0 ? 0 : 1)} kg',
+    if (weight is num && weight > 0)
+      '${weight.toStringAsFixed(weight % 1 == 0 ? 0 : 1)} ${t('fleet.unit.kg')}',
     if (item['fragile'] == true) t('fleet.detail.fragile'),
   ];
 
   return details.isEmpty ? label : '$label (${details.join(', ')})';
 }
 
-String? _distance(Object? metres) {
+String? _distance(Object? metres, _Translate t) {
   if (metres is! num || metres <= 0) return null;
   return metres >= 1000
-      ? '${(metres / 1000).toStringAsFixed(1)} km'
-      : '${metres.round()} m';
+      ? '${(metres / 1000).toStringAsFixed(1)} ${t('fleet.unit.km')}'
+      : '${metres.round()} ${t('fleet.unit.m')}';
 }
 
 /// ⚠️ Fleetbase sert `tracking_number` tantôt en chaîne, tantôt en objet —

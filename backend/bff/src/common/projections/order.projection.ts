@@ -166,9 +166,25 @@ export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   // `address` est recomposé et non supprimé : le supprimer purement laisserait
   // l'app sans rien à afficher là où une vraie adresse structurée existe (les
   // lieux du carnet, saisis par la carte, en ont une).
-  const structured = PLACE_STRUCTURED_ADDRESS_FIELDS.map((field) => projected[field])
-    .filter((value) => typeof value === 'string' && value.trim().length > 0)
-    .map((value: string) => value.trim());
+  // ⚠️ Dédoublonné, parce que `city` et `province` sont **la même chaîne** dans
+  // les wilayas-communes homonymes — Alger, Oran, Constantine, Annaba. Sans ça
+  // l'adresse se terminait par sa propre fin : « Cité 1er Novembre, Alger,
+  // 16000, Alger ». Se dédoublonner côté app est impossible, la répétition étant
+  // interne à la chaîne qu'on lui sert.
+  const seen = new Set<string>();
+  const structured: string[] = [];
+
+  for (const field of PLACE_STRUCTURED_ADDRESS_FIELDS) {
+    const value = projected[field];
+    if (typeof value !== 'string' || !value.trim()) continue;
+
+    const component = value.trim();
+    const key = component.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    structured.push(component);
+  }
 
   if (structured.length) {
     projected.address = structured.join(', ');
@@ -440,14 +456,22 @@ export function projectOrderForDriver(order: any, options: OrderProjectionOption
   // ⚠️ Sur une course NON RÉCLAMÉE, aucun rattachement (défaut D5).
   //
   // La branche d'expurgation ne touchait que `meta` et `payload` : les trois
-  // identifiants de rattachement sortaient quand même. Un transporteur
-  // apprenait donc, sur chaque opportunité qu'il n'a pas prise, quel
-  // commerçant l'a passée — et, depuis ce chantier, **quelle entreprise l'a
-  // réclamée**. Mis bout à bout au fil des rafraîchissements, c'est la
-  // cartographie commerciale du réseau, servie en JSON.
+  // identifiants de rattachement sortaient quand même. Le seul rattachement dont
+  // un transporteur a besoin est le sien, et il ne l'a que sur une course qui
+  // est déjà la sienne.
   //
-  // Le seul rattachement dont un transporteur a besoin est le sien, et il ne
-  // l'a que sur une course qui est déjà la sienne.
+  // ⚠️ **Ce retrait ne protège PAS l'identité du commerçant, et il ne faut pas
+  // le croire.** Une version précédente de ce commentaire l'affirmait — « mis
+  // bout à bout, c'est la cartographie commerciale du réseau » — alors que la
+  // ligne d'à côté sert `pickup` en entier, enseigne et téléphone du magasin
+  // compris (décision produit du 28/07 : l'enlèvement est un commerce). Ce qui
+  // est retiré ici, ce sont des **identifiants Fleetbase**, exploitables pour
+  // agir ; le nom du commerçant, lui, est donné.
+  //
+  // Décrire une protection qu'on n'a pas est pire que ne pas l'avoir : on cesse
+  // de se poser la question. La question, elle, reste ouverte — faut-il masquer
+  // le contact du magasin tant que personne ne s'est engagé ? — et elle est
+  // consignée dans `docs/specs_facilitateur.md` §D7 plutôt que tranchée ici.
   const exposeLinks = links && !unclaimed;
 
   return {

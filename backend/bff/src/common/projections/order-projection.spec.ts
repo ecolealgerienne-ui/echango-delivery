@@ -95,6 +95,29 @@ describe.each([
     expect(place.payload.dropoff.address).toBeUndefined();
   });
 
+  it('ne répète pas la wilaya quand elle porte le nom de la commune', () => {
+    // Alger, Oran, Constantine, Annaba : `city` et `province` valent la même
+    // chaîne, et l'adresse se terminait par sa propre fin.
+    const place = projectOrderForFleet(
+      {
+        payload: {
+          dropoff: {
+            uuid: 'p',
+            name: 'Toto',
+            street1: 'Cité 1er Novembre',
+            city: 'Alger',
+            postal_code: '16000',
+            province: 'Alger',
+          },
+        },
+      },
+      {},
+      { unclaimed: true },
+    ) as any;
+
+    expect(place.payload.dropoff.address).toBe('Cité 1er Novembre, Alger, 16000');
+  });
+
   it("garde l'adresse, qui est le critère de décision", () => {
     const place = dropoff();
 

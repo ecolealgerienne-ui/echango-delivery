@@ -48,6 +48,15 @@ class FleetState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
+  /// ⚠️ La liste des conducteurs a-t-elle **échoué**, ou est-elle vraiment vide ?
+  ///
+  /// Le repli `catchError` ci-dessous rend une liste vide sur erreur, pour que
+  /// l'écran affiche quand même les deux autres onglets. Sans ce drapeau, une
+  /// entreprise dont le BFF est injoignable s'entendait dire « aucun conducteur
+  /// rattaché à votre entreprise » — une affirmation possiblement fausse, au
+  /// moment précis où elle veut désigner quelqu'un.
+  bool _driversUnavailable = false;
+
   /// Course en cours de prise, pour que le bouton concerné seul se désactive.
   /// Un indicateur global ferait clignoter toute la liste à chaque geste.
   String? _claimingOrderId;
@@ -56,6 +65,7 @@ class FleetState extends ChangeNotifier {
   List<Map<String, dynamic>> get opportunities => List.unmodifiable(_opportunities);
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
   bool get isLoading => _isLoading;
+  bool get driversUnavailable => _driversUnavailable;
   String? get errorMessage => _errorMessage;
   String? get claimingOrderId => _claimingOrderId;
 
@@ -81,9 +91,11 @@ class FleetState extends ChangeNotifier {
           .then(_rows)
           .catchError((_) => <Map<String, dynamic>>[]);
 
-      _drivers = await _apiClient
-          .getFleetDrivers()
-          .catchError((_) => <Map<String, dynamic>>[]);
+      _driversUnavailable = false;
+      _drivers = await _apiClient.getFleetDrivers().catchError((_) {
+        _driversUnavailable = true;
+        return <Map<String, dynamic>>[];
+      });
     } on AppException catch (e) {
       _errorMessage = translateErrorCode(e.code, _locale);
     } catch (_) {

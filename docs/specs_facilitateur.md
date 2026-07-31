@@ -757,6 +757,28 @@ par les lots du §13.
   > le nom seul »). Il n'a pas été cherché parce que le champ portait le bon nom
   > — c'est la même erreur que `facilitator_uuid`, où un nom plausible a fait
   > conclure trop vite.
+  >
+  > ❓ **Question ouverte, à trancher — l'identité du COMMERÇANT n'est pas
+  > protégée.** `payload.pickup` est servi en entier sur une course libre
+  > (décision du 28/07 : « l'enlèvement est un commerce »), enseigne et
+  > **téléphone du magasin** compris, avec un bouton pour composer le numéro
+  > depuis la fiche. Le retrait de `customer_uuid` sur une course non réclamée
+  > ne change rien à cela : il retire un identifiant exploitable, pas un nom.
+  >
+  > Les deux positions se défendent. **Garder** : le transporteur décide aussi
+  > en fonction de qui l'attend — une pharmacie connue, un restaurant à l'heure
+  > du coup de feu — et l'adresse d'enlèvement est de toute façon publique.
+  > **Masquer le contact** (nom du magasin gardé, téléphone retiré jusqu'à
+  > l'engagement) : avant de s'engager il n'y a rien à appeler, et le flux
+  > d'opportunités devient sinon un annuaire de commerçants actifs avec leurs
+  > numéros, rafraîchi en continu — c'est-à-dire la matière exacte d'un
+  > contournement de la plateforme.
+  >
+  > Non tranché ici parce que ce n'est pas la question que la décision du 31/07
+  > posait (elle portait sur le **client**), et qu'un masquage ajouté de ma seule
+  > initiative irait à l'inverse de ce qui a été demandé. Le commentaire de
+  > `projectOrderForDriver` a en revanche été corrigé : il affirmait une
+  > protection que la ligne suivante défaisait.
 - **D5 — `facilitator_uuid` est projeté au transporteur sur une course non
   réclamée.** `ORDER_LINK_FIELDS` sort même quand `unclaimed: true` — la branche
   d'expurgation ne touche que `meta` et `payload`. Chaque indépendant apprendrait
