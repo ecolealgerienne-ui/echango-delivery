@@ -13,6 +13,7 @@ import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
+import '../../widgets/load_more_footer.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 
@@ -159,10 +160,22 @@ class _OrdersTab extends StatelessWidget {
       );
     }
 
+    // Le pied de liste n'apparaît que s'il reste vraiment quelque chose : le
+    // total vient du serveur, pas d'une supposition sur la taille de page.
+    final showMore = state.hasMoreOrders;
+
     return ListView.separated(
-      itemCount: state.orders.length,
+      itemCount: state.orders.length + (showMore ? 1 : 0),
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
+        if (i == state.orders.length) {
+          return AppLoadMore(
+            isLoading: state.isLoadingMoreOrders,
+            label: t('fleet.orders.more'),
+            onPressed: state.loadMoreOrders,
+          );
+        }
+
         final order = state.orders[i];
         final meta = order['meta'] as Map<String, dynamic>? ?? const {};
         final hasDriver = order['driver_assigned_uuid'] != null;
@@ -214,10 +227,20 @@ class _OpportunitiesTab extends StatelessWidget {
       );
     }
 
+    final showMore = state.hasMoreOpportunities;
+
     return ListView.separated(
-      itemCount: state.opportunities.length,
+      itemCount: state.opportunities.length + (showMore ? 1 : 0),
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
+        if (i == state.opportunities.length) {
+          return AppLoadMore(
+            isLoading: state.isLoadingMoreOpportunities,
+            label: t('fleet.opportunities.more'),
+            onPressed: state.loadMoreOpportunities,
+          );
+        }
+
         final order = state.opportunities[i];
         final meta = order['meta'] as Map<String, dynamic>? ?? const {};
         final uuid = order['uuid'] as String? ?? '';

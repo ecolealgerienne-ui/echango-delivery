@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
@@ -965,7 +966,7 @@ class BffApiClient {
   /// défaut que le plafond de 100 corrigé côté transporteur — une liste
   /// tronquée en silence n'est pas partielle, elle est fausse pour qui la lit
   /// comme complète.
-  Future<MerchantOrderPage> getMerchantOrders({int page = 1, int limit = 25}) async {
+  Future<MerchantOrderPage> getMerchantOrders({int page = 1, int limit = AppRules.listPageSize}) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/commercant/commandes').replace(
         queryParameters: {'page': '$page', 'limit': '$limit'},
@@ -1079,7 +1080,7 @@ class BffApiClient {
   // serveur savait déjà faire.
 
   /// Les courses confiées à cette entreprise.
-  Future<Map<String, dynamic>> getFleetOrders({int page = 1, int limit = 25}) async {
+  Future<Map<String, dynamic>> getFleetOrders({int page = 1, int limit = AppRules.listPageSize}) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/flotte/commandes').replace(
         queryParameters: {'page': '$page', 'limit': '$limit'},
@@ -1116,7 +1117,7 @@ class BffApiClient {
   /// Servies avec l'adresse complète, le prix et le montant à encaisser — ce
   /// sont eux qui permettent de décider. Seule l'identité du destinataire (nom,
   /// téléphone) attend l'engagement.
-  Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = 25}) async {
+  Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = AppRules.listPageSize}) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/flotte/opportunites').replace(
         queryParameters: {'page': '$page', 'limit': '$limit'},

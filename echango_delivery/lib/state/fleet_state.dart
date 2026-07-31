@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' show Locale;
 
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'paged_list.dart';
 import '../errors/error_message.dart';
 
 /// Le résultat d'une lecture de fiche : la course, ou la raison de son absence.
@@ -40,8 +41,20 @@ class FleetState extends ChangeNotifier {
       : _apiClient = apiClient,
         _localeState = localeState;
 
-  List<Map<String, dynamic>> _orders = [];
-  List<Map<String, dynamic>> _opportunities = [];
+  /// ⚠️ **Les deux listes étaient tronquées à la première page**, en silence.
+  ///
+  /// Le serveur pagine (`flotte.service.ts` : `query.limit || 25`) et rend le
+  /// total ; l'app demandait la page 1 et jetait le reste de la réponse. Une
+  /// entreprise passé sa vingt-cinquième course ne voyait plus les
+  /// précédentes — et rien ne le disait, ce qui est le pire cas : une liste
+  /// tronquée sans mention se lit comme une liste complète. C'est exactement le
+  /// défaut corrigé côté commerçant le 29/07/2026, resté ici.
+  ///
+  /// Le mécanisme est partagé (`PagedList`) et non recopié : si la règle de
+  /// pagination change, elle doit changer pour les trois listes (règle 5).
+  final PagedList<Map<String, dynamic>> _ordersPage = PagedList<Map<String, dynamic>>();
+  final PagedList<Map<String, dynamic>> _opportunitiesPage =
+      PagedList<Map<String, dynamic>>();
   List<Map<String, dynamic>> _drivers = [];
   List<Map<String, dynamic>> _memberships = [];
   bool _membershipsUnavailable = false;
@@ -62,9 +75,15 @@ class FleetState extends ChangeNotifier {
   /// Un indicateur global ferait clignoter toute la liste à chaque geste.
   String? _claimingOrderId;
 
-  List<Map<String, dynamic>> get orders => List.unmodifiable(_orders);
-  List<Map<String, dynamic>> get opportunities => List.unmodifiable(_opportunities);
+  List<Map<String, dynamic>> get orders => _ordersPage.items;
+  List<Map<String, dynamic>> get opportunities => _opportunitiesPage.items;
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
+
+  bool get hasMoreOrders => _ordersPage.hasMore;
+  bool get isLoadingMoreOrders => _ordersPage.isLoadingMore;
+  bool get hasMoreOpportunities => _opportunitiesPage.hasMore;
+  bool get isLoadingMoreOpportunities => _opportunitiesPage.isLoadingMore;
+
   bool get isLoading => _isLoading;
   bool get driversUnavailable => _driversUnavailable;
   List<Map<String, dynamic>> get memberships => List.unmodifiable(_memberships);
@@ -80,8 +99,11 @@ class FleetState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final ordersPage = await _apiClient.getFleetOrders();
-      _orders = _rows(ordersPage);
+      final ordersPage = await _apiClient.getFleetOrders(
+        page: 1,
+        limit: _ordersPage.pageSize,
+      );
+      _ordersPage.reset(_rows(ordersPage), _total(ordersPage));
 
       // ⚠️ Chacune de ces deux lectures a son propre repli.
       //
@@ -89,10 +111,10 @@ class FleetState extends ChangeNotifier {
       // quand même voir ses courses. Faire échouer l'écran entier parce qu'une
       // des trois listes manque, c'est cacher les deux autres — et le
       // diagnostic devient « l'espace flotte ne marche pas ».
-      _opportunities = await _apiClient
-          .getFleetOpportunities()
-          .then(_rows)
-          .catchError((_) => <Map<String, dynamic>>[]);
+      final opportunitiesPage = await _apiClient
+          .getFleetOpportunities(page: 1, limit: _opportunitiesPage.pageSize)
+          .catchError((_) => <String, dynamic>{});
+      _opportunitiesPage.reset(_rows(opportunitiesPage), _total(opportunitiesPage));
 
       _driversUnavailable = false;
       _drivers = await _apiClient.getFleetDrivers().catchError((_) {
@@ -107,10 +129,61 @@ class FleetState extends ChangeNotifier {
     }
   }
 
+  /// Charge la page suivante des courses de l'entreprise.
+  Future<void> loadMoreOrders() async {
+    if (!_ordersPage.beginLoadMore()) return;
+    notifyListeners();
+
+    try {
+      final page = await _apiClient.getFleetOrders(
+        page: _ordersPage.nextPage,
+        limit: _ordersPage.pageSize,
+      );
+      _ordersPage.append(_rows(page), _total(page));
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
+    } finally {
+      _ordersPage.endLoadMore();
+      notifyListeners();
+    }
+  }
+
+  /// Charge la page suivante des courses libres.
+  Future<void> loadMoreOpportunities() async {
+    if (!_opportunitiesPage.beginLoadMore()) return;
+    notifyListeners();
+
+    try {
+      final page = await _apiClient.getFleetOpportunities(
+        page: _opportunitiesPage.nextPage,
+        limit: _opportunitiesPage.pageSize,
+      );
+      _opportunitiesPage.append(_rows(page), _total(page));
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
+    } finally {
+      _opportunitiesPage.endLoadMore();
+      notifyListeners();
+    }
+  }
+
   List<Map<String, dynamic>> _rows(Map<String, dynamic> page) {
     final data = page['data'];
     if (data is! List) return const [];
     return data.whereType<Map<String, dynamic>>().toList();
+  }
+
+  /// Le total annoncé par le serveur.
+  ///
+  /// ⚠️ **Zéro par défaut, et c'est le bon défaut.** Un total absent rend
+  /// `hasMore` faux, donc pas de bouton « charger plus » — l'app s'en tient à ce
+  /// qu'elle a reçu. Le défaut inverse (« on ne sait pas, donc il y en a
+  /// peut-être ») afficherait un bouton qui ne rapporte rien, et le
+  /// rafficherait à chaque appui.
+  int _total(Map<String, dynamic> page) {
+    final pagination = page['pagination'];
+    if (pagination is! Map) return 0;
+    return (pagination['total'] as num?)?.toInt() ?? 0;
   }
 
   /// Prendre une course du pool.

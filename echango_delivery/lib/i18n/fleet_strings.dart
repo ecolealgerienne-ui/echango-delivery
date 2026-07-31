@@ -56,6 +56,7 @@ const Map<String, String> _fr = {
   'fleet.orders.empty': 'Aucune course confiée à votre entreprise.',
   'fleet.orders.empty.hint':
       'Prenez une course libre, ou attendez qu’un commerçant vous en confie une.',
+  'fleet.orders.more': 'Charger les courses précédentes',
   'fleet.orders.unassigned': 'Aucun conducteur désigné',
   'fleet.orders.assign': 'Désigner un conducteur',
   'fleet.orders.assigned_to': 'Conducteur',
@@ -84,6 +85,7 @@ const Map<String, String> _fr = {
   'fleet.opportunities.empty': 'Aucune course libre pour le moment.',
   'fleet.opportunities.empty.hint':
       'Les courses diffusées et non encore prises apparaissent ici.',
+  'fleet.opportunities.more': 'Charger les courses suivantes',
   'fleet.opportunities.take': 'Prendre cette course',
   'fleet.opportunities.taking': 'Prise en cours…',
   'fleet.opportunities.taken': 'Course prise. Désignez un conducteur.',
@@ -233,6 +235,7 @@ const Map<String, String> _ar = {
 
   'fleet.orders.empty': 'لا توجد رحلات مسندة إلى شركتك.',
   'fleet.orders.empty.hint': 'خذ رحلة متاحة، أو انتظر أن يسندها إليك تاجر.',
+  'fleet.orders.more': 'تحميل الرحلات السابقة',
   'fleet.orders.unassigned': 'لم يتم تعيين سائق',
   'fleet.orders.assign': 'تعيين سائق',
   'fleet.orders.assigned_to': 'السائق',
@@ -253,6 +256,7 @@ const Map<String, String> _ar = {
 
   'fleet.opportunities.empty': 'لا توجد رحلات متاحة حالياً.',
   'fleet.opportunities.empty.hint': 'تظهر هنا الرحلات المنشورة وغير المأخوذة بعد.',
+  'fleet.opportunities.more': 'تحميل الرحلات التالية',
   'fleet.opportunities.take': 'خذ هذه الرحلة',
   'fleet.opportunities.taking': 'جاري الأخذ…',
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',

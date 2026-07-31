@@ -10,6 +10,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/load_more_footer.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -204,16 +205,10 @@ class _OrderList extends StatelessWidget {
         itemCount: orders.length + (showMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == orders.length) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-              child: Center(
-                child: state.isLoadingMore
-                    ? const CircularProgressIndicator()
-                    : OutlinedButton(
-                        onPressed: () => state.loadMoreOrders(),
-                        child: const Text('Charger les livraisons précédentes'),
-                      ),
-              ),
+            return AppLoadMore(
+              isLoading: state.isLoadingMore,
+              label: 'Charger les livraisons précédentes',
+              onPressed: state.loadMoreOrders,
             );
           }
 

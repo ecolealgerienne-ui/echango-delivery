@@ -114,4 +114,19 @@ class AppRules {
   /// En changer une seule aurait fait mentir l'écran — vingt-cinq lignes sous un
   /// titre en annonçant vingt.
   static const int cashCollectionsPreview = 20;
+
+  /// Taille d'une page de liste, pour toutes les listes paginées de l'app.
+  ///
+  /// ⚠️ **Une décision locale, malgré l'apparence.** Le BFF a bien un défaut de
+  /// 25 (`flotte.service.ts`, `commercant.service.ts` : `query.limit || 25`),
+  /// mais il ne l'**impose** pas : c'est ce qu'il sert quand l'app ne demande
+  /// rien. Ce n'est donc pas une contrainte à reproduire — une divergence ne
+  /// ferait pas mentir l'écran, elle changerait le nombre de lignes par
+  /// chargement. D'où `AppRules` et non `ServerRules`, et pas de vérificateur.
+  ///
+  /// Ce qu'elle évite, en revanche, est réel : la valeur vivait dans deux
+  /// classes d'état et dans les défauts de trois méthodes du client HTTP. En
+  /// changer une seule aurait fait demander des pages de 25 à une liste qui en
+  /// compte 50 par page — c'est-à-dire sauter une commande sur deux.
+  static const int listPageSize = 25;
 }

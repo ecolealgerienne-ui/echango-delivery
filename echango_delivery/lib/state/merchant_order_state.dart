@@ -3,13 +3,14 @@ import 'package:flutter/foundation.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'paged_list.dart';
 import '../errors/error_message.dart';
 
 class MerchantOrderState extends ChangeNotifier {
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
-  List<MerchantOrder> _orders = [];
+  final PagedList<MerchantOrder> _ordersPage = PagedList<MerchantOrder>();
   List<SavedAddress> _addresses = [];
   List<KnownDriver> _favourites = [];
   MerchantOrder? _selected;
@@ -24,16 +25,19 @@ class MerchantOrderState extends ChangeNotifier {
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
 
-  List<MerchantOrder> get orders => _orders;
+  List<MerchantOrder> get orders => _ordersPage.items;
   List<MerchantOrder> get activeOrders => _matching.where((o) => !o.isFinished).toList();
   List<MerchantOrder> get pastOrders => _matching.where((o) => o.isFinished).toList();
 
   /// Recherche libre sur les commandes déjà chargées.
   ///
   /// ⚠️ **Locale, donc portant sur les pages chargées seulement.** Une
-  /// recherche serveur serait plus juste, mais tout le filtrage du BFF est
-  /// applicatif (Fleetbase ignore les filtres de requête) : elle imposerait de
-  /// parcourir toute l'organisation à chaque frappe. Le bouton « charger plus »
+  /// recherche serveur serait plus juste, mais il n'en existe aucune sur les
+  /// commandes : Fleetbase filtre bien par `customer`/`facilitator`/`driver`
+  /// (la phrase « Fleetbase ignore les filtres de requête » qui figurait ici
+  /// était fausse, corrigée le 29/07/2026), sans pour autant offrir de
+  /// recherche libre — elle imposerait de parcourir toute l'organisation à
+  /// chaque frappe. Le bouton « charger plus »
   /// étend le périmètre de recherche autant que la liste, ce qui rend la limite
   /// gérable — et l'écran le dit plutôt que de laisser croire à une recherche
   /// exhaustive.
@@ -47,9 +51,9 @@ class MerchantOrderState extends ChangeNotifier {
 
   List<MerchantOrder> get _matching {
     final needle = _search.trim().toLowerCase();
-    if (needle.isEmpty) return _orders;
+    if (needle.isEmpty) return orders;
 
-    return _orders.where((o) {
+    return orders.where((o) {
       final haystack = [
         o.dropoff?.name,
         o.dropoff?.address,
@@ -71,29 +75,21 @@ class MerchantOrderState extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  static const _pageSize = 25;
-  int _loadedPages = 1;
-  int _totalOrders = 0;
-
   /// Reste-t-il des commandes à charger ?
-  ///
-  /// Le total vient du serveur : le comparer à ce qu'on a permet de distinguer
-  /// « dernière page » de « page pleine par coïncidence ». Sans lui, l'app
-  /// afficherait un bouton « charger plus » qui ne rapporte rien.
-  bool get hasMoreOrders => _orders.length < _totalOrders;
+  bool get hasMoreOrders => _ordersPage.hasMore;
 
-  bool _loadingMore = false;
-  bool get isLoadingMore => _loadingMore;
+  bool get isLoadingMore => _ordersPage.isLoadingMore;
 
   Future<void> loadOrders() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
     try {
-      final page = await _apiClient.getMerchantOrders(page: 1, limit: _pageSize);
-      _orders = page.orders;
-      _totalOrders = page.total;
-      _loadedPages = 1;
+      final page = await _apiClient.getMerchantOrders(
+        page: 1,
+        limit: _ordersPage.pageSize,
+      );
+      _ordersPage.reset(page.orders, page.total);
     } catch (e) {
       _errorMessage = messageForError(e, _localeState.locale);
     } finally {
@@ -104,27 +100,24 @@ class MerchantOrderState extends ChangeNotifier {
 
   /// Charge la page suivante et l'ajoute à la liste.
   ///
-  /// L'app n'envoyait aucun paramètre de pagination : au-delà de 25
-  /// livraisons, les plus anciennes devenaient inaccessibles sans que rien ne
-  /// le signale. Une liste tronquée en silence n'est pas partielle — elle est
+  /// L'app n'envoyait aucun paramètre de pagination : au-delà d'une page, les
+  /// livraisons les plus anciennes devenaient inaccessibles sans que rien ne le
+  /// signale. Une liste tronquée en silence n'est pas partielle — elle est
   /// fausse pour qui la lit comme complète.
   Future<void> loadMoreOrders() async {
-    if (_loadingMore || !hasMoreOrders) return;
-
-    _loadingMore = true;
+    if (!_ordersPage.beginLoadMore()) return;
     notifyListeners();
+
     try {
       final page = await _apiClient.getMerchantOrders(
-        page: _loadedPages + 1,
-        limit: _pageSize,
+        page: _ordersPage.nextPage,
+        limit: _ordersPage.pageSize,
       );
-      _orders = [..._orders, ...page.orders];
-      _totalOrders = page.total;
-      _loadedPages++;
+      _ordersPage.append(page.orders, page.total);
     } catch (e) {
       _errorMessage = messageForError(e, _localeState.locale);
     } finally {
-      _loadingMore = false;
+      _ordersPage.endLoadMore();
       notifyListeners();
     }
   }
