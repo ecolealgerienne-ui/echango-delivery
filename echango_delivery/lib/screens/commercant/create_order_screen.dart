@@ -9,7 +9,9 @@ import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// Formulaire de demande de livraison.
 ///
@@ -256,13 +258,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     });
 
     if (!a.hasPosition && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '« ${a.name} » n\'a pas de position enregistrée : placez-la sur '
-            'la carte pour continuer.',
-          ),
-        ),
+      showAppError(
+        context,
+        '« ${a.name} » n\'a pas de position enregistrée : placez-la sur '
+        'la carte pour continuer.',
       );
     }
   }
@@ -277,14 +276,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (_dropoffPoint == null) 'le point de livraison sur la carte',
     ];
     if (missing.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Il manque ${missing.join(', ')}')),
-      );
+      showAppError(context, 'Il manque ${missing.join(', ')}');
       return;
     }
 
     final router = GoRouter.of(context);
-    final messenger = ScaffoldMessenger.of(context);
 
     final orderId = await orderState.createOrder({
       // Toute commande créée depuis ce formulaire naît en brouillon (décision
@@ -341,25 +337,17 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
     if (!mounted) return;
     if (orderId != null) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
-            'transporteur.',
-          ),
-        ),
+      showAppSnackBar(
+        context,
+        'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
+        'transporteur.',
       );
       // Vers la fiche, pas la liste : le « Publier » y est à portée de main,
       // et c'est le geste qui manque encore pour que la livraison parte
       // réellement.
       router.pushReplacement('/commercant/commandes/$orderId');
     } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Création impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? 'Création impossible');
     }
   }
 
@@ -436,7 +424,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 Container(
                   padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
+                    color: Theme.of(context).colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
                   child: const Text(
@@ -542,7 +530,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 size: 16,
                 color: point == null
                     ? Theme.of(context).colorScheme.error
-                    : Colors.green.shade700,
+                    : context.semantic.success,
               ),
               const SizedBox(width: 6),
               Expanded(

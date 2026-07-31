@@ -6,7 +6,10 @@ import '../../models/merchant_order.dart';
 import '../../state/auth_state.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_banner.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -87,16 +90,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
             // Une erreur de chargement doit être visible : sans ça, elle est
             // indiscernable d'une liste réellement vide.
             if (orderState.errorMessage != null)
-              Container(
-                width: double.infinity,
-                color: Theme.of(context).colorScheme.errorContainer,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Text(
-                  orderState.errorMessage!,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onErrorContainer,
-                  ),
-                ),
+              AppErrorBanner(
+                message: orderState.errorMessage!,
+                onRetry: () => context.read<MerchantOrderState>().loadOrders(),
               ),
             // Recherche sur les commandes chargées. Le libellé dit la limite :
             // laisser croire à une recherche exhaustive ferait conclure « je
@@ -137,6 +133,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   _OrderList(
                     orders: orderState.pastOrders,
                     emptyLabel: 'Aucune livraison terminée',
+                    // Consigne écrite parce que le composant l'exige — cet
+                    // onglet n'en avait aucune, et « Aucune livraison
+                    // terminée » sur un compte neuf se lit comme une panne
+                    // plutôt que comme un début.
+                    emptyHint: 'Vos livraisons achevées ou annulées se '
+                        'rangeront ici, avec leur preuve de remise.',
                   ),
                 ],
               ),
@@ -151,12 +153,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
 class _OrderList extends StatelessWidget {
   final List<MerchantOrder> orders;
   final String emptyLabel;
-  final String? emptyHint;
+
+  /// Non nullable, contrairement à avant : `AppEmptyState` exige sa consigne,
+  /// et l'onglet « terminées » n'en avait aucune — une liste vide sans mot
+  /// d'explication se lit comme une panne.
+  final String emptyHint;
 
   const _OrderList({
     required this.orders,
     required this.emptyLabel,
-    this.emptyHint,
+    required this.emptyHint,
   });
 
   @override
@@ -173,39 +179,14 @@ class _OrderList extends StatelessWidget {
 
     if (orders.isEmpty) {
       // Le tirer-pour-rafraîchir doit marcher sur liste vide — c'est
-      // justement là qu'on en a besoin : d'où le ListView + physics.
+      // justement là qu'on en a besoin. `AppEmptyState` rend sa propre liste
+      // défilable, avec la physique qu'il faut pour capter le geste.
       return RefreshIndicator(
         onRefresh: refresh,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            SizedBox(
-              height: MediaQuery.of(context).size.height * 0.5,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.local_shipping_outlined,
-                        size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text(emptyLabel,
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-                    if (emptyHint != null) ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
-                        child: Text(
-                          emptyHint!,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
+        child: AppEmptyState(
+          title: emptyLabel,
+          hint: emptyHint,
+          icon: Icons.local_shipping_outlined,
         ),
       );
     }
@@ -291,33 +272,41 @@ class _StatusChip extends StatelessWidget {
     // recopiée ici : la fiche et la liste affichaient deux textes différents
     // pour la même commande, faute d'une source commune. Seule la couleur
     // reste locale — c'est de la présentation, pas du vocabulaire métier.
+    final scheme = Theme.of(context).colorScheme;
+    final semantic = context.semantic;
+
+    // Fond ET texte sont décidés ensemble : la version précédente posait un
+    // `Colors.white` unique sur cinq fonds différents, donc le contraste
+    // dépendait du hasard de la teinte choisie.
+    final neutral = (scheme.secondaryContainer, scheme.onSecondaryContainer);
+
     if (order.degraded) {
-      return const Chip(
+      return Chip(
         label: Text('État indisponible',
-            style: TextStyle(fontSize: 11, color: Colors.white)),
-        backgroundColor: Colors.blueGrey,
+            style: TextStyle(fontSize: 11, color: neutral.$2)),
+        backgroundColor: neutral.$1,
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       );
     }
 
-    final color = switch (order.status) {
-      'completed' => Colors.green,
-      'canceled' || 'cancelled' => Colors.grey,
-      // Gris-bleu comme « indisponible » : un brouillon n'est pas une
-      // livraison en cours, l'orange l'aurait fait passer pour une attente
-      // active alors que rien n'a démarré.
-      'created' => Colors.blueGrey,
-      'dispatched' => Colors.orange,
-      'started' || 'enroute' => Colors.blue,
-      _ => Colors.blueGrey,
+    final (Color background, Color foreground) = switch (order.status) {
+      'completed' => (semantic.success, semantic.onSuccess),
+      'canceled' || 'cancelled' => (scheme.outlineVariant, scheme.onSurface),
+      // Neutre comme « indisponible » : un brouillon n'est pas une livraison
+      // en cours, l'avertissement l'aurait fait passer pour une attente active
+      // alors que rien n'a démarré.
+      'created' => neutral,
+      'dispatched' => (semantic.warning, semantic.onWarning),
+      'started' || 'enroute' => (scheme.primary, scheme.onPrimary),
+      _ => neutral,
     };
 
     return Chip(
       label: Text(order.statusLabel,
-          style: const TextStyle(fontSize: 11, color: Colors.white)),
-      backgroundColor: color,
+          style: TextStyle(fontSize: 11, color: foreground)),
+      backgroundColor: background,
       padding: EdgeInsets.zero,
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,

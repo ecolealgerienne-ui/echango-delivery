@@ -5,7 +5,9 @@ import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// Transporteurs habituels du commerçant.
 ///
@@ -85,7 +87,6 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
   }
 
   Future<void> _addFavourite(MerchantOrderState state, KnownDriver d) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.addFavourite(d);
     if (!mounted) return;
 
@@ -94,12 +95,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       // ferait douter que l'ajout ait eu lieu.
       setState(() => _results.removeWhere((r) => r.driverUuid == d.driverUuid));
     } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(state.errorMessage ?? 'Ajout impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, state.errorMessage ?? 'Ajout impossible');
     }
   }
 
@@ -244,7 +240,8 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     ...state.favourites.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.star, color: Colors.amber),
+                          leading:
+                              Icon(Icons.star, color: context.semantic.warning),
                           title: Text(d.displayName),
                           trailing: IconButton(
                             icon: const Icon(Icons.remove_circle_outline),

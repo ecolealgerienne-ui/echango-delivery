@@ -11,7 +11,9 @@ import '../../models/vehicle_type.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -54,17 +56,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final success = await orderState.cancelOrder(widget.orderId);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(success
-            ? 'Livraison annulée'
-            : orderState.errorMessage ?? 'Annulation impossible'),
-        backgroundColor: success ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      success ? null : orderState.errorMessage ?? 'Annulation impossible',
+      'Livraison annulée',
     );
   }
 
@@ -74,17 +72,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// invisible de tout transporteur indéfiniment, ce qui est précisément le
   /// but tant qu'il n'a pas été relu.
   Future<void> _publish(MerchantOrderState orderState) async {
-    final messenger = ScaffoldMessenger.of(context);
     final success = await orderState.publishOrder(widget.orderId);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(success
-            ? 'Livraison publiée : Echango recherche un transporteur.'
-            : orderState.errorMessage ?? 'Publication impossible'),
-        backgroundColor: success ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      success ? null : orderState.errorMessage ?? 'Publication impossible',
+      'Livraison publiée : Echango recherche un transporteur.',
     );
   }
 
@@ -98,19 +92,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// avec un mot pour dire pourquoi.
   Future<void> _duplicate(MerchantOrderState orderState) async {
     final router = GoRouter.of(context);
-    final messenger = ScaffoldMessenger.of(context);
 
     final template = await orderState.loadOrderTemplate(widget.orderId);
     if (!mounted) return;
 
     if (template == null) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            orderState.errorMessage ??
-                'Reprise impossible — le formulaire s\'ouvre vide.',
-          ),
-        ),
+      showAppError(
+        context,
+        orderState.errorMessage ??
+            'Reprise impossible — le formulaire s\'ouvre vide.',
       );
     }
 
@@ -138,6 +128,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 child: Text(orderState.errorMessage ?? 'Livraison introuvable'),
               );
             }
+
+            final scheme = Theme.of(context).colorScheme;
 
             return SingleChildScrollView(
               padding: const EdgeInsets.all(AppSpacing.lg),
@@ -192,7 +184,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // rien n'a démarré.
                     if (order.isDraft)
                       _banner(
-                        Colors.blueGrey.shade50,
+                        scheme.secondaryContainer,
                         Icons.edit_note,
                         'Brouillon : aucun transporteur n\'est sollicité tant '
                         'que vous ne publiez pas cette livraison.',
@@ -209,24 +201,24 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // par Fleetbase, lus ensemble pour choisir une phrase.
                     else if (order.isWaitingDispatch && order.driverName == null)
                       _banner(
-                        Colors.orange.shade50,
+                        context.semantic.warningContainer,
                         Icons.hourglass_empty,
                         'En attente d\'attribution. Echango recherche un '
                         'transporteur disponible.',
                       )
                     else if (order.isWaitingDispatch)
                       _banner(
-                        Colors.blue.shade50,
+                        scheme.primaryContainer,
                         Icons.assignment_turned_in_outlined,
                         'Transporteur affecté. La course démarrera à '
                         'l\'enlèvement.',
                       ),
                     if (order.driverName != null) _driverCard(order),
                     if (order.isCompleted)
-                      _banner(Colors.green.shade50, Icons.check_circle_outline,
-                          'Livraison effectuée.'),
+                      _banner(context.semantic.successContainer,
+                          Icons.check_circle_outline, 'Livraison effectuée.'),
                     if (order.isCancelled)
-                      _banner(Colors.grey.shade200, Icons.cancel_outlined,
+                      _banner(scheme.outlineVariant, Icons.cancel_outlined,
                           'Livraison annulée.'),
                     const SizedBox(height: AppSpacing.md),
                     _placeCard('Retrait', order.pickup, order.pickupNotes),
@@ -284,7 +276,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             orderState.isLoading ? null : () => _cancel(orderState),
                         icon: const Icon(Icons.close),
                         label: const Text('Annuler la livraison'),
-                        style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     const SizedBox(height: AppSpacing.xxl),
                   ],
@@ -306,7 +300,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// La carte n'apparaît qu'une fois quelqu'un affecté — avant, il n'y a rien
   /// à montrer, et un cadre vide se lit comme une panne.
   Widget _driverCard(MerchantOrder order) => Card(
-        color: Colors.blue.shade50,
+        color: Theme.of(context).colorScheme.primaryContainer,
         child: Column(
           children: [
             ListTile(
@@ -416,9 +410,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
 
     return Card(
-      color: collection?.hasDiscrepancy == true
-          ? Colors.orange.shade50
-          : Colors.amber.shade50,
+      // Même rôle des deux côtés : l'écart se signale par son libellé, pas par
+      // une nuance d'orange que personne ne sait nommer.
+      color: context.semantic.warningContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -455,7 +449,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   cashDiscrepancyLabels[collection.discrepancyReason] ??
                       collection.discrepancyReason ??
                       'Écart signalé',
-                  style: TextStyle(color: Colors.orange.shade900),
+                  style: TextStyle(color: context.semantic.onWarningContainer),
                 ),
                 if (collection.notes != null) Text(collection.notes!),
               ],
@@ -803,7 +797,9 @@ class _DriverMapState extends State<_DriverMap> {
                       // Le gris dit « ce point n'est plus frais » sans texte à
                       // lire : c'est la première chose qu'on voit sur une
                       // carte, avant la légende.
-                      color: position.isStale ? Colors.grey : Colors.blue.shade800,
+                      color: position.isStale
+                          ? Theme.of(context).colorScheme.outline
+                          : Theme.of(context).colorScheme.primary,
                       size: 32,
                     ),
                   ),
@@ -812,7 +808,8 @@ class _DriverMapState extends State<_DriverMap> {
                       point: dropoff,
                       width: 40,
                       height: 40,
-                      child: Icon(Icons.flag, color: Colors.red.shade700, size: 28),
+                      child: Icon(Icons.flag,
+                          color: Theme.of(context).colorScheme.error, size: 28),
                     ),
                 ],
               ),
@@ -888,7 +885,7 @@ class _FailureHistory extends StatelessWidget {
     final multiple = failures.length > 1;
 
     return Card(
-      color: Colors.red.shade50,
+      color: theme.colorScheme.errorContainer,
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
@@ -896,7 +893,8 @@ class _FailureHistory extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.error_outline, color: Colors.red.shade700),
+                Icon(Icons.error_outline,
+                    color: theme.colorScheme.onErrorContainer),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
@@ -904,7 +902,7 @@ class _FailureHistory extends StatelessWidget {
                         ? '${failures.length} tentatives de livraison ont échoué'
                         : 'La livraison n\'a pas pu être effectuée',
                     style: theme.textTheme.titleSmall
-                        ?.copyWith(color: Colors.red.shade700),
+                        ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
                 ),
               ],
@@ -915,7 +913,7 @@ class _FailureHistory extends StatelessWidget {
                 Text(
                   'Tentative ${failures.length - i}',
                   style: theme.textTheme.labelLarge
-                      ?.copyWith(color: Colors.red.shade700),
+                      ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
               Text(_labels[failures[i].reason] ?? failures[i].reason,
                   style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -928,7 +926,8 @@ class _FailureHistory extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             Text(
               'Contactez Echango pour convenir d\'une nouvelle tentative.',
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade700),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ],
         ),

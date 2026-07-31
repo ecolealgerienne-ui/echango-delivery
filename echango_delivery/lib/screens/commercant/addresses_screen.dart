@@ -6,7 +6,10 @@ import 'package:latlong2/latlong.dart';
 import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
+import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/empty_state.dart';
 
 /// Carnet d'adresses du commerçant.
 ///
@@ -37,19 +40,15 @@ class _AddressesScreenState extends State<AddressesScreen> {
   /// pire encore qu'à la création d'une commande, puisqu'une adresse fausse
   /// empoisonne ensuite chaque livraison qui la réutilise.
   Future<void> _openForm(SavedAddress? existing) async {
-    final messenger = ScaffoldMessenger.of(context);
 
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => _AddressFormScreen(existing: existing)),
     );
 
     if (result != true || !mounted) return;
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          existing == null ? 'Adresse enregistrée' : 'Adresse modifiée',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      existing == null ? 'Adresse enregistrée' : 'Adresse modifiée',
     );
   }
 
@@ -83,17 +82,13 @@ class _AddressesScreenState extends State<AddressesScreen> {
 
     if (confirmed != true || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await orderState.deleteAddress(a.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Adresse supprimée'
-            : orderState.errorMessage ?? 'Suppression impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : orderState.errorMessage ?? 'Suppression impossible',
+      'Adresse supprimée',
     );
   }
 
@@ -108,26 +103,12 @@ class _AddressesScreenState extends State<AddressesScreen> {
         child: const Icon(Icons.add),
       ),
       body: orderState.addresses.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.xxl),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.bookmark_border, size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: AppSpacing.lg),
-                    Text('Aucune adresse enregistrée',
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-                    const SizedBox(height: AppSpacing.sm),
-                    Text(
-                      'Enregistrez vos points de retrait et destinataires '
-                      'fréquents pour remplir une demande en un tap.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
+          ? const AppEmptyState(
+              title: 'Aucune adresse enregistrée',
+              hint: 'Enregistrez vos points de retrait et destinataires '
+                  'fréquents pour remplir une demande en un tap.',
+              icon: Icons.bookmark_border,
+              scrollable: false,
             )
           : ListView.builder(
               padding: const EdgeInsets.all(AppSpacing.sm),
@@ -139,7 +120,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                   child: ListTile(
                     leading: Icon(
                       a.isDefault ? Icons.star : Icons.place_outlined,
-                      color: a.isDefault ? Colors.amber.shade700 : null,
+                      color: a.isDefault ? context.semantic.warning : null,
                     ),
                     title: Row(
                       children: [
@@ -151,7 +132,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
-                                ?.copyWith(color: Colors.amber.shade700),
+                                ?.copyWith(color: context.semantic.warning),
                           ),
                         ],
                       ],
@@ -346,17 +327,18 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   /// 30/07/2026) : l'adresse texte et la position se complètent souvent après
   /// coup, une fois le lieu connu plus précisément.
   Future<void> _save() async {
-    final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final orderState = context.read<MerchantOrderState>();
 
     if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(_name.text.trim().isEmpty
-              ? 'Le nom est obligatoire'
-              : 'Le téléphone est obligatoire'),
-        ),
+      // Un refus, donc le ton d'un refus : ce message s'affichait comme une
+      // confirmation, au même endroit et de la même couleur qu'« Adresse
+      // enregistrée » deux gestes plus tôt.
+      showAppError(
+        context,
+        _name.text.trim().isEmpty
+            ? 'Le nom est obligatoire'
+            : 'Le téléphone est obligatoire',
       );
       return;
     }
@@ -402,11 +384,9 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     if (ok) {
       navigator.pop(true);
     } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Enregistrement impossible'),
-          backgroundColor: Colors.red,
-        ),
+      showAppError(
+        context,
+        orderState.errorMessage ?? 'Enregistrement impossible',
       );
     }
   }
@@ -447,7 +427,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                     size: 16,
                     color: _point == null
                         ? Theme.of(context).colorScheme.onSurfaceVariant
-                        : Colors.green.shade700,
+                        : context.semantic.success,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
