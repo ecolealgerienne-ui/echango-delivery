@@ -178,8 +178,13 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
+                    // Le nombre est interpolé, et non écrit en toutes lettres :
+                    // la garde de saisie suit `driverSearchMinLength`, la
+                    // consigne doit la suivre aussi. « Trois » figé sous un
+                    // champ passé à quatre serait un mensonge à l'écran.
                     'Cherchez par le nom ou le téléphone communiqué par '
-                    'Echango. Trois caractères minimum.',
+                    'Echango. ${ServerRules.driverSearchMinLength} caractères '
+                    'minimum.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (_tooMany)

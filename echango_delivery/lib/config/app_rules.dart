@@ -63,6 +63,23 @@ class ServerRules {
   /// aurait cherché un validateur y aurait trouvé une règle plus permissive que
   /// le serveur. Le fichier a été supprimé le 31/07/2026.
   static const int passwordMinLength = 8;
+
+  /// Longueur maximale de la chaîne base64 d'une photo, ~5 Mo d'image.
+  ///
+  /// Source : `backend/bff/src/transporteur/dto/transporteur.dto.ts`,
+  /// `export const MAX_PHOTO_BASE64_LENGTH = 7_000_000`, appliqué par deux
+  /// `@MaxLength` (preuve de livraison, signalement d'échec).
+  ///
+  /// ⚠️ **Le miroir dont la divergence coûte le plus cher du dépôt.** Les autres
+  /// font perdre un aller-retour ; celui-ci laisse partir jusqu'à cinq mégaoctets
+  /// sur la connexion mobile d'un transporteur avant de revenir en 400. Il vivait
+  /// dans `services/photo_service.dart` sous un commentaire disant « doit rester
+  /// alignée sur… » — la formule exacte que la règle 5 désigne comme signal
+  /// d'extraction, et personne ne l'avait extraite.
+  ///
+  /// ⚠️ Le serveur l'écrit `7_000_000` : le vérificateur retire les séparateurs
+  /// avant de comparer, sans quoi il aurait échoué sur une égalité vraie.
+  static const int maxPhotoBase64Length = 7000000;
 }
 
 /// Décisions locales à l'application : rien à synchroniser, tout à nommer.
@@ -81,6 +98,13 @@ class AppRules {
   ///
   /// Protège aussi le géocodeur : Nominatim plafonne à une requête par seconde
   /// et interdit les usages intensifs (`.env.example`, `NOMINATIM_URL`).
+  ///
+  /// ⚠️ **C'est bien une décision locale malgré cette contrainte d'amont**, et
+  /// la nuance décide de son emplacement : il n'existe aucun *original*
+  /// numérique à comparer — Nominatim publie une politique d'usage, pas une
+  /// valeur que le BFF appliquerait. 600 ms est notre réponse à cette
+  /// politique, pas une copie. Le jour où le serveur imposerait un délai
+  /// chiffré, la valeur passerait dans `ServerRules` avec son vérificateur.
   static const Duration searchDebounce = Duration(milliseconds: 600);
 
   /// Nombre d'encaissements détaillés sur l'écran de caisse.

@@ -24,6 +24,19 @@
 /// regarde à l'écran. `tool/check_spacing.dart` les recense pour que la question
 /// reste posée au lieu de se dissoudre.
 ///
+/// ── Un intervalle, pas une taille ─────────────────────────────────────────
+///
+/// `SizedBox(height: 16)` est un **intervalle** entre deux éléments : il relève
+/// du barème. `SizedBox(height: 16, width: 16, child: CircularProgressIndicator())`
+/// est une **taille de composant** : elle décrit le widget, comme `maxLines: 1`,
+/// et reste littérale. Changer l'échelle d'espacement ne doit pas redimensionner
+/// les indicateurs de chargement.
+///
+/// Vérifié après le lot du 31/07/2026 : aucun `SizedBox` portant un `child`
+/// n'a été converti, et les onze littéraux du barème encore présents sont tous
+/// de cette nature — ou vivent dans `app_theme.dart`, qui emploie désormais les
+/// jetons.
+///
 /// ── Pourquoi `double` et non `int` ────────────────────────────────────────
 ///
 /// `EdgeInsets`, `SizedBox` et `BorderRadius` prennent des `double`. Déclarer

@@ -552,8 +552,8 @@ class _DeclineSheetState extends State<_DeclineSheet> {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
@@ -651,12 +651,12 @@ class _ProofSheetState extends State<_ProofSheet> {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 24,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
+        top: AppSpacing.xl,
         // Sans ça, le clavier ou la barre système recouvre le bouton de
         // validation sur les petits écrans.
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -984,8 +984,8 @@ class _CashSheetState extends State<_CashSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),

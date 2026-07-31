@@ -109,7 +109,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     obscureText: true,
                     decoration: const InputDecoration(
                       labelText: 'Mot de passe *',
-                      helperText: '8 caractères minimum',
+                      // Interpolé, pas figé : la garde (`_submit`) et le
+                      // SnackBar suivent déjà la constante. Laisser « 8 » ici
+                      // afficherait « 8 caractères minimum » sous un champ qui
+                      // en refuserait neuf le jour où le serveur passe à dix.
+                      helperText: '${ServerRules.passwordMinLength} caractères '
+                          'minimum',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.lock_outlined),
                     ),

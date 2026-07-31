@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_spacing.dart';
 
 /// Thème Echango Delivery — couleurs, typographie, et styles cohérents.
 ThemeData buildAppTheme() {
@@ -21,19 +22,25 @@ ThemeData buildAppTheme() {
       filled: true,
       fillColor: Colors.grey[100],
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppRadius.md),
         borderSide: BorderSide.none,
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
       hintStyle: TextStyle(color: Colors.grey[500]),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.xl,
+          vertical: AppSpacing.md,
+        ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
       ),
     ),
@@ -79,10 +86,13 @@ ThemeData buildAppDarkTheme() {
       filled: true,
       fillColor: Colors.grey[800],
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppRadius.md),
         borderSide: BorderSide.none,
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
       hintStyle: TextStyle(color: Colors.grey[400]),
     ),
     fontFamily: 'Roboto',
