@@ -10,6 +10,14 @@ import 'app_spacing.dart';
 /// Material 3 en sombre. Personne ne l'avait vu parce que personne ne compare
 /// deux thèmes côte à côte — c'est exactement la forme d'invariant que la règle
 /// 5 demande de tenir plutôt que de recopier.
+/// La couleur de marque.
+///
+/// ⚠️ Elle était déclarée **dans chaque thème**, à l'identique — et une
+/// troisième fois en littéral dans le thème des onglets. Trois copies d'une
+/// couleur qui définit le produit : la changer sans en oublier une relevait de
+/// l'attention, pas du mécanisme (règle 5).
+const _primary = Color(0xFF2196F3);
+
 const _buttonPadding = EdgeInsets.symmetric(
   horizontal: AppSpacing.xl,
   vertical: AppSpacing.md,
@@ -32,9 +40,26 @@ final ButtonStyle _outlinedStyle = OutlinedButton.styleFrom(
   shape: _buttonShape,
 );
 
+/// Les onglets, décidés une fois pour les deux thèmes.
+///
+/// ⚠️ **Écrits pour un fond clair, et le thème sombre n'en avait aucun.**
+/// Libellé actif en couleur de marque, inactif en gris : cela suppose que la
+/// barre est posée sur la page. `FlotteHomeScreen` la posait dans l'AppBar,
+/// qui est bleue — donc bleu sur bleu pour l'onglet actif, indicateur bleu sur
+/// bleu, et gris délavé pour les autres. Un seul thème ne peut pas servir les
+/// deux fonds ; c'est l'écran qui a été aligné sur les deux autres profils,
+/// plutôt qu'un second thème d'onglets ajouté à côté du premier.
+const _tabBarTheme = TabBarThemeData(
+  labelColor: _primary,
+  unselectedLabelColor: Colors.grey,
+  indicator: UnderlineTabIndicator(
+    borderSide: BorderSide(color: _primary, width: 2),
+  ),
+);
+
 /// Thème Echango Delivery — couleurs, typographie, et styles cohérents.
 ThemeData buildAppTheme() {
-  const primaryColor = Color(0xFF2196F3);
+  const primaryColor = _primary;
 
   return ThemeData(
     useMaterial3: true,
@@ -98,19 +123,13 @@ ThemeData buildAppTheme() {
       labelStyle: const TextStyle(color: Colors.black),
       side: const BorderSide(color: Color(0xFFBDBDBD)),
     ),
-    tabBarTheme: const TabBarThemeData(
-      labelColor: Color(0xFF2196F3),
-      unselectedLabelColor: Colors.grey,
-      indicator: UnderlineTabIndicator(
-        borderSide: BorderSide(color: Color(0xFF2196F3), width: 2),
-      ),
-    ),
+    tabBarTheme: _tabBarTheme,
     fontFamily: 'Roboto',
   );
 }
 
 ThemeData buildAppDarkTheme() {
-  const primaryColor = Color(0xFF2196F3);
+  const primaryColor = _primary;
 
   return ThemeData(
     useMaterial3: true,
@@ -143,6 +162,9 @@ ThemeData buildAppDarkTheme() {
     // à coins arrondis en clair et des pilules Material 3 en sombre.
     filledButtonTheme: FilledButtonThemeData(style: _filledStyle),
     outlinedButtonTheme: OutlinedButtonThemeData(style: _outlinedStyle),
+    // Le même qu'en clair : sans lui, les onglets du thème sombre retombaient
+    // sur les défauts Material 3 — donc deux apparences pour un même écran.
+    tabBarTheme: _tabBarTheme,
     fontFamily: 'Roboto',
   );
 }

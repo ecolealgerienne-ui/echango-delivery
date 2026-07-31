@@ -104,21 +104,35 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
             onPressed: () => context.read<AuthState>().logout(),
           ),
         ],
-        bottom: TabBar(
-          controller: _tabs,
-          isScrollable: true,
-          tabs: [
-            Tab(text: t('fleet.tab.orders')),
-            Tab(text: t('fleet.tab.opportunities')),
-            Tab(text: t('fleet.tab.drivers')),
-            Tab(text: t('fleet.tab.memberships')),
-          ],
-        ),
       ),
-      body: state.isLoading && state.orders.isEmpty
-          ? Center(child: Text(t('fleet.loading')))
-          : Column(
+      // ⚠️ Le chargement ne remplace plus **tout** le corps : les onglets
+      // restent en place et seul le contenu attend. Sinon ils apparaissaient
+      // une fois la première réponse reçue, et la page sautait sous le doigt —
+      // un défaut que le déplacement depuis l'AppBar aurait introduit, la barre
+      // y étant affichée en permanence.
+      body: Column(
               children: [
+                // ⚠️ **Les onglets sont sur la PAGE, pas dans l'AppBar.**
+                //
+                // Ils y étaient, et c'était illisible : le thème des onglets
+                // pose un libellé bleu sur fond clair (`tabBarTheme`), tandis
+                // que l'AppBar est bleue — donc libellé bleu sur bleu pour
+                // l'onglet actif, indicateur bleu sur bleu, et gris délavé pour
+                // les autres. Un seul thème ne peut pas servir les deux fonds.
+                //
+                // Les deux autres profils — tableau de bord transporteur, liste
+                // commerçant — posaient déjà leurs onglets sur la page. Celui-ci
+                // était le seul à faire autrement, et le seul illisible.
+                TabBar(
+                  controller: _tabs,
+                  isScrollable: true,
+                  tabs: [
+                    Tab(text: t('fleet.tab.orders')),
+                    Tab(text: t('fleet.tab.opportunities')),
+                    Tab(text: t('fleet.tab.drivers')),
+                    Tab(text: t('fleet.tab.memberships')),
+                  ],
+                ),
                 // ⚠️ Sans ce bandeau, une flotte inactive, un jeton expiré ou
                 // un BFF injoignable produisaient l'écran « Aucune course
                 // confiée à votre entreprise » — un message qui affirme un
@@ -130,21 +144,23 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
                     retryLabel: t('fleet.retry'),
                   ),
                 Expanded(
-                  child: RefreshIndicator(
-                    onRefresh: () => context.read<FleetState>().load(),
-                    child: TabBarView(
-                      controller: _tabs,
-                      children: [
-                        _OrdersTab(t: t),
-                        _OpportunitiesTab(t: t),
-                        _DriversTab(t: t),
-                        MembershipsTab(
-                          t: t,
-                          onCreateDriver: () => _addDriver(context, t),
+                  child: state.isLoading && state.orders.isEmpty
+                      ? Center(child: Text(t('fleet.loading')))
+                      : RefreshIndicator(
+                          onRefresh: () => context.read<FleetState>().load(),
+                          child: TabBarView(
+                            controller: _tabs,
+                            children: [
+                              _OrdersTab(t: t),
+                              _OpportunitiesTab(t: t),
+                              _DriversTab(t: t),
+                              MembershipsTab(
+                                t: t,
+                                onCreateDriver: () => _addDriver(context, t),
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
-                    ),
-                  ),
                 ),
               ],
             ),
