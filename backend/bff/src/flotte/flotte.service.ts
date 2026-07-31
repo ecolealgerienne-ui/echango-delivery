@@ -13,15 +13,7 @@ import {
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
-
-/**
- * Une course close ne rend pas son conducteur occupé.
- *
- * `cancelled` avec deux « l » figure aussi dans `OrderReconcilerService` : les
- * deux orthographes circulent chez Fleetbase, et n'en reconnaître qu'une
- * laisserait un conducteur définitivement « occupé » par une course annulée.
- */
-const TERMINAL_ORDER_STATUSES = ['completed', 'canceled', 'cancelled'];
+import { isTerminalOrderStatus } from '../common/orders/order-status';
 
 @Injectable()
 export class FlotteService {
@@ -142,7 +134,13 @@ export class FlotteService {
       order?.adhoc === true &&
       !order?.driver_assigned_uuid &&
       !order?.facilitator_uuid &&
-      order?.status !== 'canceled'
+      // ⚠️ **Tous les statuts terminaux**, et non le seul `canceled`.
+      //
+      // La version courte laissait une course **livrée** dans « Courses
+      // libres » — constaté à l'écran le 31/07/2026 : statut « Livrée » et
+      // bouton « Prendre cette course » sur la même ligne. Terminer une course
+      // n'efface pas `adhoc`, donc rien d'autre ne l'excluait.
+      !isTerminalOrderStatus(order?.status)
     );
   }
 
@@ -495,7 +493,7 @@ export class FlotteService {
         if (exceptOrderUuid && o?.uuid === exceptOrderUuid) return false;
         const assigned =
           o?.driver_assigned_uuid === driverUuid || o?.driver_assigned?.uuid === driverUuid;
-        return assigned && !TERMINAL_ORDER_STATUSES.includes(o?.status);
+        return assigned && !isTerminalOrderStatus(o?.status);
       });
 
       if (candidates.length === 0) return false;

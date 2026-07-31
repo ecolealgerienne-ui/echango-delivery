@@ -18,6 +18,7 @@ import { PricingService } from '../common/pricing/pricing.service';
 import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
+import { isTerminalOrderStatus } from '../common/orders/order-status';
 
 @Injectable()
 export class CommerçantService {
@@ -2059,7 +2060,7 @@ export class CommerçantService {
     const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
     const liveStatus = (live as any)?.status ?? null;
 
-    if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
+    if (isTerminalOrderStatus(liveStatus)) {
       badRequest('order.already_terminal', `Commande déjà ${liveStatus}, annulation impossible`);
     }
 

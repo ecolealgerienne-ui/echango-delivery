@@ -5,7 +5,7 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { NotificationsService } from './notifications.service';
 
 /** Statuts Fleetbase après lesquels plus rien ne bouge. */
-const TERMINAL = ['completed', 'canceled', 'cancelled'];
+import { TERMINAL_ORDER_STATUSES as TERMINAL } from '../common/orders/order-status';
 
 /**
  * Rapproche périodiquement le cache local de l'état réel des commandes chez
