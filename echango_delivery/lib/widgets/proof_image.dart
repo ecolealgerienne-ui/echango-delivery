@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bff_api_client.dart';
+import '../theme/app_spacing.dart';
 
 /// Image servie par le BFF, chargée avec le jeton de session.
 ///
@@ -68,12 +69,12 @@ class _ProofImageState extends State<ProofImage> {
           // chargement se lit comme une photo perdue alors qu'elle est bien
           // enregistrée côté serveur.
           return Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppSpacing.md),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: Row(
               children: [
                 const Icon(Icons.image_not_supported_outlined),
-                const SizedBox(width: 12),
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Text(
                     'Photo enregistrée, mais son chargement a échoué.',
@@ -86,7 +87,7 @@ class _ProofImageState extends State<ProofImage> {
         }
 
         return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.md),
           child: Image.memory(
             snapshot.data!,
             height: 180,

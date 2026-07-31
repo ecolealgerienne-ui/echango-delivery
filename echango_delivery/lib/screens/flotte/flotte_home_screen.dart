@@ -10,6 +10,7 @@ import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 /// Espace « entreprise de transport ».
 ///
@@ -108,7 +109,7 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
                 // fait faux. Le même défaut a été corrigé deux fois ailleurs.
                 if (state.errorMessage != null)
                   Card(
-                    margin: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.all(AppSpacing.md),
                     color: Theme.of(context).colorScheme.errorContainer,
                     child: ListTile(
                       leading: const Icon(Icons.error_outline),
@@ -159,13 +160,13 @@ class _Empty extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       children: [
         const SizedBox(height: 48),
         Icon(Icons.inbox_outlined, size: 64, color: theme.colorScheme.outline),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         Text(title, textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Text(hint, textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
       ],
     );
@@ -465,7 +466,7 @@ class _AddDriverDialogState extends State<_AddDriverDialog> {
               decoration: InputDecoration(labelText: t('fleet.drivers.phone')),
             ),
             if (_problem != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               Text(
                 _problem!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),

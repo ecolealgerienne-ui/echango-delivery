@@ -7,6 +7,7 @@ import '../errors/app_error.dart';
 import '../errors/error_translator.dart';
 import '../services/photo_service.dart';
 import '../state/locale_state.dart';
+import '../theme/app_spacing.dart';
 
 /// Champ de prise de photo, partagé par la preuve de livraison et le
 /// signalement d'échec.
@@ -95,17 +96,17 @@ class _PhotoFieldState extends State<PhotoField> {
           ],
         ),
         if (widget.helperText.isNotEmpty) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             widget.helperText,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md),
         if (_photo != null) _preview(theme) else _picker(theme),
         if (_error != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
         ],
       ],
@@ -118,14 +119,14 @@ class _PhotoFieldState extends State<PhotoField> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.md),
           child: Image.memory(
             Uint8List.fromList(photo.bytes),
             height: 200,
             fit: BoxFit.cover,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -156,7 +157,7 @@ class _PhotoFieldState extends State<PhotoField> {
   Widget _picker(ThemeData theme) {
     if (_busy) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
         child: Center(child: CircularProgressIndicator()),
       );
     }
@@ -169,18 +170,18 @@ class _PhotoFieldState extends State<PhotoField> {
             icon: const Icon(Icons.camera_alt_outlined),
             label: const Text('Photographier'),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppSpacing.md),
         // La galerie sert au rattrapage : une photo prise juste avant, hors de
         // l'app, ou une reprise après une coupure. Sans elle, un incident non
         // photographié dans le bon écran est définitivement perdu.
         OutlinedButton(
           onPressed: () => _pick(fromGallery: true),
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg, horizontal: AppSpacing.lg),
           ),
           child: const Icon(Icons.photo_library_outlined),
         ),

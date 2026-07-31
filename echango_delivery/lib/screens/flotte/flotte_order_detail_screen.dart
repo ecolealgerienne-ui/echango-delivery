@@ -9,6 +9,7 @@ import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
+import '../../theme/app_spacing.dart';
 
 /// La fiche d'une course, vue par une entreprise de transport.
 ///
@@ -188,7 +189,7 @@ class _FlotteOrderDetailScreenState extends State<FlotteOrderDetailScreen> {
   }
 
   Widget _bar(Widget child) => SafeArea(
-        child: Padding(padding: const EdgeInsets.all(16), child: child),
+        child: Padding(padding: const EdgeInsets.all(AppSpacing.lg), child: child),
       );
 
   Future<void> _assign(Map<String, dynamic> order, _Translate t) async {
@@ -249,13 +250,13 @@ class _Failure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(AppSpacing.xxl),
       children: [
         const SizedBox(height: 48),
         Icon(Icons.error_outline, size: 56, color: Theme.of(context).colorScheme.error),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         Text(message, textAlign: TextAlign.center),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.lg),
         Center(child: FilledButton(onPressed: retry, child: Text(t('fleet.retry')))),
       ],
     );
@@ -298,11 +299,11 @@ class _Body extends StatelessWidget {
       // — ne défile pas, donc le geste de tirer-pour-rafraîchir ne part jamais
       // et le seul moyen de recharger devient de quitter l'écran.
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       children: [
         if (error != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
             child: Card(
               color: Theme.of(context).colorScheme.errorContainer,
               child: ListTile(
@@ -322,7 +323,7 @@ class _Body extends StatelessWidget {
         // jour où la règle changerait en amont.
         if (order['redacted'] == true)
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
             child: Card(
               color: Theme.of(context).colorScheme.secondaryContainer,
               child: ListTile(
@@ -403,7 +404,7 @@ class _Body extends StatelessWidget {
           ],
         ),
 
-        const SizedBox(height: 24),
+        const SizedBox(height: AppSpacing.xl),
       ],
     );
   }
@@ -526,17 +527,17 @@ class _Section extends StatelessWidget {
 
     final theme = Theme.of(context);
     return Card(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      margin: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleSmall),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             for (final row in filled)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

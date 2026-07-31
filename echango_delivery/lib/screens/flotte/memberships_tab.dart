@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/fleet_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Les rattachements de l'entreprise, et le moyen d'en demander un nouveau.
 ///
@@ -109,7 +110,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
     final memberships = state.memberships;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       children: [
         TextField(
           controller: _search,
@@ -124,7 +125,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
 
         if (_searching) Text(t('fleet.loading')),
 

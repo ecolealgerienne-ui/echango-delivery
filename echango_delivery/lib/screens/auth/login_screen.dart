@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/dev_accounts.dart';
 import '../../state/auth_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 /// Dernier email utilisé, pré-rempli au lancement suivant. L'email seul —
 /// jamais le mot de passe, qui n'a rien à faire dans des préférences en clair.
@@ -81,7 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpacing.xl),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
@@ -94,13 +95,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   Icon(Icons.local_shipping,
                       size: 56, color: Theme.of(context).primaryColor),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   Text(
                     'Echango Delivery',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: AppSpacing.xxl),
 
                   // Aucun choix de profil demandé : le serveur le résout depuis
                   // l'email, seul à savoir dans quelle table le compte existe.
@@ -114,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
@@ -125,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       prefixIcon: Icon(Icons.lock_outlined),
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: AppSpacing.xl),
                   ElevatedButton(
                     onPressed:
                         authState.isLoading ? null : () => _submit(authState),
@@ -138,7 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         : const Text('Se connecter'),
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   // Seul le commerçant peut s'inscrire seul : un transporteur
                   // est provisionné par un opérateur, son compte Echango se
                   // rattache ensuite à son Driver Fleetbase. Comme on ignore
@@ -157,10 +158,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Cas rare : un même identifiant vaut pour plusieurs profils.
                   // Le serveur refuse de trancher à la place de l'utilisateur.
                   if (authState.ambiguousRoles.isNotEmpty) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     Text('Ouvrir en tant que',
                         style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       children: authState.ambiguousRoles
@@ -175,13 +176,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
 
                   if (authState.errorMessage != null) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(AppSpacing.md),
                       decoration: BoxDecoration(
                         color: Colors.red.shade50,
                         border: Border.all(color: Colors.red),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
                       ),
                       child: Text(
                         authState.errorMessage!,
@@ -209,7 +210,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 24),
+        const SizedBox(height: AppSpacing.xl),
         Text(
           'Comptes de test (debug)',
           style: Theme.of(context)
@@ -217,7 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
               .bodySmall
               ?.copyWith(color: Colors.grey[600]),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
           runSpacing: 8,
