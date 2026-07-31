@@ -10,6 +10,7 @@ import '../../state/cash_state.dart';
 import '../../config/app_rules.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
@@ -809,7 +810,9 @@ class _CollectionCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  entry.collectedAt.toLocal().toString().split(' ')[0],
+                  // « 2026-07-31 » était un format ISO au milieu d'un écran
+                  // en jj/MM/aaaa.
+                  formatDay(entry.collectedAt),
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(

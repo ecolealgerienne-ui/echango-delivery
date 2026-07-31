@@ -13,6 +13,7 @@ import '../../state/merchant_order_state.dart';
 import '../../widgets/proof_image.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/section_card.dart';
 
@@ -166,7 +167,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ],
                             const SizedBox(height: AppSpacing.sm),
                             Text(
-                              'Créée le ${order.createdAt.toLocal().toString().split('.')[0]}',
+                              'Créée le ${formatFull(order.createdAt)}',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -493,7 +494,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (
           Icons.schedule_outlined,
           'Enlèvement',
-          _formatDateTime(order.scheduledAt!),
+          formatDayTime(order.scheduledAt!),
         )
       else
         (Icons.schedule_outlined, 'Enlèvement', 'Dès que possible'),
@@ -596,11 +597,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
       );
 
-  static String _formatDateTime(DateTime date) {
-    final local = date.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
-  }
 
   /// Carte d'un point de la livraison, avec **tout** ce qui a été saisi.
   ///

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/merchant_order.dart';
 import '../../state/merchant_order_state.dart';
 import '../../theme/app_semantic_colors.dart';
+import '../../utils/dates.dart';
 import '../../widgets/empty_state.dart';
 
 /// Journal des évènements de livraison du commerçant.
@@ -139,7 +140,7 @@ class _NotificationTile extends StatelessWidget {
           Text(notification.body),
           const SizedBox(height: 2),
           Text(
-            _relative(notification.createdAt),
+            formatRelative(notification.createdAt),
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -152,15 +153,4 @@ class _NotificationTile extends StatelessWidget {
 
   /// Ancienneté en clair. « il y a 3 min » se situe sans effort, une date
   /// complète demande une soustraction mentale.
-  static String _relative(DateTime date) {
-    final delta = DateTime.now().difference(date);
-    if (delta.inMinutes < 1) return 'à l\'instant';
-    if (delta.inMinutes < 60) return 'il y a ${delta.inMinutes} min';
-    if (delta.inHours < 24) return 'il y a ${delta.inHours} h';
-    if (delta.inDays < 7) return 'il y a ${delta.inDays} j';
-
-    final local = date.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(local.day)}/${two(local.month)}/${local.year}';
-  }
 }

@@ -11,6 +11,7 @@ import '../../widgets/photo_field.dart';
 import '../../widgets/proof_image.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
 import 'status_colors.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/section_card.dart';
@@ -147,8 +148,12 @@ class OrderDetailScreen extends StatelessWidget {
                             ),
                           ],
                           const SizedBox(height: AppSpacing.lg),
-                          _buildInfoRow('Créée le :', order.createdAt.toString().split('.')[0]),
-                          _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),
+                          // ⚠️ `toString()` sans `toLocal()` affichait l'UTC :
+                          // « Créée le » était une heure trop tôt, juste
+                          // au-dessus d'une date d'échec que le même écran
+                          // localisait. `formatFull` porte le `toLocal()`.
+                          _buildInfoRow('Créée le :', formatFull(order.createdAt)),
+                          _buildInfoRow('Mise à jour :', formatFull(order.updatedAt)),
                         ],
                       ),
                   ),
@@ -840,7 +845,7 @@ class _FailureHistory extends StatelessWidget {
                   // Numérotation à rebours : le plus récent porte le numéro le
                   // plus élevé, ce qui rend l'ordre chronologique lisible sans
                   // avoir à comparer les dates.
-                  'Tentative ${failures.length - i} — ${_formatDate(failures[i].createdAt)}',
+                  'Tentative ${failures.length - i} — ${formatDayTime(failures[i].createdAt)}',
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
@@ -863,11 +868,6 @@ class _FailureHistory extends StatelessWidget {
     );
   }
 
-  static String _formatDate(DateTime date) {
-    final local = date.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
-  }
 }
 
 class _FailureEntry extends StatelessWidget {

@@ -11,6 +11,7 @@ import 'map_picker_screen.dart';
 import '../../config/app_rules.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 
 /// Formulaire de demande de livraison.
@@ -782,9 +783,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   Widget _scheduleTile() {
     final label = _scheduledAt == null
         ? 'Dès que possible'
-        : '${_scheduledAt!.day}/${_scheduledAt!.month} à '
-            '${_scheduledAt!.hour.toString().padLeft(2, '0')}h'
-            '${_scheduledAt!.minute.toString().padLeft(2, '0')}';
+        // Le jour et le mois étaient écrits SANS rembourrage : « 5/8 à 09h30 »
+        // là où le reste de l'application écrit « 05/08 à 09h30 ».
+        : formatDayTime(_scheduledAt!);
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
