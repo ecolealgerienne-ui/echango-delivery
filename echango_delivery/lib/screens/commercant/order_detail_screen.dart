@@ -5,6 +5,8 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/cash.dart';
+import '../../i18n/cash_strings.dart';
+import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
 import '../../models/order.dart' show DeliveryFailure, Place;
 import '../../models/vehicle_type.dart';
@@ -159,7 +161,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                 // cet écran affichait « created » quand la
                                 // liste affichait « En attente », pour la
                                 // même commande.
-                                Text(order.statusLabel),
+                                Text(order.statusLabel(
+                                    context.watch<LocaleState>().locale)),
                               ],
                             ),
                             if (order.trackingNumber != null) ...[
@@ -441,9 +444,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               if (collection.hasDiscrepancy) ...[
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  cashDiscrepancyLabels[collection.discrepancyReason] ??
-                      collection.discrepancyReason ??
-                      'Écart signalé',
+                  cashDiscrepancyLabel(
+                    collection.discrepancyReason,
+                    context.watch<LocaleState>().locale,
+                    fallback: cashLabel('cash.discrepancy.default',
+                        context.watch<LocaleState>().locale),
+                  ),
                   style: TextStyle(color: context.semantic.onWarningContainer),
                 ),
                 if (collection.notes != null) Text(collection.notes!),

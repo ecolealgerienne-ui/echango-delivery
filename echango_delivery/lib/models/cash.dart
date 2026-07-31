@@ -1,4 +1,8 @@
+import 'dart:ui' show Locale;
+
 import 'package:equatable/equatable.dart';
+
+import '../i18n/cash_strings.dart';
 
 /// La chaîne de l'argent : `conducteur → entreprise → commerçant`.
 ///
@@ -43,12 +47,21 @@ CashSide cashSide(String viewer, String? counterpartyType) {
 /// Une entreprise voit à la fois des conducteurs et des commerçants dans la
 /// même liste : les appeler tous « ce transporteur », comme le faisait l'écran,
 /// est faux pour la moitié d'entre eux.
-String cashPartyLabel(String? type) => switch (type) {
-      'driver' => 'ce transporteur',
-      'fleet' => 'cette entreprise',
-      'merchant' => 'ce commerçant',
-      _ => 'cette contrepartie',
-    };
+///
+/// ⚠️ **Traduit, parce qu'il est employé DANS des phrases** — « Détenue par
+/// {who} ». Laisser ce mot-là en français aurait fait finir chaque phrase arabe
+/// du registre par « ce transporteur ». Les libellés vivent dans
+/// `i18n/cash_strings.dart` avec ceux de l'écran ; ce qui reste ici est la
+/// correspondance type → clé, qui est du domaine et non de la langue.
+String cashPartyLabel(String? type, Locale locale) => cashLabel(
+      switch (type) {
+        'driver' => 'cash.party.driver',
+        'fleet' => 'cash.party.fleet',
+        'merchant' => 'cash.party.merchant',
+        _ => 'cash.party.unknown',
+      },
+      locale,
+    );
 
 /// Dette d'un transporteur envers un commerçant, ou l'inverse selon le profil
 /// qui regarde.
@@ -130,8 +143,14 @@ class CashBalance extends Equatable {
         debt: (json['debt'] as num?)?.toDouble() ?? 0,
       );
 
-  String get displayName =>
-      (name != null && name!.isNotEmpty) ? name! : 'Compte $counterpartyId';
+  /// Le nom servi par le serveur, ou l'identifiant du compte à défaut.
+  ///
+  /// ⚠️ La locale est exigée depuis que le repli est une phrase : « Compte X »
+  /// n'était pas traduit, et c'était le seul mot français restant dans un titre
+  /// de carte arabe. Un paramètre facultatif aurait laissé ce cas revenir.
+  String displayName(Locale locale) => (name != null && name!.isNotEmpty)
+      ? name!
+      : cashLabel('cash.account.unnamed', locale, {'id': counterpartyId});
 
   @override
   List<Object?> get props => [counterpartyId, counterpartyType, debt, blocked];
@@ -365,13 +384,31 @@ class CashCollectionEntry extends Equatable {
 /// Libellés des motifs d'écart, du point de vue de qui les lit.
 ///
 /// Les codes du serveur sont faits pour être comptés, pas affichés.
-const cashDiscrepancyLabels = <String, String>{
-  'somme_incomplete': 'Le client n\'avait pas la totalité',
-  'refus_de_payer': 'Le client a refusé de payer',
-  'pas_de_monnaie': 'Pas de monnaie',
-  'montant_conteste': 'Le client a contesté le montant',
-  'autre': 'Autre',
-};
+/// Les motifs d'écart proposés à la porte, dans l'ordre où ils sont affichés.
+///
+/// ⚠️ Une **liste de codes**, plus une table de libellés : le code est le
+/// domaine — il part au serveur, il est stocké, il sera compté —, le libellé
+/// n'est que sa traduction. Les mêler dans une `Map` figeait l'ordre ET la
+/// langue dans le même objet, et le dialogue itérait donc sur du français.
+const cashDiscrepancyReasons = <String>[
+  'somme_incomplete',
+  'refus_de_payer',
+  'pas_de_monnaie',
+  'montant_conteste',
+  'autre',
+];
+
+/// Le libellé d'un motif d'écart, ou [fallback] quand le code est inconnu.
+///
+/// Un code venu du serveur mais absent de la liste ne doit pas s'afficher tel
+/// quel (`somme_incomplete` ne se lit pas), ni disparaître : l'appelant décide
+/// de ce qui le remplace — « Écart signalé » sur une ligne d'historique, rien
+/// du tout quand la phrase se suffit à elle-même.
+String cashDiscrepancyLabel(String? code, Locale locale,
+    {required String fallback}) {
+  if (code == null || !cashDiscrepancyReasons.contains(code)) return fallback;
+  return cashLabel('cash.discrepancy.$code', locale);
+}
 
 /// Une livraison dont l'argent sera réclamé à une porte, et n'est encore dans
 /// la poche de personne.

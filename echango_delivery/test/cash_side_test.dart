@@ -1,3 +1,5 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:echango_delivery/models/cash.dart';
@@ -114,15 +116,77 @@ void main() {
   });
 
   group('nommer la contrepartie', () {
+    const fr = Locale('fr');
+    const ar = Locale('ar');
+
     test('chaque type a son mot', () {
-      expect(cashPartyLabel('driver'), 'ce transporteur');
-      expect(cashPartyLabel('fleet'), 'cette entreprise');
-      expect(cashPartyLabel('merchant'), 'ce commerçant');
+      expect(cashPartyLabel('driver', fr), 'ce transporteur');
+      expect(cashPartyLabel('fleet', fr), 'cette entreprise');
+      expect(cashPartyLabel('merchant', fr), 'ce commerçant');
     });
 
     test('un type inconnu ne prend le nom de personne', () {
-      expect(cashPartyLabel('operator'), 'cette contrepartie');
-      expect(cashPartyLabel(null), 'cette contrepartie');
+      expect(cashPartyLabel('operator', fr), 'cette contrepartie');
+      expect(cashPartyLabel(null, fr), 'cette contrepartie');
+    });
+
+    // ── La raison d'être du paramètre ────────────────────────────────────
+    //
+    // Ce mot est employé DANS les phrases du registre (« Détenue par {who} »).
+    // Non traduit, il faisait finir chaque phrase arabe par « ce transporteur ».
+    // Le test ne vérifie pas la traduction elle-même — il vérifie qu'il y en a
+    // une, ce qui est la seule chose qu'un test peut affirmer ici.
+    test('les quatre suivent la langue', () {
+      for (final type in ['driver', 'fleet', 'merchant', null]) {
+        expect(cashPartyLabel(type, ar), isNot(cashPartyLabel(type, fr)),
+            reason: 'le libellé arabe de « $type » est resté en français');
+      }
+    });
+  });
+
+  group('le motif d’un écart', () {
+    const fr = Locale('fr');
+    const ar = Locale('ar');
+
+    test('chaque motif proposé a un libellé dans les deux langues', () {
+      // La liste des codes est le domaine ; s'il en manque un dans une table,
+      // le dialogue afficherait `somme_incomplete` tel quel.
+      for (final code in cashDiscrepancyReasons) {
+        final f = cashDiscrepancyLabel(code, fr, fallback: 'X');
+        final a = cashDiscrepancyLabel(code, ar, fallback: 'X');
+        expect(f, isNot('X'), reason: 'motif « $code » absent en français');
+        expect(a, isNot('X'), reason: 'motif « $code » absent en arabe');
+        expect(a, isNot(f), reason: 'motif « $code » non traduit');
+      }
+    });
+
+    test('un code inconnu rend le repli, jamais le code', () {
+      // Un motif venu du serveur mais absent de la liste ne doit pas
+      // s'afficher brut — `montant_bizarre` ne se lit pas.
+      expect(cashDiscrepancyLabel('montant_bizarre', fr, fallback: 'Écart signalé'),
+          'Écart signalé');
+      expect(cashDiscrepancyLabel(null, fr, fallback: 'Écart signalé'),
+          'Écart signalé');
+    });
+  });
+
+  group('le nom d’un compte sans nom', () {
+    test('le repli porte l’identifiant, et suit la langue', () {
+      const balance = CashBalance(
+          counterpartyId: 'abc123', counterpartyType: 'driver', debt: 0);
+      expect(balance.displayName(const Locale('fr')), contains('abc123'));
+      expect(balance.displayName(const Locale('ar')), contains('abc123'));
+      expect(balance.displayName(const Locale('ar')),
+          isNot(balance.displayName(const Locale('fr'))));
+    });
+
+    test('un nom servi par le serveur passe tel quel', () {
+      const balance = CashBalance(
+          counterpartyId: 'abc123',
+          counterpartyType: 'driver',
+          name: 'Toto',
+          debt: 0);
+      expect(balance.displayName(const Locale('ar')), 'Toto');
     });
   });
 }

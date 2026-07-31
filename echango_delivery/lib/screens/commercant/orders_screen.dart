@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
 import '../../state/auth_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -299,7 +300,7 @@ class _StatusChip extends StatelessWidget {
     };
 
     return Chip(
-      label: Text(order.statusLabel,
+      label: Text(order.statusLabel(context.watch<LocaleState>().locale),
           style: TextStyle(fontSize: 11, color: foreground)),
       backgroundColor: background,
       padding: EdgeInsets.zero,

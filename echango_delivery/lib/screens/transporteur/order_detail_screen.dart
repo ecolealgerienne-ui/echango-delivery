@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/cash.dart';
+import '../../state/locale_state.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
@@ -984,15 +985,19 @@ class _CashSheetState extends State<_CashSheet> {
               const SizedBox(height: AppSpacing.lg),
               Text('Pourquoi l\'écart ?', style: theme.textTheme.titleSmall),
               const SizedBox(height: AppSpacing.xs),
-              for (final entry in cashDiscrepancyLabels.entries)
+              // Le code part au serveur, le libellé suit la langue : la table
+              // mêlée figeait les deux dans le même objet.
+              for (final code in cashDiscrepancyReasons)
                 ListTile(
-                  onTap: () => setState(() => _reason = entry.key),
-                  title: Text(entry.value),
-                  trailing: _reason == entry.key
+                  onTap: () => setState(() => _reason = code),
+                  title: Text(cashDiscrepancyLabel(
+                      code, context.watch<LocaleState>().locale,
+                      fallback: code)),
+                  trailing: _reason == code
                       ? Icon(Icons.check_circle,
                           color: context.semantic.warning)
                       : null,
-                  selected: _reason == entry.key,
+                  selected: _reason == code,
                   contentPadding: EdgeInsets.zero,
                   dense: true,
                 ),

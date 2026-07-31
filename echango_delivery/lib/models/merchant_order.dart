@@ -1,3 +1,5 @@
+import 'dart:ui' show Locale;
+
 import 'package:equatable/equatable.dart';
 
 import 'cash.dart';
@@ -21,15 +23,29 @@ import 'order.dart' show DeliveryFailure, Place;
 /// se dit « Recherche transporteur » tant que personne n'a pris la course, et
 /// « Transporteur affecté » dès que quelqu'un l'a prise. Fleetbase ne distingue
 /// pas les deux dans son statut — c'est le second champ qui tranche.
-String orderStatusLabel(String status, {String? driverName}) => switch (status) {
-      'created' => 'Brouillon',
-      'dispatched' =>
-        driverName == null ? 'Recherche transporteur' : 'Transporteur affecté',
-      'started' || 'enroute' => 'En cours',
-      'completed' => 'Livrée',
-      'canceled' || 'cancelled' => 'Annulée',
-      _ => status,
-    };
+/// ⚠️ **La locale est exigée, pas optionnelle** (31/07/2026). Ce libellé est
+/// employé DANS une phrase de l'écran de caisse, désormais traduit — l'y
+/// laisser en français aurait mis « Recherche transporteur » au milieu d'un
+/// sous-titre arabe. Un paramètre facultatif valant « français » aurait laissé
+/// chaque nouvel appelant réintroduire le cas sans que personne relise ; le
+/// compilateur pose la question à chaque site.
+///
+/// Le repli sur `status` reste tel quel : un statut inconnu de Fleetbase n'a
+/// pas de traduction et n'en aura pas — le montrer brut dit au moins de quoi il
+/// s'agit, l'inventer non.
+String orderStatusLabel(String status, Locale locale, {String? driverName}) {
+  final ar = locale.languageCode == 'ar';
+  return switch (status) {
+    'created' => ar ? 'مسودة' : 'Brouillon',
+    'dispatched' => driverName == null
+        ? (ar ? 'البحث عن ناقل' : 'Recherche transporteur')
+        : (ar ? 'تم تعيين ناقل' : 'Transporteur affecté'),
+    'started' || 'enroute' => ar ? 'جارية' : 'En cours',
+    'completed' => ar ? 'سُلّمت' : 'Livrée',
+    'canceled' || 'cancelled' => ar ? 'أُلغيت' : 'Annulée',
+    _ => status,
+  };
+}
 
 /// Commande vue par le commerçant.
 ///
@@ -191,7 +207,12 @@ class MerchantOrder extends Equatable {
   /// parce que l'écran d'encaissement en a besoin sans manipuler de commande.
   ///
   /// Rien n'est mémorisé ni dérivé : c'est de l'affichage.
-  String get statusLabel => orderStatusLabel(status, driverName: driverName);
+  /// Le libellé du statut dans la langue courante.
+  ///
+  /// Méthode et non plus accesseur : la langue ne se devine pas depuis le
+  /// modèle, elle vient de l'écran qui l'affiche.
+  String statusLabel(Locale locale) =>
+      orderStatusLabel(status, locale, driverName: driverName);
 
   /// ⚠️ Le BFF fusionne son cache local avec l'état Fleetbase : la réponse a
   /// donc la forme d'une commande Fleetbase, plus `bff_order_id`. Deux cas
