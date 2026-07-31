@@ -11,6 +11,8 @@ import {
   projectDriverForFleet,
 } from '../common/projections/order.projection';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
+import { effectiveOrderMeta } from '../common/projections/order.projection';
+import { CashService, fleetParty, merchantParty } from '../cash/cash.service';
 
 @Injectable()
 export class FlotteService {
@@ -21,6 +23,7 @@ export class FlotteService {
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
     private audit: AuditService,
+    private cash: CashService,
   ) {}
 
   /**
@@ -61,7 +64,7 @@ export class FlotteService {
       return {
         // Projection en liste d'autorisation : le BFF décide de ce qui sort,
         // et non Fleetbase (revue M10).
-        data: paged.map((o: any) => projectOrderForFleet(o)),
+        data: paged.map((o: any) => projectOrderForFleet(this.withEffectiveMeta(o))),
         pagination: {
           page,
           limit,
@@ -102,7 +105,7 @@ export class FlotteService {
         forbidden('order.forbidden', 'You do not have access to this order');
       }
 
-      return projectOrderForFleet(order);
+      return projectOrderForFleet(this.withEffectiveMeta(order));
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
@@ -249,6 +252,15 @@ export class FlotteService {
       forbidden('driver.forbidden', 'You do not have access to this driver');
     }
 
+    // Le plafond de dette, sur un chemin qui ne le traversait pas (défaut D8).
+    //
+    // `assertCashCeiling()` du module transporteur n'est appelé que depuis
+    // `acceptOrder()` — qu'une affectation par l'entreprise ne franchit jamais.
+    // Une société pouvait donc s'affecter des courses encaissées sans aucune
+    // borne, ce qui vide de son sens le seul garde-fou du paiement à la
+    // livraison.
+    await this.assertDriverCashCeiling(fleetId, driverId, orderId);
+
     try {
       const response = await this.fleetbaseClient.assignOrderToDriver(driverId, orderId);
       this.logger.log(`Order ${orderId} assigned to driver ${driverId}`);
@@ -256,6 +268,57 @@ export class FlotteService {
     } catch (error) {
       this.logger.error(`Failed to assign driver: ${error.message}`);
       badRequest('order.assign_failed', 'Failed to assign driver');
+    }
+  }
+
+
+  /**
+   * Refuse l'affectation si elle ferait franchir le plafond de dette.
+   *
+   * La contrepartie est **l'entreprise elle-même** dès qu'elle facilite la
+   * course : c'est son exposition qu'on borne, tous conducteurs confondus, et
+   * c'est précisément le défaut que ce chantier corrige — dix conducteurs
+   * accumulaient dix plafonds chez le même commerçant.
+   *
+   * Un conducteur sans compte Echango ne peut pas porter de dette dans le
+   * registre : on laisse passer plutôt que de bloquer une affectation
+   * légitime sur une donnée qui n'existe pas.
+   */
+  private async assertDriverCashCeiling(
+    fleetId: string,
+    driverUuid: string,
+    orderId: string,
+  ): Promise<void> {
+    let order: any;
+    try {
+      const response = await this.fleetbaseClient.getOrder(orderId);
+      order = this.withEffectiveMeta(response?.order || response);
+    } catch (error: any) {
+      this.logger.warn(`Plafond non vérifié pour ${orderId} : ${error.message}`);
+      return;
+    }
+
+    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    if (codAmount <= 0) return;
+
+    const cached = await this.prisma.order.findFirst({
+      where: { fleetbaseOrderId: order?.uuid },
+      select: { merchantId: true },
+    });
+    if (!cached) return;
+
+    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+      fleetParty(fleetId),
+      merchantParty(cached.merchantId),
+      codAmount,
+    );
+
+    if (!allowed) {
+      badRequest(
+        'cash.ceiling_exceeded',
+        `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+          `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
+      );
     }
   }
 
@@ -317,6 +380,31 @@ export class FlotteService {
 
     this.driverCache.set(vendorUuid, { at: Date.now(), drivers: owned });
     return owned;
+  }
+
+
+  /**
+   * La commande, `meta` recomposé depuis les champs personnalisés.
+   *
+   * ── Pourquoi ce module en manquait, et ce que ça coûtait ─────────────────
+   *
+   * Depuis la migration du 30/07, prix et montant à encaisser vivent dans
+   * `custom_field_values`, pas dans `meta`. Les modules transporteur et
+   * commerçant recomposent ; **celui-ci ne l'a jamais fait**, parce qu'aucun
+   * écran flotte n'existait pour s'en apercevoir.
+   *
+   * On demanderait donc à une entreprise de décider si elle prend une course,
+   * puis de répondre des espèces encaissées, **sans lui montrer aucun des deux
+   * montants** (défaut D6). La donnée est pourtant déjà dans la réponse :
+   * `getAllOrders` demande `customFieldValues.customField`. Seule la projection
+   * la jetait.
+   */
+  private withEffectiveMeta(order: any): any {
+    if (!order) return order;
+    // Pas de `specMeta` ici : ce module n'a pas de cache local des commandes.
+    // La spécification est un filet posé sur les commandes créées PAR un
+    // commerçant d'Echango ; une entreprise lit ce que Fleetbase porte.
+    return { ...order, meta: effectiveOrderMeta(order, null) };
   }
 
   private async getFleetWithValidation(fleetId: string) {

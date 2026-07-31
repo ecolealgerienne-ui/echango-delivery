@@ -388,9 +388,22 @@ export function projectOrderForDriver(order: any, options: OrderProjectionOption
   const { unclaimed = false, links = true, extra = {} } = options;
   const payload = order.payload;
 
+  // ⚠️ Sur une course NON RÉCLAMÉE, aucun rattachement (défaut D5).
+  //
+  // La branche d'expurgation ne touchait que `meta` et `payload` : les trois
+  // identifiants de rattachement sortaient quand même. Un transporteur
+  // apprenait donc, sur chaque opportunité qu'il n'a pas prise, quel
+  // commerçant l'a passée — et, depuis ce chantier, **quelle entreprise l'a
+  // réclamée**. Mis bout à bout au fil des rafraîchissements, c'est la
+  // cartographie commerciale du réseau, servie en JSON.
+  //
+  // Le seul rattachement dont un transporteur a besoin est le sien, et il ne
+  // l'a que sur une course qui est déjà la sienne.
+  const exposeLinks = links && !unclaimed;
+
   return {
     ...pick(order, ORDER_FIELDS),
-    ...(links ? pick(order, ORDER_LINK_FIELDS) : {}),
+    ...(exposeLinks ? pick(order, ORDER_LINK_FIELDS) : {}),
     meta: projectMeta(order.meta, unclaimed),
     payload: payload
       ? {
@@ -446,20 +459,42 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
  *
  * Il pilote ses transporteurs : il lui faut l'identifiant du driver assigné
  * pour réaffecter, ce que le commerçant n'a pas.
+ *
+ * ── Le niveau de détail suit l'ENGAGEMENT, pas le persona (défaut D7) ──────
+ *
+ * Cette projection servait `dropoff` en entier, sans condition et sans moyen
+ * de faire autrement. Tant qu'une entreprise ne voyait que les courses qu'un
+ * opérateur lui avait rattachées, c'était sans conséquence. Dès qu'elle pourra
+ * consulter les courses **libres** pour décider d'en prendre une, la même
+ * fonction livrerait rue, étage, nom et téléphone du destinataire de toute
+ * course en attente de tout commerçant — à tout compte flotte.
+ *
+ * La règle est donc la même que côté transporteur, et pour la même raison :
+ * tant que la course n'est engagée par personne, la livraison se réduit à sa
+ * commune. `facilitator_uuid` posé ⇒ l'entreprise est engagée et passe en
+ * complet, parce qu'il faut bien organiser la tournée.
  */
-export function projectOrderForFleet(order: any, extra: Record<string, any> = {}) {
+export function projectOrderForFleet(
+  order: any,
+  extra: Record<string, any> = {},
+  options: { unclaimed?: boolean } = {},
+) {
   if (!order) return order;
+  const { unclaimed = false } = options;
   const payload = order.payload;
   const driver = order.driver_assigned;
 
   return {
     ...pick(order, ORDER_FIELDS),
-    ...pick(order, ORDER_LINK_FIELDS),
-    meta: projectMeta(order.meta),
+    // Sur une course libre, aucun rattachement — même motif que côté
+    // transporteur : ils nomment le commerçant, et il n'y a rien à en faire
+    // avant de s'être engagé.
+    ...(unclaimed ? {} : pick(order, ORDER_LINK_FIELDS)),
+    meta: projectMeta(order.meta, unclaimed),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, 'full'),
+          dropoff: projectPlace(payload.dropoff, unclaimed ? 'locality' : 'full'),
         }
       : undefined,
     driver_assigned: driver ? pick(driver, ['uuid', 'public_id', 'name', 'phone']) : undefined,

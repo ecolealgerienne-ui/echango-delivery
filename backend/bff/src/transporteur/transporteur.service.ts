@@ -530,13 +530,7 @@ export class TransporteurService {
     // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
     // traiter la course comme sans exigence.
     const adhocHydrated = await this.withSpecMeta(
-      adhocRaw.filter(
-        (o) =>
-          o?.adhoc === true &&
-          !o?.driver_assigned_uuid &&
-          o?.status !== 'canceled' &&
-          !declined.has(o?.uuid),
-      ),
+      adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
     );
 
     const adhoc = adhocHydrated.filter(suits);
@@ -644,7 +638,7 @@ export class TransporteurService {
     }
 
     const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
+    const claimableAdhoc = this.isClaimableAdhoc(order);
 
     if (!mine && !claimableAdhoc) {
       this.audit.denied({
@@ -704,7 +698,7 @@ export class TransporteurService {
     }
 
     const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
+    const claimableAdhoc = this.isClaimableAdhoc(order);
 
     if (!mine && !claimableAdhoc) {
       this.audit.denied({
@@ -871,6 +865,19 @@ export class TransporteurService {
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
+
+    // ⚠️ Le plafond se vérifie AUSSI ici, et pas seulement à l'acceptation.
+    //
+    // Une course pré-assignée — favori sollicité à la création, ou affectation
+    // par une entreprise — n'a jamais traversé `acceptOrder()`. Son plafond
+    // avait été vérifié à la création, contre la dette d'alors ; entre-temps le
+    // conducteur a pu encaisser dix autres courses. Sur un brouillon, le délai
+    // est arbitrairement long.
+    //
+    // C'est la leçon du §16 appliquée : **une garde se pose sur le fait, pas
+    // sur le chemin auquel on pense en premier**. Le fait est ici « ce
+    // conducteur devient porteur d'espèces ».
+    await this.assertCashCeiling(driver.id, order);
 
     try {
       return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
@@ -1042,6 +1049,35 @@ export class TransporteurService {
       price,
       collected,
       facilitator,
+    );
+  }
+
+  /**
+   * Cette course est-elle **libre**, donc réclamable par un indépendant ?
+   *
+   * ── Un seul prédicat, et c'est l'énumération qui est la spécification ─────
+   *
+   * Ce test était redérivé à quatre endroits — la liste, la fiche, le refus et
+   * l'acceptation — et aucun ne regardait le facilitateur. Le jour où une
+   * course porte `facilitator_uuid` sans conducteur, **tous les indépendants du
+   * réseau la verraient et pourraient la prendre** (défaut D4).
+   *
+   * Corriger la liste seule aurait laissé la fiche et la prise ouvertes à qui
+   * connaît l'uuid — et l'uuid, c'est précisément ce que la liste donnait la
+   * veille. C'est la leçon du 28/07, où l'expurgation des opportunités avait dû
+   * couvrir la liste **et** la fiche pour la même raison.
+   *
+   * ⚠️ Le facilitateur est un critère **d'exclusion**, pas d'appartenance :
+   * une course confiée à une entreprise n'est pas libre, point. Savoir si le
+   * conducteur appartient à cette entreprise ne change rien — elle lui sera
+   * affectée par son employeur, elle ne se réclame pas.
+   */
+  private isClaimableAdhoc(order: any): boolean {
+    return (
+      order?.adhoc === true &&
+      !order?.driver_assigned_uuid &&
+      !order?.facilitator_uuid &&
+      order?.status !== 'canceled'
     );
   }
 
