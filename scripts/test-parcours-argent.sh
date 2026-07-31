@@ -169,6 +169,14 @@ fi
 login="$(curl -sS -X POST "$BFF_URL/auth/login" -H 'Content-Type: application/json' \
   -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')")"
 MERCHANT_TOKEN="$(echo "$login" | jq -r '.token // empty')"
+# L'identifiant du commerçant vient de SA connexion, et de nulle part ailleurs.
+#
+# Le déduire du registre du conducteur ne peut pas marcher : il y figure à côté
+# des commerçants des runs précédents, et le distinguer par le montant est
+# impossible — chaque run laisse une dette non soldée de la MÊME valeur (la
+# seconde course du §6, jamais remise). Le script déclarait donc sa remise à
+# l'ancien commerçant, et celui du run en cours n'avait rien à confirmer.
+MERCHANT_ID="$(echo "$login" | jq -r '.user.id // empty')"
 [ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant refusée" "$login"
 pass "Commerçant connecté ($EMAIL)"
 
@@ -278,10 +286,11 @@ pass "Commerçant : $mtotal DZD détenus pour lui"
 # crée un commerçant neuf. C'est bien pour ça qu'elle passait pendant que
 # celle-ci échouait.
 dledger="$(dapi GET /transporteur/caisse)"
-dmine="$(echo "$dledger" | jq -r --argjson d "$due" \
-  '[.balances[] | select((.debt | floor) == $d)] | length')"
-[ "${dmine:-0}" -ge 1 ] \
-  || fail "Le transporteur doit voir une contrepartie à $due, il voit $(echo "$dledger" | jq -c '[.balances[].debt]')"
+dmine="$(echo "$dledger" | jq -r --arg m "$MERCHANT_ID" \
+  'first(.balances[] | select((.counterparty_id // .merchant_id) == $m)) | .debt // 0')"
+[ "$(printf '%.0f' "${dmine:-0}")" = "$due" ] \
+  || fail "Le transporteur doit voir $due dû à CE commerçant, il voit ${dmine:-aucune ligne}" \
+     "$(echo "$dledger" | jq -c '.balances')"
 pass "Transporteur : $due DZD à remettre — les deux vues concordent"
 
 details="$(mapi GET /commercant/encaissements/details)"
@@ -298,11 +307,10 @@ step "5. Remise"
 # que `driverBalances()` projette. Le repli sur `counterparty_id` anticipe la
 # généralisation aux entreprises (§4.1) : le jour où la contrepartie devient
 # typée, ce script continuera de passer sans retouche.
-# La contrepartie de CE run, désignée par son montant — `balances[0]` prenait la
-# dette la plus élevée, donc celle d'un run précédent dès qu'il y en avait un.
-MERCHANT_ID="$(echo "$dledger" | jq -r --argjson d "$due" \
-  'first(.balances[] | select((.debt | floor) == $d)) | .counterparty_id // .merchant_id // empty')"
-[ -n "$MERCHANT_ID" ] || fail "Contrepartie introuvable côté transporteur" "$(echo "$dledger" | jq -c '.balances')"
+# `MERCHANT_ID` vient de la connexion du commerçant (§ Sessions), jamais du
+# registre du conducteur : c'est la seule source qui ne confond pas ce run avec
+# les précédents.
+[ -n "$MERCHANT_ID" ] || fail "Identifiant du commerçant introuvable" "$login"
 
 declared="$(dapi POST /transporteur/caisse/remises \
   "$(jq -n --arg m "$MERCHANT_ID" --argjson a "$due" '{merchantId:$m, amount:$a}')")"
