@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'app_spacing.dart';
+
 /// Quel bouton pour quelle intention — décidé une fois, pour les trois profils.
 ///
 /// ── Ce que la mesure a montré (31/07/2026) ────────────────────────────────
@@ -59,6 +61,37 @@ import 'package:flutter/material.dart';
 /// fois, en deux variantes qui ne s'accordaient pas.
 class AppButtonStyles {
   AppButtonStyles._();
+
+  /// Un bouton posé dans le `trailing` d'une ligne de liste.
+  ///
+  /// ── Pourquoi un style à part, et pas le bouton ordinaire ─────────────────
+  ///
+  /// ⚠️ **`ListTile` ne contraint pas son `trailing` en largeur.** Il lui donne
+  /// sa taille intrinsèque et distribue le reste au titre : un bouton plein
+  /// avec le rembourrage de page (24 px de chaque côté) et un libellé de vingt
+  /// caractères déborde donc sur un écran étroit, et le déficit ne se voit
+  /// qu'à l'exécution — `flutter analyze` ne mesure rien.
+  ///
+  /// Le rembourrage est ramené au jeton `sm`, et la hauteur minimale à celle
+  /// d'une ligne dense. La **cible tactile reste entière** (`tapTargetSize` non
+  /// touché) : gagner quelques pixels en rendant le bouton difficile à toucher
+  /// serait échanger un défaut visible contre un défaut qu'on met des mois à
+  /// nommer.
+  ///
+  /// Employé par les deux onglets de l'espace entreprise, et il faut qu'il le
+  /// reste : ce sont deux lignes de liste portant chacune l'action principale
+  /// de sa ligne. Si l'une change, l'autre doit changer (règle 5).
+  /// Une constante, pas une fonction : rien ici ne dépend du `BuildContext`,
+  /// et le partage devient littéral — les deux onglets emploient **le même
+  /// objet**, ce qu'aucune divergence ne peut plus contredire.
+  static final ButtonStyle rowAction = FilledButton.styleFrom(
+    padding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.sm,
+      vertical: AppSpacing.xs,
+    ),
+    minimumSize: const Size(0, 36),
+    visualDensity: VisualDensity.compact,
+  );
 
   /// Une action qui détruit ou refuse, en bouton plein.
   ///

@@ -14,6 +14,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
 import '../../widgets/load_more_footer.dart';
+import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 
@@ -216,11 +217,18 @@ class _OrdersTab extends StatelessWidget {
           // pendant que « Prendre cette course » s'affichait en bouton plein à
           // un coup d'onglet d'écart. Même nature d'action, deux niveaux de
           // visibilité, dans le même écran (voir `theme/app_buttons.dart`).
+          //
+          // ⚠️ Libellé **court** et style de ligne : `ListTile` ne contraint
+          // pas son `trailing`, donc « Désigner un conducteur » avec le
+          // rembourrage de page déborderait sur un écran étroit. Le verbe seul
+          // suffit ici — la ligne dit de quoi il s'agit —, et la formulation
+          // entière reste sur la fiche, où il y a la place.
           trailing: hasDriver
               ? null
               : FilledButton(
+                  style: AppButtonStyles.rowAction,
                   onPressed: () => _pickDriver(context, order, t),
-                  child: Text(t('fleet.orders.assign')),
+                  child: Text(t('fleet.orders.assign.short')),
                 ),
         );
       },
@@ -281,11 +289,22 @@ class _OpportunitiesTab extends StatelessWidget {
           // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
           // « Prendre » reste sur la ligne pour ceux qui n'en ont pas besoin.
           onTap: uuid.isEmpty ? null : () => context.push('/flotte/opportunites/$uuid'),
+          // Même style que l'onglet d'à côté, et pour la même raison : c'est
+          // l'action principale d'une ligne de liste, pas d'une page.
           trailing: FilledButton(
+            style: AppButtonStyles.rowAction,
             onPressed: claiming ? null : () => _claim(context, uuid, t),
-            child: Text(
-              claiming ? t('fleet.opportunities.taking') : t('fleet.opportunities.take'),
-            ),
+            // Pendant la prise, un indicateur plutôt que « Prise en cours… » :
+            // le texte long change la largeur du bouton au moment précis où la
+            // ligne est en train de disparaître, et c'est ce genre de saut qui
+            // fait toucher la ligne d'à côté.
+            child: claiming
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(t('fleet.opportunities.take.short')),
           ),
         );
       },

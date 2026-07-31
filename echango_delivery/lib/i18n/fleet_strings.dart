@@ -59,6 +59,11 @@ const Map<String, String> _fr = {
   'fleet.orders.more': 'Charger les courses précédentes',
   'fleet.orders.unassigned': 'Aucun conducteur désigné',
   'fleet.orders.assign': 'Désigner un conducteur',
+  // ⚠️ Court, pour la LIGNE de liste : `ListTile` ne contraint pas son
+  // `trailing`, donc le libellé entier y déborderait sur un écran étroit. Le
+  // verbe seul suffit là où la ligne dit déjà de quoi il s'agit ; la
+  // formulation complète reste sur la fiche, où il y a la place.
+  'fleet.orders.assign.short': 'Désigner',
   'fleet.orders.assigned_to': 'Conducteur',
   'fleet.orders.pickup': 'Enlèvement',
   'fleet.orders.dropoff': 'Livraison',
@@ -87,6 +92,7 @@ const Map<String, String> _fr = {
       'Les courses diffusées et non encore prises apparaissent ici.',
   'fleet.opportunities.more': 'Charger les courses suivantes',
   'fleet.opportunities.take': 'Prendre cette course',
+  'fleet.opportunities.take.short': 'Prendre',
   'fleet.opportunities.taking': 'Prise en cours…',
   'fleet.opportunities.taken': 'Course prise. Désignez un conducteur.',
   // ⚠️ Ce libellé n'est pas décoratif : le nom et le téléphone du destinataire
@@ -260,6 +266,7 @@ const Map<String, String> _ar = {
   'fleet.orders.more': 'تحميل الرحلات السابقة',
   'fleet.orders.unassigned': 'لم يتم تعيين سائق',
   'fleet.orders.assign': 'تعيين سائق',
+  'fleet.orders.assign.short': 'تعيين',
   'fleet.orders.assigned_to': 'السائق',
   'fleet.orders.pickup': 'الاستلام',
   'fleet.orders.dropoff': 'التسليم',
@@ -280,6 +287,7 @@ const Map<String, String> _ar = {
   'fleet.opportunities.empty.hint': 'تظهر هنا الرحلات المنشورة وغير المأخوذة بعد.',
   'fleet.opportunities.more': 'تحميل الرحلات التالية',
   'fleet.opportunities.take': 'خذ هذه الرحلة',
+  'fleet.opportunities.take.short': 'خذها',
   'fleet.opportunities.taking': 'جاري الأخذ…',
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
   'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
