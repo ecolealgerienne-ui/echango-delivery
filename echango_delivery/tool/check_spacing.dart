@@ -10,8 +10,8 @@
 // divergence. Un chantier de centralisation sans garde n'est pas un chantier,
 // c'est un instantané.
 //
-// **Il RECENSE**, sans échouer, les valeurs hors barème (1, 2, 6, 10, 14, 36,
-// 48…). Les faire converger vers le jeton voisin déplacerait des pixels : c'est
+// **Il RECENSE**, sans échouer, les valeurs hors barème — 22 au 31/07/2026 :
+// 1, 2, 6, 10, 14, 20, 36, 48. Les faire converger déplacerait des pixels : c'est
 // une décision de design, elle se prend à l'écran, pas dans un script. Le
 // recensement existe pour que la question reste posée au lieu de se dissoudre.
 //
@@ -38,8 +38,12 @@
 
 import 'dart:io';
 
-/// Le barème, et son jeton. Doit reproduire `lib/theme/app_spacing.dart` —
-/// vérifié par lecture de ce fichier, pas par confiance (`_assertScaleMatches`).
+/// Le barème tel qu'il était au 31/07/2026 — **repère de lisibilité seulement**.
+///
+/// La vérité est `lib/theme/app_spacing.dart`, lu à l'exécution par
+/// [_declaredScale] : c'est lui qui décide ce que le script refuse. Cette carte
+/// ne sert qu'à signaler un écart entre les deux, pour qu'une valeur retirée du
+/// barème ne passe pas inaperçue.
 const _scale = <int, String>{
   4: 'AppSpacing.xs',
   8: 'AppSpacing.sm',
@@ -127,7 +131,11 @@ final _sizedBox = RegExp(r'SizedBox\(');
 final _borderRadius = RegExp(r'BorderRadius\.circular\(');
 
 /// Recense les valeurs en dur d'un fichier.
-List<_Hit> scan(String source, String file) {
+///
+/// Privée comme tout le reste du script : elle rend des `_Hit`, et une
+/// fonction publique qui expose un type privé est refusée par l'analyseur
+/// (`library_private_types_in_public_api`).
+List<_Hit> _scan(String source, String file) {
   final hits = <_Hit>[];
   int lineOf(int offset) =>
       '\n'.allMatches(source.substring(0, offset)).length + 1;
@@ -228,7 +236,7 @@ const _fixtures = <({String name, String source, List<int> expected})>[
 bool _selfTest() {
   var ok = true;
   for (final f in _fixtures) {
-    final got = scan(f.source, 'fixture').map((h) => h.value).toList();
+    final got = _scan(f.source, 'fixture').map((h) => h.value).toList();
     final match = got.length == f.expected.length &&
         List.generate(got.length, (i) => got[i] == f.expected[i])
             .every((e) => e);
@@ -303,7 +311,7 @@ void main(List<String> args) {
     // `_exempt` ne correspondraient jamais.
     final path = entity.path.replaceAll('\\', '/');
     if (_exempt.containsKey(path)) continue;
-    for (final hit in scan(entity.readAsStringSync(), path)) {
+    for (final hit in _scan(entity.readAsStringSync(), path)) {
       if (scale.containsKey(hit.value)) {
         inScale.add(hit);
       } else {
