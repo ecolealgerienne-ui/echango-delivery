@@ -31,7 +31,16 @@
 // trouve pas ce qu'il cherche et conclut à l'accord est pire que pas de
 // vérificateur — leçon du 30/07/2026 sur les codes d'erreur.
 //
-// Usage :  dart tool/check_server_rules.dart   (depuis echango_delivery/)
+// ── Il sait dire non, et il le prouve ────────────────────────────────────
+//
+// Un premier passage au vert ne montre que la moitié de ce qui compte : qu'il
+// sait dire oui. `--self-test` fait tourner l'extraction sur sept DTO fictifs —
+// dont les quatre formes de divergence qu'il doit refuser — et vérifie qu'il
+// répond ce qu'il faut. Sans ça, sa validité repose sur une simulation faite
+// ailleurs, c'est-à-dire sur rien de vérifiable là où il s'exécute.
+//
+// Usage :  dart tool/check_server_rules.dart              (contrôle réel)
+//          dart tool/check_server_rules.dart --self-test  (le script s'éprouve)
 // Sortie : 0 si tout concorde, 1 sinon, avec le détail.
 
 import 'dart:io';
@@ -140,7 +149,117 @@ final _minLengthPattern = RegExp(r'@MinLength\((\d+)');
   return (classesSeen: seen, values: values);
 }
 
-void main() {
+/// Un DTO fictif, et ce que l'extraction doit en tirer.
+class _Fixture {
+  const _Fixture(this.name, this.source, this.classes, this.expectedSeen,
+      this.expectedValues);
+
+  final String name;
+  final String source;
+  final Set<String> classes;
+  final int expectedSeen;
+  final Set<int?> expectedValues;
+}
+
+const _fixtures = <_Fixture>[
+  _Fixture('nominal', '''
+export class ADto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(60)
+  q: string;
+}
+''', {'ADto'}, 1, {3}),
+  _Fixture('champ premier de sa classe', '''
+export class ADto {
+  @MinLength(3)
+  q: string;
+
+  @IsOptional()
+  other?: string;
+}
+''', {'ADto'}, 1, {3}),
+  // Un `@MinLength(99)` dans un commentaire ne doit pas être pris pour une
+  // contrainte du champ suivant.
+  _Fixture('commentaire entre deux champs', '''
+export class ADto {
+  @MinLength(3)
+  q: string;
+
+  /**
+   * Un commentaire citant @MinLength(99), qui ne compte pas.
+   */
+  @IsOptional()
+  note?: string;
+}
+''', {'ADto'}, 1, {3}),
+  // Les quatre suivants sont ceux que le script DOIT refuser.
+  _Fixture('décorateur retiré', '''
+export class ADto {
+  @IsString()
+  q: string;
+}
+''', {'ADto'}, 1, {null}),
+  _Fixture('deux classes en désaccord', '''
+export class ADto {
+  @MinLength(3)
+  q: string;
+}
+export class BDto {
+  @MinLength(4)
+  q: string;
+}
+''', {'ADto', 'BDto'}, 2, {3, 4}),
+  _Fixture('classe hors cible ignorée', '''
+export class ADto {
+  @MinLength(3)
+  q: string;
+}
+export class LoginDto {
+  q: string;
+}
+''', {'ADto'}, 1, {3}),
+  // Le piège qui a fait échouer une version antérieure : sans borne au champ
+  // précédent, `q` aurait hérité du `@MinLength(3)` de `other`.
+  _Fixture('champ sans contrainte, voisin qui en a une', '''
+export class ADto {
+  @MinLength(3)
+  other: string;
+
+  @IsString()
+  q: string;
+}
+''', {'ADto'}, 1, {null}),
+];
+
+/// Éprouve l'extraction sur les DTO fictifs. Rend `true` si tout concorde.
+bool _selfTest() {
+  var ok = true;
+  for (final f in _fixtures) {
+    final r = _constraintsOf(f.source, f.classes, 'q');
+    final match = r.classesSeen == f.expectedSeen &&
+        r.values.length == f.expectedValues.length &&
+        r.values.every(f.expectedValues.contains);
+    stdout.writeln('${match ? '✅' : '❌'} ${f.name} — '
+        '${r.classesSeen} classe(s), valeurs ${r.values.toList()}'
+        '${match ? '' : ' (attendu ${f.expectedSeen}, ${f.expectedValues.toList()})'}');
+    if (!match) ok = false;
+  }
+  return ok;
+}
+
+void main(List<String> args) {
+  if (args.contains('--self-test')) {
+    if (_selfTest()) {
+      stdout.writeln('\n✅ ${_fixtures.length} cas — le script reconnaît les '
+          'divergences qu\'il doit refuser.');
+      return;
+    }
+    stdout.writeln('\n❌ Le vérificateur lui-même est faux : ne pas se fier à '
+        'son verdict tant que ceci n\'est pas corrigé.');
+    exit(1);
+  }
+
   final rulesFile = File('lib/config/app_rules.dart');
   if (!rulesFile.existsSync()) {
     stderr.writeln('lib/config/app_rules.dart introuvable — lancez le script '
