@@ -9,6 +9,7 @@ import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_spacing.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   final String orderId;
@@ -42,14 +43,14 @@ class OrderDetailScreen extends StatelessWidget {
             }
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Order Header
                   Card(
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -68,7 +69,7 @@ class OrderDetailScreen extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: AppSpacing.sm),
                               Chip(
                                 label: Text(order.status),
                                 backgroundColor: _getStatusColor(order.status),
@@ -80,12 +81,12 @@ class OrderDetailScreen extends StatelessWidget {
                             ],
                           ),
                           if (order.formattedPrice != null) ...[
-                            const SizedBox(height: 12),
+                            const SizedBox(height: AppSpacing.md),
                             Row(
                               children: [
                                 Icon(Icons.payments_outlined,
                                     color: Colors.green.shade800),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: AppSpacing.sm),
                                 Text(
                                   order.formattedPrice!,
                                   style: Theme.of(context)
@@ -102,13 +103,13 @@ class OrderDetailScreen extends StatelessWidget {
                           // transporteur gagne, l'autre ce qu'il transporte
                           // pour le compte du commerçant.
                           if (order.codAmount != null) ...[
-                            const SizedBox(height: 12),
+                            const SizedBox(height: AppSpacing.md),
                             Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.all(AppSpacing.md),
                               decoration: BoxDecoration(
                                 color: Colors.amber.shade100,
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(AppRadius.md),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,7 +117,7 @@ class OrderDetailScreen extends StatelessWidget {
                                   Row(
                                     children: [
                                       const Icon(Icons.account_balance_wallet_outlined),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: AppSpacing.sm),
                                       Text(
                                         'À encaisser : '
                                         '${order.codAmount!.toStringAsFixed(0)} '
@@ -128,7 +129,7 @@ class OrderDetailScreen extends StatelessWidget {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 4),
+                                  const SizedBox(height: AppSpacing.xs),
                                   const Text(
                                     'Somme due par le destinataire au commerçant. '
                                     'Vous la conservez et la lui remettez au '
@@ -139,18 +140,18 @@ class OrderDetailScreen extends StatelessWidget {
                               ),
                             ),
                           ],
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.lg),
                           _buildInfoRow('Créée le :', order.createdAt.toString().split('.')[0]),
                           _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Locations
                   Card(
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -160,7 +161,7 @@ class OrderDetailScreen extends StatelessWidget {
                             label: 'Enlèvement',
                             place: order.pickupPlace,
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.lg),
                           _PlaceBlock(
                             label: 'Livraison',
                             place: order.dropoffPlace,
@@ -175,7 +176,7 @@ class OrderDetailScreen extends StatelessWidget {
                   // transporteur cherche un numéro qui ne viendra qu'après
                   // acceptation.
                   if (order.redacted) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                     Card(
                       color: Theme.of(context).colorScheme.secondaryContainer,
                       child: const ListTile(
@@ -194,13 +195,13 @@ class OrderDetailScreen extends StatelessWidget {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Tous les signalements, du plus récent au plus ancien.
                   // N'en montrer qu'un effaçait l'historique des tentatives —
                   // et avec lui les photos des précédentes.
                   if (order.deliveryFailures.isNotEmpty) ...[
                     _FailureHistory(failures: order.deliveryFailures),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                   ],
                   // Action Buttons
                   _buildActionButtons(context, order, orderState),
@@ -251,7 +252,7 @@ class OrderDetailScreen extends StatelessWidget {
           code) as String;
       final requiresPod = activity['require_pod'] == true;
 
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
         ElevatedButton(
           onPressed: busy
@@ -280,7 +281,7 @@ class OrderDetailScreen extends StatelessWidget {
     // présenter deux actions différentes sous un même mot.
     final returnable = !order.isFinished && !claimable && order.isPending;
     if (claimable || returnable) {
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
         OutlinedButton.icon(
           onPressed: busy
@@ -296,7 +297,7 @@ class OrderDetailScreen extends StatelessWidget {
 
     // Signalement d'échec : pertinent tant que la commande n'est pas close.
     if (!order.isFinished && !claimable) {
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
         ElevatedButton(
           onPressed: busy
@@ -565,7 +566,7 @@ class _DeclineSheetState extends State<_DeclineSheet> {
               widget.assigned ? 'Rendre cette course' : 'Refuser cette course',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               widget.assigned
                   ? 'Elle sera proposée aux autres transporteurs du réseau, et '
@@ -574,7 +575,7 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                       'la voient toujours.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             // Des ListTile sélectionnables plutôt que des RadioListTile : le
             // couple `groupValue`/`onChanged` est déprécié depuis Flutter 3.32
             // au profit de RadioGroup, et cet écran doit compiler sans
@@ -593,7 +594,7 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: _notes,
               maxLines: 2,
@@ -603,7 +604,7 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             ElevatedButton(
               onPressed: _reason == null
                   ? null
@@ -668,13 +669,13 @@ class _ProofSheetState extends State<_ProofSheet> {
                 'signature, ou dépôt convenu.',
             onChanged: (photo) => setState(() => _photo = photo),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: AppSpacing.xl),
           ElevatedButton(
             onPressed: _photo == null
                 ? null
                 : () => Navigator.pop(context, _photo),
             style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
             child: const Text('Envoyer la preuve et valider l\'étape'),
           ),
@@ -717,7 +718,7 @@ class _PlaceBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text('Adresse non renseignée', style: theme.textTheme.bodySmall),
         ],
       );
@@ -728,7 +729,7 @@ class _PlaceBlock extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         // ⚠️ `name` est **absent** sur une course non réclamée (c'est celui du
         // destinataire), donc `Place.fromJson` rend une chaîne vide : le bloc
         // commençait par une ligne vide en gras.
@@ -746,7 +747,7 @@ class _PlaceBlock extends StatelessWidget {
           // porte dans l'itinéraire.
           Text('Adresse dans les précisions', style: theme.textTheme.bodySmall),
         if (p.contactName != null) Text('Contact : ${p.contactName}'),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
           children: [
@@ -811,7 +812,7 @@ class _PlaceBlock extends StatelessWidget {
 /// méthode privée de widget n'est pas atteignable depuis un autre widget.
 Widget _buildInfoRow(String label, String value) {
   return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
+    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -844,14 +845,14 @@ class _FailureHistory extends StatelessWidget {
     return Card(
       color: Colors.red.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Icon(Icons.error_outline, color: Colors.red.shade700),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
                     multiple
@@ -864,10 +865,10 @@ class _FailureHistory extends StatelessWidget {
               ],
             ),
             for (var i = 0; i < failures.length; i++) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               if (multiple) ...[
                 const Divider(height: 1),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.md),
                 Text(
                   // Numérotation à rebours : le plus récent porte le numéro le
                   // plus élevé, ce qui rend l'ordre chronologique lisible sans
@@ -876,11 +877,11 @@ class _FailureHistory extends StatelessWidget {
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: Colors.red.shade700),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
               ],
               _FailureEntry(failure: failures[i]),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             // Le statut Fleetbase reste inchangé par un signalement (§6.5) :
             // le dire, sinon l'écart entre « échec signalé » et « statut
             // enroute » passe pour une incohérence.
@@ -915,7 +916,7 @@ class _FailureEntry extends StatelessWidget {
         _buildInfoRow('Motif :', failure.reason),
         if (failure.notes != null) _buildInfoRow('Notes :', failure.notes!),
         if (failure.photoUrl != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           ProofImage(url: failure.photoUrl!),
         ],
       ],
@@ -994,13 +995,13 @@ class _CashSheetState extends State<_CashSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('Encaissement', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               'Montant attendu : ${widget.expected.toStringAsFixed(0)} '
               '${widget.currency}',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             TextField(
               controller: _amount,
               keyboardType: TextInputType.number,
@@ -1013,9 +1014,9 @@ class _CashSheetState extends State<_CashSheet> {
               ),
             ),
             if (_differs) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               Text('Pourquoi l\'écart ?', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               for (final entry in cashDiscrepancyLabels.entries)
                 ListTile(
                   onTap: () => setState(() => _reason = entry.key),
@@ -1037,7 +1038,7 @@ class _CashSheetState extends State<_CashSheet> {
                 ),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               // Rappeler ce qu'implique la validation : la somme devient une
               // dette du transporteur envers le commerçant, et elle le suit
@@ -1046,7 +1047,7 @@ class _CashSheetState extends State<_CashSheet> {
               'commerçant. Vous la retrouverez dans « Ma caisse ».',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             ElevatedButton(
               onPressed: _canSubmit
                   ? () => Navigator.pop(

@@ -7,6 +7,7 @@ import '../../i18n/fleet_strings.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/locale_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
 /// demandent.
@@ -157,7 +158,7 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
               onRefresh: _load,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 children: [
                   // ⚠️ L'erreur est un bandeau **au-dessus** de la liste et ne la
                   // remplace pas : un rechargement raté ne doit pas effacer des
@@ -181,7 +182,7 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
                       title: Text(t('driver.fleets.explain')),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
 
                   if (_fleets.isEmpty && _error == null)
                     ListTile(

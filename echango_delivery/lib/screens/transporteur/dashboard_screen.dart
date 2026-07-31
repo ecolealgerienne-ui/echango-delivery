@@ -8,6 +8,7 @@ import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -129,7 +130,7 @@ class _AvailabilitySwitch extends StatelessWidget {
             ),
             if (presence.isBusy)
               const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
+                padding: EdgeInsets.symmetric(horizontal: AppSpacing.lg),
                 child: SizedBox(
                   height: 18,
                   width: 18,
@@ -201,7 +202,7 @@ class _PresenceBanner extends StatelessWidget {
     return Container(
       width: double.infinity,
       color: bg,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 10),
       child: Text(text, style: TextStyle(color: fg)),
     );
   }
@@ -244,7 +245,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
           Container(
             width: double.infinity,
             color: Theme.of(context).colorScheme.errorContainer,
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppSpacing.md),
             child: Text(
               errorMessage,
               style: TextStyle(
@@ -328,7 +329,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
               size: 64,
               color: Colors.grey[400],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             Text(
               emptyLabel,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -336,9 +337,9 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                   ),
             ),
             if (emptyHint != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xxl),
                 child: Text(
                   emptyHint,
                   textAlign: TextAlign.center,
@@ -356,12 +357,12 @@ class _OrdersListScreenState extends State<OrdersListScreen>
   Widget _ordersListView(List<dynamic> orders) {
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       itemCount: orders.length,
       itemBuilder: (context, index) {
         final order = orders[index];
         return Card(
-          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+          margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm, horizontal: 0),
           child: ListTile(
             title: Row(
               children: [
@@ -382,7 +383,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 // ⚠️ Pas `name` seul : il est **absent** sur une course non
                 // réclamée (c'est celui du destinataire), et la ligne se
                 // lisait « MAGASIN1 →  » sur chaque opportunité.
@@ -391,7 +392,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   'Statut : ${order.status}',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -447,12 +448,12 @@ class MapScreen extends StatelessWidget {
             size: 80,
             color: Colors.grey[400],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             'Carte non disponible',
             style: Theme.of(context).textTheme.titleLarge,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(
             'La carte des courses n\'est pas encore implémentée.',
             textAlign: TextAlign.center,
@@ -473,14 +474,14 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           Card(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(AppSpacing.xl),
               child: Column(
                 children: [
                   Icon(
@@ -488,7 +489,7 @@ class ProfileScreen extends StatelessWidget {
                     size: 80,
                     color: Theme.of(context).primaryColor,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   Consumer<AuthState>(
                     builder: (context, authState, _) {
                       return Column(
@@ -497,7 +498,7 @@ class ProfileScreen extends StatelessWidget {
                             authState.email ?? 'Transporteur',
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: AppSpacing.sm),
                           Text(
                             'Profil : ${authState.role?.label ?? '—'}',
                             style: Theme.of(context)
@@ -513,9 +514,9 @@ class ProfileScreen extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           const _VehicleTypeCard(),
-          const SizedBox(height: 32),
+          const SizedBox(height: AppSpacing.xxl),
           Consumer<AuthState>(
             builder: (context, authState, _) {
               return ElevatedButton(
@@ -524,7 +525,7 @@ class ProfileScreen extends StatelessWidget {
                     : () => _handleLogout(context, authState),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                 ),
                 child: authState.isLoading
                     ? const SizedBox(
@@ -611,12 +612,12 @@ class _VehicleTypeCard extends StatelessWidget {
     return Consumer<DriverPresenceState>(
       builder: (context, presence, _) => Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String?>(
                 initialValue: presence.vehicleType,
                 // Le bouton prend toute la largeur disponible et contraint son
@@ -639,7 +640,7 @@ class _VehicleTypeCard extends StatelessWidget {
                     ? null
                     : (v) => presence.setVehicleType(v),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               // Le texte d'aide suit le choix : sans véhicule déclaré, la phrase
               // sur les courses trop grandes ne s'applique pas, et celle qui
               // compte est l'inverse — rien n'est filtré. Une aide qui décrit

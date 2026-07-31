@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
+import '../../theme/app_spacing.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
   final String orderId;
@@ -62,13 +63,13 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
         elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -80,7 +81,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                       'Commande ${widget.orderId}',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
                       'Report the reason for delivery failure',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -91,16 +92,16 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // Reason Selection
             Text(
               'Failure Reason',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Card(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 child: DropdownButton<String>(
                   value: _selectedReason,
                   isExpanded: true,
@@ -119,24 +120,24 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // Notes
             Text(
               'Additional Notes (Optional)',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _notesController,
               decoration: InputDecoration(
                 hintText: 'Précisions éventuelles…',
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
               ),
               maxLines: 4,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // La preuve photo n'est pas exigée ici — contrairement à la POD,
             // un échec de livraison n'a pas toujours quelque chose à montrer
             // (destinataire absent). L'imposer pousserait à photographier
@@ -147,7 +148,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   'adresse introuvable, colis refusé.',
               onChanged: (photo) => setState(() => _photo = photo),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: AppSpacing.xxl),
             // Submit Button
             Consumer<OrderState>(
               builder: (context, orderState, _) {
@@ -155,7 +156,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   onPressed: orderState.isLoading ? null : () => _submitFailureReport(context, orderState),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.red,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                   ),
                   child: orderState.isLoading
                       ? const SizedBox(
@@ -173,14 +174,14 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                 );
               },
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             if (context.watch<OrderState>().errorMessage != null)
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(AppSpacing.md),
                 decoration: BoxDecoration(
                   color: Colors.red.shade50,
                   border: Border.all(color: Colors.red),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
                 child: Text(
                   context.watch<OrderState>().errorMessage!,
