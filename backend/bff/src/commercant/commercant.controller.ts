@@ -14,9 +14,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import {
   MerchantRemittanceDto,
-  DisputeRemittanceDto,
   DeclareMissingCollectionDto,
 } from './dto/cash.dto';
+import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
 // E4) : un jeton transporteur ou flotte y était structurellement valide.

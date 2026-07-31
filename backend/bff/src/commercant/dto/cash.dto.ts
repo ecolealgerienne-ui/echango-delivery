@@ -22,12 +22,6 @@ export class MerchantRemittanceDto {
   amount: number;
 }
 
-export class DisputeRemittanceDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  reason?: string;
-}
 
 /**
  * Régularisation : « ce transporteur a bien encaissé X sur cette livraison ».

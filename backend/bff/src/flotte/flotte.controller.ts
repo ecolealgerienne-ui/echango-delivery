@@ -10,6 +10,7 @@ import { AddDriverDto } from './dto/driver.dto';
 import { DriverSearchDto } from '../commercant/dto/driver-search.dto';
 import { CashService, fleetParty } from '../cash/cash.service';
 import { FleetRemittanceDto } from './dto/cash.dto';
+import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 @Persona('fleet')
 @Controller('flotte')
@@ -71,7 +72,7 @@ export class FlotteController {
   async disputeRemittance(
     @Request() req: any,
     @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: { reason?: string },
+    @Body() dto: DisputeRemittanceDto,
   ) {
     return this.cash.disputeRemittance('fleet', this.fleetId(req), id, dto?.reason);
   }

@@ -1061,7 +1061,12 @@ class BffApiClient {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/flotte/caisse/remises/$id/contester'),
       headers: _buildHeaders(),
-      body: jsonEncode({'reason': reason}),
+      // La clé est OMISE quand il n'y a pas de motif, comme dans les deux
+      // variantes persona voisines. Cette ligne envoyait `{"reason": null}`,
+      // seule divergence de surface des trois — et c'est en la remarquant
+      // qu'on a trouvé que la route flotte n'avait aucun DTO, donc aucune
+      // validation.
+      body: jsonEncode({if (reason != null) 'reason': reason}),
     );
     _parseResponse(response);
   }

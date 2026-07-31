@@ -11,12 +11,12 @@ import {
   DeclineOrderDto,
   CashCollectionDto,
   DeclareRemittanceDto,
-  DisputeRemittanceDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
 } from './dto/transporteur.dto';
 import { Persona } from '../common/decorators/persona.decorator';
+import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 /**
  * Driver-facing API for the Flutter app (docs/specs_app_transporteur.md §3-5).
