@@ -8,6 +8,7 @@ import '../../models/merchant_order.dart' show KnownDriver, orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
 import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
 ///
@@ -56,18 +57,18 @@ class _CashScreenState extends State<CashScreen> {
         onRefresh: state.load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
             if (state.errorMessage != null)
               Card(
                 color: Theme.of(context).colorScheme.errorContainer,
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   child: Text(state.errorMessage!),
                 ),
               ),
             _totalCard(state),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
 
             // Ce qui appelle une action passe en premier. Une confirmation en
             // attente bloque une dette : la reléguer sous l'historique la ferait
@@ -86,7 +87,7 @@ class _CashScreenState extends State<CashScreen> {
                   onConfirm: () => _confirmCollection(state, c),
                   onDispute: () => _disputeCollection(state, c),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
             if (state.awaitingMyConfirmation.isNotEmpty) ...[
@@ -98,7 +99,7 @@ class _CashScreenState extends State<CashScreen> {
                   onConfirm: () => _confirm(state, r),
                   onDispute: () => _dispute(state, r),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
             // ── L'anomalie passe avant les soldes ────────────────────────────
@@ -121,13 +122,13 @@ class _CashScreenState extends State<CashScreen> {
                   isAnomaly: true,
                   onRegularise: () => _regularise(state, p),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
             _sectionTitle(_isDriver ? 'Mes comptes' : 'Mes transporteurs'),
             if (state.isLoading && state.ledger == null)
               const Padding(
-                padding: EdgeInsets.all(32),
+                padding: EdgeInsets.all(AppSpacing.xxl),
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (state.ledger?.isEmpty ?? true)
@@ -148,7 +149,7 @@ class _CashScreenState extends State<CashScreen> {
             // c'est l'ordre du temps. Ce qu'on détient, ce qui va venir, puis
             // d'où venait ce qu'on détient.
             if (state.pending.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               _sectionTitle('En cours — pas encore encaissé'),
               for (final p in state.pending)
                 _PendingCard(entry: p, currency: state.currency),
@@ -158,13 +159,13 @@ class _CashScreenState extends State<CashScreen> {
             // d'abord combien, ensuite d'où ça vient. L'inverse noierait le
             // chiffre qui intéresse dans une liste de lignes.
             if (state.collections.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               _sectionTitle('Détail des encaissements'),
               for (final c in state.collections.take(AppRules.cashCollectionsPreview))
                 _CollectionCard(entry: c, isDriver: _isDriver),
               if (state.collections.length > AppRules.cashCollectionsPreview)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
                   child: Text(
                     // ⚠️ Le nombre était écrit en dur ICI AUSSI. Trois
                     // occurrences du même 20 dans le même bloc : en changer une
@@ -178,7 +179,7 @@ class _CashScreenState extends State<CashScreen> {
             ],
 
             if (state.awaitingOther.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
               _sectionTitle('En attente de l\'autre partie'),
               for (final r in state.awaitingOther)
                 Card(
@@ -193,7 +194,7 @@ class _CashScreenState extends State<CashScreen> {
                   ),
                 ),
             ],
-            const SizedBox(height: 32),
+            const SizedBox(height: AppSpacing.xxl),
           ],
         ),
       ),
@@ -201,7 +202,7 @@ class _CashScreenState extends State<CashScreen> {
   }
 
   Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: Text(text, style: Theme.of(context).textTheme.titleMedium),
       );
 
@@ -210,7 +211,7 @@ class _CashScreenState extends State<CashScreen> {
     return Card(
       color: _isDriver ? Colors.orange.shade50 : Colors.green.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -220,12 +221,12 @@ class _CashScreenState extends State<CashScreen> {
                   : 'Espèces encaissées pour vous',
               style: theme.textTheme.bodyMedium,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               '${state.total.toStringAsFixed(0)} ${state.currency}',
               style: theme.textTheme.headlineMedium,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               // Dire que ce total ne se règle pas d'un coup : il est dû à
               // plusieurs personnes, et c'est le point qui distingue ce modèle
@@ -252,7 +253,7 @@ class _CashScreenState extends State<CashScreen> {
                 style: theme.textTheme.bodyMedium
                     ?.copyWith(fontWeight: FontWeight.w600),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
                 '${state.pending.length} livraison'
                 '${state.pending.length > 1 ? 's' : ''} en cours. '
@@ -273,7 +274,7 @@ class _CashScreenState extends State<CashScreen> {
                 '${state.currency}',
                 style: theme.textTheme.bodyMedium,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
                 'Déjà prélevée sur vos courses. Facturée séparément par Echango, '
                 'pas depuis cette application.',
@@ -293,7 +294,7 @@ class _CashScreenState extends State<CashScreen> {
   /// attendu. C'est la formulation qui rassure à tort — celle qui coûte le plus
   /// cher, parce qu'on ne va pas vérifier ce qu'un écran déclare tranquille.
   Widget _empty({bool hasPending = false, bool hasUnrecorded = false}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
         child: Column(
           children: [
             Icon(
@@ -301,7 +302,7 @@ class _CashScreenState extends State<CashScreen> {
               size: 56,
               color: Colors.grey[400],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Text(
               _isDriver
                   ? 'Vous ne détenez aucune somme'
@@ -570,7 +571,7 @@ class _BalanceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -600,7 +601,7 @@ class _BalanceCard extends StatelessWidget {
             // qui cesse de recevoir des courses encaissées sans savoir pourquoi
             // conclurait à une panne, ou à une mise à l'écart.
             if (balance.blocked) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
                   Icon(Icons.block, size: 16, color: Colors.red.shade700),
@@ -617,12 +618,12 @@ class _BalanceCard extends StatelessWidget {
                 ],
               ),
             ],
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               _sense(balance),
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
                 if (balance.phone != null)
@@ -670,20 +671,20 @@ class _PendingRemittanceCard extends StatelessWidget {
     return Card(
       color: Colors.amber.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(remittance.formattedAmount,
                 style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               isDriver
                   ? 'Le commerçant déclare vous avoir remis cette somme.'
                   : 'Le transporteur déclare vous avoir remis cette somme.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
                 TextButton(
@@ -760,7 +761,7 @@ class _AmountDialogState extends State<_AmountDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(widget.subtitle, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           TextField(
             controller: _controller,
             keyboardType: TextInputType.number,
@@ -814,9 +815,9 @@ class _CollectionCard extends StatelessWidget {
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -912,7 +913,7 @@ class _PendingCard extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       color: isAnomaly ? Colors.orange.shade50 : null,
       child: ListTile(
         leading: Icon(
@@ -980,9 +981,9 @@ class _CollectionToConfirmCard extends StatelessWidget {
 
     return Card(
       color: Colors.orange.shade50,
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -991,25 +992,25 @@ class _CollectionToConfirmCard extends StatelessWidget {
               '${money(entry.collectedAmount)}',
               style: theme.textTheme.titleSmall,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               'Montant annoncé sur la livraison : ${money(entry.expectedAmount)}.'
               '${entry.hasDiscrepancy ? ' Écart déclaré : '
                   '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? ''}.' : ''}',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               'Tant que vous n\'avez pas confirmé, cette somme n\'entre dans '
               'aucun compte.',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(onPressed: onDispute, child: const Text('Contester')),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 FilledButton(onPressed: onConfirm, child: const Text('Confirmer')),
               ],
             ),
@@ -1044,14 +1045,14 @@ class _UnrecordedBanner extends StatelessWidget {
     return Card(
       color: Colors.orange.shade100,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Icon(Icons.report_problem_outlined, color: Colors.orange.shade900),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
                     '$count livraison${count > 1 ? 's' : ''} '
@@ -1061,7 +1062,7 @@ class _UnrecordedBanner extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               'Montant annoncé : ${total.toStringAsFixed(0)} $currency. '
               'La livraison est terminée, mais le transporteur n\'a pas déclaré '
@@ -1162,7 +1163,7 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
               'Cherchez-le par son nom ou son téléphone.',
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _controller,
               autofocus: true,
@@ -1179,17 +1180,17 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
             ),
             if (_searching)
               const Padding(
-                padding: EdgeInsets.all(16),
+                padding: EdgeInsets.all(AppSpacing.lg),
                 child: Center(child: CircularProgressIndicator()),
               ),
             if (_error != null)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
               ),
             if (_tooMany)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(
                   'Trop de correspondances — précisez le nom.',
                   style: theme.textTheme.bodySmall,
@@ -1197,7 +1198,7 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
               ),
             if (_searched && !_searching && _results.isEmpty && !_tooMany)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(
                   'Aucun transporteur trouvé.',
                   style: theme.textTheme.bodySmall,
