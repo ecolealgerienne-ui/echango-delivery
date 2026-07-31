@@ -330,9 +330,11 @@ void main(List<String> args) {
       stdout.writeln('     $v → ${offScale[v]} fois');
       total += offScale[v]!;
     }
-    // Le total est imprimé, jamais recopié : le 31/07/2026, un décompte noté à
-    // la main dans deux fichiers valait 22 quand la mesure en donnait 25, et
-    // l'écart n'a été vu que parce que deux lectures ont été comparées.
+    // Le total est imprimé, jamais recopié. Le 31/07/2026 un décompte noté à la
+    // main dans deux fichiers a divergé de la mesure ; le corriger a produit un
+    // SECOND chiffre faux, recopié à son tour depuis une sortie tronquée. Deux
+    // erreurs de suite sur la même valeur, par le même geste — d'où la seule
+    // règle qui tienne : ne pas transcrire ce qu'un script sait dire.
     stdout.writeln('     ── $total occurrences sur ${keys.length} valeurs\n');
   }
 
