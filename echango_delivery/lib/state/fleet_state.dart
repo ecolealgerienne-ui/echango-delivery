@@ -121,6 +121,25 @@ class FleetState extends ChangeNotifier {
     }
   }
 
+  /// Créer un conducteur et le rattacher à l'entreprise.
+  Future<String?> addDriver({
+    required String name,
+    required String email,
+    String? phone,
+  }) async {
+    try {
+      await _apiClient.addFleetDriver(name: name, email: email, phone: phone);
+      await load();
+      return null;
+    } on AppException catch (e) {
+      _errorMessage = translateErrorCode(e.code, _locale);
+      return _errorMessage;
+    } catch (_) {
+      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+      return _errorMessage;
+    }
+  }
+
   /// Désigner un conducteur sur une course de l'entreprise.
   Future<String?> assignDriver(String orderId, String driverUuid) async {
     try {

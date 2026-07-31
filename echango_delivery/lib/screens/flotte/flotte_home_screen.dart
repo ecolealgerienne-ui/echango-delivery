@@ -53,19 +53,29 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
     super.dispose();
   }
 
-  String _t(String key) => fleetLabel(key, context.watch<LocaleState>().locale);
-
   @override
   Widget build(BuildContext context) {
+    // ⚠️ La locale est capturée ici, dans `build`, et la fermeture ne retient
+    // qu'elle — jamais le `BuildContext`.
+    //
+    // La version précédente faisait `context.watch<LocaleState>()` dans une
+    // méthode passée aux sous-widgets ET appelée depuis deux callbacks
+    // (`_claim`, `_pickDriver`). `watch` hors d'une phase de build lève chez
+    // Provider : les deux actions principales de l'écran plantaient en debug.
+    // `flutter analyze` ne le voit pas — c'est une règle d'exécution, pas de
+    // typage.
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key) => fleetLabel(key, locale);
+
     final state = context.watch<FleetState>();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_t('fleet.title')),
+        title: Text(t('fleet.title')),
         actions: [
           IconButton(
             icon: const Icon(Icons.account_balance_wallet_outlined),
-            tooltip: _t('fleet.tab.cash'),
+            tooltip: t('fleet.tab.cash'),
             onPressed: () => context.push('/flotte/caisse'),
           ),
           const LanguageSelector(),
@@ -78,24 +88,47 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
           controller: _tabs,
           isScrollable: true,
           tabs: [
-            Tab(text: _t('fleet.tab.orders')),
-            Tab(text: _t('fleet.tab.opportunities')),
-            Tab(text: _t('fleet.tab.drivers')),
+            Tab(text: t('fleet.tab.orders')),
+            Tab(text: t('fleet.tab.opportunities')),
+            Tab(text: t('fleet.tab.drivers')),
           ],
         ),
       ),
       body: state.isLoading && state.orders.isEmpty
-          ? Center(child: Text(_t('fleet.loading')))
-          : RefreshIndicator(
-              onRefresh: () => context.read<FleetState>().load(),
-              child: TabBarView(
-                controller: _tabs,
-                children: [
-                  _OrdersTab(t: _t),
-                  _OpportunitiesTab(t: _t),
-                  _DriversTab(t: _t),
-                ],
-              ),
+          ? Center(child: Text(t('fleet.loading')))
+          : Column(
+              children: [
+                // ⚠️ Sans ce bandeau, une flotte inactive, un jeton expiré ou
+                // un BFF injoignable produisaient l'écran « Aucune course
+                // confiée à votre entreprise » — un message qui affirme un
+                // fait faux. Le même défaut a été corrigé deux fois ailleurs.
+                if (state.errorMessage != null)
+                  Card(
+                    margin: const EdgeInsets.all(12),
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: ListTile(
+                      leading: const Icon(Icons.error_outline),
+                      title: Text(state.errorMessage!),
+                      trailing: TextButton(
+                        onPressed: () => context.read<FleetState>().load(),
+                        child: Text(t('fleet.retry')),
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: () => context.read<FleetState>().load(),
+                    child: TabBarView(
+                      controller: _tabs,
+                      children: [
+                        _OrdersTab(t: t),
+                        _OpportunitiesTab(t: t),
+                        _DriversTab(t: t),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
     );
   }
@@ -199,7 +232,7 @@ class _OpportunitiesTab extends StatelessWidget {
         final claiming = state.claimingOrderId == uuid;
 
         return ListTile(
-          title: Text(_dropoffLabel(order)),
+          title: Text(_dropoffLabel(order, unclaimed: true)),
           subtitle: Text(
             '${_amount(meta, t)}\n${t('fleet.opportunities.masked')}',
           ),
@@ -224,11 +257,27 @@ class _DriversTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<FleetState>();
+
+    // ⚠️ L'action d'ajout est offerte dans les DEUX cas, pas seulement quand la
+    // liste est vide. Sans elle, une entreprise nouvellement inscrite pouvait
+    // prendre des courses et **n'en assigner aucune, définitivement** — la même
+    // impasse que « Mes transporteurs » sans moyen d'en trouver un (29/07).
+    final add = FloatingActionButton.extended(
+      onPressed: () => _addDriver(context, t),
+      icon: const Icon(Icons.person_add_alt),
+      label: Text(t('fleet.drivers.add')),
+    );
+
     if (state.drivers.isEmpty) {
-      return _Empty(title: t('fleet.drivers.empty'), hint: '');
+      return Scaffold(
+        body: _Empty(title: t('fleet.drivers.empty'), hint: t('fleet.drivers.add')),
+        floatingActionButton: add,
+      );
     }
 
-    return ListView.separated(
+    return Scaffold(
+      floatingActionButton: add,
+      body: ListView.separated(
       itemCount: state.drivers.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, i) {
@@ -247,15 +296,91 @@ class _DriversTab extends StatelessWidget {
           ),
         );
       },
+      ),
     );
   }
 }
 
-String _dropoffLabel(Map<String, dynamic> order) {
+/// Créer un conducteur, et le rattacher à l'entreprise.
+///
+/// Le BFF fait les deux d'un geste. Le conducteur devra ensuite recevoir une
+/// invitation pour créer son compte applicatif — il existe chez Fleetbase, il
+/// n'a pas encore d'accès.
+Future<void> _addDriver(BuildContext context, _Translate t) async {
+  final nameCtrl = TextEditingController();
+  final emailCtrl = TextEditingController();
+  final phoneCtrl = TextEditingController();
+
+  final submitted = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(t('fleet.drivers.add')),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: nameCtrl,
+            decoration: InputDecoration(labelText: t('fleet.drivers.name')),
+          ),
+          TextField(
+            controller: emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(labelText: t('fleet.drivers.email')),
+          ),
+          TextField(
+            controller: phoneCtrl,
+            keyboardType: TextInputType.phone,
+            decoration: InputDecoration(labelText: t('fleet.drivers.phone')),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: Text(t('fleet.cancel')),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: Text(t('fleet.confirm')),
+        ),
+      ],
+    ),
+  );
+
+  final name = nameCtrl.text.trim();
+  final email = emailCtrl.text.trim();
+  final phone = phoneCtrl.text.trim();
+  nameCtrl.dispose();
+  emailCtrl.dispose();
+  phoneCtrl.dispose();
+
+  if (submitted != true || !context.mounted) return;
+  if (name.isEmpty || email.isEmpty) return;
+
+  final error = await context
+      .read<FleetState>()
+      .addDriver(name: name, email: email, phone: phone);
+
+  if (!context.mounted || error == null) return;
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+}
+
+/// Où va la course, selon ce que la projection a bien voulu donner.
+///
+/// ⚠️ Sur une course **non réclamée**, `projectPlace(place, 'locality')` pose
+/// `name: 'Destinataire'` **en dur** et met la commune dans `address`. Lire
+/// `name` d'abord donnait donc « Destinataire » sur *toutes* les lignes de
+/// l'onglet « Courses libres » — et le repli sur `locality`, qu'aucune
+/// projection n'émet, n'était jamais atteint.
+String _dropoffLabel(Map<String, dynamic> order, {bool unclaimed = false}) {
   final payload = order['payload'] as Map<String, dynamic>?;
   final dropoff = payload?['dropoff'] as Map<String, dynamic>?;
-  return (dropoff?['name'] ?? dropoff?['locality'] ?? order['public_id'] ?? '—')
-      .toString();
+
+  final value = unclaimed
+      ? (dropoff?['address'] ?? dropoff?['city'] ?? order['public_id'])
+      : (dropoff?['name'] ?? dropoff?['address'] ?? order['public_id']);
+
+  return (value ?? '—').toString();
 }
 
 /// Les deux montants, quand ils existent.

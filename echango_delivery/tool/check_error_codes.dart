@@ -86,8 +86,15 @@ void main() {
   // désynchroniserait dès le premier libellé ajouté à la va-vite — c'est
   // exactement ce qui m'est arrivé deux fois sur les codes d'erreur, le même
   // jour, en insérant une clé par `replace` sur la mauvaise occurrence.
+  // ⚠️ **Pas de `existsSync()` permissif.** La version précédente sautait ce
+  // contrôle en silence si le fichier était renommé — donc un vérificateur qui
+  // annonce « ✅ » sans avoir rien vérifié, ce que ce fichier dénonce en tête.
   final fleetFile = File('lib/i18n/fleet_strings.dart');
-  if (fleetFile.existsSync()) {
+  if (!fleetFile.existsSync()) {
+    stderr.writeln('lib/i18n/fleet_strings.dart introuvable — contrôle impossible.');
+    exit(2);
+  }
+  {
     final fleet = fleetFile.readAsStringSync();
     final fleetFr = fleet.indexOf('const Map<String, String> _fr');
     final fleetAr = fleet.indexOf('const Map<String, String> _ar');
@@ -107,7 +114,11 @@ void main() {
     report('Libellés flotte AR sans équivalent FR',
         labelsAr.toSet().difference(labelsFr.toSet()));
 
-    if (!failed) {
+    // Annoncé indépendamment du reste : les deux contrôles sont distincts, et
+    // masquer celui-ci parce qu'un code d'erreur manque ailleurs ferait croire
+    // qu'il n'a pas tourné.
+    if (labelsFr.toSet().difference(labelsAr.toSet()).isEmpty &&
+        labelsAr.toSet().difference(labelsFr.toSet()).isEmpty) {
       stdout.writeln('✅ ${labelsFr.length} libellés flotte — FR et AR coïncident.');
     }
   }

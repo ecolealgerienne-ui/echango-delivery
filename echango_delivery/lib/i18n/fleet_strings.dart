@@ -140,9 +140,11 @@ const Map<String, String> _ar = {
   'fleet.confirm': 'تأكيد',
 };
 
-/// Les deux tables, exposées pour le vérificateur de clés.
+/// Les deux tables, exposées pour un usage programmatique.
 ///
-/// Sans cet accès, `tool/check_error_codes.dart` devrait analyser le source —
-/// et un vérificateur qui lit du texte plutôt que des données est exactement
-/// celui qui a signalé un manque inexistant le 30/07.
+/// ⚠️ `tool/check_error_codes.dart` **n'utilise pas** cette constante : il
+/// analyse le source par expression régulière, comme il le fait déjà pour les
+/// deux tables d'erreurs. Le commentaire précédent affirmait le contraire —
+/// une description de mécanisme inexistant, qui aurait fait croire à quiconque
+/// renomme ces tables que le vérificateur suivrait.
 const Map<String, Map<String, String>> fleetLabelTables = {'fr': _fr, 'ar': _ar};

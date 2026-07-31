@@ -1121,6 +1121,30 @@ class BffApiClient {
     return list.cast<Map<String, dynamic>>();
   }
 
+  /// Créer un conducteur et le rattacher à cette entreprise.
+  ///
+  /// Le BFF fait les deux d'un geste (`createDriver` puis
+  /// `assignDriverToVendor`). Sans cette route côté app, une entreprise
+  /// nouvellement inscrite pouvait prendre des courses et **n'en assigner
+  /// aucune, définitivement** — l'impasse exacte corrigée le 29/07 sur
+  /// « Mes transporteurs ».
+  Future<Map<String, dynamic>> addFleetDriver({
+    required String name,
+    required String email,
+    String? phone,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/flotte/drivers'),
+      headers: _buildHeaders(),
+      body: jsonEncode({
+        'name': name,
+        'email': email,
+        if (phone != null && phone.isNotEmpty) 'phone': phone,
+      }),
+    );
+    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   /// Désigner un conducteur sur une course de l'entreprise.
   Future<Map<String, dynamic>> assignFleetDriver(String orderId, String driverUuid) async {
     final response = await _httpClient.post(
