@@ -480,6 +480,60 @@ class _AddDriverDialogState extends State<_AddDriverDialog> {
   }
 }
 
+/// Où va la course.
+///
+/// ⚠️ **Plus de branche `unclaimed`** (31/07/2026). L'expurgation posait
+/// `name: 'Destinataire'` en dur sur une course libre, ce qui titrait toutes les
+/// lignes du même mot ; il fallait donc lire `address` d'abord dans ce cas-là et
+/// `name` dans l'autre. Depuis que le serveur ne masque plus que l'identité,
+/// `name` est **absent** sur une course libre au lieu d'être remplacé — la
+/// chaîne de replis suffit, et une seule règle vaut pour les deux onglets.
+///
+/// L'ordre a son importance : `name` porte le libellé du carnet d'adresses,
+/// plus parlant qu'une adresse formatée quand il existe.
+String _dropoffLabel(Map<String, dynamic> order) {
+  final payload = order['payload'] as Map<String, dynamic>?;
+  final dropoff = payload?['dropoff'] as Map<String, dynamic>?;
+
+  for (final candidate in [
+    dropoff?['name'],
+    dropoff?['address'],
+    dropoff?['street1'],
+    dropoff?['city'],
+    order['public_id'],
+  ]) {
+    // ⚠️ `??` ne suffit pas : `address` vaut `''` quand le commerçant a saisi
+    // une adresse sans passer par la carte, et une chaîne vide n'est pas nulle.
+    // La ligne restait alors titrée par du blanc.
+    if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
+  }
+  return '—';
+}
+
+/// Les deux montants, quand ils existent.
+///
+/// ⚠️ Ils viennent des **champs personnalisés** recomposés par le serveur, et
+/// non du `meta` brut de Fleetbase : c'est le défaut D6, corrigé au Lot 2. Sans
+/// cette recomposition, une entreprise décidait de prendre une course sans voir
+/// ni ce qu'elle rapporte ni ce qu'il faudra encaisser.
+String _amount(Map<String, dynamic> meta, _Translate t) {
+  final price = meta['price'];
+  final cod = meta['cod_amount'];
+  final parts = <String>[];
+  if (price != null) parts.add('${t('fleet.orders.price')} : $price');
+  if (cod != null) parts.add('${t('fleet.orders.cod')} : $cod');
+  return parts.isEmpty ? '' : '\n${parts.join(' — ')}';
+}
+
+Future<void> _claim(BuildContext context, String uuid, _Translate t) async {
+  final error = await context.read<FleetState>().claim(uuid);
+  if (!context.mounted) return;
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(error ?? t('fleet.opportunities.taken'))),
+  );
+}
+
 /// Où mène cette ligne, si elle mène quelque part.
 bool _openable(Map<String, dynamic> order) {
   final uuid = order['uuid'];
