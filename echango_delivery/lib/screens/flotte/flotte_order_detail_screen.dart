@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'driver_picker.dart';
 import '../../i18n/fleet_strings.dart';
+import '../../models/fleet_order_state.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/fleet_state.dart';
@@ -341,7 +342,15 @@ class _Body extends StatelessWidget {
         _Section(
           title: t('fleet.detail.section.state'),
           rows: [
-            _Row(t('fleet.orders.status'), order['status']?.toString()),
+            // ⚠️ L'état composé, et non `status` brut. « dispatched » ne disait
+            // ni que la course était prise, ni qu'elle attendait un démarrage,
+            // ni si un autre transporteur pouvait encore la prendre — cette
+            // dernière question se lit sur `adhoc`, qui n'était affiché nulle
+            // part. Repli sur le statut brut si l'état n'est pas reconnu.
+            _Row(
+              t('fleet.orders.status'),
+              _state(order, t) ?? order['status']?.toString(),
+            ),
             _Row(t('fleet.detail.scheduled'), order['scheduled_at']?.toString()),
             _Row(t('fleet.detail.distance'), _distance(order['distance'], t)),
             _Row(t('fleet.detail.tracking'), _tracking(order['tracking_number'])),
@@ -549,6 +558,13 @@ class _Section extends StatelessWidget {
       ),
     );
   }
+}
+
+/// L'état de la course, ou `null` s'il n'est pas reconnu — auquel cas
+/// l'appelant retombe sur le statut brut plutôt que sur une phrase inventée.
+String? _state(Map<String, dynamic> order, _Translate t) {
+  final key = fleetOrderStateKey(order);
+  return key == null ? null : t(key);
 }
 
 /// Le conducteur désigné, tel que la projection flotte le sert.

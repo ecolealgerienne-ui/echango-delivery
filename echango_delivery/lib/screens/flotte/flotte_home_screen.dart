@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'driver_picker.dart';
 import 'memberships_tab.dart';
 import '../../i18n/fleet_strings.dart';
+import '../../models/fleet_order_state.dart';
 import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
@@ -196,11 +197,15 @@ class _OrdersTab extends StatelessWidget {
 
         return ListTile(
           title: Text(_dropoffLabel(order)),
-          subtitle: Text(
-            '${t('fleet.orders.status')} : ${order['status'] ?? '—'}\n'
-            '${hasDriver ? t('fleet.orders.assigned_to') : t('fleet.orders.unassigned')}'
-            '${_amount(meta, t)}',
-          ),
+          // ⚠️ Une seule ligne d'état, composée, à la place de deux.
+          //
+          // L'ancienne version affichait « Statut : dispatched » puis
+          // « Conducteur » ou « Aucun conducteur désigné » — deux lignes dont
+          // la première était en anglais et dont la seconde répétait à moitié
+          // la première. Le libellé composé dit la même chose en français, et
+          // ajoute ce qu'aucune des deux ne disait : que la course attend un
+          // démarrage, ou qu'elle est encore réclamable par quelqu'un d'autre.
+          subtitle: Text('${_stateLabel(order, t)}${_amount(meta, t)}'),
           isThreeLine: true,
           // La ligne mène à la fiche. Sans elle, l'entreprise ne voyait jamais
           // ni l'adresse, ni les instructions, ni le contact d'une course
@@ -508,6 +513,17 @@ String _dropoffLabel(Map<String, dynamic> order) {
     if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
   }
   return '—';
+}
+
+/// L'état de la course, en une phrase.
+///
+/// ⚠️ Retombe sur le **statut brut** quand l'état n'est pas reconnu, plutôt que
+/// sur une phrase par défaut : afficher « en cours » sur un statut qu'on ignore,
+/// c'est affirmer un fait qu'on n'a pas.
+String _stateLabel(Map<String, dynamic> order, _Translate t) {
+  final key = fleetOrderStateKey(order);
+  if (key != null) return t(key);
+  return '${t('fleet.orders.status')} : ${order['status'] ?? '—'}';
 }
 
 /// Les deux montants, quand ils existent.

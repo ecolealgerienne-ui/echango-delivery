@@ -66,6 +66,20 @@ const Map<String, String> _fr = {
   'fleet.orders.status': 'Statut',
   'fleet.orders.refresh': 'Actualiser',
 
+  // ── État d'une course, composé de quatre champs ─────────────────────────
+  //
+  // ⚠️ Ces libellés remplacent l'affichage du `status` brut. « dispatched » ne
+  // disait ni que la course était prise, ni qu'elle attendait un démarrage, ni
+  // si quelqu'un d'autre pouvait encore la prendre. Voir
+  // `models/fleet_order_state.dart` pour la composition.
+  'fleet.state.draft': 'Non publiée par le commerçant',
+  'fleet.state.broadcast': 'Diffusée — en attente d’un preneur',
+  'fleet.state.taken': 'Prise — aucun conducteur désigné',
+  'fleet.state.awaiting_start': 'Conducteur désigné — en attente de démarrage',
+  'fleet.state.enroute': 'En cours de livraison',
+  'fleet.state.completed': 'Livrée',
+  'fleet.state.canceled': 'Annulée',
+
   // ── Opportunités ────────────────────────────────────────────────────────
   'fleet.opportunities.empty': 'Aucune course libre pour le moment.',
   'fleet.opportunities.empty.hint':
@@ -215,6 +229,14 @@ const Map<String, String> _ar = {
   'fleet.orders.cod': 'المبلغ المطلوب عند الباب',
   'fleet.orders.status': 'الحالة',
   'fleet.orders.refresh': 'تحديث',
+
+  'fleet.state.draft': 'لم ينشرها التاجر',
+  'fleet.state.broadcast': 'منشورة — في انتظار من يأخذها',
+  'fleet.state.taken': 'مأخوذة — لم يُعيَّن سائق',
+  'fleet.state.awaiting_start': 'تم تعيين سائق — في انتظار الانطلاق',
+  'fleet.state.enroute': 'قيد التوصيل',
+  'fleet.state.completed': 'تم التسليم',
+  'fleet.state.canceled': 'ملغاة',
 
   'fleet.opportunities.empty': 'لا توجد رحلات متاحة حالياً.',
   'fleet.opportunities.empty.hint': 'تظهر هنا الرحلات المنشورة وغير المأخوذة بعد.',
