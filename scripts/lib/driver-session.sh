@@ -19,7 +19,9 @@
 # Entrées (variables d'environnement) :
 #   BFF_URL   — adresse du BFF
 #   PASSWORD  — mot de passe des comptes de test
-#   EMAIL     — email souhaité pour un nouveau compte (facultatif)
+#   DRIVER_EMAIL_HINT — email souhaité pour un nouveau compte transporteur
+#                       (facultatif). Volontairement distinct de `EMAIL`,
+#                       qui ne veut pas dire la même chose d'un script à l'autre.
 #
 # Sorties :
 #   DRIVER_TOKEN         — JWT transporteur
@@ -211,7 +213,17 @@ EOF
     return 1
   fi
 
-  DRIVER_EMAIL="${EMAIL:-transporteur-test-$RANDOM@echango.local}"
+  # ⚠️ **Jamais la variable ambiante `EMAIL`**, dont le sens dépend de
+  # l'appelant : elle désigne le conducteur dans les scripts transporteur, et
+  # le COMMERÇANT dans `test-parcours-argent.sh`. Le compte transporteur y
+  # naissait donc avec l'email du commerçant.
+  #
+  # Ce n'est pas cosmétique. `POST /auth/login` résout le profil depuis
+  # l'email : deux comptes de personas différents partageant email ET mot de
+  # passe font répondre `requiresRoleSelection` sans jeton. La connexion
+  # commerçant échouait alors — précisément dans le mode de réutilisation que
+  # le script documente (`EMAIL= PASSWORD= réutilise un commerçant existant`).
+  DRIVER_EMAIL="${DRIVER_EMAIL_HINT:-transporteur-test-$RANDOM@echango.local}"
   local register
   register=$(curl -sS -X POST "$BFF_URL/auth/transporteur/register" \
     -H 'Content-Type: application/json' \

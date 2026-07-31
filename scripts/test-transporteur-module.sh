@@ -58,6 +58,8 @@ echo ""
 # Séquence partagée avec test-driver-auth.sh : elle était dupliquée ici, et le
 # passage à l'inscription sur invitation n'y avait pas été répercuté — ce
 # script échouait donc avant d'avoir testé le module qu'il valide.
+# Ici `EMAIL` désigne bien le conducteur : on le passe explicitement.
+DRIVER_EMAIL_HINT="$EMAIL"
 obtain_driver_token "$DRIVER_UUID" \
   || fail "impossible d'obtenir un JWT driver" "$DRIVER_SESSION_ERROR"
 
