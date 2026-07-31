@@ -10,8 +10,9 @@
 // divergence. Un chantier de centralisation sans garde n'est pas un chantier,
 // c'est un instantané.
 //
-// **Il RECENSE**, sans échouer, les valeurs hors barème — 22 au 31/07/2026 :
-// 1, 2, 6, 10, 14, 20, 36, 48. Les faire converger déplacerait des pixels : c'est
+// **Il RECENSE**, sans échouer, les valeurs hors barème (1, 2, 6, 10, 14, 20,
+// 36, 48). Leur nombre est imprimé, pas écrit ici : un décompte recopié à la
+// main a déjà divergé de la mesure. Les faire converger déplacerait des pixels — c'est
 // une décision de design, elle se prend à l'écran, pas dans un script. Le
 // recensement existe pour que la question reste posée au lieu de se dissoudre.
 //
@@ -324,10 +325,15 @@ void main(List<String> args) {
     final keys = offScale.keys.toList()..sort();
     stdout.writeln('ℹ️  Hors barème, laissés littéraux — les faire converger '
         'est une décision de design, pas un renommage :');
+    var total = 0;
     for (final v in keys) {
       stdout.writeln('     $v → ${offScale[v]} fois');
+      total += offScale[v]!;
     }
-    stdout.writeln('');
+    // Le total est imprimé, jamais recopié : le 31/07/2026, un décompte noté à
+    // la main dans deux fichiers valait 22 quand la mesure en donnait 25, et
+    // l'écart n'a été vu que parce que deux lectures ont été comparées.
+    stdout.writeln('     ── $total occurrences sur ${keys.length} valeurs\n');
   }
 
   if (inScale.isEmpty) {

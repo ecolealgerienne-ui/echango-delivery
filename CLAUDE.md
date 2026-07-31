@@ -142,7 +142,7 @@ Le critère n'est pas « est-ce un littéral » — `maxLines: 1` décrit la nat
 
 ⚠️ **Ce que ces deux scripts ont appris, et qui vaut plus que le lot** : les deux se sont trompés, et **aucune des erreurs n'a été trouvée en les relisant**. `check_server_rules` concluait à l'accord quand la déclaration d'un champ ne matchait pas (`readonly password:`, `password!:`) — un `@MinLength(12)` serveur passait pour un 8 — et acceptait un décorateur mis en commentaire ; `check_spacing` lisait `5` dans `EdgeInsets.all(16.5)`. Toutes trouvées en **faisant tourner le vérificateur sur des mutations**. Un vérificateur au vert n'a montré que sa capacité à dire oui ; il doit prouver qu'il sait dire non, et `--self-test` est là pour ça.
 
-⚠️ **Dette restante** : les 22 littéraux hors barème (1, 2, 6, 10, 14, 20, 36, 48) et les valeurs métier laissées délibérément littérales — bornes serveur sans copie côté app (`@Max(500000)` sur les prix, `@MaxLength(60)` sur les recherches). L'absence ne ment pas, contrairement à une copie divergente ; c'est un choix, pas un oubli.
+⚠️ **Dette restante** : les littéraux hors barème (1, 2, 6, 10, 14, 20, 36, 48 — une vingtaine, `check_spacing.dart` en imprime le compte exact plutôt que de le faire recopier) et les valeurs métier laissées délibérément littérales — bornes serveur sans copie côté app (`@Max(500000)` sur les prix, `@MaxLength(60)` sur les recherches). L'absence ne ment pas, contrairement à une copie divergente ; c'est un choix, pas un oubli.
 
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
@@ -357,7 +357,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **Lot 2, les valeurs d'apparence** : 320 sites vers `AppSpacing`/`AppRadius`, `app_theme.dart` compris. **Vérifié comme un renommage pur** — en resubstituant chaque jeton par sa valeur et en retirant la ligne d'import, chaque fichier redevient sa version précédente au caractère près. C'est la seule preuve qui distingue un renommage d'une modification, et sans elle un lot de cette taille est impossible à relire.
 
-  ⚠️ **Ce qui reste, et qui est un choix** : 22 littéraux hors barème, laissés parce que les glisser vers le jeton voisin déplacerait des pixels — décision de design, à prendre à l'écran. `check_spacing.dart` les recense pour que la question reste posée.
+  ⚠️ **Ce qui reste, et qui est un choix** : une vingtaine de littéraux hors barème, laissés parce que les glisser vers le jeton voisin déplacerait des pixels — décision de design, à prendre à l'écran. `check_spacing.dart` les recense, et **imprime leur compte** pour qu'il ne soit plus recopié : la version manuscrite disait 22 quand la mesure en donnait 25.
 
   **Pourquoi cet ordre** : les jetons d'apparence sont un remplacement mécanique et vérifiable par l'analyseur ; les composants s'écrivent naturellement avec ces jetons une fois qu'ils existent ; et la revue des invariants de fonctions demande un jugement au cas par cas, donc du temps et de l'attention, qu'il vaut mieux dépenser en dernier. ⚠️ **Aucun des trois n'est vérifiable dans ce bac à sable** (pas de toolchain Flutter) : chacun demande un `flutter analyze` et un passage à l'écran côté utilisateur, par petits lots.
 
