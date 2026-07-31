@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/auth_state.dart';
+import '../../config/app_rules.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -37,11 +38,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       return;
     }
-    // Contrainte serveur (MerchantRegisterDto) : la vérifier ici évite un
-    // aller-retour pour un message que l'on connaît d'avance.
-    if (password.length < 8) {
+    // Contrainte serveur : la vérifier ici évite un aller-retour pour un
+    // message que l'on connaît d'avance. La valeur vit dans `ServerRules`, et
+    // `tool/check_server_rules.dart` vérifie qu'elle n'a pas dérivé du DTO.
+    if (password.length < ServerRules.passwordMinLength) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Le mot de passe doit faire au moins 8 caractères')),
+        // `const` conservé : `passwordMinLength` est une constante de
+        // compilation, donc l'interpolation l'est aussi. Le retirer aurait
+        // déclenché `prefer_const_constructors`, activé dans
+        // `analysis_options.yaml`.
+        const SnackBar(
+          content: Text('Le mot de passe doit faire au moins '
+              '${ServerRules.passwordMinLength} caractères'),
+        ),
       );
       return;
     }

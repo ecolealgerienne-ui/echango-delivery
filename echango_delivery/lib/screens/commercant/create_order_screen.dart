@@ -8,6 +8,7 @@ import '../../models/vehicle_type.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
+import '../../config/app_rules.dart';
 
 /// Formulaire de demande de livraison.
 ///
@@ -818,9 +819,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       context: context,
       initialDate: _scheduledAt ?? now,
       firstDate: now,
-      // Deux semaines : au-delà, une livraison programmée relève de la
-      // planification, pas de ce formulaire.
-      lastDate: now.add(const Duration(days: 14)),
+      // Décision d'interface, pas règle métier : `CreateOrderDto.scheduledAt`
+      // n'est qu'un `@IsISO8601()` côté serveur, qui accepterait une date à
+      // deux ans.
+      lastDate: now.add(AppRules.schedulingHorizon),
     );
     if (date == null || !mounted) return;
 

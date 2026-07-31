@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
+import '../../config/app_rules.dart';
 
 /// Sélection d'un point sur la carte, avec recherche d'adresse.
 ///
@@ -141,11 +142,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   /// quota partagé de Nominatim, que le BFF sérialise à une par seconde.
   void _onSearchChanged(String value) {
     _debounce?.cancel();
-    if (value.trim().length < 3) {
+    if (value.trim().length < ServerRules.addressSearchMinLength) {
       setState(() => _suggestions = []);
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 600), () => _search(value));
+    _debounce = Timer(AppRules.searchDebounce, () => _search(value));
   }
 
   Future<void> _search(String value) async {

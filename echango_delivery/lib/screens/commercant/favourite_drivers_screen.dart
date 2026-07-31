@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/merchant_order_state.dart';
+import '../../config/app_rules.dart';
 
 /// Transporteurs habituels du commerçant.
 ///
@@ -56,7 +57,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
 
   Future<void> _search() async {
     final query = _searchController.text.trim();
-    if (query.length < 3) {
+    if (query.length < ServerRules.driverSearchMinLength) {
       setState(() {
         _searched = false;
         _results = [];

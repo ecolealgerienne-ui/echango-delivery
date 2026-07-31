@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/fleet_state.dart';
+import '../../config/app_rules.dart';
 
 /// Les rattachements de l'entreprise, et le moyen d'en demander un nouveau.
 ///
@@ -62,9 +63,9 @@ class _MembershipsTabState extends State<MembershipsTab> {
 
   Future<void> _runSearch() async {
     final query = _search.text.trim();
-    // Trois caractères : la contrainte du serveur (`DriverSearchDto`). La
-    // reproduire ici évite un aller-retour pour une erreur qu'on connaît déjà.
-    if (query.length < 3) return;
+    // La contrainte vient du serveur et vit à un seul endroit : la reproduire
+    // ici évite un aller-retour pour une erreur qu'on connaît d'avance.
+    if (query.length < ServerRules.driverSearchMinLength) return;
 
     setState(() {
       _searching = true;

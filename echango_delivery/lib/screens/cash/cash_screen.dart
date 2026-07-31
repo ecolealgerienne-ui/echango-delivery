@@ -7,6 +7,7 @@ import '../../models/cash.dart';
 import '../../models/merchant_order.dart' show KnownDriver, orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
+import '../../config/app_rules.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
 ///
@@ -159,14 +160,18 @@ class _CashScreenState extends State<CashScreen> {
             if (state.collections.isNotEmpty) ...[
               const SizedBox(height: 16),
               _sectionTitle('Détail des encaissements'),
-              for (final c in state.collections.take(20))
+              for (final c in state.collections.take(AppRules.cashCollectionsPreview))
                 _CollectionCard(entry: c, isDriver: _isDriver),
-              if (state.collections.length > 20)
+              if (state.collections.length > AppRules.cashCollectionsPreview)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    '20 dernières livraisons encaissées sur '
-                    '${state.collections.length}.',
+                    // ⚠️ Le nombre était écrit en dur ICI AUSSI. Trois
+                    // occurrences du même 20 dans le même bloc : en changer une
+                    // seule aurait fait mentir l'écran — vingt-cinq lignes sous
+                    // un titre en annonçant vingt.
+                    '${AppRules.cashCollectionsPreview} dernières livraisons '
+                    'encaissées sur ${state.collections.length}.',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -1111,7 +1116,14 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
 
   Future<void> _search() async {
     final query = _controller.text.trim();
-    if (query.length < 2) return;
+    // ⚠️ **Valait 2, alors que le serveur exige 3.**
+    //
+    // Une saisie de deux caractères passait donc cette garde et se faisait
+    // refuser par le serveur : l'utilisateur voyait une erreur de validation sur
+    // une recherche que l'application venait d'accepter. Trois écrans
+    // reproduisaient cette règle, et celui-ci était le seul à se tromper —
+    // corrigé le 31/07/2026 en instruisant le chantier des valeurs.
+    if (query.length < ServerRules.driverSearchMinLength) return;
 
     setState(() {
       _searching = true;
