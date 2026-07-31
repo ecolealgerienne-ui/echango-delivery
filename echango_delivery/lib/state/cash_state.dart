@@ -1,13 +1,12 @@
 import 'package:flutter/foundation.dart';
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../models/cash.dart';
 // `DriverSearchResult` / `KnownDriver` : l'annuaire est celui du commerçant,
 // et il sert ici à désigner qui a effectué une course non attribuée.
 import '../models/merchant_order.dart' show DriverSearchResult;
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import '../errors/error_message.dart';
 
 /// Registre de caisse, partagé par les deux profils.
 ///
@@ -56,7 +55,6 @@ class CashState extends ChangeNotifier {
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   CashLedger? get ledger => _ledger;
   List<CashRemittance> get remittances => _remittances;
@@ -160,10 +158,8 @@ class CashState extends ChangeNotifier {
       _pending = isDriver || isFleet
           ? const PendingCollections()
           : await _apiClient.getMerchantPendingCollections();
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -270,11 +266,8 @@ class CashState extends ChangeNotifier {
       await action();
       await load();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;

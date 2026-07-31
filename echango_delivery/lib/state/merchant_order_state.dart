@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import '../errors/error_message.dart';
 
 class MerchantOrderState extends ChangeNotifier {
   final BffApiClient _apiClient;
@@ -24,7 +23,6 @@ class MerchantOrderState extends ChangeNotifier {
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   List<MerchantOrder> get orders => _orders;
   List<MerchantOrder> get activeOrders => _matching.where((o) => !o.isFinished).toList();
@@ -96,10 +94,8 @@ class MerchantOrderState extends ChangeNotifier {
       _orders = page.orders;
       _totalOrders = page.total;
       _loadedPages = 1;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -125,10 +121,8 @@ class MerchantOrderState extends ChangeNotifier {
       _orders = [..._orders, ...page.orders];
       _totalOrders = page.total;
       _loadedPages++;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _loadingMore = false;
       notifyListeners();
@@ -163,8 +157,12 @@ class MerchantOrderState extends ChangeNotifier {
       await _apiClient.addFavouriteDriver(driver.driverUuid, name: driver.name);
       await loadFavourites();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      // ⚠️ `catch` et non `on AppException` : `addFavouriteDriver` appelle
+      // `_httpClient` sans envelopper ses erreurs, donc un `SocketException`
+      // traversait ce bloc sans être attrapé — l'écran restait muet et
+      // l'exception remontait non gérée.
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -175,8 +173,8 @@ class MerchantOrderState extends ChangeNotifier {
       await _apiClient.removeFavouriteDriver(favouriteId);
       await loadFavourites();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -196,10 +194,8 @@ class MerchantOrderState extends ChangeNotifier {
       } catch (_) {
         _tracking = null;
       }
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -219,12 +215,8 @@ class MerchantOrderState extends ChangeNotifier {
   Future<Map<String, dynamic>?> loadOrderTemplate(String id) async {
     try {
       return await _apiClient.getMerchantOrderTemplate(id);
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      notifyListeners();
-      return null;
-    } catch (_) {
-      _errorMessage = _genericError;
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return null;
     }
@@ -306,11 +298,8 @@ class MerchantOrderState extends ChangeNotifier {
       final response = await _apiClient.createMerchantOrder(body);
       await loadOrders();
       return response['id'] as String?;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return null;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return null;
     } finally {
       _isLoading = false;
@@ -330,11 +319,8 @@ class MerchantOrderState extends ChangeNotifier {
         await selectOrder(id);
       }
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -353,11 +339,8 @@ class MerchantOrderState extends ChangeNotifier {
         await selectOrder(id);
       }
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -369,8 +352,10 @@ class MerchantOrderState extends ChangeNotifier {
     try {
       _addresses = await _apiClient.getMerchantAddresses();
       notifyListeners();
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      // Même raison : `getMerchantAddresses` ne passe pas par une enveloppe,
+      // et un carnet illisible ne doit pas faire remonter une exception nue.
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
     }
   }
@@ -415,11 +400,8 @@ class MerchantOrderState extends ChangeNotifier {
       );
       await loadAddresses();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -484,11 +466,8 @@ class MerchantOrderState extends ChangeNotifier {
       await action();
       await loadAddresses();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../errors/app_error.dart';
-import '../../errors/error_translator.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../services/bff_api_client.dart';
 import '../../state/locale_state.dart';
@@ -10,6 +8,7 @@ import '../../widgets/language_selector.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../errors/error_message.dart';
 
 /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
 /// demandent.
@@ -63,16 +62,10 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
         _fleets = fleets;
         _loading = false;
       });
-    } on AppException catch (e) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = translateErrorCode(e.code, locale);
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _error = translateErrorCode(AppError.unknown, locale);
+        _error = messageForError(e, locale);
         _loading = false;
       });
     }
@@ -106,13 +99,9 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
 
     try {
       await context.read<BffApiClient>().leaveFleet(membershipId);
-    } on AppException catch (e) {
+    } catch (e) {
       if (!mounted) return;
-      showAppError(context, translateErrorCode(e.code, locale));
-      return;
-    } catch (_) {
-      if (!mounted) return;
-      showAppError(context, translateErrorCode(AppError.unknown, locale));
+      showAppError(context, messageForError(e, locale));
       return;
     }
 
@@ -123,13 +112,9 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
     final locale = context.read<LocaleState>().locale;
     try {
       await context.read<BffApiClient>().respondToMembership(membershipId, accept: accept);
-    } on AppException catch (e) {
+    } catch (e) {
       if (!mounted) return;
-      showAppError(context, translateErrorCode(e.code, locale));
-      return;
-    } catch (_) {
-      if (!mounted) return;
-      showAppError(context, translateErrorCode(AppError.unknown, locale));
+      showAppError(context, messageForError(e, locale));
       return;
     }
 

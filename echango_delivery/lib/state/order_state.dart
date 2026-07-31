@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../models/order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import '../errors/error_message.dart';
 
 /// État de gestion des commandes pour le driver.
 class OrderState extends ChangeNotifier {
@@ -25,7 +24,6 @@ class OrderState extends ChangeNotifier {
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   List<Order> get orders => _orders;
   Order? get selectedOrder => _selectedOrder;
@@ -76,10 +74,8 @@ class OrderState extends ChangeNotifier {
       _orders = buckets['active'] ?? [];
       _adhocOrders = buckets['adhoc'] ?? [];
       _historyOrders = buckets['history'] ?? [];
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -109,10 +105,8 @@ class OrderState extends ChangeNotifier {
       } else {
         _nextActivities = [];
       }
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -142,11 +136,8 @@ class OrderState extends ChangeNotifier {
       await selectOrder(orderId);
       await loadOrders();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -206,11 +197,8 @@ class OrderState extends ChangeNotifier {
       _nextActivities = [];
       await loadOrders();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -234,11 +222,8 @@ class OrderState extends ChangeNotifier {
     try {
       await _apiClient.captureProofPhoto(orderId, [photoBase64]);
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;

@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Locale;
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import '../errors/error_message.dart';
 
 /// Le résultat d'une lecture de fiche : la course, ou la raison de son absence.
 class FleetOrderDetail {
@@ -100,10 +99,8 @@ class FleetState extends ChangeNotifier {
         _driversUnavailable = true;
         return <Map<String, dynamic>>[];
       });
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _locale);
-    } catch (_) {
-      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -133,11 +130,8 @@ class FleetState extends ChangeNotifier {
       // affiche ce que le serveur dit et non ce qu'on suppose.
       await load();
       return null;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _locale);
-      return _errorMessage;
-    } catch (_) {
-      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
       return _errorMessage;
     } finally {
       _claimingOrderId = null;
@@ -156,10 +150,8 @@ class FleetState extends ChangeNotifier {
           ? await _apiClient.getFleetOpportunityDetail(orderId)
           : await _apiClient.getFleetOrderDetail(orderId);
       return FleetOrderDetail(order: order);
-    } on AppException catch (e) {
-      return FleetOrderDetail(error: translateErrorCode(e.code, _locale));
-    } catch (_) {
-      return FleetOrderDetail(error: translateErrorCode(AppError.unknown, _locale));
+    } catch (e) {
+      return FleetOrderDetail(error: messageForError(e, _locale));
     }
   }
 
@@ -173,11 +165,8 @@ class FleetState extends ChangeNotifier {
       await _apiClient.addFleetDriver(name: name, email: email, phone: phone);
       await load();
       return null;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _locale);
-      return _errorMessage;
-    } catch (_) {
-      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
       return _errorMessage;
     }
   }
@@ -194,12 +183,10 @@ class FleetState extends ChangeNotifier {
     try {
       final results = await _apiClient.searchNetworkDrivers(query);
       return (results: results, error: null);
-    } on AppException catch (e) {
-      return (results: <Map<String, dynamic>>[], error: translateErrorCode(e.code, _locale));
-    } catch (_) {
+    } catch (e) {
       return (
         results: <Map<String, dynamic>>[],
-        error: translateErrorCode(AppError.unknown, _locale),
+        error: messageForError(e, _locale),
       );
     }
   }
@@ -210,10 +197,8 @@ class FleetState extends ChangeNotifier {
       await _apiClient.requestDriverMembership(driverUuid);
       await loadMemberships();
       return null;
-    } on AppException catch (e) {
-      return translateErrorCode(e.code, _locale);
-    } catch (_) {
-      return translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      return messageForError(e, _locale);
     }
   }
 
@@ -227,12 +212,9 @@ class FleetState extends ChangeNotifier {
     try {
       _memberships = await _apiClient.getFleetMemberships();
       _membershipsUnavailable = false;
-    } on AppException catch (e) {
+    } catch (e) {
       _membershipsUnavailable = true;
-      _errorMessage = translateErrorCode(e.code, _locale);
-    } catch (_) {
-      _membershipsUnavailable = true;
-      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+      _errorMessage = messageForError(e, _locale);
     }
     notifyListeners();
   }
@@ -243,10 +225,8 @@ class FleetState extends ChangeNotifier {
       await load();
       await loadMemberships();
       return null;
-    } on AppException catch (e) {
-      return translateErrorCode(e.code, _locale);
-    } catch (_) {
-      return translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      return messageForError(e, _locale);
     }
   }
 
@@ -256,11 +236,8 @@ class FleetState extends ChangeNotifier {
       await _apiClient.assignFleetDriver(orderId, driverUuid);
       await load();
       return null;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _locale);
-      return _errorMessage;
-    } catch (_) {
-      _errorMessage = translateErrorCode(AppError.unknown, _locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _locale);
       return _errorMessage;
     }
   }

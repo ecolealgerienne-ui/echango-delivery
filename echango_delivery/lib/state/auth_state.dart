@@ -2,9 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import '../errors/error_message.dart';
 
 /// Profil de l'utilisateur connecté.
 ///
@@ -163,11 +163,8 @@ class AuthState extends ChangeNotifier {
     try {
       await action();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = translateErrorCode(AppError.unknown, _localeState.locale);
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
