@@ -12,6 +12,7 @@ import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/error_banner.dart';
 import 'status_colors.dart';
 import '../../widgets/section_card.dart';
 
@@ -246,18 +247,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
         // Sans ça, un échec de chargement est indiscernable d'une liste
         // réellement vide — c'est exactement ce qui rend un premier lancement
         // impossible à diagnostiquer.
-        if (errorMessage != null)
-          Container(
-            width: double.infinity,
-            color: Theme.of(context).colorScheme.errorContainer,
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Text(
-              errorMessage,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-            ),
-          ),
+        if (errorMessage != null) AppErrorBanner(message: errorMessage),
         TabBar(
           controller: _tabController,
           // Les trois catégories de la spec §4.1. « Opportunités » remplace

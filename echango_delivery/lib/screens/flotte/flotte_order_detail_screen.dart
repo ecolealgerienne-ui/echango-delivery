@@ -11,6 +11,7 @@ import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
 
 /// La fiche d'une course, vue par une entreprise de transport.
@@ -302,16 +303,10 @@ class _Body extends StatelessWidget {
         if (error != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
-            child: Card(
-              color: Theme.of(context).colorScheme.errorContainer,
-              child: ListTile(
-                leading: const Icon(Icons.error_outline),
-                title: Text(error!),
-                trailing: TextButton(
-                  onPressed: retry,
-                  child: Text(t('fleet.retry')),
-                ),
-              ),
+            child: AppNotice.error(
+              message: error!,
+              onRetry: retry,
+              retryLabel: t('fleet.retry'),
             ),
           ),
 
@@ -322,12 +317,9 @@ class _Body extends StatelessWidget {
         if (order['redacted'] == true)
           Padding(
             padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 0),
-            child: Card(
-              color: Theme.of(context).colorScheme.secondaryContainer,
-              child: ListTile(
-                leading: const Icon(Icons.visibility_off_outlined),
-                title: Text(t('fleet.opportunities.masked')),
-              ),
+            child: AppNotice.info(
+              icon: Icons.visibility_off_outlined,
+              message: t('fleet.opportunities.masked'),
             ),
           ),
 

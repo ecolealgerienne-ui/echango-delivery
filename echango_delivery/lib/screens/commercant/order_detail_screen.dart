@@ -19,6 +19,7 @@ import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/consultation_map.dart';
+import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -135,8 +136,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               );
             }
 
-            final scheme = Theme.of(context).colorScheme;
-
             return SingleChildScrollView(
               padding: const EdgeInsets.all(AppSpacing.lg),
               child: ConstrainedBox(
@@ -187,11 +186,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // contraire ferait croire à une recherche en cours là où
                     // rien n'a démarré.
                     if (order.isDraft)
-                      _banner(
-                        scheme.secondaryContainer,
-                        Icons.edit_note,
-                        'Brouillon : aucun transporteur n\'est sollicité tant '
-                        'que vous ne publiez pas cette livraison.',
+                      const AppNotice.info(
+                        icon: Icons.edit_note,
+                        message:
+                            'Brouillon : aucun transporteur n\'est sollicité '
+                            'tant que vous ne publiez pas cette livraison.',
                       )
                     // ⚠️ `isWaitingDispatch` ne suffit pas. Le statut Fleetbase
                     // reste `dispatched` **après** l'affectation d'un
@@ -204,26 +203,28 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // Rien n'est dérivé ni mémorisé ici : deux champs servis
                     // par Fleetbase, lus ensemble pour choisir une phrase.
                     else if (order.isWaitingDispatch && order.driverName == null)
-                      _banner(
-                        context.semantic.warningContainer,
-                        Icons.hourglass_empty,
-                        'En attente d\'attribution. Echango recherche un '
-                        'transporteur disponible.',
+                      const AppNotice.warning(
+                        icon: Icons.hourglass_empty,
+                        message: 'En attente d\'attribution. Echango recherche '
+                            'un transporteur disponible.',
                       )
                     else if (order.isWaitingDispatch)
-                      _banner(
-                        scheme.primaryContainer,
-                        Icons.assignment_turned_in_outlined,
-                        'Transporteur affecté. La course démarrera à '
-                        'l\'enlèvement.',
+                      const AppNotice.progress(
+                        icon: Icons.assignment_turned_in_outlined,
+                        message: 'Transporteur affecté. La course démarrera à '
+                            'l\'enlèvement.',
                       ),
                     if (order.driverName != null) _driverCard(order),
                     if (order.isCompleted)
-                      _banner(context.semantic.successContainer,
-                          Icons.check_circle_outline, 'Livraison effectuée.'),
+                      const AppNotice.success(
+                        icon: Icons.check_circle_outline,
+                        message: 'Livraison effectuée.',
+                      ),
                     if (order.isCancelled)
-                      _banner(scheme.outlineVariant, Icons.cancel_outlined,
-                          'Livraison annulée.'),
+                      const AppNotice.muted(
+                        icon: Icons.cancel_outlined,
+                        message: 'Livraison annulée.',
+                      ),
                     const SizedBox(height: AppSpacing.md),
                     _placeCard('Retrait', order.pickup, order.pickupNotes),
                     const SizedBox(height: AppSpacing.md),
@@ -465,22 +466,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ),
     );
   }
-
-  Widget _banner(Color color, IconData icon, String text) => Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-        padding: const EdgeInsets.all(AppSpacing.md),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 20),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(child: Text(text)),
-          ],
-        ),
-      );
 
   /// Ce qui a été demandé à la création.
   ///

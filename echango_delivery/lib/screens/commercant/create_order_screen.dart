@@ -13,6 +13,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
 
 /// Formulaire de demande de livraison.
 ///
@@ -466,18 +467,15 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 // Dire ce qui se passe ensuite : sans ça, un brouillon qui
                 // n'atteint personne tant qu'il n'est pas publié passe pour un
                 // dysfonctionnement.
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                  ),
-                  child: const Text(
-                    'Cette livraison est enregistrée en brouillon : aucun '
-                    'transporteur n\'est sollicité tant que vous ne l\'avez pas '
-                    'publiée depuis sa fiche.',
-                    style: TextStyle(fontSize: 12),
-                  ),
+                // ⚠️ Le **même** ton que le bandeau « Brouillon » de la fiche
+                // (`AppNotice.info`), et non `primaryContainer` comme avant :
+                // les deux écrans disent la même chose à une navigation
+                // d'intervalle, et le disaient en deux couleurs.
+                const AppNotice.info(
+                  icon: Icons.edit_note,
+                  message: 'Cette livraison est enregistrée en brouillon : '
+                      'aucun transporteur n\'est sollicité tant que vous ne '
+                      'l\'avez pas publiée depuis sa fiche.',
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 FilledButton.icon(

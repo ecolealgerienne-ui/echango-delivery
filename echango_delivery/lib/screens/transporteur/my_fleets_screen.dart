@@ -8,6 +8,7 @@ import '../../widgets/language_selector.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
 import '../../errors/error_message.dart';
 
 /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
@@ -143,25 +144,16 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
                   // remplace pas : un rechargement raté ne doit pas effacer des
                   // entreprises parfaitement lisibles.
                   if (_error != null)
-                    Card(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      child: ListTile(
-                        leading: const Icon(Icons.error_outline),
-                        title: Text(_error!),
-                        trailing: TextButton(
-                          onPressed: _load,
-                          child: Text(t('fleet.retry')),
-                        ),
-                      ),
+                    AppNotice.error(
+                      message: _error!,
+                      onRetry: _load,
+                      retryLabel: t('fleet.retry'),
                     ),
 
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.info_outline),
-                      title: Text(t('driver.fleets.explain')),
-                    ),
+                  AppNotice.info(
+                    icon: Icons.info_outline,
+                    message: t('driver.fleets.explain'),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
 
                   if (_fleets.isEmpty && _error == null)
                     ListTile(

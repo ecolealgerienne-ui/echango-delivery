@@ -16,6 +16,7 @@ import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import 'status_colors.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatelessWidget {
@@ -186,22 +187,18 @@ class OrderDetailScreen extends StatelessWidget {
                   // acceptation.
                   if (order.redacted) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    Card(
-                      color: Theme.of(context).colorScheme.secondaryContainer,
-                      child: const ListTile(
-                        leading: Icon(Icons.lock_outline),
-                        title: Text('Course non réclamée'),
-                        // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
-                        // Il annonçait une adresse réduite à la commune, alors
-                        // que l'adresse complète est servie : le transporteur
-                        // cherchait une information déjà sous ses yeux. Un
-                        // libellé qui décrit l'ancienne règle est pire que pas
-                        // de libellé du tout.
-                        subtitle: Text(
+                    const AppNotice.info(
+                      icon: Icons.lock_outline,
+                      title: 'Course non réclamée',
+                      // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
+                      // Il annonçait une adresse réduite à la commune, alors
+                      // que l'adresse complète est servie : le transporteur
+                      // cherchait une information déjà sous ses yeux. Un
+                      // libellé qui décrit l'ancienne règle est pire que pas
+                      // de libellé du tout.
+                      message:
                           'Le nom et le téléphone du destinataire apparaissent '
                           'dès que vous acceptez. Tout le reste est affiché.',
-                        ),
-                      ),
                     ),
                   ],
                   const SizedBox(height: AppSpacing.lg),

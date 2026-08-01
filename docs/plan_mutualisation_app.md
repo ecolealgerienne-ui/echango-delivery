@@ -90,6 +90,95 @@ disant lequel est converti et **lequel ne l'est pas, avec la raison**. Une
 conversion silencieusement partielle serait pire que rien : on croirait le
 chantier clos.
 
+### Ce que la mesure a donné — le lot n'était pas celui qu'on croyait
+
+**Zéro `Card(` est devenu un `AppSectionCard`, et c'est le résultat correct.**
+Le plan supposait que certains des 21 sites étaient des cartes de section mal
+écrites. Ils ne le sont pas : les **deux seuls** qui ont la forme
+`Card > Padding` sont précisément les **deux exceptions que la documentation
+d'`AppSectionCard` nomme déjà** (`xl` sur la carte de profil transporteur,
+`symmetric` sur le sélecteur de motif d'échec). Elles avaient été écartées à
+l'écriture du composant, pour la raison qui y est écrite : les faire entrer par
+un paramètre `padding` rouvrirait ce que le composant vient de fermer.
+
+En revanche la mesure a trouvé **autre chose**, et de plus lourd : le même
+message d'interface écrit de **trois** façons sur **douze** sites.
+
+**Converti — 12 sites, vers le nouveau `AppNotice`** :
+
+| site | forme d'origine | ton |
+|---|---|---|
+| `commercant/order_detail_screen` ×5 | `_banner(Color, IconData, String)`, helper privé | info, warning, progress, success, muted |
+| `commercant/create_order_screen:469` | `Container` + `BoxDecoration`, sans icône | info |
+| `flotte/flotte_order_detail_screen:305` | `Card(errorContainer) > ListTile` + retry | error |
+| `flotte/flotte_order_detail_screen:325` | `Card(secondaryContainer) > ListTile` | info |
+| `flotte/memberships_tab:133` | `Card(errorContainer) > ListTile` | error |
+| `transporteur/my_fleets_screen:146` | `Card(errorContainer) > ListTile` + retry | error |
+| `transporteur/my_fleets_screen:158` | `Card()` sans couleur `> ListTile` | info |
+| `transporteur/order_detail_screen:189` | `Card(secondaryContainer) > ListTile` titre+sous-titre | info + `title` |
+
+⚠️ **C'est la seule extraction du lot qui n'est pas à aspect constant**, et
+c'est délibéré : les six `Card > ListTile` perdent leur élévation et leur marge
+Material par défaut au profit du bandeau plat que le commerçant employait déjà.
+On aligne les profils entreprise et transporteur sur le commerçant — ce qui est
+exactement ce qui a été demandé après le constat « le thème entre le commerçant
+et le facilitateur est différent ».
+
+**Le site le plus parlant est le douzième** : `create_order_screen` expliquait le
+mode brouillon en `primaryContainer` sans icône, et `order_detail_screen` disait
+**la même chose** en `secondaryContainer` avec une icône, à une navigation
+d'intervalle. Personne ne l'avait décidé.
+
+**Non converti — 15 sites, avec la raison** :
+
+| sites | pourquoi |
+|---|---|
+| `cash_screen:217`, `cash_screen:1071`, `addresses_screen:118`, `favourite_drivers_screen:204/241/270`, `orders_screen:217`, `dashboard_screen:352`, `my_fleets_screen:193` (9) | **lignes de liste** (`Card > ListTile`) : une densité et une marge verticale qui leur sont propres, souvent tapables. `AppSectionCard` doublerait le retrait interne, `AppNotice` supprimerait l'affordance. |
+| `dashboard_screen:451`, `delivery_failure_screen:103` (2) | les **deux exceptions déjà documentées** dans `AppSectionCard` (`xl`, `symmetric`). |
+| `create_order_screen:644` | affiche un **montant** en `titleLarge` : ce n'est pas un message mais une valeur, et la convertir la rétrécirait. |
+| `map_picker_screen:243` | enveloppe **flottante** d'une liste de suggestions au-dessus de la carte — ni section, ni message. |
+| `commercant/order_detail_screen:305` (`_driverCard`) | carte **interactive** (bouton d'appel) sur deux lignes. |
+| `commercant/order_detail_screen:580` (`_favouriteCard`) | ligne de **navigation** (`onTap`). |
+
+### Deux trouvailles hors périmètre, faites en cherchant les `Card(`
+
+**(a) `AppErrorBanner` avait un site manqué.** Le tableau de bord transporteur
+posait son bandeau d'erreur à la main — `Container(width: infinity, color:
+errorContainer, padding: all(md))` avec le texte en `onErrorContainer`, soit le
+composant réécrit à l'identique **moins son icône**. Converti. C'est un reliquat
+du lot du 31/07, et il illustre pourquoi le relevé compte : le composant
+existait, l'écran ne l'appelait pas.
+
+**(b) Un second `_banner` privé, avec une autre signature.** `dashboard_screen`
+en a un aussi — `_banner(String text, Color bg, Color fg)`, trois appels — alors
+que celui du commerçant était `_banner(Color, IconData, String)`. Deux fichiers,
+deux helpers privés, deux ordres d'arguments, pour la même idée.
+
+⚠️ **Il n'est pas converti, et la raison n'est pas la paresse** : c'est une
+**bande pleine largeur en tête de page**, pas un message dans le flux — donc ni
+un `AppNotice` (arrondi, en retrait, dans le contenu) ni un `AppErrorBanner`
+(rouge uniquement), et ses trois branches portent trois tons dont un seul est
+une erreur. N'en convertir qu'une la rendrait différente de ses deux sœurs, ce
+qui est pire que trois copies cohérentes. **C'est un motif à part entière — une
+bande d'état de page — et il n'a qu'un seul site.** À extraire le jour où un
+deuxième apparaît, pas avant.
+
+⚠️ **Et il emploie `surfaceContainerHighest`** (`dashboard_screen.dart:197`),
+arrivé en **Flutter 3.22**, alors que `pubspec.yaml` déclare `flutter:
+'>=3.20.0'`. `flutter analyze` est vert parce qu'il s'exécute contre le SDK
+**installé**, plus récent — la borne déclarée, elle, est fausse. Deux
+résolutions cohérentes, et une seule ligne à changer : retirer l'API, ou monter
+la borne à `>=3.22.0` pour qu'elle dise la vérité. **Laissé tel quel** : je ne
+connais pas la version réellement installée, et écrire une borne au jugé
+remplacerait une déclaration fausse par une autre.
+
+**Également examiné et laissé** : le bloc « À encaisser » de
+`transporteur/order_detail_screen:117` (`Container` + `BoxDecoration`,
+`warningContainer`) a la forme d'un `AppNotice.warning` avec titre — mais son
+titre *est un montant*, en `titleMedium` gras. Le convertir le passerait en
+`titleSmall`. Rétrécir un chiffre d'argent en silence est le genre de
+« refactorisation » qui ne se voit qu'à la porte du destinataire.
+
 ---
 
 ## Lot 3 — Le dialogue de confirmation (10 sites)
@@ -210,10 +299,10 @@ littéral français visible restant, et toutes les clés employées déclarées.
 
 | lot | état | preuve |
 |---|---|---|
-| 1 — enveloppes HTTP | à faire | |
-| 2 — `Card(` bruts | à faire | |
+| 1 — enveloppes HTTP | **fait** (01/08) | inventaire verbe/chemin/query/corps identique HEAD↔courant, 86 appels ; 1620 → 1371 lignes |
+| 2 — `Card(` bruts | **fait** (01/08) | 12 sites vers `AppNotice`, 1 vers `AppErrorBanner`, **0** vers `AppSectionCard`, 15 laissés avec leur raison (ci-dessus) ; délimiteurs équilibrés, 0 chaîne visible perdue vs HEAD, 12 sites d'appel vérifiés paramètre par paramètre contre les six constructeurs |
 | 3 — dialogue de confirmation | à faire, **décision attendue** | |
 | 4 — champ de saisie | à mesurer | |
 | 5 — indicateurs d'attente | à mesurer | |
-| 6 — enveloppes Fleetbase | à faire | |
+| 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
 | 7 — 335 chaînes | à faire, par écran | |

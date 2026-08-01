@@ -6,6 +6,7 @@ import '../../config/app_rules.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
 
 /// Les rattachements de l'entreprise, et le moyen d'en demander un nouveau.
 ///
@@ -130,13 +131,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
         if (_searching) Text(t('fleet.loading')),
 
         if (_searchError != null)
-          Card(
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: ListTile(
-              leading: const Icon(Icons.error_outline),
-              title: Text(_searchError!),
-            ),
-          ),
+          AppNotice.error(message: _searchError!),
 
         // ⚠️ « Personne de ce nom » n'est affirmé qu'après une recherche
         // effectivement aboutie : l'afficher pendant le chargement, ou après une
