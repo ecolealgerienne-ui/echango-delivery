@@ -29,11 +29,24 @@
 #   DRIVER_SESSION_NOTE  — comment la session a été obtenue, à afficher
 #   DRIVER_SESSION_ERROR — renseigné en cas d'échec
 
+# ⚠️ **Renseigne aussi `DRIVER_LOGIN_CODE`**, et c'est ce qui distingue « mauvais
+# mot de passe » de « trop de tentatives ».
+#
+# La première version ne rendait que le jeton : une absence de jeton était donc
+# lue comme un mot de passe faux, **quelle qu'en soit la cause**. Or la connexion
+# est throttlée à cinq par minute, et une suite de scénarios en consomme
+# davantage — le message envoyait alors supprimer des lignes en base
+# (`DELETE FROM "DriverAccount" …`) pour un problème qui se résout en attendant
+# soixante secondes. Un diagnostic faux coûte plus cher qu'une absence de
+# diagnostic : il fait agir.
 _driver_login() { # email password -> token sur stdout
-  curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
+  local response
+  DRIVER_LOGIN_CODE=""
+  response="$(curl -sS -X POST "$BFF_URL/auth/transporteur/login" \
     -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg e "$1" --arg p "$2" '{email:$e, password:$p}')" \
-    | jq -r '.token // empty'
+    -d "$(jq -n --arg e "$1" --arg p "$2" '{email:$e, password:$p}')")"
+  DRIVER_LOGIN_CODE="$(echo "$response" | jq -r '.statusCode // empty' 2>/dev/null)"
+  echo "$response" | jq -r '.token // empty'
 }
 
 # Accorde le rôle « prestataire plateforme » au compte opérateur jetable.
@@ -44,8 +57,21 @@ _driver_login() { # email password -> token sur stdout
 # d'admin, tenu ici par le script, exactement comme l'activation du fournisseur.
 #
 # **Refuse si un prestataire plateforme existe déjà.** L'invariant « exactement
-# un » fonde la résolution du facilitateur pour toutes les courses du pool ; le
-# casser pour faire passer un test rendrait le test vert et le produit faux.
+# un » est celui que la résolution du facilitateur de pool exigerait ; le casser
+# pour faire passer un test rendrait le test vert et le produit faux.
+#
+# ⚠️ **Au conditionnel, et il faut le dire (vérifié le 01/08/2026).** Cette
+# résolution **n'existe pas** : `resolveFacilitator()` rend `null` dès que
+# `facilitator_uuid` est absent, et **aucun `findFirst({ isPlatform: true })`
+# n'existe dans le BFF**. `isPlatform` n'est lu que sur un facilitateur déjà
+# posé (retenue du conducteur) et dans `auth.service` (droit d'inviter un
+# conducteur du pool). Une course du pool n'a donc **pas** de facilitateur, et
+# la dette reste conducteur → commerçant.
+#
+# La phrase d'origine décrivait l'état cible de `specs_facilitateur.md` §2.2 au
+# présent. C'est la même périmétrie que dans la spec elle-même — elle voyage,
+# et un commentaire qui décrit un futur au présent fait conclure aussi sûrement
+# qu'une mesure fausse.
 _promote_operator_to_platform() { # email -> 0 si promu
   PLATFORM_PROMOTION_ERROR=""
   local existing
@@ -304,6 +330,14 @@ obtain_driver_token() { # driver_uuid
   if [ -n "$existing" ]; then
     DRIVER_EMAIL="$existing"
     DRIVER_TOKEN=$(_driver_login "$existing" "$PASSWORD")
+
+    # Le throttle avant le mot de passe : c'est la cause la plus fréquente quand
+    # on enchaîne les scénarios, et la seule qui se résout toute seule.
+    if [ -z "$DRIVER_TOKEN" ] && [ "${DRIVER_LOGIN_CODE:-}" = "429" ]; then
+      DRIVER_SESSION_ERROR="Trop de connexions (HTTP 429, plafond de cinq par minute).
+   Le compte et le mot de passe ne sont PAS en cause — attendre une minute et rejouer."
+      return 1
+    fi
 
     if [ -z "$DRIVER_TOKEN" ]; then
       DRIVER_SESSION_ERROR=$(cat <<EOF

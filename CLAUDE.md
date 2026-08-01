@@ -709,6 +709,20 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
 - [ ] **Publier les deux signalements amont** : `docs/signalements_amont.md` — rédigés en anglais, prêts à coller. (1) `fleetbase/fleetops`, `assignDriver()` qui écrase `meta` faute de recharger une ressource d'index — correctif de trois lignes, déjà présent quatre fois ailleurs dans leur dépôt. (2) `Graphify-Labs/graphify`, l'import relatif Dart non résolu qui crée un nœud fantôme au `source_file` vide et fabrique des chemins **plausibles et faux** — avec les mesures (2 % de nœuds fantômes, 3,83 arêtes/nœud en TS contre 1,61 en Dart) et le cas de reproduction.
 
+- [x] **✅ Les sorties d'une course, et un lanceur pour tout rejouer (01/08/2026)** : `scripts/test-sorties-de-course.sh` couvre les **trois façons dont une course finit sans être livrée** — refus motivé, échec de livraison, annulation. Tous les autres scénarios jouent le chemin heureux ; ceux-ci n'avaient jamais tourné, alors que chacun porte un défaut déjà corrigé une fois, donc chacun peut se re-casser en silence.
+
+  **L'assertion qui compte est dans la partie échec**, et ce n'est pas « le signalement s'enregistre » : Fleetbase n'a **pas de statut « échec »**, donc la course reste assignée et non terminale. Si `driverIsBusy` cessait de lire notre signalement, un client absent **immobiliserait le conducteur à vie**, pour toutes les entreprises. Le script le vérifie **par l'usage** — le conducteur doit pouvoir accepter une autre course —, pas seulement en relisant le prédicat.
+
+  **Un seul fichier pour trois sorties, et le motif est concret** : la séparation est déjà faite par la course (chacune a la sienne), et le BFF plafonne les inscriptions à **10 par heure** — trois fichiers, c'est trois commerçants, donc une suite qui ne se rejoue plus.
+
+  **`scripts/run-all-scenarios.sh`** rejoue les sept d'un coup. Il n'utilise **pas** `set -e` : sortir au premier échec priverait de la seule information qu'on cherche en rejouant une suite. `ONLY=` filtre, `PACE=` temporise, et le tableau final **nomme le throttle** au lieu de le compter comme un échec métier.
+
+  ⚠️ **Le vrai défaut trouvé par la suite était un diagnostic, pas un test.** Le throttle de connexion (5/min) ressortait en « **Compte existant trouvé mais le mot de passe ne correspond pas** », suivi d'une commande `DELETE FROM "DriverAccount"` — le message envoyait supprimer des lignes en base pour un problème qui se résout en attendant soixante secondes. **Un diagnostic faux coûte plus cher qu'une absence de diagnostic : il fait agir.** `_driver_login` relève désormais le `statusCode` et distingue les deux cas.
+
+  ⚠️ **Et mon propre script laissait le conducteur bloqué** — le ménage n'annulait que la dernière course, pas celle acceptée puis seulement refusée. Exactement le défaut qui avait fait extraire `require_free_driver` en bibliothèque trois heures plus tôt. Corrigé en **relisant** les courses bloquantes au lieu de les nommer : une liste écrite à la main vieillit à chaque partie ajoutée.
+
+  **État de la suite** : les sept passent, vérifiés un par un. La suite complète d'un seul trait consomme sept inscriptions et se heurte au plafond horaire dès qu'on a déjà travaillé dans l'heure — ce n'est pas un échec du code, et le lanceur le dit.
+
 - [ ] ⚠️ **« Echango est toujours le facilitateur » est une DÉCISION, pas du code (constaté le 01/08/2026)** — et c'est la plus grosse pièce non écrite du projet, celle qui a le plus l'air faite.
 
   `docs/specs_facilitateur.md` §2.2 et §2.3 sont titrées « ✅ **Décisions prises** le 31/07/2026 ». Elles se lisent comme un état livré. **Le code dit autre chose**, et la vérification tient en deux lignes :
