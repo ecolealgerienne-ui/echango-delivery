@@ -50,8 +50,28 @@ q() { docker exec "$PGC" psql -U "$PGUSER" -d "$PGDB" -tAc "$1" 2>/dev/null; }
 
 # Le compte est cherché sur les deux identifiants : l'email est ce qu'on a sous
 # la main après un run, l'uuid ce que la console affiche.
-DRIVER_ID="$(q "SELECT id FROM \"DriverAccount\" WHERE email = '$TARGET' OR \"fleetbaseDriverUuid\" = '$TARGET' LIMIT 1;")"
-[ -n "$DRIVER_ID" ] || fail "Aucun compte conducteur pour « $TARGET »"
+# ⚠️ **Le NOM aussi**, comme partout ailleurs dans cet outillage.
+#
+# Il n'acceptait qu'un email ou un uuid, alors que tous les autres scripts
+# prennent le nom (`resolve_driver`) — donc le geste naturel après un run,
+# `reset-test-ledger.sh Toto`, échouait avec « Aucun compte conducteur »
+# **sur un conducteur qui existe**. C'est le motif que ce dépôt a déjà corrigé
+# deux fois : le refus qui ne dit pas quoi faire (règle 10 — un message qui
+# accuse une absence inexistante envoie chercher au mauvais endroit).
+DRIVER_ID="$(q "SELECT id FROM \"DriverAccount\"
+                 WHERE email = '$TARGET'
+                    OR \"fleetbaseDriverUuid\" = '$TARGET'
+                    OR lower(coalesce(\"firstName\",'') || ' ' || coalesce(\"lastName\",''))
+                       LIKE lower('%$TARGET%')
+                 LIMIT 1;")"
+
+if [ -z "$DRIVER_ID" ]; then
+  echo "❌ Aucun compte conducteur pour « $TARGET »."
+  echo "   Comptes existants :"
+  q "SELECT '     ' || email || '   ' || coalesce(\"firstName\",'') || ' ' || coalesce(\"lastName\",'')
+       FROM \"DriverAccount\" ORDER BY \"createdAt\" DESC LIMIT 20;"
+  exit 1
+fi
 
 EMAIL="$(q "SELECT email FROM \"DriverAccount\" WHERE id = '$DRIVER_ID';")"
 
