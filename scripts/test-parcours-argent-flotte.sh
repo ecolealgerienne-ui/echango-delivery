@@ -112,22 +112,6 @@ dapi() { # method path [body] — conducteur
   fi
 }
 
-# La dette entre l'acteur du jeton et une contrepartie donnée.
-#
-# ⚠️ **Par contrepartie, jamais en sommant les soldes.** Sommer suppose que le
-# compte démarre à zéro : vrai au premier run, faux ensuite — un conducteur
-# réutilisé porte les dettes des runs précédents. C'est le défaut constaté en
-# réel sur le scénario à deux acteurs (2600 au lieu de 1300, sur un code juste).
-# ⚠️ Rend « aucune » quand la contrepartie est absente, et l'appelant le traduit
-# en 0. Ce n'est pas une précaution : `balancesFor()` **retire les soldes nuls**
-# de la liste (`filter(b => b.debt !== 0)`). Une dette soldée ne vaut donc pas
-# `0` dans la réponse — elle n'y est plus du tout, et un contrôle qui attendrait
-# la ligne échouerait précisément au moment où tout s'est bien passé.
-debt_toward() { # ledger_json counterparty_id
-  echo "$1" | jq -r --arg c "$2" \
-    'first(.balances[] | select(.counterparty_id == $c)) | .debt // "aucune"'
-}
-
 echo "BFF : $BFF_URL"
 echo "Marchandise $GOODS + course $FEE = $((GOODS + FEE)) réclamés à la porte."
 echo "Attendu : conducteur doit $((GOODS + FEE)) à l'entreprise, qui doit $GOODS au commerçant."
@@ -135,6 +119,7 @@ echo "Attendu : conducteur doit $((GOODS + FEE)) à l'entreprise, qui doit $GOOD
 . "$(dirname "$0")/lib/fleetbase.sh"
 . "$(dirname "$0")/lib/resolve-driver.sh"
 . "$(dirname "$0")/lib/driver-session.sh"
+. "$(dirname "$0")/lib/ledger.sh"
 
 # Les courses qui rendent le conducteur « occupé », **telles que le serveur les
 # compte**.
@@ -445,14 +430,14 @@ FLEET_OWES=$GOODS              # 1950 perçus − 650 de rémunération
 
 dledger="$(dapi GET /transporteur/caisse)"
 d="$(debt_toward "$dledger" "$FLEET_ID")"
-[ "$(printf '%.0f' "${d/aucune/0}")" = "$DRIVER_OWES" ] \
+[ "$(amount_number "$d")" = "$DRIVER_OWES" ] \
   || fail "Le conducteur doit $DRIVER_OWES à l'entreprise, le registre dit '$d'" \
      "$(echo "$dledger" | jq -c '.balances')"
 pass "Conducteur → entreprise : $DRIVER_OWES DZD (il ne retient RIEN)"
 
 fledger="$(fapi GET /flotte/caisse)"
 f="$(debt_toward "$fledger" "$MERCHANT_ID")"
-[ "$(printf '%.0f' "${f/aucune/0}")" = "$FLEET_OWES" ] \
+[ "$(amount_number "$f")" = "$FLEET_OWES" ] \
   || fail "L'entreprise doit $FLEET_OWES au commerçant, le registre dit '$f'" \
      "$(echo "$fledger" | jq -c '.balances')"
 pass "Entreprise → commerçant : $FLEET_OWES DZD (elle garde les $FEE)"
@@ -464,7 +449,7 @@ pass "Entreprise → commerçant : $FLEET_OWES DZD (elle garde les $FEE)"
 # du milieu serait décoratif.
 mledger="$(mapi GET /commercant/encaissements)"
 m="$(debt_toward "$mledger" "$FLEET_ID")"
-[ "$(printf '%.0f' "${m/aucune/0}")" = "$FLEET_OWES" ] \
+[ "$(amount_number "$m")" = "$FLEET_OWES" ] \
   || fail "Le commerçant doit voir $FLEET_OWES dus par L'ENTREPRISE, il voit '$m'" \
      "$(echo "$mledger" | jq -c '.balances')"
 mtype="$(echo "$mledger" | jq -r --arg c "$FLEET_ID" \
@@ -488,7 +473,7 @@ echo "$r1" | is_error && fail "Déclaration de remise refusée" "$(echo "$r1" | 
 pass "Remise de $DRIVER_OWES déclarée par le conducteur"
 
 before="$(debt_toward "$(dapi GET /transporteur/caisse)" "$FLEET_ID")"
-[ "$(printf '%.0f' "${before/aucune/0}")" = "$DRIVER_OWES" ] \
+[ "$(amount_number "$before")" = "$DRIVER_OWES" ] \
   || fail "La dette a bougé AVANT confirmation — c'est le principe même du registre" "$before"
 pass "Dette inchangée avant confirmation"
 
@@ -499,16 +484,16 @@ c1="$(fapi POST "/flotte/caisse/remises/$R1_ID/confirmer")"
 echo "$c1" | is_error && fail "Confirmation refusée" "$(echo "$c1" | jq -c '.')"
 
 after1="$(debt_toward "$(dapi GET /transporteur/caisse)" "$FLEET_ID")"
-[ "$(printf '%.0f' "${after1/aucune/0}")" = "0" ] \
+[ "$(amount_number "$after1")" = "0" ] \
   || fail "Après confirmation, le conducteur ne doit plus rien ; le registre dit '$after1'"
-pass "Confirmée — le conducteur est à jour ($after1 DZD)"
+pass "Confirmée — le conducteur est à jour ($(amount_number "$after1") DZD)"
 
 # La dette de l'entreprise envers le commerçant n'a PAS bougé : ce sont deux
 # maillons distincts, et régler l'un ne règle pas l'autre.
 untouched="$(debt_toward "$(fapi GET /flotte/caisse)" "$MERCHANT_ID")"
-[ "$(printf '%.0f' "${untouched/aucune/0}")" = "$FLEET_OWES" ] \
+[ "$(amount_number "$untouched")" = "$FLEET_OWES" ] \
   || fail "Le maillon entreprise → commerçant a bougé alors qu'il ne devait pas" "$untouched"
-pass "Le second maillon est intact : $untouched DZD toujours dus au commerçant"
+pass "Le second maillon est intact : $(amount_number "$untouched") DZD toujours dus au commerçant"
 
 step "8. Remise entreprise → commerçant"
 
@@ -524,7 +509,7 @@ c2="$(mapi POST "/commercant/encaissements/remises/$R2_ID/confirmer")"
 echo "$c2" | is_error && fail "Confirmation refusée" "$(echo "$c2" | jq -c '.')"
 
 final="$(debt_toward "$(mapi GET /commercant/encaissements)" "$FLEET_ID")"
-[ "$(printf '%.0f' "${final/aucune/0}")" = "0" ] \
+[ "$(amount_number "$final")" = "0" ] \
   || fail "Après confirmation, l'entreprise ne doit plus rien ; le registre dit '$final'"
 pass "Confirmée — la chaîne est soldée de bout en bout"
 

@@ -19,14 +19,17 @@
 # de message, pas la disponibilité de Fleetbase. Ce que la chaîne réelle fait
 # reste du ressort de `test-parcours-argent-flotte.sh`.
 #
-#   ./scripts/lib/self-test.sh
+#   ./scripts/lib/self-test.sh              # les cas
+#   ./scripts/lib/self-test.sh --mutations  # et la preuve qu'ils savent refuser
 #
 # `MUTATE=<sed>` applique une transformation aux bibliothèques avant de les
-# charger — c'est ainsi qu'on vérifie que le banc sait dire non (voir la fin du
-# fichier pour les mutations éprouvées).
+# charger, sur une copie — le dépôt n'est jamais écrit. `--mutations` rejoue
+# celles de la liste `MUTATIONS` (fin du fichier) et vérifie que chacune fait
+# tomber **le nombre de cas attendu**.
 
 set -uo pipefail
 
+SELF_NAME="$(basename "${BASH_SOURCE[0]}")"
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 OK=0
@@ -61,7 +64,7 @@ refuse() { # libellé interdit obtenu — la moitié qui compte
 # Chargées depuis une copie pour que `MUTATE` n'écrive jamais dans le dépôt.
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp fleetbase.sh resolve-driver.sh driver-session.sh "$WORK/"
+cp fleetbase.sh resolve-driver.sh driver-session.sh ledger.sh "$WORK/"
 if [ -n "${MUTATE:-}" ]; then
   sed -i "$MUTATE" "$WORK"/*.sh
   echo "⚠️  mutation appliquée : $MUTATE"
@@ -75,6 +78,8 @@ PASSWORD="x"
 . "$WORK/resolve-driver.sh"
 # shellcheck disable=SC1090
 . "$WORK/driver-session.sh"
+# shellcheck disable=SC1090
+. "$WORK/ledger.sh"
 
 # ── Le talon ───────────────────────────────────────────────────────────────
 #
@@ -220,46 +225,113 @@ check  "liste illisible : le dit"          'illisible'                "$msg"
 refuse "et n'affirme rien sur le pool"     'Aucun conducteur du pool' "$msg"
 
 echo
+echo "── ledger : une dette absente n'est pas une dette nulle ──"
+
+# ⚠️ **Le cas constaté en réel le 01/08/2026**, et celui qui justifie tout ce
+# fichier : une dette soldée disparaît de `balances` (`filter(b => b.debt !== 0)`),
+# donc `first(…)` ne rend RIEN — pas « aucune », rien. La version précédente
+# s'appuyait sur `// "aucune"`, qui ne s'applique jamais à un flux vide, et le
+# contrôle passait grâce à `printf '%.0f' ""` = 0. Le seul signe visible était un
+# montant manquant DANS un message de succès : « à jour ( DZD) ».
+SOLDE='{"currency":"DZD","balances":[]}'
+check "contrepartie absente ⇒ « aucune », jamais du vide" 'aucune' "$(debt_toward "$SOLDE" c-fleet)"
+check "et « aucune » vaut 0 à la comparaison"             '0'      "$(amount_number "$(debt_toward "$SOLDE" c-fleet)")"
+
+DEUX='{"balances":[{"counterparty_id":"c-fleet","counterparty_type":"fleet","debt":1300},
+                   {"counterparty_id":"c-autre","counterparty_type":"driver","debt":700}]}'
+check "la bonne contrepartie, pas la première venue" '1300' "$(debt_toward "$DEUX" c-fleet)"
+check "une dette négative traverse"                  '-500' \
+      "$(amount_number "$(debt_toward '{"balances":[{"counterparty_id":"c","debt":-500}]}' c)")"
+check "le total somme les soldes"                    '2000' "$(ledger_total "$DEUX")"
+check "un registre vide totalise 0"                  '0'    "$(ledger_total "$SOLDE")"
+
+# ⚠️ La moitié qui compte : une réponse qu'on n'a pas su lire ne doit ressembler
+# à AUCUN montant. Trois contrôles de ces scripts attendent exactement 0 — ce
+# sont ceux qui prouvent qu'une remise a soldé la dette, donc précisément ceux
+# qu'une réponse vide rendrait verts.
+for bad in '{"statusCode":401,"code":"auth.invalid"}' '' 'pas du json'; do
+  got="$(amount_number "$(debt_toward "$bad" c-fleet)")"
+  refuse "réponse illisible ≠ 0 (« ${bad:-<vide>} »)" '0' "$got"
+  got="$(amount_number "$(ledger_total "$bad")")"
+  refuse "total illisible ≠ 0 (« ${bad:-<vide>} »)"   '0' "$got"
+done
+
+check "une valeur vide se nomme"          '<vide>' "$(amount_number "")"
+check "un texte ressort tel quel"         'absent' "$(amount_number 'absent')"
+check "un décimal est arrondi à l'entier" '1300'   "$(amount_number '1300.4')"
+
+echo
 if [ "$KO" -eq 0 ]; then
   echo "✅ $OK cas — le banc passe."
 else
   echo "❌ $KO échec(s) sur $((OK + KO)) cas."
 fi
 
-# ── Mutations éprouvées ────────────────────────────────────────────────────
+# ── Mutations : la moitié qui prouve que ce banc sait dire non ─────────────
 #
-# Un banc vert n'a montré que sa capacité à dire oui. Celles-ci le font passer
-# au rouge, chacune sur le cas qu'elle casse — c'est ce qui prouve qu'il
-# regarde :
+# Un banc vert n'a montré que sa capacité à dire oui. Chacune de ces mutations
+# casse une décision réelle du code, et doit faire tomber les cas qui la
+# couvrent — le nombre attendu est écrit à côté, et vérifié.
 #
-#   MUTATE='s/RESOLVE_DRIVER_ERROR="lecture des conducteurs impossible[^"]*"/:/'
-#                                                                       → 1 échec
-#     Remet le message dans le sous-shell, c'est-à-dire le défaut trouvé par ce
-#     banc : la panne réseau redevient « Conducteur introuvable ».
+# ⚠️ **La liste exécutée EST la liste documentée.** La première version les
+# écrivait en commentaire et les rejouait par un `grep` : celui-ci tronquait
+# toute mutation contenant un guillemet, la transformait en `sed` sans effet, et
+# **affichait « vert »**. Un contrôle incapable de voir qu'il n'a rien muté ne
+# contrôle rien — c'est exactement la faute qu'il est censé attraper.
 #
-#   MUTATE='s/select($v == null or/select(true or/'                     → 4 échecs
-#     Le filtre d'utilisabilité tombe : le message propose des conducteurs
-#     rattachés sans compte, qui seront refusés pareil, et la branche « aucun
-#     autre conducteur » ne se déclenche plus jamais.
-#
-#   MUTATE='s/or (.uuid as $u | $with | index($u) != null)//'           → 2 échecs
-#     Seul le pool est proposé : un conducteur rattaché DÉJÀ INSCRIT, souvent le
-#     seul disponible en pratique, disparaît du message.
-#
-#   MUTATE='s/\[compte existant\]/[?]/'                                 → 1 échec
-#     Les deux voies cessent d'être distinguées : on ne sait plus si le compte
-#     est à créer ou déjà là.
-#
-#   MUTATE='s/\[pool\]/[?]/'                                            → 2 échecs
-#     Le listing cesse de dire qui est invitable — ce qui était l'état d'avant
-#     ce lot, et la raison du 403 subi.
-#
-#   MUTATE='s/jq -e/jq/'                                                → 1 échec
-#     Une enveloppe inconnue passe pour une liste vide : « aucun conducteur »
-#     au lieu d'« je n'ai pas su lire ».
-#
-#   MUTATE='s/first(.\[\] | select(.uuid == $u))/first(.[])/'           → 2 échecs
-#     Le fournisseur nommé devient celui du premier conducteur venu : un
-#     conducteur du pool est alors décrit comme rattaché.
+#   ./self-test.sh --mutations
+MUTATIONS=(
+  # Remet la lecture d'origine : sur une dette soldée, `first` d'un flux vide ne
+  # rend RIEN, et `printf '%.0f' ""` vaut 0. Défaut constaté en réel, avec
+  # « à jour ( DZD) » pour seul signe.
+  '2|s/| if length == 0 then "aucune" else (.\[0\].debt | tostring) end/| first(.[]) | .debt/'
+  # Une réponse illisible redevient une dette nulle.
+  "6|s/echo 'sans-registre'/echo 0/"
+  # Une valeur absente redevient 0 — le repli que la règle 10 interdit sur une
+  # somme d'argent.
+  "1|s/echo '<vide>'/echo 0/"
+  # Remet le message d'erreur dans le sous-shell : la panne réseau redevient
+  # « Conducteur introuvable ».
+  '1|s/RESOLVE_DRIVER_ERROR="lecture des conducteurs impossible[^"]*"/:/'
+  # Le filtre d'utilisabilité tombe : des conducteurs qui seront refusés pareil
+  # sont proposés, et la branche « aucun autre conducteur » ne sort jamais.
+  '4|s/select($v == null or/select(true or/'
+  # Seul le pool est proposé : un rattaché DÉJÀ INSCRIT disparaît du message.
+  '2|s/or (.uuid as $u | $with | index($u) != null)//'
+  # Les deux voies cessent d'être distinguées.
+  '1|s/\[compte existant\]/[?]/'
+  # Le listing ne dit plus qui est invitable — l'état d'avant ce lot.
+  '2|s/\[pool\]/[?]/'
+  # Une enveloppe inconnue passe pour une liste vide.
+  '1|s/jq -e/jq/'
+  # Le fournisseur nommé devient celui du premier conducteur venu.
+  '2|s/first(.\[\] | select(.uuid == $u))/first(.[])/'
+)
+
+if [ "${1:-}" = "--mutations" ]; then
+  echo
+  echo "── Mutations : chacune DOIT faire tomber ses cas ──"
+  bad=0
+  for entry in "${MUTATIONS[@]}"; do
+    want="${entry%%|*}"
+    mutation="${entry#*|}"
+    # ⚠️ Réinvoqué par son nom de fichier, jamais par `$0` : le banc commence
+    # par `cd` dans son propre dossier, donc un `$0` relatif — la forme
+    # ordinaire, `./scripts/lib/self-test.sh` — ne résout plus. Le symptôme
+    # était « aucun » partout, c'est-à-dire dix mutations non attrapées.
+    got="$(MUTATE="$mutation" bash "./$SELF_NAME" 2>/dev/null \
+           | sed -nE 's/^❌ ([0-9]+) échec.*/\1/p')"
+    if [ "$got" = "$want" ]; then
+      echo "  ✅ $want échec(s) — ${mutation:0:64}"
+    else
+      bad=$((bad + 1))
+      echo "  ❌ attendu $want échec(s), obtenu « ${got:-aucun} » — $mutation"
+    fi
+  done
+  echo
+  [ "$bad" -eq 0 ] && echo "✅ les ${#MUTATIONS[@]} mutations sont toutes attrapées." \
+                   || echo "❌ $bad mutation(s) non attrapée(s)."
+  exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)
+fi
 
 [ "$KO" -eq 0 ]

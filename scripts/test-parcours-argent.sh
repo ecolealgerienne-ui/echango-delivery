@@ -105,6 +105,7 @@ step "Sessions"
 # le rôle de l'admin qui valide le commerçant.
 . "$(dirname "$0")/lib/fleetbase.sh"
 . "$(dirname "$0")/lib/resolve-driver.sh"
+. "$(dirname "$0")/lib/ledger.sh"
 
 # Active le fournisseur du commerçant, comme le ferait un admin dans la console.
 #
@@ -269,8 +270,8 @@ due=$((expected - FEE))
 # et la somme se fait côté client. C'est cohérent avec le principe « aucun
 # solde n'est stocké » — mais ça se vérifie, ça ne se suppose pas.
 mledger="$(mapi GET /commercant/encaissements)"
-mtotal="$(echo "$mledger" | jq -r '[.balances[].debt] | add // 0')"
-[ "$(printf '%.0f' "$mtotal")" = "$due" ] \
+mtotal="$(ledger_total "$mledger")"
+[ "$(amount_number "$mtotal")" = "$due" ] \
   || fail "Le commerçant doit voir $due dû, il voit $mtotal" "$(echo "$mledger" | jq -c '.')"
 pass "Commerçant : $mtotal DZD détenus pour lui"
 
@@ -286,17 +287,20 @@ pass "Commerçant : $mtotal DZD détenus pour lui"
 # crée un commerçant neuf. C'est bien pour ça qu'elle passait pendant que
 # celle-ci échouait.
 dledger="$(dapi GET /transporteur/caisse)"
-dmine="$(echo "$dledger" | jq -r --arg m "$MERCHANT_ID" \
-  'first(.balances[] | select((.counterparty_id // .merchant_id) == $m)) | .debt // 0')"
-[ "$(printf '%.0f' "${dmine:-0}")" = "$due" ] \
-  || fail "Le transporteur doit voir $due dû à CE commerçant, il voit ${dmine:-aucune ligne}" \
+# ⚠️ Même lecture que côté flotte, donc la même fonction — et pas une seconde
+# écriture de `first(…)`, dont le piège est justement de ne RIEN rendre sur un
+# flux vide. Le repli `.merchant_id` de la version précédente était mort : la
+# projection pose `counterparty_id` sur toutes les lignes.
+dmine="$(debt_toward "$dledger" "$MERCHANT_ID")"
+[ "$(amount_number "$dmine")" = "$due" ] \
+  || fail "Le transporteur doit voir $due dû à CE commerçant, il voit $dmine" \
      "$(echo "$dledger" | jq -c '.balances')"
 pass "Transporteur : $due DZD à remettre — les deux vues concordent"
 
 details="$(mapi GET /commercant/encaissements/details)"
 net="$(echo "$details" | jq -r '.data[0].net_amount // "absent"')"
 ret="$(echo "$details" | jq -r '.data[0].retained_amount // "absent"')"
-[ "$(printf '%.0f' "$ret")" = "$FEE" ] \
+[ "$(amount_number "$ret")" = "$FEE" ] \
   || fail "Retenue attendue $FEE, reçue '$ret'" "$(echo "$details" | jq -c '.data[0]')"
 pass "Détail : perçu $expected, retenu $ret, revient $net"
 
@@ -321,8 +325,8 @@ pass "Remise de $due déclarée par le transporteur"
 # ⚠️ Le contrôle qui donne son sens au registre : tant que l'autre partie n'a
 # rien confirmé, une remise est une AFFIRMATION, pas un fait. La dette ne doit
 # donc pas avoir bougé.
-still="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add // 0')"
-[ "$(printf '%.0f' "$still")" = "$due" ] \
+still="$(ledger_total "$(mapi GET /commercant/encaissements)")"
+[ "$(amount_number "$still")" = "$due" ] \
   || fail "Une remise NON confirmée ne doit pas réduire la dette (reçu $still)"
 pass "Dette inchangée avant confirmation — c'est le point du modèle"
 
@@ -332,8 +336,8 @@ echo "$confirmed" | is_error \
 
 # Une dette soldée disparaît de `balances` (`filter(.debt != 0)`), donc la
 # somme d'une liste vide vaut 0 — c'est bien ce qu'on veut lire.
-final="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add // 0')"
-[ "$(printf '%.0f' "$final")" = "0" ] \
+final="$(ledger_total "$(mapi GET /commercant/encaissements)")"
+[ "$(amount_number "$final")" = "0" ] \
   || fail "Après confirmation la dette doit être soldée, reste $final"
 pass "Dette soldée : $final DZD"
 
@@ -434,8 +438,8 @@ echo "$closed" | is_error \
 # La dette repart de zéro (soldée au §5), donc elle doit valoir exactement
 # celle d'une course : c'est la preuve que l'encaissement a bien été écrit par
 # ce chemin-là, et non hérité du précédent.
-after2="$(mapi GET /commercant/encaissements | jq -r '[.balances[].debt] | add // 0')"
-[ "$(printf '%.0f' "$after2")" = "$due" ] \
+after2="$(ledger_total "$(mapi GET /commercant/encaissements)")"
+[ "$(amount_number "$after2")" = "$due" ] \
   || fail "L'encaissement déclaré par /activite doit créer $due de dette, reçu $after2"
 pass "Encaissement enregistré par /activite : $after2 DZD — les deux chemins écrivent bien"
 
