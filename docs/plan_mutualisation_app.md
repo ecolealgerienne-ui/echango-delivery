@@ -437,6 +437,41 @@ resubstitution — chaque chaîne retirée doit se retrouver dans la table.
 **Ce qui débloque chaque écran** : parité FR/AR par `check_error_codes`, zéro
 littéral français visible restant, et toutes les clés employées déclarées.
 
+### Écran 1 — `commercant/create_order_screen` (01/08/2026)
+
+**69 clés**, `lib/i18n/order_form_strings.dart`, enregistré dans
+`check_error_codes.dart` (la liste des tables y est **explicite** et non un
+balayage : un fichier renommé doit faire échouer le contrôle, pas passer au
+vert). Parité FR/AR 69 = 69, aucun doublon, **69 employées et 69 déclarées** —
+ni clé manquante, ni clé morte.
+
+**Conversion prouvée par resubstitution** : 70 chaînes retirées de l'écran,
+**63 retrouvées à l'identique** dans la table, **6 retrouvées à l'apostrophe
+près** (`'` → `’`, alignement sur `fleet_strings` et `cash_strings`), 1 non
+comparable — `'Il manque ${missing.join(', ')}'`, dont la quote imbriquée
+arrête l'extracteur ; sa substitution a été vérifiée à la main.
+
+⚠️ **Les 6 apostrophes sont comptées à part, et c'est obligatoire** : le
+comparateur les normalise, donc **il ne peut pas les signaler**. Un contrôle qui
+ne voit pas une modification ne dit rien d'elle (règle 8). Même relevé que pour
+l'écran de caisse le 31/07.
+
+**Zéro littéral français visible restant.** Ce qui subsiste est nommé : les
+noms de champs de l'API, une route, et `'Commerce'` — repli de
+`pickupContactName`, qui est une **donnée** envoyée au serveur et relue par le
+transporteur, pas un libellé. La traduire ferait dépendre le contenu de la base
+de la langue du téléphone qui a créé la commande.
+
+⚠️ **Trois défauts de `const` trouvés au second passage, aucun à la lecture** —
+et `flutter analyze` les aurait tous vus, ce qui dit exactement ce que vaut ce
+bac à sable : 7 `const Text(_t(…))`, 2 `const InputDecoration(…)` et
+**2 `const options = {…}`**. Les deux derniers avaient échappé au premier
+contrôle, qui ne cherchait que `const <Majuscule>(` — une map constante n'a pas
+cette forme. Le contrôle a été élargi aux listes, aux maps et aux déclarations
+de variable, **puis éprouvé sur une mutation qui réintroduit chacun des deux
+cas** : sans cette exécution, « il ne trouve rien » n'aurait montré que sa
+capacité à se taire.
+
 ---
 
 ## Ordre, et pourquoi celui-là
@@ -471,4 +506,4 @@ littéral français visible restant, et toutes les clés employées déclarées.
 | 4 — champ de saisie | **fait** (01/08) | 21 des 25 surcharges de bordure retirées, thème corrigé d'abord ; `check_inputs.dart` — 16 cas dont 8 refus, plus mutation des 11 vrais fichiers |
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
-| 7 — 335 chaînes | à faire, par écran | |
+| 7 — 335 chaînes | **1 écran sur 5** (01/08) | `create_order_screen` : 69 clés, parité 69 = 69, 69 employées / 69 déclarées, 0 littéral français visible restant, conversion prouvée par resubstitution |

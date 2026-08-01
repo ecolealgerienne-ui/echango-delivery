@@ -3,9 +3,11 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_form_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../models/vehicle_type.dart';
 import '../../services/bff_api_client.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 import '../../config/app_rules.dart';
@@ -46,6 +48,19 @@ class CreateOrderScreen extends StatefulWidget {
 }
 
 class _CreateOrderScreenState extends State<CreateOrderScreen> {
+  /// Traduction, depuis le `build` **comme depuis un callback**.
+  ///
+  /// ⚠️ `read` et jamais `watch` : `watch` hors d'une phase de build lève chez
+  /// Provider, et la moitié de ces libellés est lue depuis `_submit`,
+  /// `_applyAddress` ou `_pickOnMap`. C'est le défaut qui faisait planter les
+  /// deux actions de l'écran flotte le 31/07, et que `flutter analyze` ne voit
+  /// pas : c'est une règle d'exécution, pas de typage.
+  ///
+  /// Ne pas observer ici ne perd rien — un changement de langue reconstruit
+  /// toute l'application (`Consumer<LocaleState>` dans `main.dart`).
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderFormLabel(key, context.read<LocaleState>().locale, vars);
+
   final _pickupName = TextEditingController();
   final _pickupAddress = TextEditingController();
   final _pickupContact = TextEditingController();
@@ -289,23 +304,27 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     if (!a.hasPosition && mounted) {
       showAppError(
         context,
-        '« ${a.name} » n\'a pas de position enregistrée : placez-la sur '
-        'la carte pour continuer.',
+        _t('order.form.address.no_position', {'name': a.name}),
       );
     }
   }
 
   Future<void> _submit(MerchantOrderState orderState) async {
     final missing = <String>[
-      if (_pickupName.text.trim().isEmpty) 'le lieu de retrait',
-      if (_pickupPhone.text.trim().isEmpty) 'le téléphone de retrait',
-      if (_dropoffName.text.trim().isEmpty) 'le nom du destinataire',
-      if (_dropoffPhone.text.trim().isEmpty) 'le téléphone du destinataire',
-      if (_pickupPoint == null) 'le point de retrait sur la carte',
-      if (_dropoffPoint == null) 'le point de livraison sur la carte',
+      if (_pickupName.text.trim().isEmpty) _t('order.form.missing.pickup_name'),
+      if (_pickupPhone.text.trim().isEmpty) _t('order.form.missing.pickup_phone'),
+      if (_dropoffName.text.trim().isEmpty) _t('order.form.missing.dropoff_name'),
+      if (_dropoffPhone.text.trim().isEmpty) _t('order.form.missing.dropoff_phone'),
+      if (_pickupPoint == null) _t('order.form.missing.pickup_point'),
+      if (_dropoffPoint == null) _t('order.form.missing.dropoff_point'),
     ];
     if (missing.isNotEmpty) {
-      showAppError(context, 'Il manque ${missing.join(', ')}');
+      showAppError(
+        context,
+        _t('order.form.missing', {
+          'fields': missing.join(_t('order.form.missing.separator')),
+        }),
+      );
       return;
     }
 
@@ -322,6 +341,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'pickupLongitude': _pickupPoint!.longitude,
       if (_pickupCity != null) 'pickupCity': _pickupCity,
       if (_pickupNeighborhood != null) 'pickupNeighborhood': _pickupNeighborhood,
+      // ⚠️ `'Commerce'` reste en français en dur, et **ce n'est pas un oubli du
+      // lot i18n**. Ce n'est pas un libellé : c'est une **donnée** envoyée au
+      // serveur, stockée chez Fleetbase et relue par le transporteur. La
+      // traduire ferait dépendre le contenu de la base de la langue du
+      // téléphone qui a créé la commande — un même commerçant produirait des
+      // contacts nommés tantôt « Commerce », tantôt « متجر ».
       'pickupContactName':
           _pickupContact.text.trim().isEmpty ? 'Commerce' : _pickupContact.text.trim(),
       'pickupContactPhone': _pickupPhone.text.trim(),
@@ -383,15 +408,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     if (orderId != null) {
       showAppSnackBar(
         context,
-        'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
-        'transporteur.',
+        _t('order.form.saved'),
       );
       // Vers la fiche, pas la liste : le « Publier » y est à portée de main,
       // et c'est le geste qui manque encore pour que la livraison parte
       // réellement.
       router.pushReplacement('/commercant/commandes/$orderId');
     } else {
-      showAppError(context, orderState.errorMessage ?? 'Création impossible');
+      showAppError(context, orderState.errorMessage ?? _t('order.form.failed'));
     }
   }
 
@@ -405,7 +429,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       // — et le commerçant hésite à valider.
       appBar: AppBar(
         title: Text(
-          widget.template == null ? 'Nouvelle livraison' : 'Reprendre une livraison',
+          widget.template == null ? _t('order.form.title.new') : _t('order.form.title.duplicate'),
         ),
       ),
       body: SafeArea(
@@ -416,28 +440,28 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _section('Retrait'),
+                _section(_t('order.form.section.pickup')),
                 _locationRow(orderState, toPickup: true),
-                _field(_pickupName, 'Lieu de retrait *', Icons.storefront_outlined),
-                _field(_pickupAddress, 'Adresse', Icons.place_outlined),
-                _field(_pickupContact, 'Contact sur place', Icons.person_outline),
-                _field(_pickupPhone, 'Téléphone *', Icons.phone_outlined,
+                _field(_pickupName, _t('order.form.pickup.name'), Icons.storefront_outlined),
+                _field(_pickupAddress, _t('order.form.address'), Icons.place_outlined),
+                _field(_pickupContact, _t('order.form.pickup.contact'), Icons.person_outline),
+                _field(_pickupPhone, _t('order.form.phone'), Icons.phone_outlined,
                     keyboard: TextInputType.phone),
                 const SizedBox(height: AppSpacing.xl),
-                _section('Livraison'),
+                _section(_t('order.form.section.dropoff')),
                 _locationRow(orderState, toPickup: false),
-                _field(_dropoffName, 'Destinataire *', Icons.person_outline),
-                _field(_dropoffAddress, 'Adresse', Icons.place_outlined),
-                _field(_dropoffContact, 'Contact (si différent)', Icons.person_outline),
-                _field(_dropoffPhone, 'Téléphone *', Icons.phone_outlined,
+                _field(_dropoffName, _t('order.form.dropoff.name'), Icons.person_outline),
+                _field(_dropoffAddress, _t('order.form.address'), Icons.place_outlined),
+                _field(_dropoffContact, _t('order.form.dropoff.contact'), Icons.person_outline),
+                _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
                     keyboard: TextInputType.phone),
                 const SizedBox(height: AppSpacing.xl),
-                _section('Colis'),
-                _field(_itemDescription, 'Contenu (ex. : gâteau, médicaments)',
+                _section(_t('order.form.section.parcel')),
+                _field(_itemDescription, _t('order.form.item.description'),
                     Icons.inventory_2_outlined),
-                _field(_itemQuantity, 'Nombre de colis',
+                _field(_itemQuantity, _t('order.form.item.quantity'),
                     Icons.numbers_outlined, keyboard: TextInputType.number),
-                _field(_itemWeight, 'Poids approximatif (kg)',
+                _field(_itemWeight, _t('order.form.item.weight'),
                     Icons.scale_outlined, keyboard: TextInputType.number),
                 // Case à cocher plutôt qu'une consigne écrite : une mention
                 // « fragile » noyée dans les instructions se lit après le
@@ -446,22 +470,22 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                   contentPadding: EdgeInsets.zero,
                   value: _fragile,
                   onChanged: (v) => setState(() => _fragile = v ?? false),
-                  title: const Text('Contenu fragile'),
+                  title: Text(_t('order.form.item.fragile')),
                   subtitle: Text(
-                    'Signalé au transporteur avant qu\'il accepte la course.',
+                    _t('order.form.item.fragile.hint'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
                 _vehicleSelector(),
                 _pricingSection(),
                 const SizedBox(height: AppSpacing.lg),
-                _section('Options'),
+                _section(_t('order.form.section.options')),
                 _codSection(),
                 _scheduleTile(),
                 _podSelector(),
                 _favouritesTile(orderState),
                 const SizedBox(height: AppSpacing.lg),
-                _field(_instructions, 'Instructions pour le transporteur',
+                _field(_instructions, _t('order.form.instructions'),
                     Icons.notes_outlined, maxLines: 3),
                 const SizedBox(height: AppSpacing.lg),
                 // Dire ce qui se passe ensuite : sans ça, un brouillon qui
@@ -471,11 +495,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 // (`AppNotice.info`), et non `primaryContainer` comme avant :
                 // les deux écrans disent la même chose à une navigation
                 // d'intervalle, et le disaient en deux couleurs.
-                const AppNotice.info(
+                AppNotice.info(
                   icon: Icons.edit_note,
-                  message: 'Cette livraison est enregistrée en brouillon : '
-                      'aucun transporteur n\'est sollicité tant que vous ne '
-                      'l\'avez pas publiée depuis sa fiche.',
+                  message: _t('order.form.draft.notice'),
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 FilledButton.icon(
@@ -487,7 +509,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: const Text('Enregistrer en brouillon'),
+                  label: Text(_t('order.form.submit')),
                 ),
                 const SizedBox(height: AppSpacing.xxl),
               ],
@@ -547,7 +569,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                   child: OutlinedButton.icon(
                     onPressed: () => _pickFromAddressBook(orderState, toPickup: toPickup),
                     icon: const Icon(Icons.bookmark_outline, size: 18),
-                    label: const Text('Carnet'),
+                    label: Text(_t('order.form.location.book')),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
@@ -556,7 +578,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 child: FilledButton.tonalIcon(
                   onPressed: () => _pickOnMap(toPickup: toPickup),
                   icon: const Icon(Icons.map_outlined, size: 18),
-                  label: Text(point == null ? 'Placer sur la carte' : 'Modifier le point'),
+                  label: Text(point == null ? _t('order.form.location.pick') : _t('order.form.location.edit')),
                 ),
               ),
             ],
@@ -578,9 +600,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               Expanded(
                 child: Text(
                   point == null
-                      ? 'Position non définie'
-                      : 'Position définie (${point.latitude.toStringAsFixed(5)}, '
-                          '${point.longitude.toStringAsFixed(5)})',
+                      ? _t('order.form.location.unset')
+                      : _t('order.form.location.set', {
+                          'lat': point.latitude.toStringAsFixed(5),
+                          'lng': point.longitude.toStringAsFixed(5),
+                        }),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -597,11 +621,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// voiture n'écarte pas un utilitaire. Traiter ce champ comme une égalité
   /// stricte priverait la course de transporteurs parfaitement capables.
   Widget _vehicleSelector() {
-    const options = {
-      null: 'Indifférent',
-      'moto': 'Moto minimum',
-      'voiture': 'Voiture minimum',
-      'utilitaire': 'Utilitaire requis',
+    final options = {
+      null: _t('order.form.vehicle.any'),
+      'moto': _t('order.form.vehicle.moto'),
+      'voiture': _t('order.form.vehicle.voiture'),
+      'utilitaire': _t('order.form.vehicle.utilitaire'),
     };
 
     return Padding(
@@ -609,7 +633,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       child: DropdownButtonFormField<String?>(
         initialValue: _vehicleType,
         decoration: InputDecoration(
-          labelText: 'Véhicule nécessaire',
+          labelText: _t('order.form.vehicle.label'),
           // L'icône suit la sélection : figée sur la moto, elle contredisait le
           // libellé et laissait croire que le choix n'avait pas été pris en
           // compte.
@@ -647,8 +671,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               style: theme.textTheme.titleLarge),
           subtitle: Text(
             quote.approximateDistance == null
-                ? 'Tarif Echango pour cette course'
-                : 'Tarif Echango — ${quote.approximateDistance}',
+                ? _t('order.form.quote.flat')
+                : _t('order.form.quote.distance',
+                    {'distance': quote.approximateDistance!}),
           ),
         ),
       );
@@ -662,7 +687,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         // marchandise. Sans reconstruction, l'aperçu plus bas afficherait un
         // total périmé — le seul endroit où le commerçant peut vérifier
         // l'addition avant de l'imposer à son client.
-        _field(_price, 'Rémunération proposée (DZD)', Icons.payments_outlined,
+        _field(_price, _t('order.form.price.label'), Icons.payments_outlined,
             keyboard: TextInputType.number,
             onChanged: (_) => setState(() {})),
         Row(
@@ -679,10 +704,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             Expanded(
               child: Text(
                 quote?.approximateDistance == null
-                    ? 'Ce montant est affiché aux transporteurs : c\'est sur lui '
-                        'qu\'ils décident de prendre la course.'
-                    : 'Distance estimée : ${quote!.approximateDistance}. '
-                        'Ce montant est affiché aux transporteurs.',
+                    ? _t('order.form.price.hint')
+                    : _t('order.form.price.hint.distance',
+                        {'distance': quote!.approximateDistance!}),
                 style: theme.textTheme.bodySmall,
               ),
             ),
@@ -725,7 +749,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return Padding(
         padding: const EdgeInsets.only(bottom: AppSpacing.xs),
         child: Text(
-          'Le destinataire remettra ${goods.toStringAsFixed(0)} DZD.',
+          _t('order.form.cod.total.included',
+              {'amount': goods.toStringAsFixed(0)}),
           style: theme.textTheme.bodySmall,
         ),
       );
@@ -736,8 +761,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return Padding(
         padding: const EdgeInsets.only(bottom: AppSpacing.xs),
         child: Text(
-          'Indiquez la rémunération du transporteur : elle sera réclamée au '
-          'destinataire en plus de la marchandise.',
+          _t('order.form.cod.total.missing_fee'),
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.error),
         ),
@@ -747,9 +771,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.xs),
       child: Text(
-        'Le destinataire remettra ${(goods + fee).toStringAsFixed(0)} DZD '
-        '(${goods.toStringAsFixed(0)} de marchandise + '
-        '${fee.toStringAsFixed(0)} de livraison).',
+        _t('order.form.cod.total.excluded', {
+          'total': (goods + fee).toStringAsFixed(0),
+          'goods': goods.toStringAsFixed(0),
+          'fee': fee.toStringAsFixed(0),
+        }),
         style: theme.textTheme.bodySmall
             ?.copyWith(fontWeight: FontWeight.bold),
       ),
@@ -766,10 +792,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           contentPadding: EdgeInsets.zero,
           value: _cashOnDelivery,
           onChanged: (v) => setState(() => _cashOnDelivery = v),
-          title: const Text('Le client paie à la livraison'),
+          title: Text(_t('order.form.cod.enable')),
           subtitle: Text(
-            'Le transporteur encaisse et vous remet la somme lors de son '
-            'prochain passage. Echango ne détient jamais cet argent.',
+            _t('order.form.cod.enable.hint'),
             style: theme.textTheme.bodySmall,
           ),
         ),
@@ -783,8 +808,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           _field(
             _codAmount,
             _codIncludesDelivery
-                ? 'Montant à encaisser (DZD)'
-                : 'Prix de la marchandise (DZD)',
+                ? _t('order.form.cod.amount.total')
+                : _t('order.form.cod.amount.goods'),
             Icons.account_balance_wallet_outlined,
             keyboard: TextInputType.number,
             onChanged: (_) => setState(() {}),
@@ -797,12 +822,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             contentPadding: EdgeInsets.zero,
             value: _codIncludesDelivery,
             onChanged: (v) => setState(() => _codIncludesDelivery = v ?? true),
-            title: const Text('Les frais de livraison sont inclus'),
+            title: Text(_t('order.form.cod.included')),
             subtitle: Text(
               _codIncludesDelivery
-                  ? 'Le client règle la marchandise et la livraison en une fois.'
-                  : 'Les frais de livraison sont réclamés au client en plus '
-                      'de la marchandise.',
+                  ? _t('order.form.cod.included.hint')
+                  : _t('order.form.cod.excluded.hint'),
               style: theme.textTheme.bodySmall,
             ),
           ),
@@ -810,8 +834,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.md),
             child: Text(
-              'Le transporteur retient sa rémunération sur les espèces et ne '
-              'vous remet que la différence, lors de son prochain passage.',
+              _t('order.form.cod.settlement'),
               style: theme.textTheme.bodySmall,
             ),
           ),
@@ -822,7 +845,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   Widget _scheduleTile() {
     final label = _scheduledAt == null
-        ? 'Dès que possible'
+        ? _t('order.form.schedule.asap')
         // Le jour et le mois étaient écrits SANS rembourrage : « 5/8 à 09h30 »
         // là où le reste de l'application écrit « 05/08 à 09h30 ».
         : formatDayTime(_scheduledAt!);
@@ -830,13 +853,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.schedule_outlined),
-      title: const Text('Enlèvement'),
+      title: Text(_t('order.form.schedule.title')),
       subtitle: Text(label),
       trailing: _scheduledAt == null
           ? const Icon(Icons.chevron_right)
           : IconButton(
               icon: const Icon(Icons.clear),
-              tooltip: 'Revenir à « dès que possible »',
+              tooltip: _t('order.form.schedule.clear'),
               onPressed: () => setState(() => _scheduledAt = null),
             ),
       onTap: _pickSchedule,
@@ -875,18 +898,18 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// ne le recueille côté transporteur. L'offrir promettrait une trace qui
   /// n'existerait pas — pire qu'une option absente.
   Widget _podSelector() {
-    const options = {
-      'photo': 'Photo à la livraison',
-      'aucune': 'Aucune preuve',
+    final options = {
+      'photo': _t('order.form.pod.photo'),
+      'aucune': _t('order.form.pod.none'),
     };
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: DropdownButtonFormField<String>(
         initialValue: _podMethod,
-        decoration: const InputDecoration(
-          labelText: 'Preuve de livraison',
-          prefixIcon: Icon(Icons.verified_outlined),
+        decoration: InputDecoration(
+          labelText: _t('order.form.pod.label'),
+          prefixIcon: const Icon(Icons.verified_outlined),
           isDense: true,
         ),
         items: options.entries
@@ -908,10 +931,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       contentPadding: EdgeInsets.zero,
       value: _preferFavourites,
       onChanged: (v) => setState(() => _preferFavourites = v),
-      title: const Text('Proposer d\'abord à mes transporteurs habituels'),
+      title: Text(_t('order.form.favourites.title')),
       subtitle: Text(
-        '${orderState.favourites.length} favori(s). Si aucun n\'est disponible, '
-        'la course est proposée à l\'ensemble du réseau.',
+        _t('order.form.favourites.hint',
+            {'count': '${orderState.favourites.length}'}),
         style: Theme.of(context).textTheme.bodySmall,
       ),
     );
@@ -933,7 +956,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final result = await Navigator.of(context).push<PickedLocation>(
       MaterialPageRoute(
         builder: (_) => MapPickerScreen(
-          title: toPickup ? 'Point de retrait' : 'Point de livraison',
+          title: toPickup ? _t('order.form.map.pickup') : _t('order.form.map.dropoff'),
           initial: toPickup ? _pickupPoint : _dropoffPoint,
         ),
       ),
@@ -1003,6 +1026,10 @@ class _AddressBookSheet extends StatefulWidget {
 }
 
 class _AddressBookSheetState extends State<_AddressBookSheet> {
+  /// La feuille a son propre contexte, donc son propre accès à la table.
+  String _t(String key) =>
+      orderFormLabel(key, context.read<LocaleState>().locale);
+
   String _filter = '';
 
   @override
@@ -1029,9 +1056,9 @@ class _AddressBookSheetState extends State<_AddressBookSheet> {
           TextField(
             autofocus: true,
             onChanged: (v) => setState(() => _filter = v),
-            decoration: const InputDecoration(
-              hintText: 'Rechercher dans le carnet…',
-              prefixIcon: Icon(Icons.search),
+            decoration: InputDecoration(
+              hintText: _t('order.form.book.search'),
+              prefixIcon: const Icon(Icons.search),
               isDense: true,
             ),
           ),
@@ -1041,9 +1068,9 @@ class _AddressBookSheetState extends State<_AddressBookSheet> {
               maxHeight: MediaQuery.of(context).size.height * 0.5,
             ),
             child: visible.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.symmetric(vertical: AppSpacing.xxl),
-                    child: Text('Aucune adresse ne correspond'),
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
+                    child: Text(_t('order.form.book.empty')),
                   )
                 : ListView.separated(
                     shrinkWrap: true,
