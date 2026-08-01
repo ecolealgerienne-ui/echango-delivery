@@ -37,6 +37,10 @@ const Map<String, String> _fr = {
   'auth.merchant_not_found': 'Aucun compte commerçant ne correspond.',
   'auth.merchant_registration_failed': 'Inscription impossible pour le moment.',
   'auth.fleet_registration_failed': 'Inscription impossible pour le moment.',
+  'fleet_pending':
+      'Votre entreprise est en attente de validation par Echango.',
+  'auth.driver_not_in_fleet':
+      "Ce transporteur n'appartient pas à votre entreprise.",
   'auth.driver_registration_failed': 'Inscription impossible pour le moment.',
   'auth.driver_not_found': 'Ce transporteur est introuvable.',
   'auth.driver_unknown': 'Invitation invalide : transporteur inconnu.',
@@ -91,6 +95,7 @@ const Map<String, String> _fr = {
       'Indiquez quel transporteur a effectué cette livraison.',
   'cash.driver_not_in_network':
       'Transporteur inconnu du réseau.',
+  'cash.counterparty_not_found': 'Contrepartie introuvable.',
   'cash.driver_no_account':
       'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
 
@@ -116,6 +121,7 @@ const Map<String, String> _fr = {
   'order.missing_public_id': 'Commande mal formée côté serveur.',
   'order.release_failed': 'Impossible de rendre cette course pour l\'instant.',
   'order.already_taken': 'Cette course vient d\'être prise par un autre transporteur.',
+  'order.claim_failed': 'Impossible de prendre cette course pour le moment.',
   'order.cod_requires_price':
       'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
   'order.custom_fields_unavailable':
@@ -142,6 +148,16 @@ const Map<String, String> _fr = {
   'driver.position_update_failed': 'Envoi de la position impossible.',
   'driver.online_toggle_failed': 'Changement de disponibilité impossible.',
   'driver.search_unavailable': 'Recherche indisponible pour le moment.',
+  'driver.search_too_broad':
+      'Trop de résultats — précisez le nom ou le numéro de téléphone.',
+  'driver.already_in_network':
+      'Cette personne est déjà dans le réseau. Recherchez-la et demandez son '
+          'rattachement au lieu de la créer.',
+  'membership.not_found': 'Ce rattachement n’existe pas.',
+  'membership.already_exists': 'Une demande existe déjà pour ce conducteur.',
+  'membership.not_pending': 'Cette demande a déjà reçu une réponse.',
+  'membership.not_active': 'Seul un rattachement actif peut être suspendu.',
+  'membership.not_suspended': 'Seul un rattachement suspendu peut être réactivé.',
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   'fleet.not_found': 'Compte flotte introuvable.',
@@ -209,6 +225,8 @@ const Map<String, String> _ar = {
   'auth.merchant_not_found': 'لا يوجد حساب تاجر مطابق.',
   'auth.merchant_registration_failed': 'التسجيل غير ممكن حالياً.',
   'auth.fleet_registration_failed': 'التسجيل غير ممكن حالياً.',
+  'fleet_pending': 'شركتك في انتظار موافقة Echango.',
+  'auth.driver_not_in_fleet': 'هذا السائق لا ينتمي إلى شركتك.',
   'auth.driver_registration_failed': 'التسجيل غير ممكن حالياً.',
   'auth.driver_not_found': 'هذا السائق غير موجود.',
   'auth.driver_unknown': 'دعوة غير صالحة: سائق غير معروف.',
@@ -259,6 +277,7 @@ const Map<String, String> _ar = {
       'حدّد الناقل الذي قام بهذا التوصيل.',
   'cash.driver_not_in_network':
       'ناقل غير معروف في الشبكة.',
+  'cash.counterparty_not_found': 'الطرف المقابل غير موجود.',
   'cash.driver_no_account':
       'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
 
@@ -284,6 +303,7 @@ const Map<String, String> _ar = {
   'order.missing_public_id': 'خطأ في تكوين الطلبية على الخادم.',
   'order.release_failed': 'تعذر إعادة هذه الرحلة حالياً.',
   'order.already_taken': 'تم أخذ هذه الرحلة من قبل سائق آخر.',
+  'order.claim_failed': 'لا يمكن أخذ هذه الرحلة في الوقت الحالي.',
   'order.cod_requires_price':
       'حدّد أجرة الناقل: ستُطلب من المستلم إضافةً إلى ثمن البضاعة.',
   'order.custom_fields_unavailable':
@@ -310,6 +330,14 @@ const Map<String, String> _ar = {
   'driver.position_update_failed': 'تعذر إرسال الموقع.',
   'driver.online_toggle_failed': 'تعذر تغيير حالة التوفر.',
   'driver.search_unavailable': 'البحث غير متاح حالياً.',
+  'driver.search_too_broad': 'نتائج كثيرة — حدّد الاسم أو رقم الهاتف.',
+  'driver.already_in_network':
+      'هذا الشخص موجود بالفعل في الشبكة. ابحث عنه واطلب ربطه بدل إنشائه من جديد.',
+  'membership.not_found': 'هذا الارتباط غير موجود.',
+  'membership.already_exists': 'يوجد طلب سابق لهذا السائق.',
+  'membership.not_pending': 'تمت الإجابة على هذا الطلب من قبل.',
+  'membership.not_active': 'يمكن تعليق الارتباط المفعّل فقط.',
+  'membership.not_suspended': 'يمكن إعادة تفعيل الارتباط المعلّق فقط.',
 
   // ── الأسطول (ملف مدير الأسطول الصغير) ────────────────────────────────────
   'fleet.not_found': 'حساب الأسطول غير موجود.',

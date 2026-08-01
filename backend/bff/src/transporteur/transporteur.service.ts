@@ -1,15 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { badRequest, forbidden, notFound } from '../common/errors/http-errors';
+import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
+import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import {
   effectiveOrderMeta,
   projectOrderForDriver,
 } from '../common/projections/order.projection';
+import { adhocRadiusMetres as configuredAdhocRadius } from '../common/orders/adhoc-radius';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -333,6 +335,172 @@ export class TransporteurService {
    * indéterminé plutôt que d'affirmer « hors ligne », qui serait un mensonge
    * dans le sens dangereux (le driver ne réagit pas à une course reçue).
    */
+  /**
+   * Les entreprises de ce conducteur — rattachements et demandes en attente.
+   *
+   * ── Pourquoi le conducteur doit voir ça, et pas seulement l'entreprise ────
+   *
+   * Un rattachement n'est pas administratif : il décide **à qui il devra les
+   * espèces** d'une course. `driverCounterparty()` prend le facilitateur de la
+   * commande, donc travailler pour deux entreprises, c'est porter deux dettes
+   * distinctes. Un conducteur qui ne sait pas pour qui il roule ne peut pas
+   * savoir à qui remettre l'argent.
+   *
+   * ⚠️ L'entreprise d'origine (`Driver.vendor_uuid`) est incluse et marquée
+   * comme telle. La laisser de côté aurait montré une liste où l'employeur
+   * principal manque — la moitié la plus importante, et celle qu'on ne pense
+   * pas à vérifier parce qu'elle « va de soi ».
+   */
+  async listMemberships(driverId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const memberships = await this.prisma.driverMembership.findMany({
+      where: { fleetbaseDriverUuid: driver.fleetbaseDriverUuid },
+      include: { fleet: true },
+      orderBy: { requestedAt: 'desc' },
+    });
+
+    const rows = memberships.map((m: any) => ({
+      id: m.id,
+      fleet_id: m.fleetId,
+      // Le nom commercial, pas l'email : c'est sous ce nom que le conducteur
+      // connaît l'entreprise.
+      name: m.fleet?.businessName ?? null,
+      status: m.status,
+      origin: false,
+      requested_at: m.requestedAt,
+    }));
+
+    const origin = await this.originFleet(driver.fleetbaseDriverUuid);
+    return { data: origin ? [origin, ...rows] : rows };
+  }
+
+  /**
+   * L'entreprise d'origine, lue chez Fleetbase et non dans notre table.
+   *
+   * `Driver.vendor_uuid` en est la source de vérité (règle 1) ; le `FleetAccount`
+   * n'est là que pour lui donner un nom lisible. Injoignable, on renvoie `null`
+   * plutôt qu'une entrée à moitié remplie : une ligne sans nom dans la liste des
+   * employeurs se lit comme une entreprise inconnue, ce qui est pire qu'une
+   * ligne absente.
+   */
+  private async originFleet(driverUuid: string): Promise<any | null> {
+    let vendorUuid: string | null = null;
+    try {
+      const driver = await this.fleetbaseClient.getDriverByUuid(driverUuid);
+      vendorUuid = driver?.vendor_uuid ?? null;
+    } catch (error: any) {
+      this.logger.warn(`Entreprise d'origine illisible pour ${driverUuid} : ${error.message}`);
+      return null;
+    }
+
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+    });
+    if (!fleet) return null;
+
+    return {
+      id: null,
+      fleet_id: fleet.id,
+      name: fleet.businessName,
+      status: 'active',
+      // Ce qui distingue l'origine d'une adhésion : elle ne se refuse pas et ne
+      // se suspend pas depuis l'application. L'écran doit le savoir pour ne pas
+      // offrir un bouton sans effet.
+      origin: true,
+      requested_at: null,
+    };
+  }
+
+  /**
+   * Accepter ou refuser un rattachement.
+   *
+   * ── Ce que l'acceptation engage réellement ───────────────────────────────
+   *
+   * Elle autorise l'entreprise à confier des courses — donc à faire porter au
+   * conducteur les espèces d'un commerçant, sous forme d'une dette envers elle.
+   * C'est pour cela que le rattachement naît `pending` et non `active` : sans ce
+   * passage, une entreprise imposerait une obligation financière à quelqu'un qui
+   * n'a rien accepté.
+   */
+  async respondToMembership(driverId: string, membershipId: string, accept: boolean) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: { id: membershipId },
+    });
+
+    // Un seul refus pour « inexistante » et « pas la vôtre » : les distinguer
+    // apprendrait au conducteur qu'une adhésion existe pour quelqu'un d'autre.
+    if (!membership || membership.fleetbaseDriverUuid !== driver.fleetbaseDriverUuid) {
+      notFound('membership.not_found', 'Membership not found');
+    }
+
+    if (membership.status !== 'pending') {
+      conflict(
+        'membership.not_pending',
+        'Cette demande a déjà reçu une réponse.',
+      );
+    }
+
+    const updated = await this.prisma.driverMembership.update({
+      where: { id: membership.id },
+      data: {
+        status: accept ? 'active' : 'declined',
+        respondedAt: new Date(),
+      },
+    });
+
+    this.logger.log(
+      `Adhésion ${membershipId} ${accept ? 'acceptée' : 'refusée'} par ${driverId}`,
+    );
+
+    return { id: updated.id, status: updated.status };
+  }
+
+  /**
+   * Quitter une entreprise.
+   *
+   * ── Pourquoi il faut une sortie, et pas seulement une entrée ─────────────
+   *
+   * La première version n'avait que l'acceptation : un conducteur ayant dit oui
+   * une fois restait rattaché **indéfiniment**, et l'entreprise pouvait
+   * continuer à lui confier des courses encaissées. Seule elle pouvait
+   * suspendre. Le principe posé par ce chantier — « l'acceptation est une
+   * condition de l'engagement » — n'avait alors aucun pendant en sortie, ce qui
+   * en fait un consentement à sens unique.
+   *
+   * ⚠️ **La dette n'est pas éteinte par le départ.** L'adhésion passe à
+   * `declined`, le lien reste écrit, et le registre continue de dire ce qui est
+   * dû — c'est tout le motif de l'absence de suppression. Partir coupe les
+   * courses à venir, pas ce qu'on doit.
+   */
+  async leaveFleet(driverId: string, membershipId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+
+    const membership = await this.prisma.driverMembership.findUnique({
+      where: { id: membershipId },
+    });
+
+    if (!membership || membership.fleetbaseDriverUuid !== driver.fleetbaseDriverUuid) {
+      notFound('membership.not_found', 'Membership not found');
+    }
+
+    if (membership.status !== 'active') {
+      conflict('membership.not_active', 'Ce rattachement n\'est pas actif.');
+    }
+
+    const updated = await this.prisma.driverMembership.update({
+      where: { id: membership.id },
+      data: { status: 'declined', respondedAt: new Date() },
+    });
+
+    this.logger.log(`Conducteur ${driverId} a quitté l'adhésion ${membershipId}`);
+    return { id: updated.id, status: updated.status };
+  }
+
   async getProfile(driverId: string) {
     const driver = await this.getDriverOrFail(driverId);
 
@@ -530,21 +698,19 @@ export class TransporteurService {
     // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
     // traiter la course comme sans exigence.
     const adhocHydrated = await this.withSpecMeta(
-      adhocRaw.filter(
-        (o) =>
-          o?.adhoc === true &&
-          !o?.driver_assigned_uuid &&
-          o?.status !== 'canceled' &&
-          !declined.has(o?.uuid),
-      ),
+      adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
     );
 
     const adhoc = adhocHydrated.filter(suits);
 
-    const isFinished = (o: any) => ['completed', 'canceled'].includes(o?.status);
+    // ⚠️ `cancelled` à deux « l » compris : sans lui, une course annulée par le
+    // chemin qui emploie cette orthographe restait dans les courses actives du
+    // transporteur, indéfiniment.
+    const isFinished = (o: any) => isTerminalOrderStatus(o?.status);
     // Projection en liste d'autorisation : le BFF décide de ce qui sort, et
-    // non Fleetbase (revue M10). `unclaimed` réduit le point de livraison à sa
-    // commune ; l'enlèvement, qui est un commerce, passe en entier.
+    // non Fleetbase (revue M10). `unclaimed` retire le nom et le téléphone du
+    // destinataire, et rien d'autre ; l'enlèvement, qui est un commerce, passe
+    // en entier.
     // Déjà complété ci-dessus — une opportunité dont `meta` a été effacé
     // n'annoncerait ni prix ni montant à encaisser, donc rien sur quoi décider
     // de la prendre.
@@ -573,6 +739,51 @@ export class TransporteurService {
    * Anything else is a 404 rather than a 403 — a driver has no business
    * learning that a given order id exists at all.
    */
+  /**
+   * La garde d'accès à une course, **écrite une seule fois**.
+   *
+   * Un transporteur peut ouvrir une course si elle lui est assignée, ou si
+   * c'est une adhoc encore libre. Tout le reste est un `404` — jamais un `403`,
+   * qui confirmerait l'existence de la commande à qui n'y a pas droit.
+   *
+   * ⚠️ **Ces dix lignes existaient en deux copies** (détecteur de corps
+   * similaires, 01/08/2026, 97 %), ne différant que par l'`action` inscrite au
+   * journal d'audit. C'est exactement la forme du défaut fondateur de la
+   * règle 5 : `isClaimable` et `isClaimableAdhoc`, deux copies d'une même
+   * décision d'accès, qui ont divergé sur `completed` et affiché une course
+   * livrée dans « Courses libres » avec un bouton pour la prendre. Une garde de
+   * sécurité recopiée est une garde qui finira par ne plus protéger qu'un
+   * chemin sur deux.
+   */
+  private assertOrderVisible(
+    order: any,
+    driverId: string,
+    driverUuid: string,
+    orderId: string,
+    action: string,
+  ): { mine: boolean; claimableAdhoc: boolean } {
+    if (!order) {
+      notFound('order.not_found', 'Order not found');
+    }
+
+    const mine = this.isAssignedTo(order, driverUuid);
+    const claimableAdhoc = this.isClaimableAdhoc(order);
+
+    if (!mine && !claimableAdhoc) {
+      this.audit.denied({
+        actorType: 'transporteur',
+        actorId: driverId,
+        action,
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
+      });
+      notFound('order.not_found', 'Order not found');
+    }
+
+    return { mine, claimableAdhoc };
+  }
+
   /**
    * Confirme un encaissement que le commerçant a déclaré à la place du
    * transporteur, après une clôture faite hors application.
@@ -639,24 +850,13 @@ export class TransporteurService {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    if (!order) {
-      notFound('order.not_found', 'Order not found');
-    }
-
-    const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
-
-    if (!mine && !claimableAdhoc) {
-      this.audit.denied({
-        actorType: 'transporteur',
-        actorId: driverId,
-        action: 'order.access',
-        resourceType: 'Order',
-        resourceId: orderId,
-        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
-      });
-      notFound('order.not_found', 'Order not found');
-    }
+    const { mine, claimableAdhoc } = this.assertOrderVisible(
+      order,
+      driverId,
+      driver.fleetbaseDriverUuid,
+      orderId,
+      'order.access',
+    );
 
     // Une adhoc que ce driver n'a pas encore réclamée passe par la même
     // expurgation que la liste. Sans ça, la protection ne tiendrait pas une
@@ -699,24 +899,13 @@ export class TransporteurService {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    if (!order) {
-      notFound('order.not_found', 'Order not found');
-    }
-
-    const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = order?.adhoc === true && !order?.driver_assigned_uuid;
-
-    if (!mine && !claimableAdhoc) {
-      this.audit.denied({
-        actorType: 'transporteur',
-        actorId: driverId,
-        action: 'order.decline',
-        resourceType: 'Order',
-        resourceId: orderId,
-        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
-      });
-      notFound('order.not_found', 'Order not found');
-    }
+    const { mine, claimableAdhoc } = this.assertOrderVisible(
+      order,
+      driverId,
+      driver.fleetbaseDriverUuid,
+      orderId,
+      'order.decline',
+    );
 
     if (mine && !['created', 'dispatched'].includes(order?.status)) {
       badRequest(
@@ -817,14 +1006,18 @@ export class TransporteurService {
   /**
    * Rayon de rediffusion d'une course rendue.
    *
-   * Même valeur que celle appliquée à la création (`CommerçantService`) : une
-   * course rendue doit être proposée exactement comme elle l'aurait été si le
-   * favori n'avait pas été sollicité, sans quoi le refus changerait
-   * silencieusement sa portée.
+   * ⚠️ **La même valeur qu'à la création, et c'est maintenant tenu plutôt
+   * qu'affirmé.** Une course rendue doit être proposée exactement comme elle
+   * l'aurait été si le favori n'avait pas été sollicité — sans quoi le refus
+   * changerait silencieusement sa portée. Ce commentaire disait déjà cet
+   * invariant tout en le laissant à deux copies : c'est le signal même de la
+   * règle 5, et il a fallu le lire pour le voir.
    */
   private adhocRadiusMetres(): number {
-    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
-    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+    // Aliasé à l'import : sans alias, l'appel se lirait comme une récursion
+    // sur la méthode du même nom. Il n'en est pas une — un identifiant nu
+    // résout le module et non la méthode — mais rien ne le dit à la lecture.
+    return configuredAdhocRadius(this.configService.get('ADHOC_RADIUS_METRES'));
   }
 
   /**
@@ -871,6 +1064,19 @@ export class TransporteurService {
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
+
+    // ⚠️ Le plafond se vérifie AUSSI ici, et pas seulement à l'acceptation.
+    //
+    // Une course pré-assignée — favori sollicité à la création, ou affectation
+    // par une entreprise — n'a jamais traversé `acceptOrder()`. Son plafond
+    // avait été vérifié à la création, contre la dette d'alors ; entre-temps le
+    // conducteur a pu encaisser dix autres courses. Sur un brouillon, le délai
+    // est arbitrairement long.
+    //
+    // C'est la leçon du §16 appliquée : **une garde se pose sur le fait, pas
+    // sur le chemin auquel on pense en premier**. Le fait est ici « ce
+    // conducteur devient porteur d'espèces ».
+    await this.assertCashCeiling(driver.id, order);
 
     try {
       return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
@@ -1013,6 +1219,11 @@ export class TransporteurService {
       return;
     }
 
+    // Résolu UNE fois, puis figé dans les deux écritures : la partie ne doit
+    // pas pouvoir différer entre l'encaissement et la rémunération de la même
+    // course (exception §3.3 d'`architecture_bff_fleetbase.md`).
+    const facilitator = await this.resolveFacilitator(order);
+
     let collected = 0;
     if (codAmount > 0 && cash) {
       const result = await this.cash.declareCollection(
@@ -1021,6 +1232,7 @@ export class TransporteurService {
         order.uuid,
         codAmount,
         cash,
+        facilitator?.id ?? null,
       );
       collected = result.collectedAmount;
     }
@@ -1035,7 +1247,75 @@ export class TransporteurService {
       order.uuid,
       price,
       collected,
+      facilitator,
     );
+  }
+
+  /**
+   * Cette course est-elle **libre**, donc réclamable par un indépendant ?
+   *
+   * ── Un seul prédicat, et c'est l'énumération qui est la spécification ─────
+   *
+   * Ce test était redérivé à quatre endroits — la liste, la fiche, le refus et
+   * l'acceptation — et aucun ne regardait le facilitateur. Le jour où une
+   * course porte `facilitator_uuid` sans conducteur, **tous les indépendants du
+   * réseau la verraient et pourraient la prendre** (défaut D4).
+   *
+   * Corriger la liste seule aurait laissé la fiche et la prise ouvertes à qui
+   * connaît l'uuid — et l'uuid, c'est précisément ce que la liste donnait la
+   * veille. C'est la leçon du 28/07, où l'expurgation des opportunités avait dû
+   * couvrir la liste **et** la fiche pour la même raison.
+   *
+   * ⚠️ Le facilitateur est un critère **d'exclusion**, pas d'appartenance :
+   * une course confiée à une entreprise n'est pas libre, point. Savoir si le
+   * conducteur appartient à cette entreprise ne change rien — elle lui sera
+   * affectée par son employeur, elle ne se réclame pas.
+   */
+  private isClaimableAdhoc(order: any): boolean {
+    return isOrderClaimable(order);
+  }
+
+  /**
+   * Le facilitateur de cette course, ou `null` si elle n'en porte pas.
+   *
+   * ── Où vit l'information ────────────────────────────────────────────────
+   *
+   * Sur `Order.facilitator_uuid` chez Fleetbase, natif et prévu pour ça. Le BFF
+   * ne le recopie nulle part : il le lit, et ne conserve que le lien vers le
+   * compte Echango correspondant, une fois figé dans une écriture comptable.
+   *
+   * ⚠️ Rend `null` quand le fournisseur n'a **aucun compte Echango**. Ce cas
+   * est réel : un opérateur peut rattacher une commande à un `Vendor` en
+   * console sans que ce fournisseur soit une entreprise inscrite chez nous. La
+   * course se comporte alors comme une course sans facilitateur — le conducteur
+   * règle avec le commerçant — plutôt que de créer une dette envers une partie
+   * qui n'existe pas dans le registre.
+   */
+  private async resolveFacilitator(
+    order: any,
+  ): Promise<{ id: string; isPlatform: boolean } | null> {
+    const vendorUuid = order?.facilitator_uuid;
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+      select: { id: true, isPlatform: true },
+    });
+
+    if (!fleet) {
+      this.logger.warn(
+        `Commande ${order?.uuid} rattachée au fournisseur ${vendorUuid}, qui n'a pas de compte ` +
+          'Echango — traitée comme une course sans facilitateur',
+      );
+      return null;
+    }
+
+    return fleet;
+  }
+
+  /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
+  private async resolveFacilitatorId(order: any): Promise<string | null> {
+    return (await this.resolveFacilitator(order))?.id ?? null;
   }
 
   /**
@@ -1063,18 +1343,31 @@ export class TransporteurService {
     });
     if (!cached) return;
 
-    const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
-      driverId,
-      cached.merchantId,
+    // La contrepartie du conducteur est son facilitateur quand la course en
+    // porte un — c'est LUI qui borne son exposition, et non plus le commerçant
+    // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
+    // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
+    const facilitatorId = await this.resolveFacilitatorId(order);
+
+    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
+      driverParty(driverId),
+      this.cash.driverCounterparty(facilitatorId, cached.merchantId),
       codAmount,
     );
 
     if (!allowed) {
+      // ⚠️ « pour ce commerçant » est faux quand c'est le plafond par personne
+      // qui a mordu : le conducteur irait remettre à celui-là, sans se
+      // débloquer, et conclurait à un défaut de l'application.
       badRequest(
         'cash.ceiling_exceeded',
-        `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
-          `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-          'Remettez les espèces avant de reprendre une course encaissée pour lui.',
+        scope === 'person'
+          ? `Vous détenez déjà ${debt} ${this.cash.currency} au total, toutes entreprises et ` +
+              `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
+              `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
+          : `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
+              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
+              'Remettez les espèces avant de reprendre une course encaissée pour lui.',
       );
     }
   }

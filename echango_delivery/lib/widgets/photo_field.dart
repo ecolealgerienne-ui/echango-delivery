@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../errors/app_error.dart';
+import '../i18n/common_strings.dart';
 import '../errors/error_translator.dart';
 import '../services/photo_service.dart';
 import '../state/locale_state.dart';
+import '../theme/app_spacing.dart';
 
 /// Champ de prise de photo, partagé par la preuve de livraison et le
 /// signalement d'échec.
@@ -18,7 +20,10 @@ class PhotoField extends StatefulWidget {
   /// Remonte la photo encodée, ou `null` quand elle est retirée.
   final ValueChanged<CapturedPhoto?> onChanged;
 
-  final String label;
+  /// Titre du bloc. `null` ⇒ « Photo », traduit — un défaut de paramètre doit
+  /// être constant, donc il ne peut pas appeler la table ; il est résolu au
+  /// `build`, où le contexte existe.
+  final String? label;
   final String helperText;
 
   /// Une preuve de livraison est exigée par le serveur sur certaines étapes
@@ -28,7 +33,7 @@ class PhotoField extends StatefulWidget {
   const PhotoField({
     super.key,
     required this.onChanged,
-    this.label = 'Photo',
+    this.label,
     this.helperText = '',
     this.required = false,
   });
@@ -38,6 +43,10 @@ class PhotoField extends StatefulWidget {
 }
 
 class _PhotoFieldState extends State<PhotoField> {
+  /// Libellés d'ossature (« Photographier », « Retirer »…).
+  String _c(String key, [Map<String, String>? vars]) =>
+      commonLabel(key, context.read<LocaleState>().locale, vars);
+
   CapturedPhoto? _photo;
   String? _error;
   bool _busy = false;
@@ -89,23 +98,24 @@ class _PhotoFieldState extends State<PhotoField> {
       children: [
         Row(
           children: [
-            Text(widget.label, style: theme.textTheme.titleMedium),
+            Text(widget.label ?? _c('common.photo'),
+                style: theme.textTheme.titleMedium),
             if (widget.required)
               Text(' *', style: TextStyle(color: theme.colorScheme.error)),
           ],
         ),
         if (widget.helperText.isNotEmpty) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             widget.helperText,
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.md),
         if (_photo != null) _preview(theme) else _picker(theme),
         if (_error != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
         ],
       ],
@@ -118,19 +128,19 @@ class _PhotoFieldState extends State<PhotoField> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadius.md),
           child: Image.memory(
             Uint8List.fromList(photo.bytes),
             height: 200,
             fit: BoxFit.cover,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              '${photo.approximateSizeKb} ko',
+              _c('common.photo.size', {'size': '${photo.approximateSizeKb}'}),
               style: theme.textTheme.bodySmall,
             ),
             Row(
@@ -138,12 +148,12 @@ class _PhotoFieldState extends State<PhotoField> {
                 TextButton.icon(
                   onPressed: _busy ? null : () => _pick(fromGallery: false),
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Reprendre'),
+                  label: Text(_c('common.photo.retake')),
                 ),
                 TextButton.icon(
                   onPressed: _busy ? null : _remove,
                   icon: const Icon(Icons.delete_outline),
-                  label: const Text('Retirer'),
+                  label: Text(_c('common.photo.remove')),
                 ),
               ],
             ),
@@ -156,7 +166,7 @@ class _PhotoFieldState extends State<PhotoField> {
   Widget _picker(ThemeData theme) {
     if (_busy) {
       return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
         child: Center(child: CircularProgressIndicator()),
       );
     }
@@ -167,20 +177,20 @@ class _PhotoFieldState extends State<PhotoField> {
           child: OutlinedButton.icon(
             onPressed: () => _pick(fromGallery: false),
             icon: const Icon(Icons.camera_alt_outlined),
-            label: const Text('Photographier'),
+            label: Text(_c('common.photo.take')),
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: AppSpacing.md),
         // La galerie sert au rattrapage : une photo prise juste avant, hors de
         // l'app, ou une reprise après une coupure. Sans elle, un incident non
         // photographié dans le bon écran est définitivement perdu.
         OutlinedButton(
           onPressed: () => _pick(fromGallery: true),
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg, horizontal: AppSpacing.lg),
           ),
           child: const Icon(Icons.photo_library_outlined),
         ),

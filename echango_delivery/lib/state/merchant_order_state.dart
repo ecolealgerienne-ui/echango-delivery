@@ -1,16 +1,29 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'write_envelope.dart';
+import 'paged_list.dart';
+import '../errors/error_message.dart';
 
-class MerchantOrderState extends ChangeNotifier {
+class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
-  List<MerchantOrder> _orders = [];
+  final PagedList<MerchantOrder> _ordersPage = PagedList<MerchantOrder>();
   List<SavedAddress> _addresses = [];
   List<KnownDriver> _favourites = [];
   MerchantOrder? _selected;
@@ -18,24 +31,38 @@ class MerchantOrderState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
+  /// ⚠️ Le carnet a-t-il **échoué**, ou est-il vraiment vide ?
+  ///
+  /// [loadAddresses] avale son erreur pour ne pas faire remonter une exception
+  /// nue, et laisse donc `_addresses` tel quel — c'est-à-dire vide au premier
+  /// chargement. Sans ce drapeau, un commerçant dont le BFF est injoignable
+  /// s'entend dire « aucune adresse enregistrée » alors qu'il en a dix, et le
+  /// message est **définitif** : rien ne le recharge ensuite.
+  ///
+  /// Même forme que `FleetState.driversUnavailable`, et pour la même raison —
+  /// une liste vide obtenue par échec ne se dit pas comme une liste vide.
+  bool _addressesUnavailable = false;
+
   MerchantOrderState({required BffApiClient apiClient, required LocaleState localeState})
       : _apiClient = apiClient,
         _localeState = localeState;
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
-  List<MerchantOrder> get orders => _orders;
+  List<MerchantOrder> get orders => _ordersPage.items;
   List<MerchantOrder> get activeOrders => _matching.where((o) => !o.isFinished).toList();
   List<MerchantOrder> get pastOrders => _matching.where((o) => o.isFinished).toList();
 
   /// Recherche libre sur les commandes déjà chargées.
   ///
   /// ⚠️ **Locale, donc portant sur les pages chargées seulement.** Une
-  /// recherche serveur serait plus juste, mais tout le filtrage du BFF est
-  /// applicatif (Fleetbase ignore les filtres de requête) : elle imposerait de
-  /// parcourir toute l'organisation à chaque frappe. Le bouton « charger plus »
+  /// recherche serveur serait plus juste, mais il n'en existe aucune sur les
+  /// commandes : Fleetbase filtre bien par `customer`/`facilitator`/`driver`
+  /// (la phrase « Fleetbase ignore les filtres de requête » qui figurait ici
+  /// était fausse, corrigée le 29/07/2026), sans pour autant offrir de
+  /// recherche libre — elle imposerait de parcourir toute l'organisation à
+  /// chaque frappe. Le bouton « charger plus »
   /// étend le périmètre de recherche autant que la liste, ce qui rend la limite
   /// gérable — et l'écran le dit plutôt que de laisser croire à une recherche
   /// exhaustive.
@@ -49,9 +76,9 @@ class MerchantOrderState extends ChangeNotifier {
 
   List<MerchantOrder> get _matching {
     final needle = _search.trim().toLowerCase();
-    if (needle.isEmpty) return _orders;
+    if (needle.isEmpty) return orders;
 
-    return _orders.where((o) {
+    return orders.where((o) {
       final haystack = [
         o.dropoff?.name,
         o.dropoff?.address,
@@ -64,6 +91,7 @@ class MerchantOrderState extends ChangeNotifier {
     }).toList();
   }
   List<SavedAddress> get addresses => _addresses;
+  bool get addressesUnavailable => _addressesUnavailable;
 
   /// Transporteurs favoris. Sollicités en premier à la création d'une course,
   /// avec repli automatique sur le pool commun si aucun n'est disponible.
@@ -73,33 +101,23 @@ class MerchantOrderState extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  static const _pageSize = 25;
-  int _loadedPages = 1;
-  int _totalOrders = 0;
-
   /// Reste-t-il des commandes à charger ?
-  ///
-  /// Le total vient du serveur : le comparer à ce qu'on a permet de distinguer
-  /// « dernière page » de « page pleine par coïncidence ». Sans lui, l'app
-  /// afficherait un bouton « charger plus » qui ne rapporte rien.
-  bool get hasMoreOrders => _orders.length < _totalOrders;
+  bool get hasMoreOrders => _ordersPage.hasMore;
 
-  bool _loadingMore = false;
-  bool get isLoadingMore => _loadingMore;
+  bool get isLoadingMore => _ordersPage.isLoadingMore;
 
   Future<void> loadOrders() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
     try {
-      final page = await _apiClient.getMerchantOrders(page: 1, limit: _pageSize);
-      _orders = page.orders;
-      _totalOrders = page.total;
-      _loadedPages = 1;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+      final page = await _apiClient.getMerchantOrders(
+        page: 1,
+        limit: _ordersPage.pageSize,
+      );
+      _ordersPage.reset(page.orders, page.total);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -108,29 +126,24 @@ class MerchantOrderState extends ChangeNotifier {
 
   /// Charge la page suivante et l'ajoute à la liste.
   ///
-  /// L'app n'envoyait aucun paramètre de pagination : au-delà de 25
-  /// livraisons, les plus anciennes devenaient inaccessibles sans que rien ne
-  /// le signale. Une liste tronquée en silence n'est pas partielle — elle est
+  /// L'app n'envoyait aucun paramètre de pagination : au-delà d'une page, les
+  /// livraisons les plus anciennes devenaient inaccessibles sans que rien ne le
+  /// signale. Une liste tronquée en silence n'est pas partielle — elle est
   /// fausse pour qui la lit comme complète.
   Future<void> loadMoreOrders() async {
-    if (_loadingMore || !hasMoreOrders) return;
-
-    _loadingMore = true;
+    if (!_ordersPage.beginLoadMore()) return;
     notifyListeners();
+
     try {
       final page = await _apiClient.getMerchantOrders(
-        page: _loadedPages + 1,
-        limit: _pageSize,
+        page: _ordersPage.nextPage,
+        limit: _ordersPage.pageSize,
       );
-      _orders = [..._orders, ...page.orders];
-      _totalOrders = page.total;
-      _loadedPages++;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+      _ordersPage.append(page.orders, page.total);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
-      _loadingMore = false;
+      _ordersPage.endLoadMore();
       notifyListeners();
     }
   }
@@ -163,8 +176,12 @@ class MerchantOrderState extends ChangeNotifier {
       await _apiClient.addFavouriteDriver(driver.driverUuid, name: driver.name);
       await loadFavourites();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      // ⚠️ `catch` et non `on AppException` : `addFavouriteDriver` appelle
+      // `_httpClient` sans envelopper ses erreurs, donc un `SocketException`
+      // traversait ce bloc sans être attrapé — l'écran restait muet et
+      // l'exception remontait non gérée.
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -175,8 +192,8 @@ class MerchantOrderState extends ChangeNotifier {
       await _apiClient.removeFavouriteDriver(favouriteId);
       await loadFavourites();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return false;
     }
@@ -196,10 +213,8 @@ class MerchantOrderState extends ChangeNotifier {
       } catch (_) {
         _tracking = null;
       }
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -219,12 +234,8 @@ class MerchantOrderState extends ChangeNotifier {
   Future<Map<String, dynamic>?> loadOrderTemplate(String id) async {
     try {
       return await _apiClient.getMerchantOrderTemplate(id);
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      notifyListeners();
-      return null;
-    } catch (_) {
-      _errorMessage = _genericError;
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return null;
     }
@@ -306,11 +317,8 @@ class MerchantOrderState extends ChangeNotifier {
       final response = await _apiClient.createMerchantOrder(body);
       await loadOrders();
       return response['id'] as String?;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return null;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return null;
     } finally {
       _isLoading = false;
@@ -319,58 +327,45 @@ class MerchantOrderState extends ChangeNotifier {
   }
 
   /// Publie un brouillon : déclenche le dispatch (favori ou pool commun).
-  Future<bool> publishOrder(String id) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _apiClient.publishMerchantOrder(id);
-      await loadOrders();
-      if (_selected?.id == id || _selected?.publicId == id) {
-        await selectOrder(id);
-      }
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
-    } catch (e) {
-      _errorMessage = _genericError;
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> publishOrder(String id) =>
+      _orderWrite(id, () => _apiClient.publishMerchantOrder(id));
 
-  Future<bool> cancelOrder(String id) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _apiClient.cancelMerchantOrder(id);
-      await loadOrders();
-      if (_selected?.id == id || _selected?.publicId == id) {
-        await selectOrder(id);
-      }
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
-    } catch (e) {
-      _errorMessage = _genericError;
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> cancelOrder(String id) =>
+      _orderWrite(id, () => _apiClient.cancelMerchantOrder(id));
+
+  /// Écrire sur une commande, puis **relire la liste et la fiche ouverte**.
+  ///
+  /// La relecture n'est pas cosmétique : sans elle, l'écran de détail continue
+  /// d'afficher l'état d'avant l'écriture, et le commerçant republie ou
+  /// réannule une commande qui a déjà changé.
+  ///
+  /// ⚠️ `publishOrder` et `cancelOrder` étaient identiques à 98 % — même
+  /// drapeau, même relecture, même traduction d'erreur, à un appel près. Le
+  /// jour où la relecture change (ou disparaît), une copie oubliée laisse un
+  /// écran périmé sans lever la moindre erreur.
+  Future<bool> _orderWrite(String id, Future<void> Function() action) =>
+      runWrite(action, reload: () async {
+        await loadOrders();
+        if (_selected?.id == id || _selected?.publicId == id) {
+          await selectOrder(id);
+        }
+      });
 
   Future<void> loadAddresses() async {
     try {
       _addresses = await _apiClient.getMerchantAddresses();
+      _addressesUnavailable = false;
       notifyListeners();
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
+    } catch (e) {
+      // Même raison : `getMerchantAddresses` ne passe pas par une enveloppe,
+      // et un carnet illisible ne doit pas faire remonter une exception nue.
+      //
+      // ⚠️ Mais avaler l'erreur laisse `_addresses` vide, et un écran ne peut
+      // pas distinguer « vous n'avez rien enregistré » de « je n'ai pas pu
+      // lire ». Le drapeau porte cette différence ; sans lui l'écran affirme
+      // la première, ce qui est faux et définitif.
+      _addressesUnavailable = true;
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
     }
   }
@@ -415,11 +410,8 @@ class MerchantOrderState extends ChangeNotifier {
       );
       await loadAddresses();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -476,25 +468,8 @@ class MerchantOrderState extends ChangeNotifier {
   /// Toute écriture sur le carnet est suivie d'une relecture : la liste est la
   /// seule vue de ce carnet, et la laisser périmée après une modification
   /// donnerait à croire que rien ne s'est passé.
-  Future<bool> _addressWrite(Future<void> Function() action) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await action();
-      await loadAddresses();
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
-    } catch (e) {
-      _errorMessage = _genericError;
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> _addressWrite(Future<void> Function() action) =>
+      runWrite(action, reload: loadAddresses);
 
   void clearError() {
     _errorMessage = null;

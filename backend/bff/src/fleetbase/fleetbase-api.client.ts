@@ -53,6 +53,15 @@ export interface DriverFilters {
   limit?: number;
 }
 
+/**
+ * Alias de morphologie polymorphe d'un `Vendor` chez Fleetbase.
+ *
+ * **Mesuré, pas déduit** : `scripts/verify-facilitator.sh` (31/07/2026) montre
+ * que `facilitator_type` est stocké `fleet-ops:vendor`. La valeur `vendor` est
+ * acceptée et normalisée, mais on écrit ce que le serveur stocke.
+ */
+export const FACILITATOR_TYPE_VENDOR = 'fleet-ops:vendor';
+
 @Injectable()
 export class FleetbaseApiClient {
   private readonly logger = new Logger(FleetbaseApiClient.name);
@@ -71,6 +80,21 @@ export class FleetbaseApiClient {
       timeout: 30000,
     });
 
+    // ── LE point où une erreur Fleetbase est journalisée ────────────────────
+    //
+    // ⚠️ **Ne rajoutez pas de `try/catch` pour journaliser dans les méthodes.**
+    // Dix-huit d'entre elles le faisaient, et c'était une pure duplication :
+    // l'erreur passait déjà ici, donc chaque échec produisait **deux lignes** —
+    // celle-ci, qui porte le statut, la méthode, l'URL et la charge utile
+    // renvoyée, et une seconde écrite à la main qui ne portait que
+    // `error.message`. La moins informative des deux masquait l'autre dans le
+    // journal, et les six lignes de plomberie par méthode donnaient à croire
+    // que les vingt-cinq méthodes SANS `try/catch` ne journalisaient rien —
+    // alors qu'elles passent par ici comme les autres.
+    //
+    // Un `catch` dans une méthode ne se justifie donc que s'il fait autre chose
+    // que journaliser : rendre `null` sur un 404, réessayer, replier. Les cinq
+    // qui subsistent sont exactement dans ce cas.
     this.apiClient.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -171,16 +195,11 @@ export class FleetbaseApiClient {
    * Login to customer-portal for merchant
    */
   async merchantLogin(email: string, password: string) {
-    try {
-      const response = await this.callCustomerPortal('POST', '/auth/login', {
-        email,
-        password,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Merchant login failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callCustomerPortal('POST', '/auth/login', {
+      email,
+      password,
+    });
+    return response.data;
   }
 
   /**
@@ -205,18 +224,13 @@ export class FleetbaseApiClient {
     phone?: string,
     status?: 'active' | 'inactive' | 'suspended',
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/vendors', {
-        name,
-        email,
-        phone,
-        ...(status ? { status } : {}),
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Vendor creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/vendors', {
+      name,
+      email,
+      phone,
+      ...(status ? { status } : {}),
+    });
+    return response.data;
   }
 
   /**
@@ -238,16 +252,101 @@ export class FleetbaseApiClient {
       data = (await this.callFleetOps('GET', `/vendors/${encodeURIComponent(vendorUuid)}`)).data;
     } catch (error: any) {
       if (error.response?.status === 404) return null;
-      this.logger.error(`Lecture du vendor ${vendorUuid} échouée : ${error.message}`);
       throw error;
     }
 
     const single = data?.vendor ?? (data?.uuid ? data : null);
     if (single) return single.uuid === vendorUuid ? single : null;
 
-    return (
-      this.extractCollection(data, 'vendors').find((v: any) => v?.uuid === vendorUuid) ?? null
-    );
+    // ── Le repli sur collection doit paginer, sinon le garde s'éteint tout seul
+    //
+    // La variante « liste » de cet endpoint renvoie une **page**, pas la
+    // totalité. Chercher l'uuid dans cette seule page marche tant que le réseau
+    // est petit, puis cesse de marcher sans rien signaler : la méthode rend
+    // `null`, et `assertVendorApproved()` a décidé qu'un vendor introuvable
+    // **laisse passer** (à raison — un vendor supprimé à la main ne doit pas
+    // priver quelqu'un de son compte). Le garde de validation se désactiverait
+    // donc de lui-même à mesure que des commerçants et des entreprises
+    // s'inscrivent, ce qui est exactement le mode de panne qu'on ne remarque
+    // jamais : rien n'échoue, tout devient permissif.
+    //
+    // Même famille que les plafonds silencieux des §21.5/§22 — le premier
+    // lecteur voyait ses données, donc personne ne cherchait plus loin.
+    const first = this.extractCollection(data, 'vendors');
+    const found = first.find((v: any) => v?.uuid === vendorUuid);
+    if (found || first.length === 0) return found ?? null;
+
+    return this.findVendorAcrossPages(vendorUuid);
+  }
+
+  /**
+   * Parcourt les pages de `/vendors` à la recherche d'un uuid.
+   *
+   * Appelé seulement quand la première réponse était une collection ne le
+   * contenant pas — donc jamais sur le chemin nominal, où `GET /vendors/{uuid}`
+   * rend l'objet ou une première page qui suffit.
+   */
+  private async findVendorAcrossPages(
+    vendorUuid: string,
+    pageSize = 200,
+    maxPages = 25,
+  ): Promise<any | null> {
+    // ⚠️ La condition d'arrêt ne suppose PAS que `limit` est honoré.
+    //
+    // Écrire `if (vendors.length < pageSize) return null` paraît naturel et
+    // rendrait ce correctif **entièrement inerte** si le serveur plafonne
+    // `limit` en dessous de la valeur demandée : la première page renverrait
+    // moins que `pageSize`, on sortirait aussitôt, et le garde resterait aussi
+    // auto-désarmant qu'avant — avec cinquante lignes de commentaire expliquant
+    // qu'il ne l'est plus. C'est la leçon fondatrice du projet : Fleetbase
+    // **abandonne un paramètre inconnu sans erreur**, donc aucune supposition
+    // sur un paramètre de requête ne se vérifie toute seule.
+    //
+    // On s'arrête donc sur une page **vide**, et on détecte séparément le cas
+    // où `page` serait ignoré — sans quoi on relirait la même page vingt-cinq
+    // fois avant de conclure « introuvable », c'est-à-dire « laisse passer ».
+    let previousFirstUuid: string | null = null;
+
+    for (let page = 1; page <= maxPages; page++) {
+      let vendors: any[];
+      try {
+        const response = await this.callFleetOps('GET', '/vendors', undefined, {
+          page,
+          limit: pageSize,
+        });
+        vendors = this.extractCollection(response.data, 'vendors');
+      } catch (error: any) {
+        this.logger.error(`Parcours des vendors échoué (page ${page}) : ${error.message}`);
+        throw error;
+      }
+
+      const found = vendors.find((v: any) => v?.uuid === vendorUuid);
+      if (found) return found;
+
+      if (vendors.length === 0) return null;
+
+      const firstUuid = vendors[0]?.uuid ?? null;
+      if (page > 1 && firstUuid !== null && firstUuid === previousFirstUuid) {
+        this.logger.warn(
+          `/vendors semble ignorer le paramètre « page » (page ${page} identique à la ` +
+            `précédente) — recherche de ${vendorUuid} abandonnée, le statut renvoyé ne fait pas foi`,
+        );
+        return null;
+      }
+      previousFirstUuid = firstUuid;
+
+      if (page === maxPages) {
+        // Ne pas rendre `null` en silence : au-delà du garde-fou, « introuvable »
+        // ne veut plus dire « n'existe pas », et l'appelant en tire une décision
+        // d'accès.
+        this.logger.warn(
+          `Vendor ${vendorUuid} non trouvé après ${maxPages} pages — la recherche est tronquée, ` +
+            'le statut renvoyé ne fait pas foi',
+        );
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -279,17 +378,12 @@ export class FleetbaseApiClient {
    * qui fonctionne. À traiter avec un test d'inscription sous la main.
    */
   async createCustomer(vendorUuid: string, email: string, firstName: string, lastName: string) {
-    try {
-      const response = await this.callFleetOps('POST', `/vendors/${this.seg(vendorUuid)}/personnels`, {
-        email,
-        name: `${firstName} ${lastName}`.trim(),
-        type: 'customer',
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Customer creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', `/vendors/${this.seg(vendorUuid)}/personnels`, {
+      email,
+      name: `${firstName} ${lastName}`.trim(),
+      type: 'customer',
+    });
+    return response.data;
   }
 
   /**
@@ -313,24 +407,37 @@ export class FleetbaseApiClient {
     name: string,
     latitude: number,
     longitude: number,
-    contact?: { name?: string; phone?: string; address?: string },
+    contact?: {
+      name?: string;
+      phone?: string;
+      address?: string;
+      /**
+       * Commune et quartier issus du géocodage inverse.
+       *
+       * ⚠️ **Le lieu n'avait, jusqu'au 31/07/2026, que son nom et un point.**
+       * Aucune colonne d'adresse structurée n'était renseignée, alors que
+       * l'application les avait sous la main. Sur une course non réclamée,
+       * `projectPlace(…, 'anonymous')` recompose l'adresse à partir de ces
+       * colonnes-là uniquement : il n'y en avait aucune, donc l'entreprise
+       * lisait un identifiant technique en titre de ligne.
+       */
+      city?: string;
+      neighborhood?: string;
+    },
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/places', {
-        name,
-        location: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-        ...(contact?.address ? { street1: contact.address } : {}),
-        ...(contact?.phone ? { phone: contact.phone } : {}),
-        ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Place creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/places', {
+      name,
+      location: {
+        type: 'Point',
+        coordinates: [longitude, latitude],
+      },
+      ...(contact?.address ? { street1: contact.address } : {}),
+      ...(contact?.city ? { city: contact.city } : {}),
+      ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
+      ...(contact?.phone ? { phone: contact.phone } : {}),
+      ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
+    });
+    return response.data;
   }
 
   /**
@@ -358,30 +465,25 @@ export class FleetbaseApiClient {
       meta?: Record<string, any>;
     },
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/places', {
-        name: data.name,
-        location: {
-          type: 'Point',
-          coordinates: [data.longitude, data.latitude],
-        },
-        street1: data.street1,
-        neighborhood: data.neighborhood,
-        city: data.city,
-        district: data.district,
-        province: data.province,
-        postal_code: data.postal_code,
-        country: data.country,
-        phone: data.phone,
-        owner_uuid: ownerUuid,
-        owner_type: 'fleet-ops:vendor',
-        meta: data.meta,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Owned place creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/places', {
+      name: data.name,
+      location: {
+        type: 'Point',
+        coordinates: [data.longitude, data.latitude],
+      },
+      street1: data.street1,
+      neighborhood: data.neighborhood,
+      city: data.city,
+      district: data.district,
+      province: data.province,
+      postal_code: data.postal_code,
+      country: data.country,
+      phone: data.phone,
+      owner_uuid: ownerUuid,
+      owner_type: 'fleet-ops:vendor',
+      meta: data.meta,
+    });
+    return response.data;
   }
 
   /**
@@ -458,13 +560,8 @@ export class FleetbaseApiClient {
    * List Places owned by a given Vendor (a merchant's saved addresses).
    */
   async getOwnedPlaces(ownerUuid: string) {
-    try {
-      const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get owned places failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
+    return response.data;
   }
 
   /**
@@ -539,18 +636,13 @@ export class FleetbaseApiClient {
    * Resolve the default 'transport' OrderConfig UUID, required by order creation.
    */
   async getDefaultOrderConfigUuid(): Promise<string> {
-    try {
-      const response = await this.callFleetOps('GET', '/order-configs');
-      const configs = response.data?.order_configs || [];
-      const transportConfig = configs.find((c: any) => c.key === 'transport') || configs[0];
-      if (!transportConfig) {
-        throw new Error('No OrderConfig found in Fleetbase');
-      }
-      return transportConfig.uuid;
-    } catch (error) {
-      this.logger.error(`Get order configs failed: ${error.message}`);
-      throw error;
+    const response = await this.callFleetOps('GET', '/order-configs');
+    const configs = response.data?.order_configs || [];
+    const transportConfig = configs.find((c: any) => c.key === 'transport') || configs[0];
+    if (!transportConfig) {
+      throw new Error('No OrderConfig found in Fleetbase');
     }
+    return transportConfig.uuid;
   }
 
   /**
@@ -608,29 +700,19 @@ export class FleetbaseApiClient {
      */
     custom_field_values?: { custom_field_uuid: string; value: any; value_type: string }[];
   }) {
-    try {
-      const response = await this.callFleetOps('POST', '/orders', { order });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Order creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/orders', { order });
+    return response.data;
   }
 
   /**
    * Get merchant's orders via customer-portal-api
    */
   async getMerchantOrders(token: string, page = 1, limit = 25) {
-    try {
-      const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
-        page,
-        limit,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get merchant orders failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
+      page,
+      limit,
+    });
+    return response.data;
   }
 
   /**
@@ -644,24 +726,19 @@ export class FleetbaseApiClient {
    * (`docs/architecture_bff_fleetbase.md` §4.3).
    */
   async getAllOrders(page = 1, limit = 100, filters: OrderFilters = {}) {
-    try {
-      const response = await this.callFleetOps('GET', '/orders', undefined, {
-        page,
-        limit,
-        // Charge les valeurs de champs personnalisés avec leur définition.
-        //
-        // Sans ça elles arrivent quand même — `withCustomFields()` fait un
-        // `loadMissing()` sur chaque ressource — mais **une requête par
-        // commande** : cent commandes, deux cents requêtes côté Fleetbase.
-        // Le demander ici les charge en une fois.
-        with: ['customFieldValues.customField'],
-        ...filters,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all orders failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/orders', undefined, {
+      page,
+      limit,
+      // Charge les valeurs de champs personnalisés avec leur définition.
+      //
+      // Sans ça elles arrivent quand même — `withCustomFields()` fait un
+      // `loadMissing()` sur chaque ressource — mais **une requête par
+      // commande** : cent commandes, deux cents requêtes côté Fleetbase.
+      // Le demander ici les charge en une fois.
+      with: ['customFieldValues.customField'],
+      ...filters,
+    });
+    return response.data;
   }
 
   /**
@@ -732,13 +809,8 @@ export class FleetbaseApiClient {
    * commercant.service.ts getOrderTracking).
    */
   async getOrder(orderUuid: string) {
-    try {
-      const response = await this.callFleetOps('GET', `/orders/${this.seg(orderUuid)}`);
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get order failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', `/orders/${this.seg(orderUuid)}`);
+    return response.data;
   }
 
   /**
@@ -805,13 +877,8 @@ export class FleetbaseApiClient {
    * the request body as 'order', per OrderController::cancel().
    */
   async cancelOrder(orderUuid: string) {
-    try {
-      const response = await this.callFleetOps('PATCH', '/orders/cancel', { order: orderUuid });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Cancel order failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('PATCH', '/orders/cancel', { order: orderUuid });
+    return response.data;
   }
 
   /**
@@ -820,19 +887,14 @@ export class FleetbaseApiClient {
    * body key is `order` (not `order_id`/`orderId`).
    */
   async assignOrderToDriver(driverUuid: string, orderUuid: string) {
-    try {
-      // `seg()` comme partout ailleurs : l'uuid vient ici de notre propre base
-      // (favori enregistré, conducteur d'une flotte vérifiée), mais la
-      // discipline vaut mieux uniforme que jugée site par site — c'est
-      // exactement ce que la revue P0 avait relevé sur les autres chemins.
-      const response = await this.callFleetOps('POST', `/drivers/${this.seg(driverUuid)}/assign-order`, {
-        order: orderUuid,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Assign order to driver failed: ${error.message}`);
-      throw error;
-    }
+    // `seg()` comme partout ailleurs : l'uuid vient ici de notre propre base
+    // (favori enregistré, conducteur d'une flotte vérifiée), mais la
+    // discipline vaut mieux uniforme que jugée site par site — c'est
+    // exactement ce que la revue P0 avait relevé sur les autres chemins.
+    const response = await this.callFleetOps('POST', `/drivers/${this.seg(driverUuid)}/assign-order`, {
+      order: orderUuid,
+    });
+    return response.data;
   }
 
   /**
@@ -858,6 +920,19 @@ export class FleetbaseApiClient {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {
         driver_assigned_uuid: null,
+        // ⚠️ **`facilitator_uuid` est effacé aussi**, et son oubli rendait la
+        // course invisible pour tout le monde.
+        //
+        // `isClaimable` (flotte) et `isClaimableAdhoc` (transporteur) exigent
+        // TOUS DEUX que les deux colonnes soient vides. Une course affectée par
+        // une entreprise puis refusée par le conducteur ressortait donc
+        // `adhoc: true` mais toujours rattachée : ni les indépendants ni les
+        // entreprises ne la voyaient, et le commerçant la croyait diffusée.
+        //
+        // Le chemin était rare avant ce chantier ; l'affectation par une
+        // entreprise en fait une opération de routine.
+        facilitator_uuid: null,
+        facilitator_type: null,
         adhoc: true,
         adhoc_distance: adhocDistance,
       },
@@ -931,6 +1006,60 @@ export class FleetbaseApiClient {
    * il ne reste qu'à le journaliser fort — mais l'inverse, ne rien tenter,
    * laisse une course en circulation que personne n'a publiée.
    */
+  /**
+   * Rattache une course à un facilitateur, et la retire de la diffusion.
+   *
+   * ── Les deux écritures sont indissociables ──────────────────────────────
+   *
+   * Poser `facilitator_uuid` ne touche ni `adhoc` ni `driver_assigned_uuid` :
+   * le dispatch adhoc de Fleetbase **continue de notifier les indépendants
+   * toutes les ~4 minutes** tant que personne n'a accepté (validé par test réel
+   * le 26/07, `specs_echango_delivery.md` §3.2). Une course réclamée par une
+   * entreprise resterait donc proposée à tout le réseau, et notre filtre de
+   * liste n'y peut rien — les pings partent de Fleetbase.
+   *
+   * `adhoc: false` est donc écrit **dans le même geste**, et non dans un second
+   * appel : deux appels laisseraient une fenêtre pendant laquelle la course est
+   * à la fois attribuée et diffusée.
+   *
+   * ⚠️ **Aucune clé `meta` dans ce payload.** Le `$record->update($input)` de
+   * Fleetbase remplace `meta` **en entier** dès qu'elle est mentionnée — c'est
+   * le bug qui efface prix et montant à encaisser quand la console affecte un
+   * conducteur. On n'envoie que les colonnes voulues, jamais une commande
+   * re-sérialisée.
+   *
+   * ── `fleet-ops:vendor`, et non `vendor` — mesuré, pas déduit ─────────────
+   *
+   * Contrôle C1 joué en réel le 31/07/2026 (`scripts/verify-facilitator.sh`) :
+   * Fleetbase **stocke `fleet-ops:vendor`**, son alias de morphologie
+   * polymorphe. Envoyer `vendor` fonctionne — la valeur est normalisée, la
+   * relation `with[]=facilitator` résout le bon Vendor, et le filtre
+   * `?facilitator=` rend la commande avec un témoin à 0 — mais on envoie
+   * désormais la forme canonique.
+   *
+   * Le motif n'est pas cosmétique : dépendre d'une normalisation observée **une
+   * seule fois** est plus faible que d'écrire la valeur que le serveur stocke
+   * de toute façon. Si cette normalisation disparaissait, `vendor` deviendrait
+   * un type inconnu, la relation cesserait de résoudre, et rien ne le
+   * signalerait — le rattachement continuerait de renvoyer 2xx.
+   *
+   * ⚠️ Asymétrie à connaître : nous envoyons `customer_type: 'vendor'` à la
+   * création, et le journal §2.10 l'a relu tel quel. Les deux colonnes ne sont
+   * donc peut-être pas traitées à l'identique en amont — raison de plus pour
+   * ne pas raisonner de l'une vers l'autre, ce que la première version de
+   * `docs/specs_facilitateur.md` faisait et que sa revue a démenti.
+   */
+  async attachFacilitator(orderUuid: string, vendorUuid: string) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: {
+        facilitator_uuid: vendorUuid,
+        facilitator_type: FACILITATOR_TYPE_VENDOR,
+        adhoc: false,
+      },
+    });
+    return response.data;
+  }
+
   async withdrawFromDispatch(orderUuid: string) {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {
@@ -991,7 +1120,6 @@ export class FleetbaseApiClient {
       if (error.response?.status === 404) return null;
       // Toute autre erreur remonte : la confondre avec une absence ferait dire
       // « ce transporteur n'existe pas » à une panne réseau.
-      this.logger.error(`Lecture du conducteur ${driverUuid} échouée : ${error.message}`);
       throw error;
     }
 
@@ -1002,14 +1130,66 @@ export class FleetbaseApiClient {
     return candidate?.uuid === driverUuid ? candidate : null;
   }
 
-  async getAllDrivers(filters: DriverFilters = {}) {
-    try {
-      const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all drivers failed: ${error.message}`);
-      throw error;
+  /**
+   * **Tous** les conducteurs correspondant à un filtre, pages comprises.
+   *
+   * ── Le plafond silencieux que ceci ferme ─────────────────────────────────
+   *
+   * `getAllDrivers()` rend **une** page. Trois appels s'en servaient comme
+   * d'une liste exhaustive avec `limit: 100`, et deux autres sans limite du
+   * tout — c'est-à-dire avec la page par défaut de Fleetbase :
+   *
+   *  * le **repli par les chiffres** des trois recherches de conducteur, qui
+   *    balaie le réseau entier pour retrouver un numéro écrit dans un autre
+   *    format. Au-delà du plafond, la **garde anti-doublon cesse d'opérer** —
+   *    et une même personne se retrouve avec deux `Driver` Fleetbase, position
+   *    et historique désynchronisés, ce que tout ce mécanisme existe pour
+   *    empêcher ;
+   *  * `fetchOwnedDrivers()`, la liste que l'entreprise voit de ses PROPRES
+   *    conducteurs ;
+   *  * le repli d'invitation d'`auth.service`, qui **refuse une invitation
+   *    légitime** quand le conducteur est au-delà de la première page.
+   *
+   * Dans les trois cas, une liste tronquée n'est pas une liste partielle :
+   * c'est une **réponse fausse**, puisque l'appelant y cherche l'absence de
+   * quelqu'un. Même famille que le plafond de 100 sur les commandes (28/07) et
+   * même remède — d'où la symétrie volontaire avec `fetchEveryOrder`.
+   *
+   * Le garde-fou de pages n'est pas une limite que quelqu'un doit atteindre ;
+   * le franchir est journalisé, parce qu'au-delà les résultats redeviennent
+   * faux.
+   */
+  async fetchEveryDriverMatching(
+    filters: DriverFilters = {},
+    pageSize = 100,
+    maxPages = 20,
+  ): Promise<any[]> {
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const drivers = this.extractCollection(
+        await this.getAllDrivers({ ...filters, page, limit: pageSize }),
+        'drivers',
+      );
+
+      if (drivers.length === 0) break;
+      all.push(...drivers);
+      if (drivers.length < pageSize) break;
+
+      if (page === maxPages) {
+        this.logger.warn(
+          `fetchEveryDriverMatching a atteint le garde-fou de ${maxPages} pages — ` +
+            'la liste est tronquée, et un conducteur existant peut être déclaré absent',
+        );
+      }
     }
+
+    return all;
+  }
+
+  async getAllDrivers(filters: DriverFilters = {}) {
+    const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
+    return response.data;
   }
 
   /**
@@ -1024,13 +1204,8 @@ export class FleetbaseApiClient {
    * and, if it still 400s, check `DriverController.php` line 67 directly.
    */
   async createDriver(data: { name: string; email?: string; phone?: string }) {
-    try {
-      const response = await this.callFleetOps('POST', '/drivers', { driver: data });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Create driver failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/drivers', { driver: data });
+    return response.data;
   }
 
   /**
@@ -1039,15 +1214,10 @@ export class FleetbaseApiClient {
    * body key is `driver`; this sets the Driver's `vendor_uuid`.
    */
   async assignDriverToVendor(vendorUuid: string, driverUuid: string) {
-    try {
-      const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/assign-driver`, {
-        driver: driverUuid,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Assign driver to vendor failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/assign-driver`, {
+      driver: driverUuid,
+    });
+    return response.data;
   }
 
   /**
@@ -1082,18 +1252,13 @@ export class FleetbaseApiClient {
    * repeatedly, and duplicate rows would mean duplicate pushes.
    */
   async upsertDriverDeviceToken(userUuid: string, token: string, platform: string) {
-    try {
-      const response = await this.callFleetOps('POST', '/user-devices', {
-        user_uuid: userUuid,
-        token,
-        platform,
-        status: 'active',
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Upsert driver device token failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/user-devices', {
+      user_uuid: userUuid,
+      token,
+      platform,
+      status: 'active',
+    });
+    return response.data;
   }
 
   // ── Opérations driver (API publique v1) ────────────────────────────────
@@ -1358,12 +1523,7 @@ export class FleetbaseApiClient {
    * un besoin d'historique — ne pas la rebrancher sur la carte.
    */
   async getAllPositions() {
-    try {
-      const response = await this.callFleetOps('GET', '/positions');
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all positions failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/positions');
+    return response.data;
   }
 }

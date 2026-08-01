@@ -12,8 +12,8 @@ import axios, { AxiosInstance } from 'axios';
  * Alger, 16000, Algérie ». Rangée entière dans `street1`, elle donnait une
  * adresse où la wilaya apparaissait deux fois — l'accesseur `address` de
  * Fleetbase y rajoutant le nom du lieu et la commune —, et surtout aucun champ
- * exploitable : ni tri par commune, ni recherche par code postal, et
- * `coarseLocality()` réduit à découper une chaîne pour retrouver ce que le
+ * exploitable : ni tri par commune, ni recherche par code postal, et tout
+ * affichage court réduit à découper une chaîne pour retrouver ce que le
  * géocodeur avait déjà séparé.
  *
  * Le modèle `Place` a exactement les colonnes qu'il faut. La correspondance

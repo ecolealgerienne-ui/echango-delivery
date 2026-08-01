@@ -2,9 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
+import '../../models/order.dart'
+    show deliveryFailureLabel, deliveryFailureReasons;
 import '../../services/photo_service.dart';
+import '../../state/locale_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
+import '../../theme/app_buttons.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/error_banner.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/section_card.dart';
 
 class DeliveryFailureScreen extends StatefulWidget {
   final String orderId;
@@ -16,35 +25,25 @@ class DeliveryFailureScreen extends StatefulWidget {
 }
 
 class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   late String _selectedReason;
   late TextEditingController _notesController;
   CapturedPhoto? _photo;
 
-  /// Codes attendus par le BFF (DELIVERY_FAILURE_REASONS, liste fermée
-  /// validée côté serveur) associés à leur libellé affiché.
-  ///
-  /// ⚠️ La valeur envoyée doit être le CODE, pas le libellé : l'écran
-  /// envoyait auparavant des libellés anglais ('Recipient not available'),
-  /// que la validation serveur rejetait systématiquement en 400.
-  ///
-  /// La liste suit specs_app_transporteur.md §4.3 — délibérément courte et
-  /// spécifique à la livraison, et non les 9 catégories génériques de
-  /// Navigator. Deux entrées du scaffolding ont disparu ('Traffic/delay',
-  /// 'Vehicle issue') : ce sont des retards, pas des échecs de livraison.
-  /// Marquée « à valider avec l'équipe métier » dans la spec.
-  static const Map<String, String> _failureReasons = {
-    'client_absent': 'Client absent',
-    'adresse_introuvable': 'Adresse introuvable',
-    'colis_refuse': 'Client a refusé le colis',
-    'colis_endommage': 'Colis endommagé ou manquant',
-    'acces_impossible': 'Accès impossible (site fermé, zone inaccessible)',
-    'autre': 'Autre',
-  };
+  // ⚠️ **Les motifs vivaient ici ET dans `order_detail_screen`, et ils avaient
+  // divergé** (01/08/2026) : trois libellés sur six ne s'accordaient plus. Le
+  // conducteur déclarait « Client a refusé le colis » quand le commerçant
+  // lisait « Colis refusé par le client », pour le même code. La liste et ses
+  // libellés vivent désormais dans `models/order.dart`
+  // (`deliveryFailureReasons` / `deliveryFailureLabel`), avec le motif complet
+  // et le rappel que la valeur envoyée est le CODE, jamais le libellé.
 
   @override
   void initState() {
     super.initState();
-    _selectedReason = _failureReasons.keys.first;
+    _selectedReason = deliveryFailureReasons.first;
     _notesController = TextEditingController();
   }
 
@@ -58,18 +57,16 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Report Delivery Failure'),
+        title: Text(_t('driver.failure.title')),
         elevation: 0,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
+            AppSectionCard(
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -77,38 +74,38 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                       // interpolait l'objet `widget` puis affichait « .orderId »
                       // en littéral — l'écran montrait le nom de la classe
                       // suivi d'un fragment de code.
-                      'Commande ${widget.orderId}',
+                      _t('driver.order.number', {'id': widget.orderId}),
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Text(
-                      'Report the reason for delivery failure',
+                      _t('driver.failure.intro'),
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey[600],
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],
                 ),
-              ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // Reason Selection
             Text(
-              'Failure Reason',
+              _t('driver.failure.reason'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             Card(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 child: DropdownButton<String>(
                   value: _selectedReason,
                   isExpanded: true,
                   underline: const SizedBox.shrink(),
-                  items: _failureReasons.entries.map((entry) {
+                  items: deliveryFailureReasons.map((code) {
                     return DropdownMenuItem(
-                      value: entry.key,
-                      child: Text(entry.value),
+                      value: code,
+                      child: Text(deliveryFailureLabel(
+                          code, context.read<LocaleState>().locale)),
                     );
                   }).toList(),
                   onChanged: (value) {
@@ -119,73 +116,58 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // Notes
             Text(
-              'Additional Notes (Optional)',
+              _t('driver.failure.notes'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _notesController,
               decoration: InputDecoration(
-                hintText: 'Précisions éventuelles…',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                hintText: _t('driver.failure.notes.hint'),
               ),
               maxLines: 4,
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.xl),
             // La preuve photo n'est pas exigée ici — contrairement à la POD,
             // un échec de livraison n'a pas toujours quelque chose à montrer
             // (destinataire absent). L'imposer pousserait à photographier
             // n'importe quoi pour débloquer l'écran.
             PhotoField(
-              label: 'Photo (facultative)',
-              helperText: 'Utile quand l\'échec se constate : porte close, '
-                  'adresse introuvable, colis refusé.',
+              label: _t('driver.failure.photo'),
+              helperText: _t('driver.failure.photo.hint'),
               onChanged: (photo) => setState(() => _photo = photo),
             ),
-            const SizedBox(height: 32),
+            const SizedBox(height: AppSpacing.xxl),
             // Submit Button
             Consumer<OrderState>(
               builder: (context, orderState, _) {
-                return ElevatedButton(
+                return FilledButton(
                   onPressed: orderState.isLoading ? null : () => _submitFailureReport(context, orderState),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  style: AppButtonStyles.destructiveFilled(
+                    context,
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
                   ),
                   child: orderState.isLoading
                       ? const SizedBox(
                           height: 20,
                           width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
+                          // La couleur suit le `foregroundColor` du bouton.
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text(
-                          'Signaler l\'échec',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      : Text(
+                          _t('driver.failure.submit'),
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 );
               },
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             if (context.watch<OrderState>().errorMessage != null)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  border: Border.all(color: Colors.red),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  context.watch<OrderState>().errorMessage!,
-                  style: TextStyle(color: Colors.red.shade700),
-                ),
+              AppErrorBanner(
+                message: context.watch<OrderState>().errorMessage!,
               ),
           ],
         ),
@@ -211,13 +193,15 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       // être jointe. Le taire laisserait le transporteur croire qu'il a fourni
       // un justificatif absent du dossier.
       final photoLost = _photo != null && orderState.lastPhotoUploaded == false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(photoLost
-              ? 'Signalement enregistré, mais la photo n\'a pas pu être jointe.'
-              : 'Échec de livraison signalé'),
-          backgroundColor: photoLost ? Colors.orange.shade800 : null,
-        ),
+      // Ni un succès muet, ni un échec : le signalement est enregistré, mais
+      // il manque son justificatif. C'est le cas pour lequel `SnackTone.warning`
+      // existe.
+      showAppSnackBar(
+        context,
+        photoLost
+            ? _t('driver.failure.done.no_photo')
+            : _t('driver.failure.done'),
+        tone: photoLost ? SnackTone.warning : SnackTone.success,
       );
       // Un seul pop : revenir au détail, qui recharge et affiche désormais le
       // signalement. Deux pops renvoyaient à la liste, où rien ne change —
@@ -226,12 +210,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
     } else {
       // Sans ça, un échec du signalement ne produisait STRICTEMENT rien à
       // l'écran : ni message, ni navigation. Indiscernable d'un bouton mort.
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Signalement impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? _t('driver.failure.failed'));
     }
   }
 }

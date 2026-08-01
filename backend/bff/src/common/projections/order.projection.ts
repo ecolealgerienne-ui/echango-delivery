@@ -26,12 +26,32 @@
 
 import { readOrderCustomFields } from '../../fleetbase/order-custom-fields';
 
-/** Niveau de détail d'un lieu. */
+/**
+ * Niveau de détail d'un lieu.
+ *
+ * ── Décision produit du 31/07/2026, qui remplace la réduction à la commune ──
+ *
+ * Une course diffusée était servie avec sa livraison **réduite à sa commune**.
+ * Constaté à l'écran : l'entreprise voyait huit lignes titrées « Destinataire »
+ * et ne pouvait décider de rien — ni la distance, ni l'accès, ni même de quel
+ * bout de la ville il s'agissait. Le motif d'origine était juste (ne pas livrer
+ * l'annuaire des clients à qui rafraîchit une liste), la contrepartie ne l'était
+ * pas : **on protégeait l'adresse, qui est le critère de décision, et on ne
+ * protégeait rien de ce qui identifie réellement quelqu'un**.
+ *
+ * Ce qui rend l'arbitrage tenable est le même fait qui a levé la réservation aux
+ * favoris le 29/07 : les transporteurs et les entreprises ne s'inscrivent pas
+ * d'eux-mêmes, ils sont **invités nominativement** par Echango. Le contrôle a
+ * lieu à l'entrée du réseau, sur l'identité réelle — pas sur ce que chacun peut
+ * lire une fois entré.
+ *
+ * On masque donc **l'identité du destinataire, et elle seule**.
+ */
 export type PlaceDetail =
-  /** Tout : le client a droit à cette course. */
+  /** Tout : le lecteur est engagé sur cette course. */
   | 'full'
-  /** Commune seule : course diffusée, pas encore réclamée. */
-  | 'locality';
+  /** Tout sauf qui habite là : course diffusée, pas encore réclamée. */
+  | 'anonymous';
 
 const pick = (source: any, keys: string[]): Record<string, any> => {
   const out: Record<string, any> = {};
@@ -40,33 +60,6 @@ const pick = (source: any, keys: string[]): Record<string, any> => {
   }
   return out;
 };
-
-/**
- * Réduit une adresse à sa commune.
- *
- * Les champs structurés sont préférés. À défaut, on retombe sur l'adresse
- * formatée en retirant son premier segment, qui porte le nom et la rue
- * (`MAGASIN1 - 3 AVENUE PAUL LANGEVIN, SCEAUX, 92330` → `SCEAUX, 92330`).
- * Cette heuristique dépend du format de saisie : en cas de doute elle renvoie
- * **rien** plutôt qu'un fragment qui pourrait encore identifier une porte.
- */
-export function coarseLocality(place: any): string {
-  // Le pays est délibérément absent : la colonne `country` de Fleetbase stocke
-  // un **code ISO-2**, et « Alger, 16000, Alger, DZ » se lit comme une donnée
-  // mal formatée. Sur un service national, il n'apprend rien de toute façon.
-  const structured = [place?.city, place?.postal_code, place?.province]
-    .filter((v) => typeof v === 'string' && v.trim().length > 0);
-
-  if (structured.length) return structured.join(', ');
-
-  const formatted = typeof place?.address === 'string' ? place.address : '';
-  const segments = formatted
-    .split(',')
-    .map((s: string) => s.trim())
-    .filter(Boolean);
-
-  return segments.length > 1 ? segments.slice(1).join(', ') : '';
-}
 
 /** Champs d'un lieu que l'app sait lire (voir `Place.fromJson`). */
 const PLACE_FULL = [
@@ -94,39 +87,112 @@ const PLACE_FULL = [
   'contact_phone',
 ];
 
-/** Ce qui subsiste d'un lieu réduit à sa commune. */
-const PLACE_LOCALITY = ['uuid', 'public_id', 'id', 'city', 'postal_code', 'province', 'country'];
-// ⚠️ `neighborhood` et `district` en sont volontairement absents : le quartier
-// désigne un périmètre de quelques rues, ce qui rapproche trop de la porte sur
-// une course encore non réclamée.
+/**
+ * Ce qui désigne **une personne** plutôt qu'un endroit.
+ *
+ * C'est la liste, et la seule, qui disparaît d'une course non réclamée. Elle est
+ * courte volontairement : tout le reste — rue, numéro, étage, commune,
+ * coordonnées — décrit un lieu, et le lieu est ce sur quoi on décide de prendre
+ * une course ou non.
+ *
+ * ⚠️ `name` en fait partie parce que sur un lieu de livraison il porte le nom du
+ * destinataire (le carnet d'adresses du commerçant enregistre « Toto » ou
+ * « Mme Benali »), et non un libellé d'endroit. L'app retombe alors sur
+ * `address`, qui dit où aller sans dire chez qui.
+ */
+const PLACE_IDENTITY_FIELDS = ['name', 'phone', 'contact_name', 'contact_phone'];
 
-export function projectPlace(place: any, detail: PlaceDetail, anonymousName?: string) {
+/**
+ * Les colonnes qui décrivent **un endroit**, et rien qu'un endroit.
+ *
+ * ⚠️ **`address` n'en fait pas partie, et c'est le piège de tout ce lot.**
+ * `Place.address` n'est pas une colonne : c'est un accesseur Fleetbase qui
+ * recompose « nom, rue, commune, code postal, pays ». Il **contient donc le
+ * nom**. Retirer `name` en laissant `address` ne masque rien du tout — pire,
+ * sur le chemin de création de l'application le lieu de livraison n'a *que*
+ * son nom (`createPlace(dto.dropoffLocationName, …)` sans `street1`, l'adresse
+ * tapée partant dans `meta.dropoff_notes`), donc `address` **est** le nom du
+ * destinataire et rien d'autre.
+ *
+ * L'adresse servie sur une course non réclamée est donc **recomposée ici**, à
+ * partir des seules colonnes structurées. Quand elles sont vides — le cas
+ * courant sur les commandes de l'app — il ne reste rien, et c'est correct :
+ * l'adresse réelle est dans `meta.dropoff_notes`, servi par ailleurs, et la
+ * position dans `location`. Le transporteur a de quoi aller à la porte sans
+ * savoir qui l'ouvre.
+ *
+ * Trouvé par un agent de vérification, pas à la lecture — et il était visible à
+ * l'écran : le titre de chaque ligne de « Courses libres » aurait été le nom du
+ * destinataire, juste au-dessus du bandeau qui promet de ne pas le donner.
+ */
+const PLACE_STRUCTURED_ADDRESS_FIELDS = [
+  'street1',
+  'street2',
+  'neighborhood',
+  'city',
+  'postal_code',
+  'province',
+];
+
+export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   if (!place) return undefined;
 
-  if (detail === 'full') {
-    // `contact_name` n'existe pas sur le modèle `Place` de Fleetbase : le nom
-    // du contact est déposé dans `meta` à la création. Le remonter ici évite
-    // que chaque appelant ait à connaître ce détail de stockage — et il est
-    // remonté SEULEMENT dans la branche complète : sur une course non
-    // réclamée, ce nom est précisément ce que l'expurgation retire.
-    const fromMeta = place?.meta?.contact_name;
-    return {
-      ...pick(place, PLACE_FULL),
-      ...(place.contact_name === undefined && typeof fromMeta === 'string'
-        ? { contact_name: fromMeta }
-        : {}),
-      // Adresse principale du carnet (§ « adresse magasin », 30/07/2026) :
-      // même mécanisme que `contact_name`, un booléen déposé dans `meta` sans
-      // équivalent natif sur `Place`.
-      is_default: place?.meta?.is_default === true,
-    };
+  // `contact_name` n'existe pas sur le modèle `Place` de Fleetbase : le nom du
+  // contact est déposé dans `meta` à la création. Le remonter ici évite que
+  // chaque appelant ait à connaître ce détail de stockage.
+  const fromMeta = place?.meta?.contact_name;
+  const projected: Record<string, any> = {
+    ...pick(place, PLACE_FULL),
+    ...(place.contact_name === undefined && typeof fromMeta === 'string'
+      ? { contact_name: fromMeta }
+      : {}),
+    // Adresse principale du carnet (§ « adresse magasin », 30/07/2026) : même
+    // mécanisme que `contact_name`, un booléen déposé dans `meta` sans
+    // équivalent natif sur `Place`.
+    is_default: place?.meta?.is_default === true,
+  };
+
+  if (detail === 'full') return projected;
+
+  // ⚠️ Suppression **après** composition, et non liste d'autorisation réduite.
+  //
+  // Ce n'est pas une entorse à la règle du fichier : la liste d'autorisation
+  // reste `PLACE_FULL`, elle décide seule de ce qui peut sortir. Ce retrait-ci
+  // s'applique par-dessus. Le composer à part aurait créé une seconde liste à
+  // tenir à jour — et un champ ajouté à l'une sans l'autre est exactement le
+  // genre d'oubli qui a produit les fuites de la revue M10.
+  for (const field of PLACE_IDENTITY_FIELDS) delete projected[field];
+
+  // `address` est recomposé et non supprimé : le supprimer purement laisserait
+  // l'app sans rien à afficher là où une vraie adresse structurée existe (les
+  // lieux du carnet, saisis par la carte, en ont une).
+  // ⚠️ Dédoublonné, parce que `city` et `province` sont **la même chaîne** dans
+  // les wilayas-communes homonymes — Alger, Oran, Constantine, Annaba. Sans ça
+  // l'adresse se terminait par sa propre fin : « Cité 1er Novembre, Alger,
+  // 16000, Alger ». Se dédoublonner côté app est impossible, la répétition étant
+  // interne à la chaîne qu'on lui sert.
+  const seen = new Set<string>();
+  const structured: string[] = [];
+
+  for (const field of PLACE_STRUCTURED_ADDRESS_FIELDS) {
+    const value = projected[field];
+    if (typeof value !== 'string' || !value.trim()) continue;
+
+    const component = value.trim();
+    const key = component.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    structured.push(component);
   }
 
-  return {
-    ...pick(place, PLACE_LOCALITY),
-    name: anonymousName ?? 'Destinataire',
-    address: coarseLocality(place),
-  };
+  if (structured.length) {
+    projected.address = structured.join(', ');
+  } else {
+    delete projected.address;
+  }
+
+  return projected;
 }
 
 /** Champs d'une commande que les apps savent lire. */
@@ -318,24 +384,22 @@ const META_FIELDS = [
  * `meta` qu'un `meta` inventé.
  */
 /**
- * Clés de `meta` retirées d'une course **diffusée mais pas encore réclamée**.
+ * ⚠️ **`meta` n'est plus expurgé sur une course non réclamée** (31/07/2026).
  *
- * ⚠️ Trou trouvé le 30/07/2026. `payload.dropoff` était bien réduit à sa
- * commune, mais `meta.dropoff_notes` porte **l'adresse de livraison telle que
- * le commerçant l'a tapée** — rue, numéro, étage — et sortait en entier. La
- * réduction était donc contournée par une clé voisine, exactement le défaut
- * que l'expurgation existe pour fermer : on retire ce qu'on a pensé à retirer.
+ * `dropoff_notes` et `instructions` en étaient retirés, parce qu'ils portent
+ * l'adresse telle que le commerçant l'a tapée — rue, numéro, étage. C'était
+ * cohérent tant que `payload.dropoff` était lui-même réduit à sa commune ; ça ne
+ * l'est plus depuis que l'adresse complète est servie (voir `PlaceDetail`).
  *
- * `instructions` part avec, pour la même raison : « sonner au 3e, porte
- * gauche, demander Karim » identifie une porte aussi sûrement qu'une rue.
- *
- * Ce qui reste est ce qui permet de **décider** de prendre la course — prix,
- * catégorie de véhicule, colis, montant à encaisser — et l'enlèvement, qui
- * est un commerce et se donne en entier par décision produit.
+ * **Ce qui reste vrai et qu'il faut assumer** : ces deux champs sont du texte
+ * libre, donc un commerçant peut y écrire « demander Karim, 0555… ». Le masquage
+ * porte sur les champs **structurés** d'identité, il ne peut rien contre une
+ * saisie libre. C'est un risque résiduel accepté, pas un oubli — et il vaut la
+ * peine d'être dit ici plutôt que découvert plus tard : « sonner au 3e » est
+ * précisément l'information sans laquelle un transporteur tourne dix minutes
+ * dans une cage d'escalier.
  */
-const META_REDACTED_WHEN_UNCLAIMED = ['dropoff_notes', 'instructions'];
-
-function projectMeta(meta: any, unclaimed = false): Record<string, any> | undefined {
+function projectMeta(meta: any): Record<string, any> | undefined {
   let source = meta;
 
   if (typeof source === 'string') {
@@ -348,11 +412,7 @@ function projectMeta(meta: any, unclaimed = false): Record<string, any> | undefi
 
   if (!source || typeof source !== 'object') return undefined;
 
-  const allowed = unclaimed
-    ? META_FIELDS.filter((field) => !META_REDACTED_WHEN_UNCLAIMED.includes(field))
-    : META_FIELDS;
-
-  const projected = pick(source, allowed);
+  const projected = pick(source, META_FIELDS);
   return Object.keys(projected).length ? projected : undefined;
 }
 
@@ -376,28 +436,57 @@ export interface OrderProjectionOptions {
 /**
  * Projection destinée au transporteur.
  *
- * Sur une course non réclamée, deux niveaux distincts (décision produit du
- * 28/07/2026) : l'enlèvement est un commerce et passe en entier, la livraison
- * est chez un particulier et se réduit à sa commune. Les relations `owner` et
- * `customer` d'un lieu ne sont jamais reprises — elles peuvent porter les
- * données du client, et les laisser rouvrirait par une porte de côté ce que
- * l'expurgation de la livraison ferme.
+ * Sur une course non réclamée (décision produit du 31/07/2026) : l'enlèvement
+ * est un commerce et passe en entier, la livraison passe **complète elle
+ * aussi**, à l'exception de qui habite là. Les relations `owner` et `customer`
+ * d'un lieu ne sont jamais reprises — elles portent les données du client, et
+ * les laisser rouvrirait par une porte de côté ce que le masquage ferme.
+ *
+ * ⚠️ La même règle qu'en face, et c'est délibéré : une entreprise et un
+ * indépendant regardent **la même course libre** et décident de la même chose.
+ * Deux niveaux de détail différents pour la même donnée, ce serait le « second
+ * vocabulaire » que la règle 1 du projet interdit — et le moins-disant des deux
+ * deviendrait vite le bug qu'on ne comprend pas.
  */
 export function projectOrderForDriver(order: any, options: OrderProjectionOptions = {}) {
   if (!order) return order;
   const { unclaimed = false, links = true, extra = {} } = options;
   const payload = order.payload;
 
+  // ⚠️ Sur une course NON RÉCLAMÉE, aucun rattachement (défaut D5).
+  //
+  // La branche d'expurgation ne touchait que `meta` et `payload` : les trois
+  // identifiants de rattachement sortaient quand même. Le seul rattachement dont
+  // un transporteur a besoin est le sien, et il ne l'a que sur une course qui
+  // est déjà la sienne.
+  //
+  // ⚠️ **Ce retrait ne protège PAS l'identité du commerçant, et il ne faut pas
+  // le croire.** Une version précédente de ce commentaire l'affirmait — « mis
+  // bout à bout, c'est la cartographie commerciale du réseau » — alors que la
+  // ligne d'à côté sert `pickup` en entier, enseigne et téléphone du magasin
+  // compris (décision produit du 28/07 : l'enlèvement est un commerce). Ce qui
+  // est retiré ici, ce sont des **identifiants Fleetbase**, exploitables pour
+  // agir ; le nom du commerçant, lui, est donné.
+  //
+  // Décrire une protection qu'on n'a pas est pire que ne pas l'avoir : on cesse
+  // de se poser la question. La question, elle, reste ouverte — faut-il masquer
+  // le contact du magasin tant que personne ne s'est engagé ? — et elle est
+  // consignée dans `docs/specs_facilitateur.md` §D7 plutôt que tranchée ici.
+  const exposeLinks = links && !unclaimed;
+
   return {
     ...pick(order, ORDER_FIELDS),
-    ...(links ? pick(order, ORDER_LINK_FIELDS) : {}),
-    meta: projectMeta(order.meta, unclaimed),
+    ...(exposeLinks ? pick(order, ORDER_LINK_FIELDS) : {}),
+    meta: projectMeta(order.meta),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, unclaimed ? 'locality' : 'full'),
+          dropoff: projectPlace(payload.dropoff, unclaimed ? 'anonymous' : 'full'),
         }
       : undefined,
+    // `redacted` dit à l'app qu'il **manque** quelque chose, et lequel : sans ce
+    // drapeau, une fiche sans nom ni téléphone se lit comme une donnée absente,
+    // et le transporteur appellerait le commerçant pour la réclamer.
     ...(unclaimed ? { redacted: true } : {}),
     ...extra,
   };
@@ -446,23 +535,54 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
  *
  * Il pilote ses transporteurs : il lui faut l'identifiant du driver assigné
  * pour réaffecter, ce que le commerçant n'a pas.
+ *
+ * ── Le niveau de détail suit l'ENGAGEMENT, pas le persona (défaut D7) ──────
+ *
+ * Cette projection servait `dropoff` en entier, sans condition et sans moyen
+ * de faire autrement. Tant qu'une entreprise ne voyait que les courses qu'un
+ * opérateur lui avait rattachées, c'était sans conséquence. Dès qu'elle consulte
+ * les courses **libres** pour décider d'en prendre une, la même fonction
+ * livrerait nom et téléphone du destinataire de toute course en attente de tout
+ * commerçant — à tout compte flotte.
+ *
+ * Ce qui suit l'engagement, depuis le 31/07/2026, est **l'identité du client, et
+ * elle seule** : l'adresse, les précisions d'accès, le prix et le montant à
+ * encaisser sont servis dans les deux cas, parce que ce sont eux qui permettent
+ * de décider. `facilitator_uuid` posé ⇒ l'entreprise est engagée, et le nom et
+ * le téléphone apparaissent, parce qu'il faut bien pouvoir sonner.
  */
-export function projectOrderForFleet(order: any, extra: Record<string, any> = {}) {
+export function projectOrderForFleet(
+  order: any,
+  extra: Record<string, any> = {},
+  options: { unclaimed?: boolean } = {},
+) {
   if (!order) return order;
+  const { unclaimed = false } = options;
   const payload = order.payload;
   const driver = order.driver_assigned;
 
   return {
     ...pick(order, ORDER_FIELDS),
-    ...pick(order, ORDER_LINK_FIELDS),
+    // Sur une course libre, aucun rattachement — même motif que côté
+    // transporteur : ils nomment le commerçant, et il n'y a rien à en faire
+    // avant de s'être engagé.
+    ...(unclaimed ? {} : pick(order, ORDER_LINK_FIELDS)),
     meta: projectMeta(order.meta),
     payload: payload
       ? {
           pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, 'full'),
+          dropoff: projectPlace(payload.dropoff, unclaimed ? 'anonymous' : 'full'),
         }
       : undefined,
-    driver_assigned: driver ? pick(driver, ['uuid', 'public_id', 'name', 'phone']) : undefined,
+    ...(unclaimed ? { redacted: true } : {}),
+    // ⚠️ Conditionné par `unclaimed` alors qu'une course libre n'a par
+    // définition aucun conducteur (`isClaimable` exige `!driver_assigned_uuid`).
+    // C'était donc le seul champ de cette projection sans garde, protégé par un
+    // invariant posé ailleurs : le jour où « libre » s'assouplit — course adhoc
+    // pré-assignée, réaffectation — nom et téléphone du conducteur d'un
+    // concurrent sortiraient, en silence et sans que personne ne l'ait décidé.
+    driver_assigned:
+      !unclaimed && driver ? pick(driver, ['uuid', 'public_id', 'name', 'phone']) : undefined,
     ...extra,
   };
 }

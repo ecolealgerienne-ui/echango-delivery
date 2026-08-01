@@ -3,15 +3,29 @@ import 'package:provider/provider.dart';
 
 import 'package:latlong2/latlong.dart';
 
+import '../../i18n/common_strings.dart';
+import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
+import '../../theme/app_semantic_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/confirm_dialog.dart';
+import '../../widgets/empty_state.dart';
 
 /// Carnet d'adresses du commerçant.
 ///
 /// Côté Fleetbase ce sont des `Place` rattachés à son Vendor par `owner_uuid`,
-/// un filtre serveur réel — vérifié en pratique (journal §2.7), contrairement
-/// aux filtres de `/orders` et `/drivers` qui sont ignorés silencieusement.
+/// un filtre serveur réel — vérifié en pratique (journal §2.7).
+///
+/// ⚠️ La phrase qui suivait ici — « contrairement aux filtres de `/orders` et
+/// `/drivers`, ignorés silencieusement » — est **fausse depuis le 29/07/2026**.
+/// Fleetbase filtre bien côté serveur ; nous envoyions des noms de paramètre
+/// qui n'existent pas (`facilitator_uuid` au lieu de `facilitator`), et il
+/// abandonne un paramètre inconnu sans erreur. Voir
+/// `docs/architecture_bff_fleetbase.md`.
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
 
@@ -20,11 +34,25 @@ class AddressesScreen extends StatefulWidget {
 }
 
 class _AddressesScreenState extends State<AddressesScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  String _c(String key) =>
+      commonLabel(key, context.read<LocaleState>().locale);
+
+  /// ⚠️ Le carnet part vide, et l'écran s'ouvre **avant** la lecture. Sans ce
+  /// drapeau il affirmait « aucune adresse enregistrée » pendant tout
+  /// l'aller-retour, à un commerçant qui en a dix — une phrase fausse au
+  /// moment précis où elle est lue.
+  bool _loading = true;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<MerchantOrderState>().loadAddresses();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await context.read<MerchantOrderState>().loadAddresses();
+      if (mounted) setState(() => _loading = false);
     });
   }
 
@@ -36,19 +64,15 @@ class _AddressesScreenState extends State<AddressesScreen> {
   /// pire encore qu'à la création d'une commande, puisqu'une adresse fausse
   /// empoisonne ensuite chaque livraison qui la réutilise.
   Future<void> _openForm(SavedAddress? existing) async {
-    final messenger = ScaffoldMessenger.of(context);
 
     final result = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => _AddressFormScreen(existing: existing)),
     );
 
     if (result != true || !mounted) return;
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          existing == null ? 'Adresse enregistrée' : 'Adresse modifiée',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      existing == null ? _t('order.book.saved') : _t('order.book.updated'),
     );
   }
 
@@ -59,40 +83,23 @@ class _AddressesScreenState extends State<AddressesScreen> {
   /// la commande, distinct de l'entrée du carnet — les livraisons passées
   /// gardent donc leur adresse.
   Future<void> _delete(MerchantOrderState orderState, SavedAddress a) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Supprimer « ${a.name} » ?'),
-        content: const Text(
-          'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
-          'affectées.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Retour'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Supprimer'),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: _t('order.book.delete.title', {'name': a.name}),
+      message: _t('order.book.delete.body'),
+      cancelLabel: _c('common.back'),
+      confirmLabel: _t('order.book.delete'),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await orderState.deleteAddress(a.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Adresse supprimée'
-            : orderState.errorMessage ?? 'Suppression impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : orderState.errorMessage ?? _t('order.book.delete.failed'),
+      _t('order.book.deleted'),
     );
   }
 
@@ -101,95 +108,104 @@ class _AddressesScreenState extends State<AddressesScreen> {
     final orderState = context.watch<MerchantOrderState>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Carnet d\'adresses')),
+      appBar: AppBar(title: Text(_t('order.book.title'))),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
       ),
-      body: orderState.addresses.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.bookmark_border, size: 64, color: Colors.grey[400]),
-                    const SizedBox(height: 16),
-                    Text('Aucune adresse enregistrée',
-                        style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Enregistrez vos points de retrait et destinataires '
-                      'fréquents pour remplir une demande en un tap.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                    ),
-                  ],
+      body: _body(orderState),
+    );
+  }
+
+  /// ⚠️ **Trois états et non deux.** `loadAddresses` avale son erreur pour ne
+  /// pas faire remonter d'exception nue, et laisse donc le carnet vide. Une
+  /// liste vide peut alors vouloir dire « je n'ai pas pu lire » — et l'annoncer
+  /// « aucune adresse enregistrée » est faux, **définitif** (rien ne recharge
+  /// ensuite), et pousse le commerçant à ressaisir ce qu'il a déjà.
+  Widget _body(MerchantOrderState orderState) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (orderState.addressesUnavailable) {
+      return AppEmptyState.unavailable(
+        title: _t('order.book.unavailable'),
+        hint: _t('order.book.unavailable.hint'),
+        scrollable: false,
+        onRetry: () => orderState.loadAddresses(),
+      );
+    }
+
+    if (orderState.addresses.isEmpty) {
+      return AppEmptyState(
+        title: _t('order.book.empty'),
+        hint: _t('order.book.empty.hint'),
+        icon: Icons.bookmark_border,
+        scrollable: false,
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      itemCount: orderState.addresses.length,
+      itemBuilder: (context, index) {
+        final a = orderState.addresses[index];
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          child: ListTile(
+            leading: Icon(
+              a.isDefault ? Icons.star : Icons.place_outlined,
+              color: a.isDefault ? context.semantic.warning : null,
+            ),
+            title: Row(
+              children: [
+                Flexible(child: Text(a.name)),
+                if (a.isDefault) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    _t('order.book.default_badge'),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: context.semantic.warning),
+                  ),
+                ],
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  [a.composedAddress, a.contactName, a.contactPhone]
+                      .where((e) => e != null && e.isNotEmpty)
+                      .join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(8),
-              itemCount: orderState.addresses.length,
-              itemBuilder: (context, index) {
-                final a = orderState.addresses[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  child: ListTile(
-                    leading: Icon(
-                      a.isDefault ? Icons.star : Icons.place_outlined,
-                      color: a.isDefault ? Colors.amber.shade700 : null,
-                    ),
-                    title: Row(
-                      children: [
-                        Flexible(child: Text(a.name)),
-                        if (a.isDefault) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            '· Principale',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: Colors.amber.shade700),
-                          ),
-                        ],
-                      ],
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          [a.composedAddress, a.contactName, a.contactPhone]
-                              .where((e) => e != null && e.isNotEmpty)
-                              .join(' · '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        // Une adresse sans position ne peut pas servir : le
-                        // formulaire de commande exige un point. Le dire ici
-                        // évite de le découvrir au moment de commander.
-                        if (!a.hasPosition)
-                          Text(
-                            'Position manquante — à compléter',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                          ),
-                      ],
-                    ),
-                    // Toute la ligne ouvre la fiche : c'est le geste attendu, et
-                    // la liste n'était jusqu'ici qu'un affichage mort.
-                    onTap: () => _openForm(a),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Supprimer',
-                      onPressed: () => _delete(orderState, a),
+                // Une adresse sans position ne peut pas servir : le
+                // formulaire de commande exige un point. Le dire ici
+                // évite de le découvrir au moment de commander.
+                if (!a.hasPosition)
+                  Text(
+                    _t('order.book.no_position'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
-                );
-              },
+              ],
             ),
+            // Toute la ligne ouvre la fiche : c'est le geste attendu, et
+            // la liste n'était jusqu'ici qu'un affichage mort.
+            onTap: () => _openForm(a),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: _t('order.book.delete'),
+              onPressed: () => _delete(orderState, a),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -211,6 +227,9 @@ class _AddressFormScreen extends StatefulWidget {
 }
 
 class _AddressFormScreenState extends State<_AddressFormScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final _name = TextEditingController();
   final _address = TextEditingController();
   final _contact = TextEditingController();
@@ -285,7 +304,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     final result = await Navigator.of(context).push<PickedLocation>(
       MaterialPageRoute(
         builder: (_) => MapPickerScreen(
-          title: 'Position de l\'adresse',
+          title: _t('order.book.position.title'),
           initial: _point,
         ),
       ),
@@ -293,9 +312,10 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     if (result == null || !mounted) return;
 
     // La commune est retenue même si le commerçant refuse le libellé : elle
-    // ne s'affiche nulle part et ne peut donc rien écraser, mais c'est le
-    // seul champ structuré que nous ayons — il sert à réduire une adresse de
-    // livraison à sa commune sur une course encore non réclamée.
+    // ne s'affiche nulle part et ne peut donc rien écraser, mais c'est un des
+    // rares champs structurés que nous ayons — et depuis le 31/07/2026 c'est
+    // par eux seuls que l'adresse d'une course non réclamée est recomposée,
+    // l'accesseur `address` de Fleetbase contenant le nom du destinataire.
     setState(() {
       _point = result.point;
       _neighborhood = result.neighborhood;
@@ -314,22 +334,25 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
       return;
     }
 
+    // ⚠️ **Pas un `AppConfirmDialog`, et ce n'est pas un oubli.** Les deux
+    // boutons sont deux choix légitimes — « Garder mon texte » n'est pas un
+    // retrait, c'est une décision aussi valable que « Remplacer ». Le passer en
+    // confirmation baptiserait l'un des deux « annuler », et peindrait l'autre
+    // en rouge alors que rien ici n'est destructeur : le champ est réécrit, il
+    // n'est pas perdu.
     final replace = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remplacer l\'adresse ?'),
-        content: Text(
-          'Préremplir le champ Adresse avec « $label », la position que vous '
-          'venez de sélectionner sur la carte ?',
-        ),
+        title: Text(_t('order.book.replace.title')),
+        content: Text(_t('order.book.replace.body', {'label': label})),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Garder mon texte'),
+            child: Text(_t('order.book.replace.keep')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remplacer'),
+            child: Text(_t('order.book.replace.confirm')),
           ),
         ],
       ),
@@ -344,17 +367,18 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   /// 30/07/2026) : l'adresse texte et la position se complètent souvent après
   /// coup, une fois le lieu connu plus précisément.
   Future<void> _save() async {
-    final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
     final orderState = context.read<MerchantOrderState>();
 
     if (_name.text.trim().isEmpty || _phone.text.trim().isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(_name.text.trim().isEmpty
-              ? 'Le nom est obligatoire'
-              : 'Le téléphone est obligatoire'),
-        ),
+      // Un refus, donc le ton d'un refus : ce message s'affichait comme une
+      // confirmation, au même endroit et de la même couleur qu'« Adresse
+      // enregistrée » deux gestes plus tôt.
+      showAppError(
+        context,
+        _name.text.trim().isEmpty
+            ? _t('order.book.name.required')
+            : _t('order.book.phone.required'),
       );
       return;
     }
@@ -400,11 +424,9 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     if (ok) {
       navigator.pop(true);
     } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Enregistrement impossible'),
-          backgroundColor: Colors.red,
-        ),
+      showAppError(
+        context,
+        orderState.errorMessage ?? _t('order.book.save.failed'),
       );
     }
   }
@@ -413,28 +435,28 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEdit ? 'Modifier l\'adresse' : 'Nouvelle adresse'),
+        title: Text(_isEdit ? _t('order.book.form.edit') : _t('order.book.form.new')),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _field(_name, 'Nom *', Icons.label_outline),
-              _field(_address, 'Adresse', Icons.place_outlined),
-              _field(_contact, 'Contact', Icons.person_outline),
-              _field(_phone, 'Téléphone *', Icons.phone_outlined,
+              _field(_name, _t('order.book.field.name'), Icons.label_outline),
+              _field(_address, _t('order.form.address'), Icons.place_outlined),
+              _field(_contact, _t('order.book.field.contact'), Icons.person_outline),
+              _field(_phone, _t('order.form.phone'), Icons.phone_outlined,
                   keyboard: TextInputType.phone),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               FilledButton.tonalIcon(
                 onPressed: _pickOnMap,
                 icon: const Icon(Icons.map_outlined),
                 label: Text(_point == null
-                    ? 'Placer sur la carte'
-                    : 'Modifier la position'),
+                    ? _t('order.form.location.pick')
+                    : _t('order.book.position.edit')),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               // Optionnelle, mais son absence a une conséquence concrète à
               // dire : sans elle, cette adresse ne pourra pas servir telle
               // quelle à une commande tant qu'elle n'aura pas été complétée.
@@ -445,34 +467,32 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                     size: 16,
                     color: _point == null
                         ? Theme.of(context).colorScheme.onSurfaceVariant
-                        : Colors.green.shade700,
+                        : context.semantic.success,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       _point == null
-                          ? 'Position non définie (facultatif) — à compléter '
-                              'avant de commander avec cette adresse'
-                          : 'Position définie',
+                          ? _t('order.book.position.unset')
+                          : _t('order.book.position.set'),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 value: _isDefault,
                 onChanged: (v) => setState(() => _isDefault = v),
-                title: const Text('Adresse principale'),
+                title: Text(_t('order.book.default')),
                 subtitle: Text(
-                  'Préremplit le retrait à chaque nouvelle livraison. '
-                  'Une seule adresse principale à la fois.',
+                  _t('order.book.default.hint'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
+              const SizedBox(height: AppSpacing.lg),
+              FilledButton.icon(
                 onPressed: _saving ? null : _save,
                 icon: _saving
                     ? const SizedBox(
@@ -481,7 +501,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_outlined),
-                label: const Text('Enregistrer'),
+                label: Text(_t('order.book.save')),
               ),
             ],
           ),
@@ -497,13 +517,12 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     TextInputType? keyboard,
   }) =>
       Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.only(bottom: AppSpacing.md),
         child: TextField(
           controller: controller,
           keyboardType: keyboard,
           decoration: InputDecoration(
             labelText: label,
-            border: const OutlineInputBorder(),
             prefixIcon: Icon(icon),
             isDense: true,
           ),

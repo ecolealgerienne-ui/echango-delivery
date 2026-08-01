@@ -15,9 +15,15 @@ import {
   projectPlace,
 } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
+import { isTerminalOrderStatus } from '../common/orders/order-status';
+import {
+  phoneContains,
+  subscriberDigits,
+} from '../common/identity/subscriber-number';
+import { adhocRadiusMetres as configuredAdhocRadius } from '../common/orders/adhoc-radius';
 
 @Injectable()
 export class CommerçantService {
@@ -221,16 +227,15 @@ export class CommerçantService {
   /**
    * Rayon de diffusion d'une course adhoc, en mètres.
    *
-   * Fleetbase porte nativement `adhoc_distance` : inutile de reconstruire un
-   * filtre de proximité côté BFF, c'est son dispatch géospatial qui l'applique.
-   *
-   * ⚠️ La valeur par défaut est un **repli, pas une décision produit** : 15 km
-   * couvre une agglomération sans noyer les transporteurs de courses hors de
-   * portée. À régler au pilote, avec de vraies distances.
+   * La règle vit dans `common/orders/adhoc-radius.ts` : elle était écrite ici
+   * ET dans `TransporteurService`, sous un commentaire qui affirmait que les
+   * deux devaient rester identiques (règle 5).
    */
   private adhocRadiusMetres(): number {
-    const configured = Number(this.configService.get('ADHOC_RADIUS_METRES'));
-    return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+    // Aliasé à l'import : sans alias, l'appel se lirait comme une récursion
+    // sur la méthode du même nom. Il n'en est pas une — un identifiant nu
+    // résout le module et non la méthode — mais rien ne le dit à la lecture.
+    return configuredAdhocRadius(this.configService.get('ADHOC_RADIUS_METRES'));
   }
 
   /**
@@ -340,6 +345,25 @@ export class CommerçantService {
     return Object.keys(meta).length ? meta : undefined;
   }
 
+
+  /**
+   * Identifiant du compte Echango du facilitateur d'une course, ou `null`.
+   *
+   * Rend `null` quand le fournisseur n'a pas de compte chez nous : la course se
+   * comporte alors comme une course sans facilitateur, plutôt que de créer une
+   * dette envers une partie qui n'existe pas dans le registre.
+   */
+  private async resolveFacilitatorId(live: any): Promise<string | null> {
+    const vendorUuid = live?.facilitator_uuid;
+    if (!vendorUuid) return null;
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+      select: { id: true },
+    });
+    return fleet?.id ?? null;
+  }
+
   /**
    * Premier transporteur favori actuellement en ligne, ou `null`.
    *
@@ -422,9 +446,12 @@ export class CommerçantService {
     // confier des espèces à qui en doit déjà trop est le seul instrument de
     // limitation du risque dont nous disposions.
     for (const account of available) {
+      // À la création, la course ne porte pas encore de facilitateur : la
+      // contrepartie est donc le commerçant, comme avant ce chantier. Le
+      // plafond sera revérifié à l'acceptation, contre la contrepartie réelle.
       const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
-        account.id,
-        merchantId,
+        driverParty(account.id),
+        merchantParty(merchantId),
         codAmount,
       );
       if (allowed) return account;
@@ -571,9 +598,6 @@ export class CommerçantService {
     // `searchWhere` est un LIKE SQL — le forcer en minuscules ne servait que la
     // comparaison en mémoire, qui n'existe plus.
     const q = query.trim();
-    // Le téléphone se cherche par ses chiffres : la saisie contient souvent des
-    // espaces ou un indicatif que l'enregistrement n'a pas.
-    const digits = q.replace(/\D/g, '');
 
     // ⚠️ La recherche porte sur l'annuaire FLEETBASE, pas sur les comptes
     // applicatifs.
@@ -615,15 +639,14 @@ export class CommerçantService {
     // Repli sur les chiffres seuls : une saisie comme « 0555 12 34 » ne trouve
     // rien côté serveur si l'enregistrement est écrit « +2135551234 ». Le
     // rapatriement reste borné et ne se déclenche que sur un échec.
-    if (matches.length === 0 && digits.length >= 4) {
+    if (matches.length === 0 && subscriberDigits(q).length >= 4) {
       try {
-        const response = await this.fleetbaseClient.getAllDrivers({ limit: 100 });
-        matches = this.fleetbaseClient
-          .extractCollection(response, 'drivers')
-          .filter((d: any) => {
-            const phone = String(d?.phone ?? '').replace(/\D/g, '');
-            return phone.length > 0 && phone.includes(digits);
-          });
+        // Paginé, et comparé sur les chiffres NORMALISÉS : la version
+        // précédente plafonnait à 100 conducteurs et comparait les chiffres
+        // bruts — elle échouait donc sur l'exemple même de ce commentaire,
+        // « 0555 12 34 » contre « +2135551234 ».
+        const wide = await this.fleetbaseClient.fetchEveryDriverMatching();
+        matches = wide.filter((d: any) => phoneContains(d?.phone, q));
       } catch {
         // Le repli est un bonus : son échec ne doit pas casser la recherche.
       }
@@ -1244,13 +1267,26 @@ export class CommerçantService {
           dto.pickupLocationName,
           dto.pickupLatitude,
           dto.pickupLongitude,
-          { name: dto.pickupContactName, phone: dto.pickupContactPhone },
+          {
+            name: dto.pickupContactName,
+            phone: dto.pickupContactPhone,
+            city: dto.pickupCity,
+            neighborhood: dto.pickupNeighborhood,
+          },
         ),
         this.fleetbaseClient.createPlace(
           dto.dropoffLocationName,
           dto.dropoffLatitude,
           dto.dropoffLongitude,
-          { name: dto.dropoffContactName, phone: dto.dropoffContactPhone },
+          {
+            name: dto.dropoffContactName,
+            phone: dto.dropoffContactPhone,
+            // ⚠️ Commune et quartier, jamais la rue : sur une course non
+            // réclamée, ces deux-là suffisent à juger un détour et ne
+            // désignent aucune porte.
+            city: dto.dropoffCity,
+            neighborhood: dto.dropoffNeighborhood,
+          },
         ),
       ]);
 
@@ -1937,6 +1973,12 @@ export class CommerçantService {
         discrepancyReason: input.discrepancyReason,
         notes: input.notes,
       },
+      // Le facilitateur de la course, résolu depuis Fleetbase et figé avec
+      // l'écriture. Sans lui, une course d'entreprise régularisée imputait la
+      // dette au conducteur et lui laissait retenir la rémunération de son
+      // employeur — sur le chemin qui existe précisément pour les courses
+      // closes hors application.
+      await this.resolveFacilitatorId(live),
     );
 
     // ⚠️ **Le transporteur n'est pas notifié**, et c'est une limite, pas un
@@ -2031,7 +2073,7 @@ export class CommerçantService {
     const [live] = await this.mergeWithFleetbase([order], merchant.fleetbaseVendorUuid);
     const liveStatus = (live as any)?.status ?? null;
 
-    if (liveStatus && ['completed', 'canceled', 'cancelled'].includes(liveStatus)) {
+    if (isTerminalOrderStatus(liveStatus)) {
       badRequest('order.already_terminal', `Commande déjà ${liveStatus}, annulation impossible`);
     }
 

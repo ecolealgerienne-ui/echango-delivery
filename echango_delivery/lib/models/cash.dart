@@ -1,4 +1,67 @@
+import 'dart:ui' show Locale;
+
 import 'package:equatable/equatable.dart';
+
+import '../i18n/cash_strings.dart';
+
+/// La chaîne de l'argent : `conducteur → entreprise → commerçant`.
+///
+/// Le conducteur encaisse à la porte, l'entreprise perçoit de son conducteur,
+/// le commerçant est le destinataire final. Le rang situe chaque acteur ; il
+/// décide, à lui seul, dans quel sens se lit une dette.
+///
+/// `null` sur un type inconnu — le serveur pourrait en ajouter un, et deviner
+/// serait pire que se taire (l'appelant retombe alors sur un libellé neutre).
+int? cashChainRank(String? party) => switch (party) {
+      'driver' => 0,
+      'fleet' => 1,
+      'merchant' => 2,
+      _ => null,
+    };
+
+/// Où se situe la contrepartie par rapport à celui qui regarde.
+enum CashSide {
+  /// Elle est en amont : c'est elle qui encaisse. Une dette positive veut dire
+  /// qu'elle **détient** de l'argent qui me revient.
+  upstream,
+
+  /// Elle est en aval : c'est moi qui encaisse pour elle. Une dette positive
+  /// veut dire que **je détiens** de l'argent qui lui revient.
+  downstream,
+
+  /// Type de contrepartie non renseigné ou inconnu. L'écran doit alors rester
+  /// neutre plutôt que d'affirmer un sens.
+  unknown,
+}
+
+/// De quel côté de la chaîne se trouve [counterpartyType] pour [viewer].
+CashSide cashSide(String viewer, String? counterpartyType) {
+  final me = cashChainRank(viewer);
+  final other = cashChainRank(counterpartyType);
+  if (me == null || other == null || me == other) return CashSide.unknown;
+  return other < me ? CashSide.upstream : CashSide.downstream;
+}
+
+/// Comment nommer la contrepartie dans une phrase.
+///
+/// Une entreprise voit à la fois des conducteurs et des commerçants dans la
+/// même liste : les appeler tous « ce transporteur », comme le faisait l'écran,
+/// est faux pour la moitié d'entre eux.
+///
+/// ⚠️ **Traduit, parce qu'il est employé DANS des phrases** — « Détenue par
+/// {who} ». Laisser ce mot-là en français aurait fait finir chaque phrase arabe
+/// du registre par « ce transporteur ». Les libellés vivent dans
+/// `i18n/cash_strings.dart` avec ceux de l'écran ; ce qui reste ici est la
+/// correspondance type → clé, qui est du domaine et non de la langue.
+String cashPartyLabel(String? type, Locale locale) => cashLabel(
+      switch (type) {
+        'driver' => 'cash.party.driver',
+        'fleet' => 'cash.party.fleet',
+        'merchant' => 'cash.party.merchant',
+        _ => 'cash.party.unknown',
+      },
+      locale,
+    );
 
 /// Dette d'un transporteur envers un commerçant, ou l'inverse selon le profil
 /// qui regarde.
@@ -13,6 +76,9 @@ class CashBalance extends Equatable {
   /// Identifiant de la contrepartie : le commerçant vu du transporteur, le
   /// transporteur vu du commerçant.
   final String counterpartyId;
+
+  /// `driver`, `fleet` ou `merchant` — null si le serveur ne le renseigne pas.
+  final String? counterpartyType;
   final String? name;
   final String? phone;
   final double debt;
@@ -21,12 +87,20 @@ class CashBalance extends Equatable {
   /// sera confiée à ce transporteur pour ce commerçant tant qu'il n'a pas remis.
   final bool blocked;
 
-  /// La position est **signée**. Positive : le transporteur détient des espèces
-  /// du commerçant. Négative : le commerçant lui doit une rémunération que
-  /// l'encaissement n'a pas couverte — course sans encaissement, ou client qui
-  /// n'a payé qu'une partie. Les deux appellent une action, en sens inverse.
-  bool get driverOwes => debt > 0;
-  bool get merchantOwes => debt < 0;
+  /// La position est **signée**, et son signe a un sens absolu : positif quand
+  /// la partie **en amont** de la chaîne détient l'argent de celle en aval.
+  ///
+  /// ⚠️ **`driverOwes`/`merchantOwes` ont été retirés, parce que leurs noms
+  /// mentaient dès qu'une entreprise de transport regardait.** L'entreprise est
+  /// au MILIEU de la chaîne : ses conducteurs lui doivent, elle doit aux
+  /// commerçants. Un même `debt > 0` désignait donc, sur le même écran, tantôt
+  /// « mon conducteur détient » et tantôt « je détiens et je dois » — et
+  /// l'écran, qui traitait toute non-conducteur comme un commerçant, décrivait
+  /// **la moitié des soldes d'une entreprise à l'envers**.
+  ///
+  /// Le sens ne se déduit pas du profil qui regarde, mais de la POSITION de la
+  /// contrepartie par rapport à lui : voir [cashSide].
+  bool get upstreamHolds => debt > 0;
 
   /// Somme due, quel que soit le sens.
   double get outstanding => debt.abs();
@@ -34,33 +108,52 @@ class CashBalance extends Equatable {
   const CashBalance({
     required this.counterpartyId,
     required this.debt,
+    this.counterpartyType,
     this.name,
     this.phone,
     this.blocked = false,
   });
 
-  /// Vu du transporteur : la contrepartie est un commerçant.
+  /// Vu du transporteur : la contrepartie est son facilitateur, ou le
+  /// commerçant quand la course n'en porte pas.
+  ///
+  /// ⚠️ `counterparty_*` d'abord, `merchant_*` en repli. Le serveur ne
+  /// renseigne les seconds que lorsque la contrepartie est effectivement un
+  /// commerçant — ils valent `null` face à une entreprise, et les lire seuls
+  /// affichait « Compte  » sans identifiant ni nom. Le repli reste pour les
+  /// réponses d'un serveur antérieur à la généralisation.
   factory CashBalance.fromDriverJson(Map<String, dynamic> json) => CashBalance(
-        counterpartyId: (json['merchant_id'] ?? '') as String,
-        name: json['merchant_name'] as String?,
-        phone: json['merchant_phone'] as String?,
+        counterpartyId:
+            (json['counterparty_id'] ?? json['merchant_id'] ?? '') as String,
+        counterpartyType: json['counterparty_type'] as String?,
+        name: (json['counterparty_name'] ?? json['merchant_name']) as String?,
+        phone: (json['counterparty_phone'] ?? json['merchant_phone']) as String?,
         debt: (json['debt'] as num?)?.toDouble() ?? 0,
         blocked: json['blocked'] == true,
       );
 
-  /// Vu du commerçant : la contrepartie est un transporteur.
+  /// Vu du commerçant : la contrepartie est le facilitateur de la course, ou
+  /// le transporteur lui-même quand elle n'en porte pas.
   factory CashBalance.fromMerchantJson(Map<String, dynamic> json) => CashBalance(
-        counterpartyId: (json['driver_id'] ?? '') as String,
-        name: json['driver_name'] as String?,
-        phone: json['driver_phone'] as String?,
+        counterpartyId:
+            (json['counterparty_id'] ?? json['driver_id'] ?? '') as String,
+        counterpartyType: json['counterparty_type'] as String?,
+        name: (json['counterparty_name'] ?? json['driver_name']) as String?,
+        phone: (json['counterparty_phone'] ?? json['driver_phone']) as String?,
         debt: (json['debt'] as num?)?.toDouble() ?? 0,
       );
 
-  String get displayName =>
-      (name != null && name!.isNotEmpty) ? name! : 'Compte $counterpartyId';
+  /// Le nom servi par le serveur, ou l'identifiant du compte à défaut.
+  ///
+  /// ⚠️ La locale est exigée depuis que le repli est une phrase : « Compte X »
+  /// n'était pas traduit, et c'était le seul mot français restant dans un titre
+  /// de carte arabe. Un paramètre facultatif aurait laissé ce cas revenir.
+  String displayName(Locale locale) => (name != null && name!.isNotEmpty)
+      ? name!
+      : cashLabel('cash.account.unnamed', locale, {'id': counterpartyId});
 
   @override
-  List<Object?> get props => [counterpartyId, debt, blocked];
+  List<Object?> get props => [counterpartyId, counterpartyType, debt, blocked];
 }
 
 /// Ensemble des dettes d'un compte, avec la devise et le plafond.
@@ -88,8 +181,28 @@ class CashLedger {
 
   /// Somme des positions, signée. Un repère, jamais un montant à régler d'un
   /// coup : il est dû à — ou par — plusieurs personnes différentes.
+  ///
+  /// ⚠️ **N'a de sens que pour un acteur situé à un bout de la chaîne.** Le
+  /// conducteur ne fait face qu'à des parties en aval, le commerçant qu'à des
+  /// parties en amont : leur total va donc dans un seul sens. L'entreprise de
+  /// transport, elle, est au milieu — ses conducteurs lui doivent et elle doit
+  /// aux commerçants —, et ce total **soustrait sa créance de sa dette** pour
+  /// n'en donner qu'un nombre qui ne désigne rien. Voir [totalOn].
   double get total =>
       balances.fold<double>(0, (sum, b) => sum + b.debt);
+
+  /// Somme signée des positions dont la contrepartie est du côté [side] pour
+  /// [viewer]. `null` si aucune contrepartie ne s'y trouve.
+  ///
+  /// Le `null` compte : il permet à l'écran de n'afficher une ligne que
+  /// lorsqu'elle existe, sans avoir à savoir quel profil regarde. Un `0` aurait
+  /// affiché « vous devez 0 » à un conducteur qui ne doit à personne.
+  double? totalOn(CashSide side, String viewer) {
+    final rows =
+        balances.where((b) => cashSide(viewer, b.counterpartyType) == side);
+    if (rows.isEmpty) return null;
+    return rows.fold<double>(0, (sum, b) => sum + b.debt);
+  }
 
   bool get isEmpty => balances.isEmpty;
 }
@@ -105,7 +218,13 @@ class CashRemittance extends Equatable {
   final double amount;
   final String currency;
 
-  /// `driver` ou `merchant`. Détermine qui doit confirmer : l'autre, toujours.
+  /// `driver`, `fleet` ou `merchant` — le serveur y écrit un `PartyType`
+  /// complet depuis le chantier facilitateur. Détermine qui doit confirmer :
+  /// l'autre, toujours.
+  ///
+  /// ⚠️ Ce commentaire disait « `driver` ou `merchant` », et l'écran s'y fiait
+  /// pour nommer le déclarant à partir du profil qui regarde. Une entreprise de
+  /// transport déclare pourtant des remises, dans les deux sens.
   final String declaredBy;
   final DateTime declaredAt;
   final DateTime? confirmedAt;
@@ -265,13 +384,31 @@ class CashCollectionEntry extends Equatable {
 /// Libellés des motifs d'écart, du point de vue de qui les lit.
 ///
 /// Les codes du serveur sont faits pour être comptés, pas affichés.
-const cashDiscrepancyLabels = <String, String>{
-  'somme_incomplete': 'Le client n\'avait pas la totalité',
-  'refus_de_payer': 'Le client a refusé de payer',
-  'pas_de_monnaie': 'Pas de monnaie',
-  'montant_conteste': 'Le client a contesté le montant',
-  'autre': 'Autre',
-};
+/// Les motifs d'écart proposés à la porte, dans l'ordre où ils sont affichés.
+///
+/// ⚠️ Une **liste de codes**, plus une table de libellés : le code est le
+/// domaine — il part au serveur, il est stocké, il sera compté —, le libellé
+/// n'est que sa traduction. Les mêler dans une `Map` figeait l'ordre ET la
+/// langue dans le même objet, et le dialogue itérait donc sur du français.
+const cashDiscrepancyReasons = <String>[
+  'somme_incomplete',
+  'refus_de_payer',
+  'pas_de_monnaie',
+  'montant_conteste',
+  'autre',
+];
+
+/// Le libellé d'un motif d'écart, ou [fallback] quand le code est inconnu.
+///
+/// Un code venu du serveur mais absent de la liste ne doit pas s'afficher tel
+/// quel (`somme_incomplete` ne se lit pas), ni disparaître : l'appelant décide
+/// de ce qui le remplace — « Écart signalé » sur une ligne d'historique, rien
+/// du tout quand la phrase se suffit à elle-même.
+String cashDiscrepancyLabel(String? code, Locale locale,
+    {required String fallback}) {
+  if (code == null || !cashDiscrepancyReasons.contains(code)) return fallback;
+  return cashLabel('cash.discrepancy.$code', locale);
+}
 
 /// Une livraison dont l'argent sera réclamé à une porte, et n'est encore dans
 /// la poche de personne.

@@ -219,12 +219,6 @@ export class DeclareRemittanceDto {
   amount: number;
 }
 
-export class DisputeRemittanceDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(500)
-  reason?: string;
-}
 
 export class CapturePhotoDto {
   @IsArray()

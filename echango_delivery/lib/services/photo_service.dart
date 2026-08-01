@@ -2,16 +2,19 @@ import 'dart:convert';
 
 import 'package:image_picker/image_picker.dart';
 
+import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../utils/logger.dart';
 
 /// Longueur maximale de la chaîne base64 acceptée par le BFF.
 ///
-/// Doit rester alignée sur `MAX_PHOTO_BASE64_LENGTH` de
-/// `backend/bff/src/transporteur/dto/transporteur.dto.ts` (7 000 000, soit
-/// ~5 Mo d'image). Dépassée, la requête part et revient en 400 après avoir
-/// consommé la connexion mobile du transporteur — autant refuser avant.
-const maxPhotoBase64Length = 7000000;
+/// La valeur vit dans [ServerRules.maxPhotoBase64Length], où
+/// `tool/check_server_rules.dart` la compare au `MAX_PHOTO_BASE64_LENGTH` du
+/// DTO. Elle portait ici un commentaire disant « doit rester alignée sur… », ce
+/// qui est précisément l'aveu que rien ne la tenait (règle 5).
+///
+/// L'alias est conservé pour les appelants ; il ne redéclare pas la valeur.
+const maxPhotoBase64Length = ServerRules.maxPhotoBase64Length;
 
 /// Résultat d'une capture : l'image encodée, prête pour le BFF.
 class CapturedPhoto {

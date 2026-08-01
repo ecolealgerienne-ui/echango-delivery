@@ -12,6 +12,7 @@ import 'services/location_service.dart';
 import 'state/auth_state.dart';
 import 'state/driver_presence_state.dart';
 import 'state/cash_state.dart';
+import 'state/fleet_state.dart';
 import 'state/locale_state.dart';
 import 'state/merchant_order_state.dart';
 import 'state/order_state.dart';
@@ -97,6 +98,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
   late final OrderState _orderState;
   late final MerchantOrderState _merchantOrderState;
   late final CashState _cashState;
+  late final FleetState _fleetState;
   late final DriverPresenceState _presence;
 
   bool _presenceStarted = false;
@@ -113,6 +115,8 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     );
     _cashState =
         CashState(apiClient: widget.apiClient, localeState: widget.localeState);
+    _fleetState =
+        FleetState(apiClient: widget.apiClient, localeState: widget.localeState);
     _presence = DriverPresenceState(
       apiClient: widget.apiClient,
       orderState: _orderState,
@@ -181,6 +185,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
         // est ce que le commerçant attend. Deux états auraient divergé sur la
         // seule chose qui doit rester commune.
         ChangeNotifierProvider<CashState>.value(value: _cashState),
+        ChangeNotifierProvider<FleetState>.value(value: _fleetState),
         ChangeNotifierProvider<DriverPresenceState>.value(value: _presence),
         ChangeNotifierProvider<LocaleState>.value(value: widget.localeState),
       ],

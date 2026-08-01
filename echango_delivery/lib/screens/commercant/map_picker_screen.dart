@@ -5,8 +5,12 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
+import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
+import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
 
 /// Sélection d'un point sur la carte, avec recherche d'adresse.
 ///
@@ -69,6 +73,9 @@ class PickedLocation {
 }
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   /// Centre d'Alger — point de départ de la carte quand rien n'est connu.
   /// Contrairement à l'ancien comportement, ce n'est plus la valeur *envoyée* :
   /// le commerçant doit déplacer le repère, et c'est sa position qui compte.
@@ -141,11 +148,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   /// quota partagé de Nominatim, que le BFF sérialise à une par seconde.
   void _onSearchChanged(String value) {
     _debounce?.cancel();
-    if (value.trim().length < 3) {
+    if (value.trim().length < ServerRules.addressSearchMinLength) {
       setState(() => _suggestions = []);
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 600), () => _search(value));
+    _debounce = Timer(AppRules.searchDebounce, () => _search(value));
   }
 
   Future<void> _search(String value) async {
@@ -223,14 +230,13 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   }
 
   Widget _searchField() => Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(AppSpacing.md),
         child: TextField(
           controller: _searchController,
           onChanged: _onSearchChanged,
-          decoration: const InputDecoration(
-            hintText: 'Rechercher une adresse…',
-            prefixIcon: Icon(Icons.search),
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            hintText: _t('order.map.search'),
+            prefixIcon: const Icon(Icons.search),
             isDense: true,
           ),
         ),
@@ -239,7 +245,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   Widget _suggestionList() => ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 220),
         child: Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12),
+          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: _suggestions.length,
@@ -265,22 +271,21 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
   Widget _footer(ThemeData theme) => SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
                 children: [
                   const Icon(Icons.place_outlined, size: 18),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: _resolving
-                        ? Text('Recherche de l\'adresse…',
+                        ? Text(_t('order.map.searching'),
                             style: theme.textTheme.bodySmall)
                         : Text(
                             _label.isEmpty
-                                ? 'Point sans adresse connue — la position est '
-                                    'tout de même utilisable'
+                                ? _t('order.map.no_address')
                                 : _label,
                             style: theme.textTheme.bodySmall,
                             maxLines: 2,
@@ -289,8 +294,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
+              const SizedBox(height: AppSpacing.md),
+              FilledButton.icon(
                 onPressed: () => Navigator.pop(
                   context,
                   PickedLocation(
@@ -305,7 +310,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                   ),
                 ),
                 icon: const Icon(Icons.check),
-                label: const Text('Valider ce point'),
+                label: Text(_t('order.map.confirm')),
               ),
             ],
           ),

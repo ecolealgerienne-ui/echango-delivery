@@ -5,8 +5,10 @@ import {
   ForbiddenException,
   Logger,
   ConflictException,
+  HttpException,
 } from '@nestjs/common';
-import { badRequest, unauthorized, forbidden, conflict } from '../common/errors/http-errors';
+import { badRequest, unauthorized, forbidden, conflict, notFound } from '../common/errors/http-errors';
+import { AuditService } from '../common/audit/audit.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -55,7 +57,31 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private fleetbaseClient: FleetbaseApiClient,
+    // `AuditModule` est `@Global()` : rien à importer dans `AuthModule`.
+    private audit: AuditService,
   ) {}
+
+  /**
+   * Un email déjà pris : la réponse ne dépend pas du persona.
+   *
+   * Une seconde tentative après une inscription **en attente de validation**
+   * doit dire la même chose que la première. Sans ce contrôle, le compte lisait
+   * « en cours de validation », réessayait, et s'entendait répondre « email déjà
+   * utilisé » — deux messages qui se contredisent sur le même fait, dont aucun
+   * ne dit quoi faire.
+   *
+   * ⚠️ Les deux copies portaient chacune un commentaire disant « même raison que
+   * côté commerçant » : c'est le signal exact de la règle 5 — la phrase avoue
+   * l'invariant que rien ne tient. Un commentaire ne peut pas échouer.
+   */
+  private async assertEmailFree(
+    existing: { fleetbaseVendorUuid: string } | null,
+    persona: 'merchant' | 'fleet',
+  ): Promise<void> {
+    if (!existing) return;
+    await this.assertVendorApproved(existing.fleetbaseVendorUuid, persona);
+    conflict('auth.email_taken', 'Email already registered');
+  }
 
   /**
    * Register a new merchant
@@ -67,15 +93,7 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (existing) {
-      // Une seconde tentative après une inscription en attente doit dire la
-      // même chose que la première. Sans ce contrôle, le commerçant lisait
-      // « compte en cours de validation », réessayait, et s'entendait répondre
-      // « email déjà utilisé » — deux messages qui se contredisent sur le même
-      // fait, et dont aucun ne dit quoi faire.
-      await this.assertMerchantApproved(existing.fleetbaseVendorUuid);
-      conflict('auth.email_taken', 'Email already registered');
-    }
+    await this.assertEmailFree(existing, 'merchant');
 
     // Retenu pour la compensation ci-dessous : une inscription qui échoue
     // après la création du Vendor laissait un enregistrement orphelin dans
@@ -203,7 +221,19 @@ export class AuthService {
   }
 
   /**
-   * Refuse la connexion tant qu'un admin n'a pas validé le commerçant.
+   * Refuse la connexion tant qu'un admin n'a pas validé le compte.
+   *
+   * Vaut pour les **deux personas adossés à un `Vendor`** — commerçant et
+   * entreprise de transport. Le mécanisme est identique ; seul le code de refus
+   * change, parce que l'application ne dit pas la même phrase à un boulanger
+   * qu'à une société de transport.
+   *
+   * ⚠️ Généralisé le 31/07/2026. Il n'a longtemps servi que le commerçant, et
+   * `docs/specs_facilitateur.md` (première version) affirmait qu'il
+   * « s'appliquait tel quel » à une entreprise : le mécanisme était réutilisable,
+   * il n'était **pas branché**, et `loginFleet` ne lisait que sa colonne locale.
+   * Écrire qu'un garde s'applique est exactement ce qui fait qu'on ne vérifie
+   * jamais s'il est appelé.
    *
    * ── Où vit la décision ──────────────────────────────────────────────────
    *
@@ -229,7 +259,10 @@ export class AuthService {
    * l'inscription, pas d'un accès non autorisé aux données d'autrui — ce
    * dernier est assuré ailleurs, et sans dépendance réseau.
    */
-  private async assertMerchantApproved(vendorUuid: string): Promise<void> {
+  private async assertVendorApproved(
+    vendorUuid: string,
+    persona: 'merchant' | 'fleet' = 'merchant',
+  ): Promise<void> {
     let vendor: any;
     try {
       vendor = await this.fleetbaseClient.getVendorByUuid(vendorUuid);
@@ -264,6 +297,14 @@ export class AuthService {
     // qu'il connaît le mot de passe, donc il n'y a plus rien à lui cacher. Lui
     // renvoyer « identifiants invalides » l'enverrait réinitialiser un mot de
     // passe parfaitement bon.
+    if (persona === 'fleet') {
+      forbidden(
+        'fleet_pending',
+        'Votre entreprise est en cours de validation par Echango. Vous recevrez un accès ' +
+          "dès qu'elle sera approuvée.",
+      );
+    }
+
     forbidden(
       'merchant_pending',
       'Votre compte est en cours de validation par Echango. Vous recevrez un accès dès ' +
@@ -363,7 +404,7 @@ export class AuthService {
       unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
-    await this.assertMerchantApproved(merchant.fleetbaseVendorUuid);
+    await this.assertVendorApproved(merchant.fleetbaseVendorUuid, 'merchant');
 
     // Update last login
     await this.prisma.merchantAccount.update({
@@ -404,22 +445,33 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (existing) {
-      conflict('auth.email_taken', 'Email already registered');
-    }
+    await this.assertEmailFree(existing, 'fleet');
+
+    // Même compensation que côté commerçant : sans elle, un échec après la
+    // création du Vendor laissait un enregistrement orphelin que le `@unique`
+    // sur `fleetbaseVendorUuid` ne voit pas, et qu'une seconde tentative avec le
+    // même email dupliquait au lieu de récupérer.
+    let createdVendorUuid: string | null = null;
 
     try {
       this.logger.log(`Creating Vendor in Fleetbase for fleet ${dto.businessName}`);
+      // `inactive` explicite, exactement pour la raison trouvée sur le
+      // commerçant au Lot 4 : sans ce paramètre, le modèle Fleetbase applique
+      // `$status ?? 'active'` et **chaque entreprise de transport naîtrait
+      // validée**. Le garde ajouté à `loginFleet` ci-dessous aurait alors été
+      // livré sans rien empêcher — un garde-fou qui rassure sans protéger.
       const vendorResponse = await this.fleetbaseClient.createVendor(
         dto.businessName,
         dto.email,
         dto.businessPhone,
+        'inactive',
       );
 
       const vendorUuid = vendorResponse.vendor?.uuid || vendorResponse.vendor?.id;
       if (!vendorUuid) {
         throw new Error('Vendor UUID not returned from Fleetbase');
       }
+      createdVendorUuid = vendorUuid;
 
       const hashedPassword = await bcrypt.hash(dto.password, 10);
 
@@ -436,19 +488,19 @@ export class AuthService {
         },
       });
 
-      this.logger.log(`Fleet account registered: ${fleet.id}`);
-
-      const token = this.generateToken(fleet.id, fleet.email, 'fleet', fleet.tokenVersion);
-
-      return {
-        token,
-        user: {
-          id: fleet.id,
-          email: fleet.email,
-          businessName: fleet.businessName,
-        },
-      };
+      this.logger.log(
+        `Demande d'inscription entreprise enregistrée : ${fleet.id} (en attente de validation)`,
+      );
     } catch (error) {
+      // Laissez-passer : aucun refus métier ne naît dans ce `try` aujourd'hui,
+      // mais le jour où quelqu'un y ajoute un `conflict()`, il serait avalé
+      // **et** déclencherait `rollbackVendor()` — donc supprimerait un Vendor
+      // légitime en réponse à un refus. Trois lignes qui ferment un piège que
+      // ce fichier commente déjà deux fois.
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      await this.rollbackVendor(createdVendorUuid);
       this.logger.error(`Fleet registration failed: ${error.message}`, error);
       const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
       badRequest(
@@ -458,6 +510,21 @@ export class AuthService {
           : 'Failed to register fleet account',
       );
     }
+
+    // ⚠️ HORS du `try`, comme côté commerçant, et pour la même raison : levée à
+    // l'intérieur, cette exception serait attrapée par le filet ci-dessus, qui
+    // appellerait `rollbackVendor()` et **supprimerait l'entreprise qu'on vient
+    // d'enregistrer**. La compensation ne défait que les échecs, jamais un
+    // succès qui se termine par un refus d'entrer.
+    //
+    // Plus de jeton à l'inscription : c'était le second trou du Lot 4, resté
+    // ouvert côté flotte. Le délivrer aurait fait entrer l'entreprise
+    // immédiatement, et le garde n'aurait servi qu'à sa deuxième visite.
+    forbidden(
+      'fleet_pending',
+      'Votre demande a bien été enregistrée. Un administrateur Echango doit valider votre ' +
+        'entreprise avant votre première connexion.',
+    );
   }
 
   /**
@@ -478,9 +545,18 @@ export class AuthService {
       unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
 
+    // `active` et `Vendor.status` ne disent pas la même chose, et ce n'est donc
+    // pas l'état parallèle qu'on pourrait y voir. `Vendor.status` porte la
+    // **validation** — décidée par un admin dans la console, chez Fleetbase qui
+    // fait autorité. `active` est notre **coupe-circuit applicatif**, immédiat
+    // et local, que Fleetbase ne peut pas exprimer parce qu'il ne connaît pas
+    // nos comptes. Les trois personas portent déjà ce même couple : le
+    // commerçant l'a depuis le Lot 4, sans que personne y ait vu un doublon.
     if (!fleet.active) {
       unauthorized('auth.invalid_credentials', INVALID_CREDENTIALS);
     }
+
+    await this.assertVendorApproved(fleet.fleetbaseVendorUuid, 'fleet');
 
     await this.prisma.fleetAccount.update({
       where: { id: fleet.id },
@@ -553,7 +629,18 @@ export class AuthService {
    * Le jeton en clair n'est renvoyé qu'ici, une seule fois : la base n'en
    * garde que l'empreinte. À transmettre au transporteur hors bande.
    */
-  async createDriverInvitation(fleetbaseDriverUuid: string, email?: string, validForDays = 7) {
+  async createDriverInvitation(
+    fleetId: string,
+    fleetbaseDriverUuid: string,
+    email?: string,
+    validForDays = 7,
+  ) {
+    // ⚠️ Résolu et refusé **AVANT** le `try` : le `catch` ci-dessous réemballe
+    // en `auth.driver_invitation_failed`, ce qui remplacerait un refus délibéré
+    // par « émission impossible » et ferait disparaître le code que l'app doit
+    // traduire. Piège nommé en règle 3 de CLAUDE.md, rencontré trois fois.
+    await this.assertDriverBelongsToFleet(fleetId, fleetbaseDriverUuid);
+
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + validForDays * 24 * 60 * 60 * 1000);
 
@@ -587,9 +674,171 @@ export class AuthService {
       );
     }
 
-    this.logger.log(`Driver invitation issued for ${fleetbaseDriverUuid}`);
+    // Le refus était audité, pas le succès — or c'est le succès qui crée un
+    // jeton donnant l'identité de quelqu'un. `DriverInvitation` ne stocke pas
+    // son émetteur : cette entrée est le **seul** lien entre une invitation et
+    // l'entreprise qui l'a demandée.
+    this.audit.succeeded({
+      actorType: 'fleet',
+      actorId: fleetId,
+      action: 'driver.invitation',
+      resourceType: 'Driver',
+      resourceId: fleetbaseDriverUuid,
+    });
+
+    this.logger.log(`Driver invitation issued for ${fleetbaseDriverUuid} by fleet ${fleetId}`);
 
     return { invitationToken: token, expiresAt };
+  }
+
+  /**
+   * Ce conducteur appartient-il bien à l'entreprise qui l'invite ?
+   *
+   * ── Pourquoi ce contrôle manquait, et ce qu'il coûtait ────────────────────
+   *
+   * `@Persona('fleet')` répond à « qui a le droit d'émettre une invitation ».
+   * Il ne dit rien de « pour quel conducteur », et la méthode ne recevait même
+   * pas l'identité de l'appelant. Un compte flotte pouvait donc inviter
+   * n'importe quel `Driver` du réseau pas encore inscrit — les uuid sortent
+   * dans `ORDER_LINK_FIELDS` de toute commande — puis créer son compte Echango
+   * à sa place et récupérer ses courses, ses preuves et son registre de caisse.
+   *
+   * ── Le cas du pool, qui n'est pas une exception ───────────────────────────
+   *
+   * Un conducteur sans `vendor_uuid` n'appartient à aucune entreprise : il est
+   * du pool, et le pool est Echango (`specs_facilitateur.md` §2.2). Seul le
+   * prestataire plateforme peut donc l'inviter. Ce n'est pas un passe-droit,
+   * c'est la même règle lue sur le même champ — Echango est le facilitateur de
+   * ceux que personne n'a rattachés.
+   */
+  private async assertDriverBelongsToFleet(
+    fleetId: string,
+    fleetbaseDriverUuid: string,
+  ): Promise<void> {
+    const fleet = await this.prisma.fleetAccount.findUnique({ where: { id: fleetId } });
+    if (!fleet) {
+      notFound('fleet.not_found', 'Fleet account not found');
+    }
+
+    let driver: any;
+    try {
+      driver = await this.fleetbaseClient.getDriverByUuid(fleetbaseDriverUuid);
+    } catch (error: any) {
+      // Contrairement à `assertVendorApproved`, une lecture impossible **refuse**
+      // ici. Les deux gardes n'ont pas le même sens de l'échec : refuser une
+      // connexion couperait des comptes déjà validés, alors que refuser une
+      // émission d'invitation ne fait que la reporter. Sur un doute, on ne
+      // délivre pas un jeton qui donne l'identité de quelqu'un.
+      this.logger.error(
+        `Conducteur ${fleetbaseDriverUuid} illisible (${error.message}) — invitation refusée`,
+      );
+      badRequest(
+        'auth.driver_invitation_failed',
+        "Impossible de vérifier ce transporteur pour le moment. Réessayez.",
+      );
+    }
+
+    if (!driver) {
+      notFound('auth.driver_not_found', 'Driver not found in Fleetbase');
+    }
+
+    // ⚠️ **Champ absent ≠ conducteur non rattaché**, et confondre les deux
+    // casserait ce garde dans les deux sens à la fois.
+    //
+    // Le seul endroit du dépôt qui lisait `vendor_uuid` jusqu'ici le lisait sur
+    // la réponse de **liste** (`flotte.service.ts`). Rien n'établit que la
+    // ressource **unitaire** l'expose : ce projet a déjà rencontré une ressource
+    // d'index et une ressource complète divergentes (`_index_resource`), et une
+    // résolution d'identifiant non uniforme route par route.
+    //
+    // Si le champ manquait et qu'on lisait `?? null`, alors : plus aucune
+    // entreprise ne pourrait inviter son propre conducteur (403 systématique),
+    // et le prestataire plateforme pourrait inviter n'importe qui — le tout sans
+    // une seule erreur pour le signaler. D'où la distinction explicite entre
+    // « absent » et « nul », et le repli sur la liste, dont on SAIT qu'elle
+    // porte le champ.
+    let vendorUuid: string | null;
+
+    if ('vendor_uuid' in driver) {
+      vendorUuid = driver.vendor_uuid || null;
+    } else {
+      this.logger.warn(
+        `La lecture unitaire du conducteur ${fleetbaseDriverUuid} ne porte pas vendor_uuid — ` +
+          'repli sur la liste filtrée par fournisseur',
+      );
+      vendorUuid = await this.readDriverVendorFromList(
+        fleetbaseDriverUuid,
+        fleet.fleetbaseVendorUuid,
+      );
+    }
+
+    // `fleetbaseVendorUuid` vide rendrait `isOwn` vrai pour tout conducteur sans
+    // fournisseur. Aucun chemin actuel ne le permet — les deux créateurs lèvent
+    // si l'uuid manque — mais rien ne l'interdit en base.
+    const isOwn =
+      !!fleet.fleetbaseVendorUuid && vendorUuid === fleet.fleetbaseVendorUuid;
+    const isUnattachedPoolDriver = vendorUuid === null && fleet.isPlatform === true;
+
+    if (isOwn || isUnattachedPoolDriver) return;
+
+    this.audit.denied({
+      actorType: 'fleet',
+      actorId: fleetId,
+      action: 'driver.invitation',
+      resourceType: 'Driver',
+      resourceId: fleetbaseDriverUuid,
+      reason: 'Conducteur rattaché à une autre entreprise, ou pool sans droit plateforme',
+    });
+
+    forbidden(
+      'auth.driver_not_in_fleet',
+      "Ce transporteur n'appartient pas à votre entreprise.",
+    );
+  }
+
+  /**
+   * Repli quand la lecture unitaire d'un conducteur ne porte pas `vendor_uuid`.
+   *
+   * `GET /drivers?vendor=<uuid>` est le filtre que le module flotte utilise
+   * depuis le Lot 1, et sa réponse porte le champ — c'est de là que venait la
+   * seule lecture connue. On demande donc « les conducteurs de CETTE
+   * entreprise » et on regarde si le nôtre y est.
+   *
+   * Rend l'uuid du fournisseur si le conducteur appartient à l'entreprise
+   * interrogée, `null` sinon. `null` signifie donc ici « pas à cette
+   * entreprise-là », ce qui suffit au seul appelant : il n'a pas besoin de
+   * savoir à qui d'autre, il a besoin de savoir si c'est à lui.
+   *
+   * ⚠️ Conséquence à connaître : dans ce repli, un conducteur rattaché à une
+   * AUTRE entreprise et un conducteur du pool deviennent indiscernables. Le
+   * prestataire plateforme pourrait donc inviter un conducteur d'une entreprise
+   * tierce. C'est pourquoi ce chemin journalise en `warn` : il est un filet, pas
+   * un mode de fonctionnement, et le contrôle qui le rend inutile tient en un
+   * `curl` (voir `docs/specs_facilitateur.md` §12).
+   */
+  private async readDriverVendorFromList(
+    fleetbaseDriverUuid: string,
+    vendorUuid: string,
+  ): Promise<string | null> {
+    try {
+      // Paginé : la version précédente lisait une seule page. Un conducteur
+      // au-delà était déclaré ne PAS appartenir à l'entreprise, et son
+      // invitation refusée — un refus de sécurité pour une raison qui n'en
+      // était pas une, sans rien à l'écran pour le distinguer d'un vrai.
+      const drivers = await this.fleetbaseClient.fetchEveryDriverMatching({
+        vendor: vendorUuid,
+      });
+      const found = drivers.some((d: any) => d?.uuid === fleetbaseDriverUuid);
+      return found ? vendorUuid : null;
+    } catch (error: any) {
+      this.logger.error(
+        `Repli sur la liste des conducteurs impossible (${error.message}) — invitation refusée`,
+      );
+      badRequest(
+        'auth.driver_invitation_failed',
+        'Impossible de vérifier ce transporteur pour le moment. Réessayez.',
+      );
+    }
   }
 
   /**

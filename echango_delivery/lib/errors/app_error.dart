@@ -27,6 +27,11 @@ class AppError {
   static const String authMerchantNotFound = 'auth.merchant_not_found';
   static const String authMerchantRegistrationFailed = 'auth.merchant_registration_failed';
   static const String authFleetRegistrationFailed = 'auth.fleet_registration_failed';
+  /// Pendant exact de `merchant_pending`, et il suit la même exception de
+  /// nommage : l'un sans point et l'autre avec aurait laissé croire à deux
+  /// mécanismes différents.
+  static const String authFleetPending = 'fleet_pending';
+  static const String authDriverNotInFleet = 'auth.driver_not_in_fleet';
   static const String authDriverRegistrationFailed = 'auth.driver_registration_failed';
   static const String authDriverNotFound = 'auth.driver_not_found';
   static const String authDriverUnknown = 'auth.driver_unknown';
@@ -68,6 +73,7 @@ class AppError {
   static const String cashOrderHasNoCod = 'cash.order_has_no_cod';
   static const String cashDriverRequired = 'cash.driver_required';
   static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
+  static const String cashCounterpartyNotFound = 'cash.counterparty_not_found';
   static const String cashDriverNoAccount = 'cash.driver_no_account';
 
   // ── Commandes ────────────────────────────────────────────────────────────
@@ -91,6 +97,7 @@ class AppError {
   static const String orderMissingPublicId = 'order.missing_public_id';
   static const String orderReleaseFailed = 'order.release_failed';
   static const String orderAlreadyTaken = 'order.already_taken';
+  static const String orderClaimFailed = 'order.claim_failed';
   static const String orderCodRequiresPrice = 'order.cod_requires_price';
   static const String orderCustomFieldsUnavailable =
       'order.custom_fields_unavailable';
@@ -116,6 +123,18 @@ class AppError {
   static const String driverPositionUpdateFailed = 'driver.position_update_failed';
   static const String driverOnlineToggleFailed = 'driver.online_toggle_failed';
   static const String driverSearchUnavailable = 'driver.search_unavailable';
+  static const String driverSearchTooBroad = 'driver.search_too_broad';
+  static const String driverAlreadyInNetwork = 'driver.already_in_network';
+
+  // ── Adhésions conducteur ↔ entreprise ───────────────────────────────────
+  //
+  // Un rattachement décide **à qui le conducteur devra les espèces** d'une
+  // course : ce ne sont pas des codes administratifs.
+  static const String membershipNotFound = 'membership.not_found';
+  static const String membershipAlreadyExists = 'membership.already_exists';
+  static const String membershipNotPending = 'membership.not_pending';
+  static const String membershipNotActive = 'membership.not_active';
+  static const String membershipNotSuspended = 'membership.not_suspended';
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   static const String fleetNotFound = 'fleet.not_found';

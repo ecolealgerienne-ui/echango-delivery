@@ -5,9 +5,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
+import '../models/fleet_driver_position.dart';
 import '../models/cash.dart';
 
 const _tokenKey = 'echango_session_token';
@@ -148,6 +150,80 @@ class BffApiClient {
     }
   }
 
+  // ── Les quatre enveloppes, et pourquoi elles n'existaient pas ─────────────
+  //
+  // ⚠️ **La même séquence était écrite 84 fois** : construire l'URI, poser les
+  // en-têtes, appeler, passer la réponse à `_parseResponse`. Le détecteur de
+  // corps similaires trouve des couples à **100 %**. Seule la *projection* qui
+  // suit différait (`as Map`, `as List`, `Model.fromJson`, rien du tout).
+  //
+  // Le 31/07/2026 j'avais conclu que cette répétition était « contrôlée plutôt
+  // que supposée saine », au motif qu'une seule méthode ne vérifiait pas sa
+  // réponse. Le contrôle était juste et la conclusion fausse : vérifier que 84
+  // copies s'accordent aujourd'hui ne dit rien de ce qui arrivera à la 85ᵉ. Le
+  // critère de la règle 5 répond oui — ajouter un délai maximal, une reprise
+  // réseau, un rafraîchissement de jeton ou un en-tête de traçage demandait de
+  // toucher 84 endroits, et en oublier un ne lève aucune erreur : cet appel-là
+  // se comporte simplement autrement que les autres.
+  //
+  // ── Ce qu'elles ne font PAS ───────────────────────────────────────────────
+  //
+  // Aucune gestion d'erreur : `_parseResponse` lève déjà l'`AppException`
+  // portant le `code` du serveur, et chaque méthode publique garde son propre
+  // `catch` quand elle en a un. Déplacer ce filet ici changerait le
+  // comportement de 84 appels d'un coup — or ce lot est à contrat constant.
+  //
+  // Et elles rendent `dynamic`, pas `Map` : c'est l'appelant qui sait ce qu'il
+  // attend. Typer ici obligerait à quatre variantes par verbe.
+
+  /// Lecture. [query] est omis quand il est nul — une URI sans paramètres n'est
+  /// pas une URI avec des paramètres vides.
+  Future<dynamic> _get(String path, {Map<String, String>? query}) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final response = await _httpClient.get(
+      query == null ? uri : uri.replace(queryParameters: query),
+      headers: _buildHeaders(),
+    );
+    return _parseResponse(response);
+  }
+
+  /// Écriture. [body] est sérialisé ici : aucun appelant ne doit avoir à se
+  /// souvenir de `jsonEncode`, et l'oublier produisait un corps `toString()`
+  /// que le serveur refusait avec un message qui ne parlait pas de JSON.
+  Future<dynamic> _post(String path, [Object? body]) =>
+      _write(_httpClient.post, path, body);
+
+  Future<dynamic> _put(String path, [Object? body]) =>
+      _write(_httpClient.put, path, body);
+
+  /// Le corps commun de [_post] et [_put] — elles ne différaient que par le
+  /// verbe, et le détecteur les donnait à 99 %. Deux noms restent au niveau
+  /// des appelants, parce que `_post(path)` se lit mieux que
+  /// `_write(client.post, path)` sur quatre-vingts sites.
+  Future<dynamic> _write(
+    Future<http.Response> Function(Uri, {Map<String, String>? headers, Object? body,
+            Encoding? encoding})
+        send,
+    String path,
+    Object? body,
+  ) async {
+    final response = await send(
+      Uri.parse('$baseUrl$path'),
+      headers: _buildHeaders(),
+      body: body == null ? null : jsonEncode(body),
+    );
+    return _parseResponse(response);
+  }
+
+  Future<dynamic> _delete(String path) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl$path'),
+      headers: _buildHeaders(),
+    );
+    return _parseResponse(response);
+  }
+
+
   // Authentication endpoints
 
   /// Connexion email/mot de passe.
@@ -161,15 +237,13 @@ class BffApiClient {
     required String password,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/transporteur/login'),
-        headers: _buildHeaders(),
-        body: jsonEncode({
+      final data = await _post(
+        '/auth/transporteur/login',
+        {
           'email': email,
           'password': password,
-        }),
+        },
       );
-      final data = _parseResponse(response);
       if (data != null && data['token'] != null) {
         await _saveToken(data['token']);
       }
@@ -203,19 +277,17 @@ class BffApiClient {
     String? phone,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/transporteur/register'),
-        headers: _buildHeaders(),
-        body: jsonEncode({
+      final data = await _post(
+        '/auth/transporteur/register',
+        {
           'invitationToken': invitationToken,
           'email': email,
           'password': password,
           if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
           if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
           if (phone != null && phone.isNotEmpty) 'phone': phone,
-        }),
+        },
       );
-      final data = _parseResponse(response);
       if (data != null && data['token'] != null) {
         await _saveToken(data['token'] as String);
       }
@@ -239,12 +311,7 @@ class BffApiClient {
     required String phone,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/login-phone'),
-        headers: _buildHeaders(),
-        body: jsonEncode({'phone': phone}),
-      );
-      return _parseResponse(response) ?? {};
+      return await _post('/auth/login-phone', {'phone': phone}) ?? {};
     } catch (e) {
       if (e is AppException) rethrow;
       throw AppException(
@@ -265,15 +332,13 @@ class BffApiClient {
     required String otp,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/verify-otp'),
-        headers: _buildHeaders(),
-        body: jsonEncode({
+      final data = await _post(
+        '/auth/verify-otp',
+        {
           'phone': phone,
           'otp': otp,
-        }),
+        },
       );
-      final data = _parseResponse(response);
       if (data != null && data['data'] != null) {
         final token = data['data']['access_token'];
         await _saveToken(token);
@@ -318,12 +383,7 @@ class BffApiClient {
     required String platform, // 'ios' ou 'android'
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/transporteur/device-token'),
-        headers: _buildHeaders(),
-        body: jsonEncode({'token': token, 'platform': platform}),
-      );
-      return _parseResponse(response) ?? {};
+      return await _post('/auth/transporteur/device-token', {'token': token, 'platform': platform}) ?? {};
     } catch (e) {
       if (e is AppException) rethrow;
       throw AppException(
@@ -348,11 +408,7 @@ class BffApiClient {
   // Driver endpoints
 
   Future<Map<String, dynamic>> getDriver() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/profil'),
-      headers: _buildHeaders(),
-    );
-    return _parseResponse(response) ?? {};
+    return await _get('/transporteur/profil') ?? {};
   }
 
   /// Télécharge une image servie par le BFF (preuve de livraison).
@@ -381,29 +437,22 @@ class BffApiClient {
     double? speed,
     double? altitude,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/position'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/transporteur/position',
+      {
         'latitude': latitude,
         'longitude': longitude,
         if (heading != null) 'heading': heading,
         if (speed != null) 'speed': speed,
         if (altitude != null) 'altitude': altitude,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   /// Bascule la disponibilité. Toujours explicite : omettre la valeur ferait
   /// inverser l'état courant côté Fleetbase, donc désynchroniser sur un rejeu.
   Future<void> setOnline(bool online) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/statut'),
-      headers: _buildHeaders(),
-      body: jsonEncode({'online': online}),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/statut', {'online': online});
   }
 
   // Order endpoints
@@ -412,11 +461,7 @@ class BffApiClient {
   /// (active/adhoc/history) — c'est ce qu'attend l'écran liste (§4.1).
   /// Avec [type], une seule liste à plat.
   Future<Map<String, List<Order>>> getOrderBuckets() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/commandes'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/transporteur/commandes');
     if (data == null) return {'active': [], 'adhoc': [], 'history': []};
 
     List<Order> parse(String key) {
@@ -435,12 +480,7 @@ class BffApiClient {
   }
 
   Future<List<Order>> getOrders({String type = 'assigned'}) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/commandes')
-          .replace(queryParameters: {'type': type}),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/transporteur/commandes', query: {'type': type});
     if (data != null && data['orders'] is List) {
       return (data['orders'] as List)
           .map((order) => Order.fromJson(order as Map<String, dynamic>))
@@ -453,11 +493,7 @@ class BffApiClient {
   /// Une commande qui n'appartient pas au driver remonte en 404 (jamais 403 :
   /// un driver n'a pas à apprendre qu'un identifiant existe).
   Future<Order> getOrder(String orderId) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/transporteur/commandes/$orderId');
     if (data != null) {
       return Order.fromJson(data as Map<String, dynamic>);
     }
@@ -468,19 +504,11 @@ class BffApiClient {
   /// démarrage sont une seule opération (§4.2 « assigne le driver et démarre
   /// immédiatement »). Peut échouer si un autre driver a été plus rapide.
   Future<void> acceptOrder(String orderId) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/accepter'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/commandes/$orderId/accepter');
   }
 
   Future<void> startOrder(String orderId) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/demarrer'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/commandes/$orderId/demarrer');
   }
 
   /// Marque la commande comme terminée. Distinct de [updateActivity] : c'est
@@ -496,18 +524,19 @@ class BffApiClient {
     String? discrepancyReason,
     String? cashNotes,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/terminer'),
-      headers: _buildHeaders(),
-      body: collectedAmount == null
+    // ⚠️ Le corps est **absent**, pas vide, quand rien n'a été encaissé : le
+    // helper ne sérialise que ce qu'il reçoit, et `{}` ne dit pas la même chose
+    // que « pas de déclaration » à un serveur qui distingue les deux.
+    await _post(
+      '/transporteur/commandes/$orderId/terminer',
+      collectedAmount == null
           ? null
-          : jsonEncode({
+          : {
               'collectedAmount': collectedAmount,
               if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
               if (cashNotes != null && cashNotes.isNotEmpty) 'notes': cashNotes,
-            }),
+            },
     );
-    _parseResponse(response);
   }
 
   // ── Caisse (transporteur) ──────────────────────────────────────────────
@@ -517,59 +546,33 @@ class BffApiClient {
   // jamais ces sommes.
 
   Future<CashLedger> getDriverCashLedger() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/caisse'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/transporteur/caisse');
     return _ledgerFrom(data, CashBalance.fromDriverJson);
   }
 
   Future<List<CashRemittance>> getDriverRemittances() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/caisse/remises'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', CashRemittance.fromJson);
+    return _listOf(await _get('/transporteur/caisse/remises'), 'data', CashRemittance.fromJson);
   }
 
   Future<void> declareDriverRemittance({
     required String merchantId,
     required double amount,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/caisse/remises'),
-      headers: _buildHeaders(),
-      body: jsonEncode({'merchantId': merchantId, 'amount': amount}),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/caisse/remises', {'merchantId': merchantId, 'amount': amount});
   }
 
   Future<void> confirmDriverRemittance(String id) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/caisse/remises/$id/confirmer'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/caisse/remises/$id/confirmer');
   }
 
   Future<void> disputeDriverRemittance(String id, {String? reason}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/caisse/remises/$id/contester'),
-      headers: _buildHeaders(),
-      body: jsonEncode({if (reason != null) 'reason': reason}),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/caisse/remises/$id/contester', {if (reason != null) 'reason': reason});
   }
 
   // ── Encaissements (commerçant) ─────────────────────────────────────────
 
   Future<CashLedger> getMerchantCashLedger() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/encaissements'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/encaissements');
     return _ledgerFrom(data, CashBalance.fromMerchantJson);
   }
 
@@ -580,11 +583,7 @@ class BffApiClient {
   /// pourtant ce qu'il contrôle avant de confirmer une remise, geste qui éteint
   /// une dette.
   Future<List<CashCollectionEntry>> getMerchantCollections() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/encaissements/details'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
+    return _listOf(await _get('/commercant/encaissements/details'), 'data', CashCollectionEntry.fromJson);
   }
 
   /// Ce qui sera réclamé aux portes, et n'est encore dans la poche de personne.
@@ -597,11 +596,7 @@ class BffApiClient {
   /// qui existe, parce qu'une clôture depuis la console Fleetbase ne passe par
   /// aucune de nos gardes.
   Future<PendingCollections> getMerchantPendingCollections() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/encaissements/attendus'),
-      headers: _buildHeaders(),
-    );
-    return PendingCollections.fromJson(_parseResponse(response));
+    return PendingCollections.fromJson(await _get('/commercant/encaissements/attendus'));
   }
 
   /// « Ce transporteur a bien encaissé X sur cette livraison. »
@@ -620,17 +615,15 @@ class BffApiClient {
     String? discrepancyReason,
     String? notes,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/commandes/$orderId/encaissement'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/commercant/commandes/$orderId/encaissement',
+      {
         'collectedAmount': collectedAmount,
         if (fleetbaseDriverUuid != null) 'fleetbaseDriverUuid': fleetbaseDriverUuid,
         if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
         if (notes != null && notes.isNotEmpty) 'notes': notes,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   /// Le transporteur confirme un encaissement déclaré par le commerçant.
@@ -639,66 +632,35 @@ class BffApiClient {
   /// saisir au moment où il confirme sa propre dette lui laisserait fixer ce
   /// qu'il retient dessus.
   Future<void> confirmDeclaredCollection(String collectionId) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/caisse/encaissements/$collectionId/confirmer'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/caisse/encaissements/$collectionId/confirmer');
   }
 
   Future<void> disputeDeclaredCollection(String collectionId, {String? reason}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/caisse/encaissements/$collectionId/contester'),
-      headers: _buildHeaders(),
-      body: jsonEncode({if (reason != null && reason.isNotEmpty) 'reason': reason}),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/caisse/encaissements/$collectionId/contester', {if (reason != null && reason.isNotEmpty) 'reason': reason});
   }
 
   /// Idem côté transporteur : ce qu'il détient, course par course.
   Future<List<CashCollectionEntry>> getDriverCollections() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/transporteur/caisse/encaissements'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', CashCollectionEntry.fromJson);
+    return _listOf(await _get('/transporteur/caisse/encaissements'), 'data', CashCollectionEntry.fromJson);
   }
 
   Future<List<CashRemittance>> getMerchantRemittances() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/encaissements/remises'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', CashRemittance.fromJson);
+    return _listOf(await _get('/commercant/encaissements/remises'), 'data', CashRemittance.fromJson);
   }
 
   Future<void> declareMerchantRemittance({
     required String driverId,
     required double amount,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/encaissements/remises'),
-      headers: _buildHeaders(),
-      body: jsonEncode({'driverId': driverId, 'amount': amount}),
-    );
-    _parseResponse(response);
+    await _post('/commercant/encaissements/remises', {'driverId': driverId, 'amount': amount});
   }
 
   Future<void> confirmMerchantRemittance(String id) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/encaissements/remises/$id/confirmer'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/commercant/encaissements/remises/$id/confirmer');
   }
 
   Future<void> disputeMerchantRemittance(String id, {String? reason}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/encaissements/remises/$id/contester'),
-      headers: _buildHeaders(),
-      body: jsonEncode({if (reason != null) 'reason': reason}),
-    );
-    _parseResponse(response);
+    await _post('/commercant/encaissements/remises/$id/contester', {if (reason != null) 'reason': reason});
   }
 
   /// Désérialisation commune aux deux profils : même forme, seule la clé
@@ -760,10 +722,9 @@ class BffApiClient {
       double? collectedAmount,
       String? discrepancyReason,
       String? cashNotes}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/activite'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/transporteur/commandes/$orderId/activite',
+      {
         'activity': activity,
         if (proof != null) 'proof': proof,
         if (collectedAmount != null)
@@ -772,9 +733,8 @@ class BffApiClient {
             if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
             if (cashNotes != null && cashNotes.isNotEmpty) 'notes': cashNotes,
           },
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   /// Preuve de livraison photo (§5). [photos] sont des images encodées en
@@ -782,16 +742,14 @@ class BffApiClient {
   /// multipart, ce qui évite au BFF de gérer du multipart.
   Future<void> captureProofPhoto(String orderId, List<String> photos,
       {String? remarks, String? subjectId}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/preuve'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/transporteur/commandes/$orderId/preuve',
+      {
         'photos': photos,
         if (remarks != null) 'remarks': remarks,
         if (subjectId != null) 'subjectId': subjectId,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   /// Refuse une course, avec un motif.
@@ -810,15 +768,13 @@ class BffApiClient {
     required String reason,
     String? notes,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/refuser'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    return (await _post(
+      '/transporteur/commandes/$orderId/refuser',
+      {
         'reason': reason,
         if (notes != null && notes.isNotEmpty) 'notes': notes,
-      }),
-    );
-    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+      },
+    ) ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
   /// Signale un échec de livraison (§4.3).
@@ -835,17 +791,15 @@ class BffApiClient {
     String? waypointUuid,
     String? photo,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/commandes/$orderId/echec'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    return await _post(
+      '/transporteur/commandes/$orderId/echec',
+      {
         'reason': reason,
         if (notes != null) 'notes': notes,
         if (waypointUuid != null) 'waypointUuid': waypointUuid,
         if (photo != null) 'photo': photo,
-      }),
-    );
-    return _parseResponse(response) ?? {};
+      },
+    ) ?? {};
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -867,12 +821,7 @@ class BffApiClient {
     required String password,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/login'),
-        headers: _buildHeaders(),
-        body: jsonEncode({'email': email, 'password': password}),
-      );
-      final data = _parseResponse(response);
+      final data = await _post('/auth/login', {'email': email, 'password': password});
       if (data != null && data['token'] != null) {
         await _saveToken(data['token'] as String);
       }
@@ -892,12 +841,7 @@ class BffApiClient {
     required String password,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/merchant/login'),
-        headers: _buildHeaders(),
-        body: jsonEncode({'email': email, 'password': password}),
-      );
-      final data = _parseResponse(response);
+      final data = await _post('/auth/merchant/login', {'email': email, 'password': password});
       if (data != null && data['token'] != null) {
         await _saveToken(data['token'] as String);
       }
@@ -924,19 +868,17 @@ class BffApiClient {
     String? phone,
   }) async {
     try {
-      final response = await _httpClient.post(
-        Uri.parse('$baseUrl/auth/merchant/register'),
-        headers: _buildHeaders(),
-        body: jsonEncode({
+      final data = await _post(
+        '/auth/merchant/register',
+        {
           'email': email,
           'password': password,
           'businessName': businessName,
           if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
           if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
           if (phone != null && phone.isNotEmpty) 'phone': phone,
-        }),
+        },
       );
-      final data = _parseResponse(response);
       if (data != null && data['token'] != null) {
         await _saveToken(data['token'] as String);
       }
@@ -965,14 +907,8 @@ class BffApiClient {
   /// défaut que le plafond de 100 corrigé côté transporteur — une liste
   /// tronquée en silence n'est pas partielle, elle est fausse pour qui la lit
   /// comme complète.
-  Future<MerchantOrderPage> getMerchantOrders({int page = 1, int limit = 25}) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes').replace(
-        queryParameters: {'page': '$page', 'limit': '$limit'},
-      ),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+  Future<MerchantOrderPage> getMerchantOrders({int page = 1, int limit = AppRules.listPageSize}) async {
+    final data = await _get('/commercant/commandes', query: {'page': '$page', 'limit': '$limit'});
     return MerchantOrderPage(
       orders: _listOf(data, 'orders', MerchantOrder.fromJson),
       total: (data is Map ? (data['pagination']?['total'] as num?) : null)?.toInt() ?? 0,
@@ -984,50 +920,228 @@ class BffApiClient {
   /// `null` tant que personne n'est affecté — état normal d'une course en
   /// attente, pas une erreur.
   Future<DriverPosition?> getMerchantOrderPosition(String id) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes/$id/position'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/commandes/$id/position');
     final raw = (data is Map) ? data['position'] : null;
     return raw is Map<String, dynamic> ? DriverPosition.fromJson(raw) : null;
   }
 
   Future<MerchantOrder> getMerchantOrder(String id) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes/$id'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/commandes/$id');
     final map = (data is Map && data['order'] is Map) ? data['order'] : data;
     return MerchantOrder.fromJson(map as Map<String, dynamic>);
   }
 
+  // ── Caisse de l'entreprise ───────────────────────────────────────────────
+  //
+  // ⚠️ Ces routes ne sont pas un supplément d'agrément : sans elles, une dette
+  // envers une entreprise n'est **confirmable par personne**, et elle reste
+  // ouverte jusqu'à ce que le plafond bloque le conducteur.
+
+  Future<CashLedger> getFleetCashLedger() async {
+    // ⚠️ `fromMerchantJson` et non un désérialiseur dédié : le champ qui compte
+    // est `counterparty_*`, servi identiquement aux trois personas depuis la
+    // généralisation du registre. Les deux fabriques ne diffèrent que par leur
+    // repli sur les anciens noms — et l'entreprise n'en a aucun à replier.
+    return _ledgerFrom(await _get('/flotte/caisse'), CashBalance.fromMerchantJson);
+  }
+
+  Future<List<CashRemittance>> getFleetRemittances() async {
+    return _listOf(await _get('/flotte/caisse/remises'), 'data', CashRemittance.fromJson);
+  }
+
+  Future<List<CashCollectionEntry>> getFleetCollections() async {
+    return _listOf(await _get('/flotte/caisse/encaissements'), 'data', CashCollectionEntry.fromJson);
+  }
+
+  Future<void> declareFleetRemittance({
+    required String counterpartyId,
+    required double amount,
+  }) async {
+    await _post('/flotte/caisse/remises', {'counterpartyId': counterpartyId, 'amount': amount});
+  }
+
+  Future<void> confirmFleetRemittance(String id) async {
+    await _post('/flotte/caisse/remises/$id/confirmer');
+  }
+
+  Future<void> disputeFleetRemittance(String id, {String? reason}) async {
+    // La clé est OMISE quand il n'y a pas de motif, comme dans les deux
+    // variantes persona voisines. Cette ligne envoyait `{"reason": null}`,
+    // seule divergence de surface des trois — et c'est en la remarquant
+    // qu'on a trouvé que la route flotte n'avait aucun DTO, donc aucune
+    // validation.
+    await _post('/flotte/caisse/remises/$id/contester',
+        {if (reason != null) 'reason': reason});
+  }
+
+  // ── Profil entreprise de transport (« flotte ») ─────────────────────────
+  //
+  // Le module BFF existait depuis le 28/07 et **aucune de ces routes n'était
+  // appelée** : l'application affichait « Espace non disponible » (défaut D20).
+  // C'est le fil rouge du projet pris à l'envers — ici l'app ignorait ce que le
+  // serveur savait déjà faire.
+
+  /// Les courses confiées à cette entreprise.
+  Future<Map<String, dynamic>> getFleetOrders({int page = 1, int limit = AppRules.listPageSize}) async {
+    return (await _get('/flotte/commandes', query: {'page': '$page', 'limit': '$limit'}) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Le détail d'une course confiée à cette entreprise.
+  Future<Map<String, dynamic>> getFleetOrderDetail(String orderId) async {
+    return (await _get('/flotte/commandes/$orderId') ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Le détail d'une course **libre**, avant de décider de la prendre.
+  ///
+  /// Route distincte de la précédente, et non un assouplissement de sa garde :
+  /// `GET /flotte/commandes/:id` exige que la course soit déjà celle de
+  /// l'entreprise. Celle-ci exige au contraire qu'elle ne soit à personne.
+  Future<Map<String, dynamic>> getFleetOpportunityDetail(String orderId) async {
+    return (await _get('/flotte/opportunites/$orderId') ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Les courses **libres**, réclamables par cette entreprise.
+  ///
+  /// Servies avec l'adresse complète, le prix et le montant à encaisser — ce
+  /// sont eux qui permettent de décider. Seule l'identité du destinataire (nom,
+  /// téléphone) attend l'engagement.
+  Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = AppRules.listPageSize}) async {
+    return (await _get('/flotte/opportunites', query: {'page': '$page', 'limit': '$limit'}) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Prendre une course du pool.
+  ///
+  /// Le second arrivant reçoit `order.already_taken` : le serveur relit après
+  /// écriture, Fleetbase n'offrant aucune écriture conditionnelle.
+  Future<Map<String, dynamic>> claimFleetOrder(String orderId) async {
+    return (await _post('/flotte/opportunites/$orderId/prendre') ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Chercher un conducteur **déjà dans le réseau**, pour le rattacher.
+  ///
+  /// Le téléphone n'est jamais renvoyé, et au-delà de dix correspondances le
+  /// serveur refuse plutôt que de tronquer : une liste balayable serait
+  /// l'annuaire qu'on refuse d'ouvrir (même règle que les favoris du
+  /// commerçant, 29/07).
+  Future<List<Map<String, dynamic>>> searchNetworkDrivers(String query) async {
+    final data = await _get('/flotte/conducteurs/recherche', query: {'q': query});
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Demander le rattachement d'un conducteur existant. Naît en attente de sa
+  /// réponse — l'entreprise ne peut pas se l'attribuer seule.
+  Future<Map<String, dynamic>> requestDriverMembership(String driverUuid) async {
+    return (await _post('/flotte/conducteurs/$driverUuid/adhesion') ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Les rattachements de cette entreprise, tous états confondus.
+  Future<List<Map<String, dynamic>>> getFleetMemberships() async {
+    final data = await _get('/flotte/adhesions');
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Suspendre ou réactiver un rattachement.
+  ///
+  /// Il n'existe **aucune suppression**, côté serveur comme ici : la dette d'un
+  /// conducteur envers une entreprise survit à leur séparation.
+  Future<void> setFleetMembershipSuspended(String membershipId, bool suspended) async {
+    final action = suspended ? 'suspendre' : 'reactiver';
+    await _post('/flotte/adhesions/$membershipId/$action');
+  }
+
+  // ── Côté conducteur : ses entreprises ───────────────────────────────────
+
+  /// Les entreprises pour lesquelles ce conducteur roule, et celles qui le
+  /// demandent. Un rattachement décide à qui il devra les espèces d'une course.
+  Future<List<Map<String, dynamic>>> getMyFleets() async {
+    final data = await _get('/transporteur/entreprises');
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Quitter une entreprise à laquelle on est rattaché.
+  ///
+  /// ⚠️ Ne solde rien : l'adhésion se ferme, la dette reste écrite.
+  Future<void> leaveFleet(String membershipId) async {
+    await _post('/transporteur/entreprises/$membershipId/quitter');
+  }
+
+  Future<void> respondToMembership(String membershipId, {required bool accept}) async {
+    final action = accept ? 'accepter' : 'refuser';
+    await _post('/transporteur/entreprises/$membershipId/$action');
+  }
+
+  Future<List<Map<String, dynamic>>> getFleetDrivers() async {
+    final data = await _get('/flotte/drivers');
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list.cast<Map<String, dynamic>>();
+  }
+
+  /// Où sont les conducteurs de cette entreprise, en ce moment.
+  ///
+  /// ⚠️ **La route existait depuis le 28/07 et n'était appelée nulle part.**
+  /// C'est le fil rouge du projet — le serveur savait, l'app ignorait — et il
+  /// portait ici la fonction même du persona : la vision produit décrit
+  /// l'entreprise de transport comme « une vue dispatch minimaliste (commandes
+  /// entrantes, assignation à un conducteur disponible, **position des
+  /// conducteurs**) ».
+  ///
+  /// Le serveur ne renvoie **que** ceux qui ont une position exploitable, et il
+  /// se charge lui-même de n'exposer que les conducteurs de cette entreprise —
+  /// adhérents compris, sans quoi la carte montrerait la moitié de la flotte
+  /// sans le dire.
+  Future<List<FleetDriverPosition>> getFleetDriverPositions() async {
+    final data = await _get('/flotte/drivers/positions');
+    final list = (data is Map ? data['data'] : data) as List<dynamic>? ?? [];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(FleetDriverPosition.tryFromJson)
+        .whereType<FleetDriverPosition>()
+        .toList();
+  }
+
+  /// Créer un conducteur et le rattacher à cette entreprise.
+  ///
+  /// Le BFF fait les deux d'un geste (`createDriver` puis
+  /// `assignDriverToVendor`). Sans cette route côté app, une entreprise
+  /// nouvellement inscrite pouvait prendre des courses et **n'en assigner
+  /// aucune, définitivement** — l'impasse exacte corrigée le 29/07 sur
+  /// « Mes transporteurs ».
+  Future<Map<String, dynamic>> addFleetDriver({
+    required String name,
+    required String email,
+    String? phone,
+  }) async {
+    return (await _post(
+      '/flotte/drivers',
+      {
+        'name': name,
+        'email': email,
+        if (phone != null && phone.isNotEmpty) 'phone': phone,
+      },
+    ) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Désigner un conducteur sur une course de l'entreprise.
+  Future<Map<String, dynamic>> assignFleetDriver(String orderId, String driverUuid) async {
+    return (await _post('/flotte/commandes/$orderId/assigner', {'driverId': driverUuid}) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> getMerchantTracking(String id) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes/$id/suivi'),
-      headers: _buildHeaders(),
-    );
-    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+    return (await _get('/commercant/commandes/$id/suivi') ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> createMerchantOrder(Map<String, dynamic> body) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/commandes'),
-      headers: _buildHeaders(),
-      body: jsonEncode(body),
-    );
-    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+    return (await _post('/commercant/commandes', body) ?? <String, dynamic>{})
+        as Map<String, dynamic>;
   }
 
   /// Publie un brouillon : déclenche le dispatch (favori ou pool commun) sur
   /// une commande créée sans lui.
   Future<Map<String, dynamic>> publishMerchantOrder(String id) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/commandes/$id/publier'),
-      headers: _buildHeaders(),
-    );
-    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+    return (await _post('/commercant/commandes/$id/publier') ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
   /// Champs à reprendre pour recommencer une livraison identique.
@@ -1037,11 +1151,7 @@ class BffApiClient {
   /// celui d'hier est dans le passé, et le recopier créerait une commande dont
   /// l'échéance est déjà dépassée.
   Future<Map<String, dynamic>> getMerchantOrderTemplate(String id) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/commandes/$id/modele'),
-      headers: _buildHeaders(),
-    );
-    return (_parseResponse(response) ?? <String, dynamic>{}) as Map<String, dynamic>;
+    return (await _get('/commercant/commandes/$id/modele') ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
   // ── Notifications (commerçant) ─────────────────────────────────────────
@@ -1052,39 +1162,27 @@ class BffApiClient {
   // reste la source de vérité — une notification non vue n'est pas perdue.
 
   Future<MerchantNotifications> getNotifications({bool unreadOnly = false}) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/notifications')
-          .replace(queryParameters: unreadOnly ? {'nonLues': 'true'} : null),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    // ⚠️ `query` vaut `null` et non `{}` quand on ne filtre pas : une URI sans
+    // paramètres n'est pas une URI avec des paramètres vides — la seconde
+    // s'écrit `?` et le serveur la traite autrement.
+    final data =
+        await _get('/commercant/notifications',
+            query: unreadOnly ? {'nonLues': 'true'} : null);
     return MerchantNotifications.fromJson(
       (data ?? <String, dynamic>{}) as Map<String, dynamic>,
     );
   }
 
   Future<void> markNotificationRead(String id) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/notifications/$id/lu'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/commercant/notifications/$id/lu');
   }
 
   Future<void> markAllNotificationsRead() async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/notifications/tout-lu'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/commercant/notifications/tout-lu');
   }
 
   Future<void> cancelMerchantOrder(String id) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/commandes/$id/annuler'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _post('/commercant/commandes/$id/annuler');
   }
 
   /// Devis d'une course, calculé **par le serveur**.
@@ -1101,30 +1199,24 @@ class BffApiClient {
     String? scheduledAt,
     String? vehicleType,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/devis'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    return OrderQuote.fromJson(await _post(
+      '/commercant/devis',
+      {
         'pickupLatitude': pickupLatitude,
         'pickupLongitude': pickupLongitude,
         'dropoffLatitude': dropoffLatitude,
         'dropoffLongitude': dropoffLongitude,
         if (scheduledAt != null) 'scheduledAt': scheduledAt,
         if (vehicleType != null) 'vehicleType': vehicleType,
-      }),
-    );
-    return OrderQuote.fromJson(_parseResponse(response) as Map<String, dynamic>);
+      },
+    ) as Map<String, dynamic>);
   }
 
   // ── Transporteurs favoris (commerçant) ─────────────────────────────────
 
   /// Transporteurs ayant déjà livré pour ce commerçant.
   Future<List<KnownDriver>> getKnownDrivers() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/transporteurs'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', KnownDriver.fromJson);
+    return _listOf(await _get('/commercant/transporteurs'), 'data', KnownDriver.fromJson);
   }
 
   /// Cherche un transporteur du réseau par nom ou téléphone.
@@ -1133,12 +1225,7 @@ class BffApiClient {
   /// renvoie `tooMany` et aucune donnée, plutôt qu'une liste tronquée qu'on
   /// pourrait balayer en changeant une lettre.
   Future<DriverSearchResult> searchDrivers(String query) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/transporteurs/recherche')
-          .replace(queryParameters: {'q': query}),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/transporteurs/recherche', query: {'q': query});
     return DriverSearchResult(
       drivers: _listOf(data, 'data', KnownDriver.fromJson),
       tooMany: (data is Map) && data['too_many'] == true,
@@ -1146,41 +1233,26 @@ class BffApiClient {
   }
 
   Future<List<KnownDriver>> getFavouriteDrivers() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/transporteurs/favoris'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'data', KnownDriver.fromJson);
+    return _listOf(await _get('/commercant/transporteurs/favoris'), 'data', KnownDriver.fromJson);
   }
 
   Future<void> addFavouriteDriver(String driverUuid, {String? name}) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/transporteurs/favoris'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/commercant/transporteurs/favoris',
+      {
         'fleetbaseDriverUuid': driverUuid,
         if (name != null) 'driverName': name,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   Future<void> removeFavouriteDriver(String favouriteId) async {
-    final response = await _httpClient.delete(
-      Uri.parse('$baseUrl/commercant/transporteurs/favoris/$favouriteId'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _delete('/commercant/transporteurs/favoris/$favouriteId');
   }
 
   /// Déclare la catégorie de véhicule du transporteur connecté.
   Future<void> setVehicleType(String? vehicleType) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/transporteur/vehicule'),
-      headers: _buildHeaders(),
-      body: jsonEncode({if (vehicleType != null) 'vehicleType': vehicleType}),
-    );
-    _parseResponse(response);
+    await _post('/transporteur/vehicule', {if (vehicleType != null) 'vehicleType': vehicleType});
   }
 
   /// Recherche d'adresse, relayée par le BFF.
@@ -1189,30 +1261,18 @@ class BffApiClient {
   /// un User-Agent identifiant et plafonne le débit, deux choses intenables
   /// depuis des milliers d'appareils.
   Future<List<GeocodedPlace>> searchAddress(String query) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/geocodage?q=${Uri.encodeQueryComponent(query)}'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/geocodage?q=${Uri.encodeQueryComponent(query)}');
     return _listOf(data, 'data', GeocodedPlace.fromJson);
   }
 
   /// Adresse correspondant à un point choisi sur la carte.
   Future<GeocodedPlace> reverseGeocode(double latitude, double longitude) async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/geocodage/inverse?lat=$latitude&lon=$longitude'),
-      headers: _buildHeaders(),
-    );
-    final data = _parseResponse(response);
+    final data = await _get('/commercant/geocodage/inverse?lat=$latitude&lon=$longitude');
     return GeocodedPlace.fromJson(data as Map<String, dynamic>);
   }
 
   Future<List<SavedAddress>> getMerchantAddresses() async {
-    final response = await _httpClient.get(
-      Uri.parse('$baseUrl/commercant/adresses'),
-      headers: _buildHeaders(),
-    );
-    return _listOf(_parseResponse(response), 'places', SavedAddress.fromJson);
+    return _listOf(await _get('/commercant/adresses'), 'places', SavedAddress.fromJson);
   }
 
   /// Modifie une adresse du carnet. [id] est l'identifiant du lieu.
@@ -1236,10 +1296,9 @@ class BffApiClient {
     required String contactPhone,
     bool isDefault = false,
   }) async {
-    final response = await _httpClient.put(
-      Uri.parse('$baseUrl/commercant/adresses/$id'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _put(
+      '/commercant/adresses/$id',
+      {
         'label': label,
         'name': name,
         // Envoyée même vide, contrairement aux autres : `PUT /places` ne
@@ -1262,17 +1321,12 @@ class BffApiClient {
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
         'contactPhone': contactPhone,
         'isDefault': isDefault,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 
   Future<void> deleteMerchantAddress(String id) async {
-    final response = await _httpClient.delete(
-      Uri.parse('$baseUrl/commercant/adresses/$id'),
-      headers: _buildHeaders(),
-    );
-    _parseResponse(response);
+    await _delete('/commercant/adresses/$id');
   }
 
   /// Seuls [name] et [contactPhone] sont obligatoires (décision produit,
@@ -1293,10 +1347,9 @@ class BffApiClient {
     required String contactPhone,
     bool isDefault = false,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/commercant/adresses'),
-      headers: _buildHeaders(),
-      body: jsonEncode({
+    await _post(
+      '/commercant/adresses',
+      {
         'label': label,
         'name': name,
         // Envoyée même vide, contrairement aux autres : `PUT /places` ne
@@ -1319,8 +1372,7 @@ class BffApiClient {
         if (contactName != null && contactName.isNotEmpty) 'contactName': contactName,
         'contactPhone': contactPhone,
         'isDefault': isDefault,
-      }),
+      },
     );
-    _parseResponse(response);
   }
 }

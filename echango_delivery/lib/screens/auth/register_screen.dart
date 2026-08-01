@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/auth_strings.dart';
+import '../../state/locale_state.dart';
 import '../../state/auth_state.dart';
+import '../../config/app_rules.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/error_banner.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -12,6 +18,9 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      authLabel(key, context.read<LocaleState>().locale, vars);
+
   final _businessController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -32,16 +41,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final password = _passwordController.text;
 
     if (business.isEmpty || email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Commerce, email et mot de passe sont requis')),
-      );
+      showAppError(context, _t('auth.register.missing'));
       return;
     }
-    // Contrainte serveur (MerchantRegisterDto) : la vérifier ici évite un
-    // aller-retour pour un message que l'on connaît d'avance.
-    if (password.length < 8) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Le mot de passe doit faire au moins 8 caractères')),
+    // Contrainte serveur : la vérifier ici évite un aller-retour pour un
+    // message que l'on connaît d'avance. La valeur vit dans `ServerRules`, et
+    // `tool/check_server_rules.dart` vérifie qu'elle n'a pas dérivé du DTO.
+    if (password.length < ServerRules.passwordMinLength) {
+      showAppError(
+        context,
+        _t('auth.register.password.short',
+            {'n': '${ServerRules.passwordMinLength}'}),
       );
       return;
     }
@@ -62,11 +72,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final authState = context.watch<AuthState>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Créer un compte')),
+      appBar: AppBar(title: Text(_t('auth.register.title'))),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpacing.xl),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
@@ -75,47 +85,48 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   TextField(
                     controller: _businessController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nom du commerce *',
-                      helperText: 'Affiché aux transporteurs',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.storefront_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.register.name'),
+                      helperText: _t('auth.register.name.hint'),
+                      prefixIcon: const Icon(Icons.storefront_outlined),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Email *',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.email_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.register.email'),
+                      prefixIcon: const Icon(Icons.email_outlined),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Mot de passe *',
-                      helperText: '8 caractères minimum',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.register.password'),
+                      // Interpolé, pas figé : la garde (`_submit`) et le
+                      // SnackBar suivent déjà la constante. Laisser « 8 » ici
+                      // afficherait « 8 caractères minimum » sous un champ qui
+                      // en refuserait neuf le jour où le serveur passe à dix.
+                      helperText: _t('auth.register.password.hint',
+                          {'n': '${ServerRules.passwordMinLength}'}),
+                      prefixIcon: const Icon(Icons.lock_outlined),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Téléphone',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.phone_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.register.phone'),
+                      prefixIcon: const Icon(Icons.phone_outlined),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
+                  const SizedBox(height: AppSpacing.xl),
+                  FilledButton(
                     onPressed: authState.isLoading ? null : () => _submit(authState),
                     child: authState.isLoading
                         ? const SizedBox(
@@ -123,22 +134,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             width: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Créer le compte'),
+                        : Text(_t('auth.register.submit')),
                   ),
                   if (authState.errorMessage != null) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        border: Border.all(color: Colors.red),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        authState.errorMessage!,
-                        style: TextStyle(color: Colors.red.shade700),
-                      ),
-                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    AppErrorBanner(message: authState.errorMessage!),
                   ],
                 ],
               ),

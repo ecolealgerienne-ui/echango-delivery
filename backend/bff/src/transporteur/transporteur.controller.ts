@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Param, Query, Request, Res } from '@nestjs
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
-import { CashService } from '../cash/cash.service';
+import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -11,12 +11,12 @@ import {
   DeclineOrderDto,
   CashCollectionDto,
   DeclareRemittanceDto,
-  DisputeRemittanceDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
 } from './dto/transporteur.dto';
 import { Persona } from '../common/decorators/persona.decorator';
+import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 /**
  * Driver-facing API for the Flutter app (docs/specs_app_transporteur.md §3-5).
@@ -89,9 +89,11 @@ export class TransporteurController {
   /** « J'ai remis X à ce commerçant. » Reste en attente jusqu'à sa confirmation. */
   @Post('caisse/remises')
   async declareRemittance(@Request() req: any, @Body() dto: DeclareRemittanceDto) {
-    return this.cash.declareRemittance(
-      'driver',
-      this.driverId(req),
+    // `dto.merchantId` garde son nom — il est gelé par le contrôle de
+    // référence — mais désigne désormais **la contrepartie**, que le serveur
+    // type lui-même : le commerçant, ou le facilitateur du conducteur.
+    return this.cash.declareRemittanceTo(
+      driverParty(this.driverId(req)),
       dto.merchantId,
       dto.amount,
     );
@@ -116,6 +118,37 @@ export class TransporteurController {
   // qu'à extraire l'identifiant.
   private driverId(req: any): string {
     return req.user.id;
+  }
+
+  /**
+   * Les entreprises pour lesquelles ce conducteur roule, et celles qui le
+   * demandent. Un rattachement décide à qui il devra les espèces d'une course.
+   */
+  @Get('entreprises')
+  async listMemberships(@Request() req: any) {
+    return this.transporteurService.listMemberships(req.user.id);
+  }
+
+  @Post('entreprises/:id/accepter')
+  async acceptMembership(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.respondToMembership(req.user.id, id, true);
+  }
+
+  @Post('entreprises/:id/refuser')
+  async declineMembership(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.respondToMembership(req.user.id, id, false);
+  }
+
+  /**
+   * Quitter une entreprise à laquelle on est rattaché.
+   *
+   * ⚠️ `:id` est l'identifiant de **l'adhésion**, pas de l'entreprise — comme
+   * sur les deux routes ci-dessus. `listMemberships` rend les deux séparément
+   * (`id` et `fleet_id`) ; envoyer le second ici donne un 404 sans indice.
+   */
+  @Post('entreprises/:id/quitter')
+  async leaveFleet(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.leaveFleet(req.user.id, id);
   }
 
   @Get('profil')

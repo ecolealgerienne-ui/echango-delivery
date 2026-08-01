@@ -12,6 +12,7 @@ import '../services/notification_service.dart';
 import '../utils/logger.dart';
 import 'locale_state.dart';
 import 'order_state.dart';
+import '../errors/error_message.dart';
 
 /// Fréquence du repli par interrogation du BFF quand l'app est au premier plan.
 ///
@@ -50,7 +51,6 @@ class DriverPresenceState extends ChangeNotifier {
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   /// `null` tant que la disponibilité réelle n'a pas été lue côté serveur.
   /// Afficher « hors ligne » par défaut mentirait dans le sens dangereux :
@@ -222,11 +222,8 @@ class DriverPresenceState extends ChangeNotifier {
       await _orderState.loadOrders();
       _errorMessage = warning;
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isBusy = false;
@@ -246,7 +243,12 @@ class DriverPresenceState extends ChangeNotifier {
       await _orderState.loadOrders();
       return true;
     } catch (e) {
-      _errorMessage = _genericError;
+      // ⚠️ Ce `catch` unique posait le message générique pour TOUTE erreur, y
+      // compris une `AppException` dont le code a une traduction. Un refus
+      // serveur — véhicule inconnu, compte suspendu — s'affichait donc en
+      // « erreur inconnue » alors que la raison était disponible. Trouvé en
+      // retirant `_genericError`, pas en relisant le bloc.
+      _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
       return false;
     }

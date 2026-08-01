@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
+import '../../config/app_rules.dart';
+import '../../theme/app_semantic_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/app_snack_bar.dart';
 
 /// Transporteurs habituels du commerçant.
 ///
@@ -35,8 +41,18 @@ class FavouriteDriversScreen extends StatefulWidget {
 }
 
 class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   List<KnownDriver> _known = [];
   bool _loading = true;
+
+  /// Vrai jusqu'à ce que la première lecture ait abouti — d'où l'écran part.
+  ///
+  /// Seul ce premier chargement a le droit de remplacer le contenu : après, il
+  /// y a quelque chose à l'écran, et l'effacer pour montrer une attente est une
+  /// perte nette.
+  bool _firstLoad = true;
   String? _error;
 
   final _searchController = TextEditingController();
@@ -56,7 +72,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
 
   Future<void> _search() async {
     final query = _searchController.text.trim();
-    if (query.length < 3) {
+    if (query.length < ServerRules.driverSearchMinLength) {
       setState(() {
         _searched = false;
         _results = [];
@@ -76,14 +92,16 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
         _searched = true;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = 'Recherche impossible : $e');
+      if (mounted) {
+        setState(() =>
+            _error = _t('order.fav.search.failed', {'error': '$e'}));
+      }
     } finally {
       if (mounted) setState(() => _searching = false);
     }
   }
 
   Future<void> _addFavourite(MerchantOrderState state, KnownDriver d) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.addFavourite(d);
     if (!mounted) return;
 
@@ -92,12 +110,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       // ferait douter que l'ajout ait eu lieu.
       setState(() => _results.removeWhere((r) => r.driverUuid == d.driverUuid));
     } else {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(state.errorMessage ?? 'Ajout impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, state.errorMessage ?? _t('order.fav.add.failed'));
     }
   }
 
@@ -121,9 +134,17 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       final known = await api.getKnownDrivers();
       if (mounted) setState(() => _known = known);
     } catch (e) {
-      if (mounted) setState(() => _error = 'Chargement impossible : $e');
+      if (mounted) {
+        setState(() =>
+            _error = _t('order.fav.load.failed', {'error': '$e'}));
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _firstLoad = false;
+        });
+      }
     }
   }
 
@@ -135,36 +156,45 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
         _known.where((d) => !favouriteUuids.contains(d.driverUuid)).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Mes transporteurs')),
+      appBar: AppBar(title: Text(_t('order.fav.title'))),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: _loading
+        // ⚠️ `_firstLoad` et non `_loading`. Avec `_loading`, **tirer pour
+        // recharger effaçait la liste** : le contenu était remplacé par un
+        // second indicateur, sous celui que `RefreshIndicator` dessine
+        // lui-même, et l'enfant cessait d'être défilable au milieu du geste qui
+        // en dépend. Un rechargement ne doit pas effacer ce qui était lisible —
+        // même règle qu'`AppErrorBanner`, appliquée à l'attente.
+        child: _loading && _firstLoad
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.all(16),
+                // Sans ça, une liste courte — un commerçant avec deux favoris,
+                // c'est-à-dire le cas courant — ne défile pas, donc le geste de
+                // rechargement ne part jamais.
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 children: [
                   if (_error != null) ...[
                     Text(_error!,
                         style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                   ],
                   // La recherche passe en tête : c'est le seul chemin dont
                   // dispose un commerçant nouveau, dont toutes les autres
                   // listes sont vides.
-                  Text('Ajouter un transporteur',
+                  Text(_t('order.fav.add.section'),
                       style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   TextField(
                     controller: _searchController,
                     onChanged: (_) => _search(),
                     decoration: InputDecoration(
-                      hintText: 'Nom ou téléphone du transporteur',
+                      hintText: _t('order.fav.search'),
                       prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
                       isDense: true,
                       suffixIcon: _searching
                           ? const Padding(
-                              padding: EdgeInsets.all(12),
+                              padding: EdgeInsets.all(AppSpacing.md),
                               child: SizedBox(
                                 height: 16,
                                 width: 16,
@@ -174,27 +204,27 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                           : null,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: AppSpacing.xs),
                   Text(
-                    'Cherchez par le nom ou le téléphone communiqué par '
-                    'Echango. Trois caractères minimum.',
+                    // Le nombre est interpolé, et non écrit en toutes lettres :
+                    // la garde de saisie suit `driverSearchMinLength`, la
+                    // consigne doit la suivre aussi. « Trois » figé sous un
+                    // champ passé à quatre serait un mensonge à l'écran.
+                    _t('order.fav.search.hint',
+                        {'min': '${ServerRules.driverSearchMinLength}'}),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (_tooMany)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        'Trop de correspondances. Précisez le nom ou saisissez '
-                        'le numéro de téléphone.',
-                      ),
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                      child: Text(_t('order.fav.search.too_many')),
                     )
                   else if (_searched && _results.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        'Aucun transporteur ne correspond. Vérifiez le nom, ou '
-                        'demandez-lui le numéro qu\'il a donné à Echango.',
-                      ),
+                    Padding(
+                      padding:
+                          const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                      child: Text(_t('order.fav.search.none')),
                     )
                   else
                     ..._results.map(
@@ -209,39 +239,37 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                           subtitle: d.hasAccount
                               ? null
                               : Text(
-                                  'N\'a pas encore installé l\'application — '
-                                  'aucune course ne lui sera proposée pour '
-                                  'l\'instant.',
+                                  _t('order.fav.no_account'),
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
-                            tooltip: 'Ajouter aux favoris',
+                            tooltip: _t('order.fav.add'),
                             onPressed: () => _addFavourite(state, d),
                           ),
                         ),
                       ),
                     ),
-                  const SizedBox(height: 24),
-                  Text('Favoris', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.xl),
+                  Text(_t('order.fav.section'), style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: AppSpacing.sm),
                   if (state.favourites.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(
-                        'Aucun favori. Vos livraisons sont proposées à '
-                        'l\'ensemble du réseau.',
+                        _t('order.fav.empty'),
                       ),
                     )
                   else
                     ...state.favourites.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.star, color: Colors.amber),
+                          leading:
+                              Icon(Icons.star, color: context.semantic.warning),
                           title: Text(d.displayName),
                           trailing: IconButton(
                             icon: const Icon(Icons.remove_circle_outline),
-                            tooltip: 'Retirer des favoris',
+                            tooltip: _t('order.fav.remove'),
                             onPressed: d.favouriteId == null
                                 ? null
                                 : () => state.removeFavourite(d.favouriteId!),
@@ -249,16 +277,15 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         ),
                       ),
                     ),
-                  const SizedBox(height: 24),
-                  Text('Déjà intervenus pour vous',
+                  const SizedBox(height: AppSpacing.xl),
+                  Text(_t('order.fav.known'),
                       style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   if (candidates.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(
-                        'Aucun autre transporteur pour l\'instant. La liste se '
-                        'remplit au fil de vos livraisons.',
+                        _t('order.fav.known.empty'),
                       ),
                     )
                   else
@@ -269,7 +296,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                           title: Text(d.displayName),
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
-                            tooltip: 'Ajouter aux favoris',
+                            tooltip: _t('order.fav.add'),
                             onPressed: () => _addFavourite(state, d),
                           ),
                         ),

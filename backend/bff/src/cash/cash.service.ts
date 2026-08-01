@@ -19,6 +19,33 @@ export interface DeclareCollectionInput {
 }
 
 /**
+ * Une partie du registre.
+ *
+ * ── Pourquoi un couple typé, et pourquoi aux DEUX bouts ─────────────────────
+ *
+ * La chaîne compte deux maillons dès qu'une course porte un facilitateur : le
+ * conducteur doit à son facilitateur, le facilitateur doit au commerçant
+ * (`docs/specs_facilitateur.md` §7.1). Ne typer qu'un bout — l'autre restant
+ * « le commerçant » — rendait le premier maillon **inexprimable** : une remise
+ * conducteur → entreprise n'a aucun commerçant à nommer.
+ *
+ * Le calcul de dette, les remises et leur confirmation ne changent pas ; seule
+ * l'identité des deux bouts devient variable.
+ */
+export type PartyType = 'driver' | 'fleet' | 'merchant';
+
+export interface Party {
+  type: PartyType;
+  id: string;
+}
+
+export const driverParty = (id: string): Party => ({ type: 'driver', id });
+export const fleetParty = (id: string): Party => ({ type: 'fleet', id });
+export const merchantParty = (id: string): Party => ({ type: 'merchant', id });
+
+const samePartyAs = (a: Party, b: Party) => a.type === b.type && a.id === b.id;
+
+/**
  * Registre de caisse du paiement à la livraison.
  *
  * ── Le modèle retenu, en une phrase ─────────────────────────────────────────
@@ -102,74 +129,121 @@ export class CashService {
   }
 
   /**
-   * Position nette entre un transporteur et un commerçant.
+   * Ce qu'**une personne** peut détenir, toutes contreparties confondues.
    *
-   * ── Pourquoi elle est signée ────────────────────────────────────────────────
+   * ── Pourquoi un second plafond, et pourquoi il n'est pas redondant ────────
    *
-   * **Positive** : le transporteur détient des espèces du commerçant.
-   * **Négative** : le commerçant lui doit une rémunération que l'encaissement
-   * n'a pas couverte — course sans encaissement, ou client qui n'a payé qu'une
-   * partie. Les deux situations sont normales, et une dette bornée à zéro
-   * effacerait la seconde : le transporteur aurait travaillé sans que rien ne
-   * l'enregistre.
+   * Le plafond ci-dessus borne **une relation**. Depuis que la
+   * multi-appartenance existe (31/07/2026), un conducteur rattaché à trois
+   * entreprises porte trois dettes distinctes — `driverCounterparty()` prend le
+   * facilitateur de la course —, donc trois fois le plafond, dans la même poche.
+   * Le garde-fou se contournait par le nombre d'adhésions.
    *
-   *     position = encaissé − retenu sur l'encaissement
-   *                − rémunérations non retenues
-   *                − remises confirmées (transporteur → commerçant)
-   *                + versements confirmés (commerçant → transporteur)
+   * C'est le défaut déjà nommé dans `specs_flux_argent_quatre_acteurs.md` (« une
+   * entreprise de dix conducteurs accumule dix fois le plafond »), pris par
+   * l'autre bout.
    *
-   * Ce qui se simplifie, sur une course encaissée couvrant la rémunération, en
-   * l'énoncé attendu : `dette = perçu − rémunération`. Et il vaut que les frais
-   * de livraison soient inclus ou non dans le montant à encaisser — c'est ce
-   * qui rend `codIncludesDelivery` purement informatif.
+   * ⚠️ **Même valeur par défaut que le plafond par couple**, et c'est
+   * intentionnel : un conducteur ne détient jamais plus que le plafond, quel que
+   * soit le nombre d'entreprises pour lesquelles il roule. Un multi-rattaché
+   * n'est ainsi ni avantagé ni pénalisé — il l'est seulement s'il détient
+   * réellement plus. La variable existe séparément pour qu'on puisse desserrer
+   * l'un sans l'autre au pilote.
    *
-   * Les remises **non confirmées ne comptent pas** : tant que la seconde partie
-   * n'a rien confirmé, une remise est une affirmation, pas un fait.
+   * ⚠️ **Ne s'applique qu'aux conducteurs** (voir `canTakeCashOrder`). Le
+   * raisonnement porte sur une personne qui transporte des billets ; l'appliquer
+   * à une entreprise la bornait, tous commerçants confondus, à ce qu'un
+   * indépendant peut détenir.
    */
-  async debtBetween(driverId: string, merchantId: string): Promise<number> {
+  private personDebtCeiling(): number {
+    const configured = Number(this.configService.get('COD_DEBT_CEILING_PER_PERSON'));
+    return Number.isFinite(configured) && configured > 0 ? configured : this.debtCeiling();
+  }
+
+  /**
+   * Tout ce qu'une partie détient, toutes contreparties confondues.
+   *
+   * ⚠️ Les jambes **négatives ne compensent pas**. Si un commerçant doit 500 au
+   * conducteur et que le conducteur doit 2000 à une entreprise, il a 2000 dans
+   * la poche : les soustraire annoncerait 1500 et laisserait passer une course
+   * de plus. Ce qu'on borne est ce qui est **détenu**, pas une position nette.
+   */
+  async totalHeldBy(actor: Party): Promise<number> {
+    const parties = await this.counterpartiesOf(actor);
+    const legs = await Promise.all(parties.map((p) => this.debtBetween(actor, p)));
+    return legs.reduce((sum, leg) => sum + Math.max(0, leg), 0);
+  }
+
+  /**
+   * Position nette entre **deux parties quelconques**.
+   *
+   * Trois couples existent réellement, et une seule formule les couvre :
+   *
+   *     conducteur → facilitateur   perçu − ce que le conducteur a gagné
+   *     facilitateur → commerçant   perçu − la rémunération de la course
+   *     conducteur → commerçant     idem, quand la course n'a pas de facilitateur
+   *
+   * Le troisième est le cas d'avant ce chantier, et il reste **bit pour bit**
+   * celui d'avant : toutes les lignes existantes ont `facilitatorId` nul, donc
+   * elles tombent dans ce couple-là et donnent le même nombre qu'hier. C'est ce
+   * qui rend `scripts/test-parcours-argent.sh` probant.
+   *
+   * ⚠️ La **commission n'entre pas** dans la dette. Elle reste servie à part,
+   * comme aujourd'hui. La fondre ici mélangerait « l'argent que je détiens pour
+   * vous » et « ce que je vous dois » dans un seul nombre — la confusion exacte
+   * que ce projet évite entre `price` et `cod_amount` — et changerait la valeur
+   * lue par un contrôle qui n'a pas à bouger.
+   */
+  /**
+   * Ordonne un couple dans le sens **canonique** de la chaîne.
+   *
+   * ── Le défaut que ceci répare ───────────────────────────────────────────
+   *
+   * La chaîne va toujours dans le même sens : `driver → fleet → merchant`.
+   * `legScope()` ne connaît donc que ces trois couples-là, et rend `null` pour
+   * `(merchant, driver)` — ce qui, faute d'orientation, faisait interroger
+   * `balancesFor()` à l'envers **pour tout acteur qui n'est pas le conducteur**.
+   *
+   * Le commerçant lisait alors 0 au lieu de 1300 avant remise ; et une fois la
+   * remise confirmée, il ne restait dans le calcul que les remises, avec le
+   * signe inversé — donc **+1300 sur une dette pourtant éteinte**, à chaque
+   * cycle. Pire, `declareRemittance` déduit le sens du versement de ce même
+   * nombre : le commerçant pouvait déclarer un versement fantôme et
+   * **ressusciter une dette soldée**.
+   *
+   * Un nombre plausible et faux — le seul mode de défaut qui compte ici.
+   */
+  private orient(a: Party, b: Party): { up: Party; down: Party; flipped: boolean } {
+    const rank: Record<PartyType, number> = { driver: 0, fleet: 1, merchant: 2 };
+    return rank[a.type] <= rank[b.type]
+      ? { up: a, down: b, flipped: false }
+      : { up: b, down: a, flipped: true };
+  }
+
+  async debtBetween(a: Party, b: Party): Promise<number> {
+    if (samePartyAs(a, b)) return 0;
+
+    // Orienté ici, et non chez les appelants : c'est la seule façon d'être sûr
+    // qu'aucun ne l'oublie. La valeur rendue garde le sens demandé — positif
+    // veut dire « `a` doit à `b` » quel que soit l'ordre des arguments.
+    const { up, down, flipped } = this.orient(a, b);
+    const [first, second] = [up, down];
+
     const [collected, earned, out, back] = await Promise.all([
       this.prisma.cashCollection.aggregate({
-        // ⚠️ La condition porte sur le DÉCLARANT, pas seulement sur la
-        // confirmation, et c'est délibéré à deux titres.
-        //
-        // **Le sens** : un encaissement déclaré par le TRANSPORTEUR n'a besoin
-        // de personne — il s'attribue sa propre dette, et nul ne ment pour se
-        // rendre débiteur. Déclaré par le COMMERÇANT, il engage quelqu'un
-        // d'autre ; le compter sans confirmation permettrait d'inventer une
-        // créance sur un transporteur.
-        //
-        // **La migration** : filtrer sur le seul `confirmedAt: { not: null }`
-        // aurait fait disparaître **toutes les dettes existantes** le jour de
-        // la migration, puisque les lignes déjà écrites naissent avec un
-        // `confirmedAt` nul. Une colonne ajoutée ne doit jamais changer le sens
-        // des lignes d'avant — surtout quand ce sens est une somme d'argent.
-        where: {
-          driverId,
-          merchantId,
-          OR: [{ declaredBy: 'driver' }, { confirmedAt: { not: null } }],
-        },
+        where: this.collectionsBetween(first, second),
         _sum: { collectedAmount: true },
       }),
       this.prisma.driverEarning.aggregate({
-        where: { driverId, merchantId },
+        where: this.earningsBetween(first, second),
         _sum: { grossAmount: true },
       }),
       this.prisma.cashRemittance.aggregate({
-        where: {
-          driverId,
-          merchantId,
-          direction: 'driver_to_merchant',
-          confirmedAt: { not: null },
-        },
+        where: this.remittancesFromTo(first, second),
         _sum: { amount: true },
       }),
       this.prisma.cashRemittance.aggregate({
-        where: {
-          driverId,
-          merchantId,
-          direction: 'merchant_to_driver',
-          confirmedAt: { not: null },
-        },
+        where: this.remittancesFromTo(second, first),
         _sum: { amount: true },
       }),
     ]);
@@ -182,7 +256,102 @@ export class CashService {
 
     // Arrondi au centime : les flottants accumulent un résidu sur des sommes
     // d'argent, et une dette affichée « 0.000000001 » n'est jamais soldée.
-    return Math.round(total * 100) / 100;
+    // Le signe suit l'ordre DEMANDÉ, pas l'ordre canonique.
+    return (flipped ? -1 : 1) * (Math.round(total * 100) / 100);
+  }
+
+  /**
+   * Lignes d'encaissement qui portent la dette de `a` envers `b`.
+   *
+   * ⚠️ La condition sur le DÉCLARANT est reprise telle quelle de la version
+   * précédente, et elle compte à deux titres.
+   *
+   * **Le sens** : un encaissement déclaré par le TRANSPORTEUR n'a besoin de
+   * personne — il s'attribue sa propre dette, et nul ne ment pour se rendre
+   * débiteur. Déclaré par le COMMERÇANT, il engage quelqu'un d'autre ; le
+   * compter sans confirmation permettrait d'inventer une créance.
+   *
+   * **La migration** : filtrer sur le seul `confirmedAt: { not: null }` ferait
+   * disparaître toutes les dettes existantes, les lignes d'avant naissant avec
+   * ce champ nul (journal §30.4).
+   */
+  private collectionsBetween(a: Party, b: Party): any {
+    const declared: any = { OR: [{ declaredBy: 'driver' }, { confirmedAt: { not: null } }] };
+    const scope = this.legScope(a, b);
+    return scope ? { ...scope, ...declared } : { id: '__aucune__' };
+  }
+
+  private earningsBetween(a: Party, b: Party): any {
+    const scope = this.legScope(a, b, true);
+    return scope ?? { id: '__aucune__' };
+  }
+
+  /**
+   * Traduit un couple de parties en filtre sur les colonnes du registre.
+   *
+   * Trois couples ont un sens ; tout autre rend `null`, et l'appelant produit
+   * alors un filtre qui ne matche rien. **Refuser en silence est ici le bon
+   * défaut** : une paire inattendue doit donner une dette nulle, jamais une
+   * agrégation trop large sur des sommes d'argent.
+   *
+   * `forEarnings` distingue le seul point où les deux tables divergent : sur le
+   * maillon conducteur → facilitateur, ce que le conducteur déduit est ce qu'il
+   * a **lui-même gagné** (`earnerType = 'driver'`), pas la rémunération de la
+   * course, qui revient à l'entreprise quand il y en a une.
+   */
+  private legScope(a: Party, b: Party, forEarnings = false): any | null {
+    // Conducteur → facilitateur (chaîne interne).
+    if (a.type === 'driver' && b.type === 'fleet') {
+      return forEarnings
+        ? { earnerType: 'driver', earnerId: a.id, facilitatorId: b.id }
+        : { driverId: a.id, facilitatorId: b.id };
+    }
+
+    // Facilitateur → commerçant (chaîne contractuelle).
+    if (a.type === 'fleet' && b.type === 'merchant') {
+      return { facilitatorId: a.id, merchantId: b.id };
+    }
+
+    // Conducteur → commerçant : le cas SANS facilitateur, et donc celui de
+    // toutes les lignes écrites avant ce chantier. `facilitatorId: null` est
+    // essentiel — sans lui, une course confiée à une entreprise compterait
+    // deux fois, chez l'entreprise et chez le conducteur.
+    if (a.type === 'driver' && b.type === 'merchant') {
+      return { driverId: a.id, merchantId: b.id, facilitatorId: null };
+    }
+
+    return null;
+  }
+
+  /**
+   * Remises confirmées allant de `a` vers `b`.
+   *
+   * Deux formes coexistent, et il faut les compter toutes les deux : les lignes
+   * **d'avant** ce chantier n'ont pas de couple typé, seulement `driverId`,
+   * `merchantId` et `direction`. Les ignorer effacerait des remises déjà
+   * confirmées, c'est-à-dire ferait réapparaître des dettes soldées.
+   */
+  private remittancesFromTo(a: Party, b: Party): any {
+    const typed: any = {
+      fromType: a.type,
+      fromId: a.id,
+      toType: b.type,
+      toId: b.id,
+      confirmedAt: { not: null },
+    };
+
+    let legacy: any = null;
+    if (a.type === 'driver' && b.type === 'merchant') {
+      legacy = { driverId: a.id, merchantId: b.id, direction: 'driver_to_merchant' };
+    } else if (a.type === 'merchant' && b.type === 'driver') {
+      legacy = { driverId: b.id, merchantId: a.id, direction: 'merchant_to_driver' };
+    }
+
+    if (!legacy) return typed;
+
+    return {
+      OR: [typed, { ...legacy, fromType: null, confirmedAt: { not: null } }],
+    };
   }
 
   /**
@@ -197,7 +366,23 @@ export class CashService {
    */
   async platformCommissionOwed(driverId: string): Promise<number> {
     const result = await this.prisma.driverEarning.aggregate({
-      where: { driverId },
+      // ⚠️ Filtré sur le BÉNÉFICIAIRE, pas sur `driverId`.
+      //
+      // Une ligne de course d'entreprise porte quand même le `driverId` de
+      // celui qui a livré : filtrer dessus facturait au salarié la commission
+      // due sur un chiffre d'affaires qu'il n'a jamais touché. La correction
+      // avait été appliquée à la retenue et oubliée sur cet agrégat — c'est
+      // exactement ce que le commentaire de `earnerType` promet d'éviter.
+      //
+      // La seconde branche couvre les lignes d'avant ce chantier : elles
+      // naissent avec `earnerType` nul, et le conducteur en est bien le
+      // bénéficiaire.
+      where: {
+        OR: [
+          { earnerType: 'driver', earnerId: driverId },
+          { earnerType: null, driverId },
+        ],
+      },
       _sum: { commissionAmount: true },
     });
     return Math.round(Number(result._sum.commissionAmount ?? 0) * 100) / 100;
@@ -220,6 +405,14 @@ export class CashService {
     fleetbaseOrderUuid: string,
     grossAmount: number,
     collectedAmount: number,
+    /**
+     * Facilitateur de la course, ou `null` quand elle n'en porte pas.
+     *
+     * `isPlatform` décide de la seule chose qui varie : ce que le conducteur
+     * retient. Passer le compte entier plutôt que son seul identifiant évite
+     * une seconde lecture ici, sur un chemin déjà appelé à chaque clôture.
+     */
+    facilitator?: { id: string; isPlatform: boolean } | null,
   ) {
     const gross = Math.round(grossAmount * 100) / 100;
     if (gross <= 0) return null;
@@ -231,12 +424,47 @@ export class CashService {
 
     const rate = this.commissionRate();
     const commission = Math.round(gross * rate * 100) / 100;
-    const retained = Math.round(Math.min(gross, Math.max(collectedAmount, 0)) * 100) / 100;
+
+    // ── Qui gagne cette course, et donc qui retient sur les espèces ──────────
+    //
+    // Sur une course du pool (facilitateur plateforme, ou pas de facilitateur
+    // du tout), la rémunération revient au **conducteur** : c'est un montant
+    // que nous connaissons, puisque le commerçant l'a saisi, et il la retient
+    // sur ce qu'il détient.
+    //
+    // Sur une course confiée à une **entreprise réelle**, elle revient à
+    // l'entreprise. Ce que le conducteur touche est un salaire interne que nous
+    // ne verrons jamais : il retient donc **0** et remet l'intégralité.
+    //
+    // Sans cette distinction, le code tranchait tout seul et dans le mauvais
+    // sens — un salarié aurait empoché le chiffre d'affaires de son employeur,
+    // et Echango aurait facturé l'employeur au salarié
+    // (`docs/specs_facilitateur.md` §7.2).
+    // ⚠️ `=== false` et non `!isPlatform`.
+    //
+    // Avec `isPlatform: undefined`, `!undefined` vaut `true` : une course du
+    // pool aurait été traitée comme une course d'entreprise, le conducteur
+    // aurait remis 1950 au lieu de 1300, et sa rémunération aurait été créditée
+    // au facilitateur — donc jamais déduite de son maillon. Le seul appelant
+    // sélectionne bien le champ aujourd'hui, mais Prisma est un `any` ici :
+    // rien ne le tiendra demain.
+    const earner: Party =
+      facilitator && facilitator.isPlatform === false
+        ? fleetParty(facilitator.id)
+        : driverParty(driverId);
+
+    const retained =
+      earner.type === 'driver'
+        ? Math.round(Math.min(gross, Math.max(collectedAmount, 0)) * 100) / 100
+        : 0;
 
     const earning = await this.prisma.driverEarning.create({
       data: {
         driverId,
         merchantId,
+        facilitatorId: facilitator?.id ?? null,
+        earnerType: earner.type,
+        earnerId: earner.id,
         fleetbaseOrderUuid,
         grossAmount: gross,
         commissionRate: rate,
@@ -262,13 +490,103 @@ export class CashService {
    * course qui fera franchir le plafond vide le plafond de son sens.
    */
   async canTakeCashOrder(
-    driverId: string,
-    merchantId: string,
+    debtor: Party,
+    creditor: Party,
     amount: number,
-  ): Promise<{ allowed: boolean; debt: number; ceiling: number }> {
-    const debt = await this.debtBetween(driverId, merchantId);
+  ): Promise<{
+    allowed: boolean;
+    debt: number;
+    ceiling: number;
+    /** Lequel des deux plafonds a refusé — pour que le message le dise. */
+    scope: 'couple' | 'person';
+  }> {
+    const debt = await this.debtBetween(debtor, creditor);
     const ceiling = this.debtCeiling();
-    return { allowed: debt + amount <= ceiling, debt, ceiling };
+
+    if (debt + amount > ceiling) {
+      return { allowed: false, debt, ceiling, scope: 'couple' };
+    }
+
+    // ⚠️ **Le plafond global ne s'applique qu'à une PERSONNE.**
+    //
+    // Il est né de la multi-appartenance : un conducteur rattaché à trois
+    // entreprises porte trois dettes distinctes, donc trois fois le plafond dans
+    // une seule poche. Ce raisonnement vaut pour un être humain qui transporte
+    // des billets ; il ne vaut pas pour une société.
+    //
+    // Appliqué à une entreprise, il bornait son encours **tous commerçants
+    // confondus** à ce qu'un indépendant isolé peut détenir : une société de dix
+    // conducteurs servant cinq commerçants était plafonnée comme une personne
+    // seule, et se bloquait dès le pilote. C'est une exposition réelle, mais
+    // elle se dimensionne autrement — et cette question-là n'est pas tranchée
+    // (`specs_flux_argent_quatre_acteurs.md`, plafond par entreprise).
+    //
+    // Un plafond mal dimensionné qui bloque l'exploitation ne protège rien : il
+    // fait désactiver le garde-fou.
+    if (debtor.type !== 'driver') {
+      return { allowed: true, debt, ceiling, scope: 'couple' };
+    }
+
+    // Les deux plafonds sont vérifiés **ici**, et non chez les appelants. Il y a
+    // deux chemins — `acceptOrder` côté conducteur, `assignDriver` côté
+    // entreprise — et une règle d'argent recopiée à deux endroits finit par
+    // diverger, ce que `specs_flux_argent_quatre_acteurs.md` §5 interdit.
+    const total = await this.totalHeldBy(debtor);
+    const personCeiling = this.personDebtCeiling();
+
+    if (total + amount > personCeiling) {
+      return { allowed: false, debt: total, ceiling: personCeiling, scope: 'person' };
+    }
+
+    return { allowed: true, debt, ceiling, scope: 'couple' };
+  }
+
+  /**
+   * Les trois refus qui gardent un montant encaissé — **écrits une seule fois**.
+   *
+   * ⚠️ Ils existaient en deux copies (détecteur de corps similaires,
+   * 01/08/2026), et **elles avaient déjà divergé** : la seconde annonçait
+   * « Montant supérieur à ce qui était annoncé » sans la phrase qui dit quoi
+   * faire (« Contactez Echango si le montant à encaisser était incorrect »).
+   * Deux refus du même fait, dont un seul est actionnable — et rien ne disait
+   * lequel des deux chemins l'utilisateur avait pris.
+   *
+   * Le critère de la règle 5 : si l'un de ces trois seuils change, les deux
+   * chemins doivent changer. Sur de l'argent, une divergence ne se voit pas —
+   * elle laisse passer d'un côté ce qu'elle refuse de l'autre.
+   *
+   * Rend le montant arrondi, seule sortie utile aux deux appelants.
+   */
+  private assertCollectedAmount(
+    collectedAmount: number,
+    expectedAmount: number,
+    discrepancyReason?: string | null,
+  ): number {
+    const collected = Math.round(collectedAmount * 100) / 100;
+
+    if (collected < 0) {
+      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
+    }
+
+    if (collected > expectedAmount) {
+      // Un transporteur qui perçoit plus que dû n'est pas un cas à absorber en
+      // silence : soit le montant annoncé était faux, soit la déclaration l'est.
+      // Les deux appellent une correction humaine.
+      badRequest(
+        'cash.amount_exceeds_expected',
+        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}). ` +
+          'Contactez Echango si le montant à encaisser était incorrect.',
+      );
+    }
+
+    if (collected !== expectedAmount && !discrepancyReason) {
+      badRequest(
+        'cash.discrepancy_reason_required',
+        'Un écart entre le montant annoncé et le montant perçu exige un motif',
+      );
+    }
+
+    return collected;
   }
 
   /**
@@ -291,31 +609,21 @@ export class CashService {
     fleetbaseOrderUuid: string,
     expectedAmount: number,
     input: DeclareCollectionInput,
+    /**
+     * Facilitateur de la course, **figé ici et jamais recalculé**.
+     *
+     * Exception §3.3 d'`architecture_bff_fleetbase.md`, la même que
+     * `expectedAmount` : si un admin change `facilitator_uuid` demain, la dette
+     * d'aujourd'hui ne doit pas changer de débiteur.
+     */
+    facilitatorId?: string | null,
   ) {
-    const collected = Math.round(input.collectedAmount * 100) / 100;
-
-    if (collected < 0) {
-      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
-    }
-
-    if (collected > expectedAmount) {
-      // Un transporteur qui perçoit plus que dû n'est pas un cas à absorber en
-      // silence : soit le montant annoncé était faux, soit la déclaration l'est.
-      // Les deux appellent une correction humaine.
-      badRequest(
-        'cash.amount_exceeds_expected',
-        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}). ` +
-          'Contactez Echango si le montant à encaisser était incorrect.',
-      );
-    }
-
+    const collected = this.assertCollectedAmount(
+      input.collectedAmount,
+      expectedAmount,
+      input.discrepancyReason,
+    );
     const differs = collected !== expectedAmount;
-    if (differs && !input.discrepancyReason) {
-      badRequest(
-        'cash.discrepancy_reason_required',
-        'Un écart entre le montant annoncé et le montant perçu exige un motif',
-      );
-    }
 
     // ── Idempotence, et pourquoi elle est indispensable ────────────────────
     //
@@ -354,7 +662,13 @@ export class CashService {
         expectedAmount: existing.expectedAmount,
         collectedAmount: existing.collectedAmount,
         currency: existing.currency,
-        debt: await this.debtBetween(driverId, merchantId),
+        // La contrepartie relue sur la LIGNE, pas sur l'argument : une reprise
+        // après échec de clôture doit rendre la dette telle qu'elle a été
+        // figée, même si la course a changé de facilitateur entre-temps.
+        debt: await this.debtBetween(
+          driverParty(driverId),
+          this.driverCounterparty(existing.facilitatorId, merchantId),
+        ),
         replayed: true,
       };
     }
@@ -363,6 +677,7 @@ export class CashService {
       data: {
         driverId,
         merchantId,
+        facilitatorId: facilitatorId ?? null,
         fleetbaseOrderUuid,
         expectedAmount,
         collectedAmount: collected,
@@ -380,7 +695,10 @@ export class CashService {
       },
     });
 
-    const debt = await this.debtBetween(driverId, merchantId);
+    const debt = await this.debtBetween(
+      driverParty(driverId),
+      this.driverCounterparty(facilitatorId, merchantId),
+    );
 
     this.logger.log(
       `Encaissement ${fleetbaseOrderUuid} : ${collected}/${expectedAmount} ${this.currency}` +
@@ -411,31 +729,178 @@ export class CashService {
   }
 
   /**
+   * À qui un conducteur doit les espèces d'une course.
+   *
+   * Son facilitateur quand la course en porte un, le commerçant sinon. Une
+   * seule ligne, mais elle porte toute la décision du §2.1 — et la placer ici
+   * évite qu'elle soit réécrite à chaque endroit qui touche à l'argent, ce que
+   * `docs/specs_flux_argent_quatre_acteurs.md` §5 interdit explicitement.
+   */
+  driverCounterparty(facilitatorId: string | null | undefined, merchantId: string): Party {
+    return facilitatorId ? fleetParty(facilitatorId) : merchantParty(merchantId);
+  }
+
+  /**
    * Contreparties avec lesquelles un compte a une histoire.
    *
    * L'union des trois tables, et non les seuls encaissements : un transporteur
    * qui a livré sans encaisser n'apparaîtrait nulle part, alors que c'est
    * précisément le cas où le commerçant lui doit quelque chose.
    */
-  private async counterparties(
-    persona: 'driver' | 'merchant',
-    actorId: string,
-  ): Promise<string[]> {
-    const field = persona === 'driver' ? 'merchantId' : 'driverId';
-    const where = persona === 'driver' ? { driverId: actorId } : { merchantId: actorId };
+  private async counterpartiesOf(actor: Party): Promise<Party[]> {
+    const found = new Map<string, Party>();
+    const add = (p: Party | null) => {
+      if (p && !(p.type === actor.type && p.id === actor.id)) found.set(`${p.type}:${p.id}`, p);
+    };
 
+    if (actor.type === 'driver') {
+      // Un conducteur fait face à son facilitateur quand la course en porte un,
+      // au commerçant sinon. Les deux populations sont disjointes ligne à
+      // ligne — c'est `facilitatorId` qui tranche — donc on lit les deux.
+      const [collections, earnings, remittances] = await Promise.all([
+        this.prisma.cashCollection.findMany({
+          where: { driverId: actor.id },
+          select: { merchantId: true, facilitatorId: true },
+        }),
+        this.prisma.driverEarning.findMany({
+          where: { driverId: actor.id },
+          select: { merchantId: true, facilitatorId: true },
+        }),
+        this.prisma.cashRemittance.findMany({
+          where: { OR: [{ fromType: 'driver', fromId: actor.id }, { toType: 'driver', toId: actor.id }, { fromType: null, driverId: actor.id }] },
+          select: { merchantId: true, fromType: true, fromId: true, toType: true, toId: true },
+        }),
+      ]);
+
+      for (const row of [...collections, ...earnings] as any[]) {
+        add(this.driverCounterparty(row.facilitatorId, row.merchantId));
+      }
+      for (const r of remittances as any[]) {
+        if (r.fromType && r.fromId && !(r.fromType === 'driver' && r.fromId === actor.id)) {
+          add({ type: r.fromType, id: r.fromId });
+        }
+        if (r.toType && r.toId && !(r.toType === 'driver' && r.toId === actor.id)) {
+          add({ type: r.toType, id: r.toId });
+        }
+        if (!r.fromType && r.merchantId) add(merchantParty(r.merchantId));
+      }
+
+      return [...found.values()];
+    }
+
+    if (actor.type === 'merchant') {
+      // Face au commerçant : le facilitateur quand la course en porte un, le
+      // conducteur sinon. Même bascule, lue depuis l'autre bout.
+      const [collections, earnings, remittances] = await Promise.all([
+        this.prisma.cashCollection.findMany({
+          where: { merchantId: actor.id },
+          select: { driverId: true, facilitatorId: true },
+        }),
+        this.prisma.driverEarning.findMany({
+          where: { merchantId: actor.id },
+          select: { driverId: true, facilitatorId: true },
+        }),
+        this.prisma.cashRemittance.findMany({
+          where: { OR: [{ fromType: 'merchant', fromId: actor.id }, { toType: 'merchant', toId: actor.id }, { fromType: null, merchantId: actor.id }] },
+          select: { driverId: true, fromType: true, fromId: true, toType: true, toId: true },
+        }),
+      ]);
+
+      for (const row of [...collections, ...earnings] as any[]) {
+        add(row.facilitatorId ? fleetParty(row.facilitatorId) : driverParty(row.driverId));
+      }
+      for (const r of remittances as any[]) {
+        if (r.fromType && r.fromId && !(r.fromType === 'merchant' && r.fromId === actor.id)) {
+          add({ type: r.fromType, id: r.fromId });
+        }
+        if (r.toType && r.toId && !(r.toType === 'merchant' && r.toId === actor.id)) {
+          add({ type: r.toType, id: r.toId });
+        }
+        if (!r.fromType && r.driverId) add(driverParty(r.driverId));
+      }
+
+      return [...found.values()];
+    }
+
+    // Facilitateur : ses conducteurs d'un côté, ses commerçants de l'autre.
+    // ⚠️ `driverEarning` est lu ici AUSSI, comme dans les deux autres branches.
+    //
+    // Une course d'entreprise **sans encaissement** — prépayée — ne produit
+    // qu'une ligne de rémunération. Sans cette lecture, le commerçant n'est
+    // jamais listé comme contrepartie de l'entreprise, et les 650 qu'il lui
+    // doit ne sont calculés nulle part : une créance réelle, invisible des deux
+    // côtés.
     const [collections, earnings, remittances] = await Promise.all([
-      this.prisma.cashCollection.groupBy({ by: [field as any], where }),
-      this.prisma.driverEarning.groupBy({ by: [field as any], where }),
-      this.prisma.cashRemittance.groupBy({ by: [field as any], where }),
+      this.prisma.cashCollection.findMany({
+        where: { facilitatorId: actor.id },
+        select: { driverId: true, merchantId: true },
+      }),
+      this.prisma.driverEarning.findMany({
+        where: { facilitatorId: actor.id },
+        select: { driverId: true, merchantId: true },
+      }),
+      this.prisma.cashRemittance.findMany({
+        where: { OR: [{ fromType: 'fleet', fromId: actor.id }, { toType: 'fleet', toId: actor.id }] },
+        select: { fromType: true, fromId: true, toType: true, toId: true },
+      }),
     ]);
 
-    const ids = new Set<string>();
-    for (const row of [...collections, ...earnings, ...remittances]) {
-      const value = (row as any)[field];
-      if (value) ids.add(value);
+    for (const row of [...collections, ...earnings] as any[]) {
+      add(driverParty(row.driverId));
+      add(merchantParty(row.merchantId));
     }
-    return [...ids];
+    for (const r of remittances as any[]) {
+      if (r.fromType && r.fromId) add({ type: r.fromType, id: r.fromId });
+      if (r.toType && r.toId) add({ type: r.toType, id: r.toId });
+    }
+
+    return [...found.values()];
+  }
+
+  /**
+   * Nom et téléphone d'une contrepartie, quelle que soit sa table.
+   *
+   * ── Pourquoi ce n'était pas un détail d'affichage ───────────────────────
+   *
+   * `merchantBalances` lisait `driverAccount` en dur. Une contrepartie de type
+   * entreprise y donnait `driver_name: null` **sans la moindre erreur** : le
+   * commerçant aurait lu « 1300 DZD dus » sans nom ni téléphone, donc sans
+   * personne à appeler pour organiser la remise. Une panne silencieuse sur
+   * l'écran qui sert précisément à réclamer de l'argent (défaut D15).
+   */
+  private async describeParties(parties: Party[]): Promise<Map<string, { name: string | null; phone: string | null }>> {
+    const key = (p: Party) => `${p.type}:${p.id}`;
+    const ids = (type: PartyType) => parties.filter((p) => p.type === type).map((p) => p.id);
+
+    const [merchants, fleets, drivers] = await Promise.all([
+      this.prisma.merchantAccount.findMany({
+        where: { id: { in: ids('merchant') } },
+        select: { id: true, businessName: true, phone: true, businessPhone: true },
+      }),
+      this.prisma.fleetAccount.findMany({
+        where: { id: { in: ids('fleet') } },
+        select: { id: true, businessName: true, phone: true, businessPhone: true },
+      }),
+      this.prisma.driverAccount.findMany({
+        where: { id: { in: ids('driver') } },
+        select: { id: true, firstName: true, lastName: true, phone: true },
+      }),
+    ]);
+
+    const out = new Map<string, { name: string | null; phone: string | null }>();
+    for (const m of merchants as any[]) {
+      out.set(key(merchantParty(m.id)), { name: m.businessName ?? null, phone: m.businessPhone ?? m.phone ?? null });
+    }
+    for (const f of fleets as any[]) {
+      out.set(key(fleetParty(f.id)), { name: f.businessName ?? null, phone: f.businessPhone ?? f.phone ?? null });
+    }
+    for (const d of drivers as any[]) {
+      out.set(key(driverParty(d.id)), {
+        name: [d.firstName, d.lastName].filter(Boolean).join(' ') || null,
+        phone: d.phone ?? null,
+      });
+    }
+    return out;
   }
 
   /**
@@ -452,69 +917,95 @@ export class CashService {
    * fois, au prochain enlèvement.
    */
   async driverBalances(driverId: string) {
-    const merchantIds = await this.counterparties('driver', driverId);
-    const ceiling = this.debtCeiling();
-
-    const merchants = await this.prisma.merchantAccount.findMany({
-      where: { id: { in: merchantIds } },
-      select: { id: true, businessName: true, phone: true, businessPhone: true },
-    });
-    const byId = new Map<string, any>(merchants.map((m: any) => [m.id, m]));
-
-    const balances = await Promise.all(
-      merchantIds.map(async (merchantId) => {
-        const debt = await this.debtBetween(driverId, merchantId);
-        const merchant = byId.get(merchantId);
-        return {
-          merchant_id: merchantId,
-          merchant_name: merchant?.businessName ?? null,
-          merchant_phone: merchant?.businessPhone ?? merchant?.phone ?? null,
-          debt,
-          blocked: debt >= ceiling,
-        };
-      }),
-    );
-
-    return {
-      currency: this.currency,
-      ceiling,
-      /** Commission cumulée due à Echango. Son recouvrement n'est pas construit. */
-      platform_commission: await this.platformCommissionOwed(driverId),
-      // Les soldes nuls disparaissent, les négatifs restent : ils disent que le
-      // commerçant doit quelque chose au transporteur, ce qui appelle une
-      // action tout autant qu'une dette dans l'autre sens.
-      balances: balances
-        .filter((b) => b.debt !== 0)
-        .sort((a, b) => b.debt - a.debt),
-    };
+    return this.balancesFor(driverParty(driverId), { withCeiling: true });
   }
 
-  /** Soldes du commerçant, un par transporteur. Symétrique du précédent. */
+  /** Soldes du commerçant, un par contrepartie. Symétrique du précédent. */
   async merchantBalances(merchantId: string) {
-    const driverIds = await this.counterparties('merchant', merchantId);
+    return this.balancesFor(merchantParty(merchantId));
+  }
 
-    const drivers = await this.prisma.driverAccount.findMany({
-      where: { id: { in: driverIds } },
-      select: { id: true, firstName: true, lastName: true, phone: true },
-    });
-    const byId = new Map<string, any>(drivers.map((d: any) => [d.id, d]));
+  /** Soldes d'un facilitateur : ses conducteurs d'un côté, ses commerçants de l'autre. */
+  async fleetBalances(fleetId: string) {
+    return this.balancesFor(fleetParty(fleetId), { withCeiling: true });
+  }
+
+  /**
+   * Soldes d'un compte, un par contrepartie.
+   *
+   * ── Une seule fonction pour les trois personas ──────────────────────────
+   *
+   * Les trois versions précédentes ne différaient que par la table où elles
+   * allaient chercher le nom de la contrepartie — et c'est précisément ce qui
+   * faisait le défaut D15 : le commerçant lisait toujours `driverAccount`, donc
+   * une contrepartie de type entreprise donnait `driver_name: null` **sans la
+   * moindre erreur**. Un montant dû par personne, sans personne à appeler.
+   *
+   * Chaque solde passe par `debtBetween()` plutôt que par une agrégation
+   * parallèle : deux façons de calculer la même dette finiraient par en donner
+   * deux valeurs, et sur de l'argent la divergence n'est pas un détail
+   * d'affichage.
+   *
+   * ── Le contrat des champs est conservé ──────────────────────────────────
+   *
+   * `merchant_id`/`merchant_name` côté conducteur, `driver_id`/`driver_name`
+   * côté commerçant : ces noms sont lus par l'application et par le contrôle de
+   * référence. Ils sont servis **en plus** de `counterparty_*`, jamais à la
+   * place — et ils ne portent une valeur que lorsque la contrepartie est
+   * effectivement du type que leur nom annonce. Mentir sur un identifiant
+   * serait pire que ne rien dire.
+   */
+  private async balancesFor(actor: Party, opts: { withCeiling?: boolean } = {}) {
+    const parties = await this.counterpartiesOf(actor);
+    const described = await this.describeParties(parties);
+    const ceiling = this.debtCeiling();
 
     const balances = await Promise.all(
-      driverIds.map(async (driverId) => {
-        const debt = await this.debtBetween(driverId, merchantId);
-        const driver = byId.get(driverId);
+      parties.map(async (party) => {
+        // ⚠️ Interrogé dans le sens CANONIQUE, jamais dans celui de l'acteur.
+        //
+        // `debtBetween` fait suivre son signe à l'ordre demandé — API la moins
+        // surprenante — mais le contrat des écrans veut l'inverse : les deux
+        // parties doivent lire **le même nombre**, positif quand l'amont détient
+        // l'argent de l'aval. C'est ce que fait `cash.dart` (`driverOwes =>
+        // debt > 0`) et ce que vérifie le contrôle de référence des deux côtés.
+        //
+        // Demander `(actor, party)` rendait donc −1300 au commerçant là où il
+        // doit lire +1300 : juste au signe près, et faux à l'écran.
+        const { up, down } = this.orient(actor, party);
+        const debt = await this.debtBetween(up, down);
+        const info = described.get(`${party.type}:${party.id}`);
+
         return {
-          driver_id: driverId,
-          driver_name:
-            [driver?.firstName, driver?.lastName].filter(Boolean).join(' ') || null,
-          driver_phone: driver?.phone ?? null,
+          counterparty_type: party.type,
+          counterparty_id: party.id,
+          counterparty_name: info?.name ?? null,
+          counterparty_phone: info?.phone ?? null,
+          // Champs historiques, servis seulement quand ils ne mentent pas.
+          merchant_id: party.type === 'merchant' ? party.id : null,
+          merchant_name: party.type === 'merchant' ? (info?.name ?? null) : null,
+          merchant_phone: party.type === 'merchant' ? (info?.phone ?? null) : null,
+          driver_id: party.type === 'driver' ? party.id : null,
+          driver_name: party.type === 'driver' ? (info?.name ?? null) : null,
+          driver_phone: party.type === 'driver' ? (info?.phone ?? null) : null,
           debt,
+          blocked: opts.withCeiling ? debt >= ceiling : undefined,
         };
       }),
     );
 
     return {
       currency: this.currency,
+      ...(opts.withCeiling ? { ceiling } : {}),
+      ...(actor.type === 'driver'
+        ? {
+            /** Commission cumulée due à Echango. Son recouvrement n'est pas construit. */
+            platform_commission: await this.platformCommissionOwed(actor.id),
+          }
+        : {}),
+      // Les soldes nuls disparaissent, les négatifs restent : ils disent que la
+      // contrepartie doit quelque chose, ce qui appelle une action tout autant
+      // qu'une dette dans l'autre sens.
       balances: balances.filter((b) => b.debt !== 0).sort((a, b) => b.debt - a.debt),
     };
   }
@@ -528,9 +1019,9 @@ export class CashService {
    * geste possible, et créerait une dette négative que rien ne saurait lire.
    */
   async declareRemittance(
-    declaredBy: 'driver' | 'merchant',
-    driverId: string,
-    merchantId: string,
+    declaredBy: PartyType,
+    declarantSide: Party,
+    counterparty: Party,
     amount: number,
   ) {
     const rounded = Math.round(amount * 100) / 100;
@@ -538,7 +1029,18 @@ export class CashService {
       badRequest('cash.remittance_amount_must_be_positive', 'Le montant remis doit être positif');
     }
 
-    const debt = await this.debtBetween(driverId, merchantId);
+    // Les deux colonnes historiques restent renseignées quand elles ont un
+    // sens, pour que les index et les écrans existants continuent de servir.
+    const driverId =
+      declarantSide.type === 'driver' ? declarantSide.id
+        : counterparty.type === 'driver' ? counterparty.id
+        : null;
+    const merchantId =
+      declarantSide.type === 'merchant' ? declarantSide.id
+        : counterparty.type === 'merchant' ? counterparty.id
+        : null;
+
+    const debt = await this.debtBetween(declarantSide, counterparty);
     if (debt === 0) {
       badRequest('cash.no_debt', 'Aucune somme due entre ces deux comptes');
     }
@@ -547,7 +1049,14 @@ export class CashService {
     // le choisir permettrait d'enregistrer un versement dans le mauvais sens et
     // de doubler une dette au lieu de l'éteindre — une erreur de saisie qui
     // coûterait de l'argent réel.
-    const direction = debt > 0 ? 'driver_to_merchant' : 'merchant_to_driver';
+    // ⚠️ `direction` conserve son vocabulaire d'origine **tant qu'il décrit la
+    // réalité** — c'est ce que lisent les lignes déjà écrites et les écrans
+    // existants. Sur un maillon qu'il ne sait pas nommer (conducteur →
+    // entreprise), il prend la forme générale `<from>_to_<to>` : mieux vaut un
+    // vocabulaire élargi qu'un champ qui ment sur la moitié des lignes.
+    const from = debt > 0 ? declarantSide : counterparty;
+    const to = debt > 0 ? counterparty : declarantSide;
+    const direction = `${from.type}_to_${to.type}`;
     const outstanding = Math.abs(debt);
 
     if (rounded > outstanding) {
@@ -557,10 +1066,16 @@ export class CashService {
       );
     }
 
+    // Le couple typé est écrit systématiquement ; `driverId`/`merchantId` ne
+    // sont renseignés que là où ils ont un sens, et ne décident plus de rien.
     const remittance = await this.prisma.cashRemittance.create({
       data: {
         driverId,
         merchantId,
+        fromType: from.type,
+        fromId: from.id,
+        toType: to.type,
+        toId: to.id,
         amount: rounded,
         currency: this.currency,
         declaredBy,
@@ -572,7 +1087,11 @@ export class CashService {
     // ça, la remise attendrait une confirmation que personne ne sait devoir
     // donner. Dans l'autre sens le transporteur n'a pas de journal de
     // notifications — la remise apparaît sur son écran de caisse.
-    if (declaredBy === 'driver') {
+    // Seul un commerçant a un journal de notifications ; une remise qui ne le
+    // concerne pas (conducteur → entreprise) n'a personne à prévenir ici, et
+    // `merchantId` y est nul. La condition porte donc sur le DESTINATAIRE de
+    // l'information, pas sur le déclarant seul.
+    if (declaredBy === 'driver' && merchantId) {
       await this.notifications.notify({
         merchantId,
         type: 'cash.remittance_declared',
@@ -588,10 +1107,61 @@ export class CashService {
     }
 
     this.logger.log(
-      `Remise déclarée par ${declaredBy} : ${rounded} ${this.currency} (${driverId} → ${merchantId})`,
+      `Remise déclarée par ${declaredBy} : ${rounded} ${this.currency} ` +
+        `(${from.type}:${from.id} → ${to.type}:${to.id})`,
     );
 
     return this.projectRemittance(remittance);
+  }
+
+  /**
+   * Déclare une remise à partir d'un simple identifiant de contrepartie.
+   *
+   * ── Pourquoi le serveur résout le type, et non le client ────────────────────
+   *
+   * Les deux routes de remise reçoivent un identifiant nu — `merchantId` côté
+   * transporteur, `driverId` côté commerçant. Ces noms sont **gelés** : le
+   * contrôle de référence les envoie tels quels, et `docs/specs_facilitateur.md`
+   * §14 interdit de les changer.
+   *
+   * Or la contrepartie d'un conducteur devient son facilitateur dès qu'une
+   * course en porte un. Plutôt que d'ajouter un champ de type que le client
+   * devrait deviner — et qu'un client menteur pourrait falsifier — le serveur
+   * regarde à quelle table appartient l'identifiant. C'est lui qui sait, et il
+   * n'a personne à croire.
+   */
+  async declareRemittanceTo(
+    declarant: Party,
+    counterpartyId: string,
+    amount: number,
+  ) {
+    const counterparty = await this.resolveParty(counterpartyId);
+
+    if (!counterparty) {
+      notFound('cash.counterparty_not_found', 'Contrepartie introuvable');
+    }
+
+    return this.declareRemittance(declarant.type, declarant, counterparty, amount);
+  }
+
+  /**
+   * À quelle table appartient cet identifiant ?
+   *
+   * Les trois sont des cuid distincts : aucune ambiguïté possible. Les trois
+   * lectures partent ensemble plutôt qu'en cascade — le coût est le même et le
+   * temps de réponse ne dépend pas du type trouvé.
+   */
+  async resolveParty(id: string): Promise<Party | null> {
+    const [merchant, fleet, driver] = await Promise.all([
+      this.prisma.merchantAccount.findUnique({ where: { id }, select: { id: true } }),
+      this.prisma.fleetAccount.findUnique({ where: { id }, select: { id: true } }),
+      this.prisma.driverAccount.findUnique({ where: { id }, select: { id: true } }),
+    ]);
+
+    if (merchant) return merchantParty(merchant.id);
+    if (fleet) return fleetParty(fleet.id);
+    if (driver) return driverParty(driver.id);
+    return null;
   }
 
   /**
@@ -602,7 +1172,7 @@ export class CashService {
    * dette sur la seule parole de celui qui la doit.
    */
   async confirmRemittance(
-    confirmedBy: 'driver' | 'merchant',
+    confirmedBy: PartyType,
     actorId: string,
     remittanceId: string,
   ) {
@@ -616,7 +1186,7 @@ export class CashService {
     }
     if (remittance.declaredBy === confirmedBy) {
       this.audit.denied({
-        actorType: confirmedBy === 'driver' ? 'transporteur' : 'merchant',
+        actorType: confirmedBy === 'driver' ? 'transporteur' : confirmedBy,
         actorId,
         action: 'cash.remittance.confirm',
         resourceType: 'CashRemittance',
@@ -646,7 +1216,7 @@ export class CashService {
    * désaccord réel pour un oubli.
    */
   async disputeRemittance(
-    disputedBy: 'driver' | 'merchant',
+    disputedBy: PartyType,
     actorId: string,
     remittanceId: string,
     reason?: string,
@@ -666,7 +1236,7 @@ export class CashService {
     });
 
     this.audit.succeeded({
-      actorType: disputedBy === 'driver' ? 'transporteur' : 'merchant',
+      actorType: disputedBy === 'driver' ? 'transporteur' : disputedBy,
       actorId,
       action: 'cash.remittance.dispute',
       resourceType: 'CashRemittance',
@@ -686,20 +1256,41 @@ export class CashService {
    * cuid — et confirmer, ici, efface une dette.
    */
   private async loadRemittanceFor(
-    persona: 'driver' | 'merchant',
+    persona: PartyType,
     actorId: string,
     remittanceId: string,
   ) {
+    // ⚠️ Le filtre porte sur **la partie**, jamais sur `driverId` seul.
+    //
+    // C'est le défaut D13, et il retournait le registre contre lui-même : une
+    // remise entreprise → commerçant porte `driverId` — le conducteur qui a
+    // encaissé — donc l'ancien filtre la lui rendait. Il appelait `confirmer`,
+    // `declaredBy ('fleet') !== confirmedBy ('driver')` passait, et **la dette
+    // de son employeur s'éteignait sans que le commerçant ait rien vu**.
+    //
+    // Le repli sur les colonnes historiques ne vaut que pour les lignes qui
+    // n'ont pas de couple typé, c'est-à-dire celles d'avant ce chantier.
+    const legacy =
+      persona === 'driver'
+        ? { driverId: actorId }
+        : persona === 'merchant'
+          ? { merchantId: actorId }
+          : null;
+
     const remittance = await this.prisma.cashRemittance.findFirst({
       where: {
         id: remittanceId,
-        ...(persona === 'driver' ? { driverId: actorId } : { merchantId: actorId }),
+        OR: [
+          { fromType: persona, fromId: actorId },
+          { toType: persona, toId: actorId },
+          ...(legacy ? [{ fromType: null, ...legacy }] : []),
+        ],
       },
     });
 
     if (!remittance) {
       this.audit.denied({
-        actorType: persona === 'driver' ? 'transporteur' : 'merchant',
+        actorType: persona === 'driver' ? 'transporteur' : persona,
         actorId,
         action: 'cash.remittance.access',
         resourceType: 'CashRemittance',
@@ -713,9 +1304,23 @@ export class CashService {
   }
 
   /** Remises d'un compte, en attente d'abord — ce sont elles qui appellent une action. */
-  async listRemittances(persona: 'driver' | 'merchant', actorId: string) {
+  async listRemittances(persona: PartyType, actorId: string) {
+    // Le filtre porte sur la PARTIE, pas sur une colonne historique : une
+    // remise conducteur → entreprise n'a pas de `merchantId`, et une entreprise
+    // n'apparaît dans aucune des deux colonnes d'origine.
+    const legacy =
+      persona === 'driver' ? { driverId: actorId }
+      : persona === 'merchant' ? { merchantId: actorId }
+      : null;
+
     const remittances = await this.prisma.cashRemittance.findMany({
-      where: persona === 'driver' ? { driverId: actorId } : { merchantId: actorId },
+      where: {
+        OR: [
+          { fromType: persona, fromId: actorId },
+          { toType: persona, toId: actorId },
+          ...(legacy ? [{ fromType: null, ...legacy }] : []),
+        ],
+      },
       orderBy: [{ confirmedAt: 'asc' }, { declaredAt: 'desc' }],
       take: 100,
     });
@@ -743,9 +1348,12 @@ export class CashService {
    * a réellement pu prélever, plafonné à ce qu'il a perçu — et non la
    * rémunération théorique, qui différerait sur une course payée en partie.
    */
-  async listCollections(persona: 'driver' | 'merchant', actorId: string) {
+  async listCollections(persona: PartyType, actorId: string) {
     const collections = await this.prisma.cashCollection.findMany({
-      where: persona === 'driver' ? { driverId: actorId } : { merchantId: actorId },
+      where:
+        persona === 'driver' ? { driverId: actorId }
+        : persona === 'merchant' ? { merchantId: actorId }
+        : { facilitatorId: actorId },
       orderBy: { collectedAt: 'desc' },
       take: 100,
     });
@@ -824,26 +1432,22 @@ export class CashService {
     fleetbaseOrderUuid: string,
     expectedAmount: number,
     input: DeclareCollectionInput,
+    /**
+     * Facilitateur de la course, figé ici comme sur le chemin nominal.
+     *
+     * Sans lui, une course d'entreprise close en console puis régularisée par
+     * le commerçant — c'est-à-dire **le cas exact pour lequel cette
+     * fonctionnalité existe** — imputait la dette au conducteur et lui laissait
+     * retenir une rémunération qui revient à son employeur.
+     */
+    facilitatorId?: string | null,
   ) {
-    const collected = Math.round(input.collectedAmount * 100) / 100;
-
-    if (collected < 0) {
-      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
-    }
-    if (collected > expectedAmount) {
-      badRequest(
-        'cash.amount_exceeds_expected',
-        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}).`,
-      );
-    }
-
+    const collected = this.assertCollectedAmount(
+      input.collectedAmount,
+      expectedAmount,
+      input.discrepancyReason,
+    );
     const differs = collected !== expectedAmount;
-    if (differs && !input.discrepancyReason) {
-      badRequest(
-        'cash.discrepancy_reason_required',
-        'Un écart entre le montant annoncé et le montant perçu exige un motif',
-      );
-    }
 
     const existing = await this.prisma.cashCollection.findUnique({
       where: { fleetbaseOrderUuid },
@@ -867,6 +1471,7 @@ export class CashService {
         fleetbaseOrderUuid,
         expectedAmount,
         collectedAmount: collected,
+        facilitatorId: facilitatorId ?? null,
         discrepancyReason: differs ? input.discrepancyReason : null,
         notes: input.notes,
         currency: this.currency,
@@ -897,6 +1502,8 @@ export class CashService {
    * séparer laisserait, entre les deux, un état où la dette est fausse.
    */
   async confirmCollection(driverId: string, collectionId: string, grossAmount: number) {
+    // Le facilitateur est relu sur la ligne, jamais redemandé à l'appelant :
+    // il a été figé à la déclaration, et c'est lui qui décide de la retenue.
     const collection = await this.prisma.cashCollection.findFirst({
       where: { id: collectionId, driverId },
     });
@@ -926,15 +1533,26 @@ export class CashService {
     // `fleetbaseOrderUuid`, donc une course qui en aurait déjà une — cas
     // improbable mais possible si la clôture applicative a fini par passer —
     // n'en crée pas une seconde.
+    const facilitator = collection.facilitatorId
+      ? await this.prisma.fleetAccount.findUnique({
+          where: { id: collection.facilitatorId },
+          select: { id: true, isPlatform: true },
+        })
+      : null;
+
     await this.recordEarning(
       driverId,
       collection.merchantId,
       collection.fleetbaseOrderUuid,
       grossAmount,
       updated.collectedAmount,
+      facilitator,
     );
 
-    const debt = await this.debtBetween(driverId, collection.merchantId);
+    const debt = await this.debtBetween(
+      driverParty(driverId),
+      this.driverCounterparty(collection.facilitatorId, collection.merchantId),
+    );
     this.logger.log(
       `Encaissement ${collection.fleetbaseOrderUuid} confirmé par le transporteur — dette ${debt}`,
     );

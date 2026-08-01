@@ -1,5 +1,8 @@
+import 'dart:ui' show Locale;
+
 import 'package:equatable/equatable.dart';
 
+import '../i18n/order_strings.dart';
 import 'fleetbase_json.dart';
 
 class Order extends Equatable {
@@ -260,8 +263,8 @@ class Place extends Equatable {
   final String id;
   final String name;
   final String address;
-  /// Nulles quand le BFF les a retirées — course non réclamée. Une valeur par
-  /// défaut à 0 aurait placé le point au large du golfe de Guinée, et
+  /// Nulles quand l'adresse a été saisie sans passer par la carte. Une valeur
+  /// par défaut à 0 aurait placé le point au large du golfe de Guinée, et
   /// l'itinéraire y aurait mené sans rien signaler.
   final double? latitude;
   final double? longitude;
@@ -306,6 +309,47 @@ class Place extends Equatable {
         contactName,
         contactPhone,
       ];
+}
+
+/// Les motifs d'échec de livraison, **dans l'ordre où on les propose**.
+///
+/// ── Pourquoi une liste de codes et une fonction de libellé, et non une map ──
+///
+/// Le code part au serveur, y est stocké et sera compté ; le libellé est de la
+/// langue. Les mêler dans un seul objet fait itérer sur du français pour
+/// construire un sélecteur — c'est le défaut corrigé le 31/07 sur
+/// `cashDiscrepancyLabels`, reproduit ici à l'identique.
+///
+/// ⚠️ **Ils existaient en deux copies, et trois libellés sur six avaient
+/// divergé** (01/08/2026) : `delivery_failure_screen` proposait « Client a
+/// refusé le colis », « Accès impossible (site fermé, zone inaccessible) » et
+/// « Autre » là où `order_detail_screen` affichait « Colis refusé par le
+/// client », « Accès impossible » et « Autre motif ». Le conducteur déclarait
+/// donc un motif et le commerçant en lisait un autre, pour le même code. C'est
+/// exactement le défaut que ce projet a déjà payé (« deux tables recopiées ont
+/// affiché deux textes différents pour la même commande »), et le critère de la
+/// règle 5 tranche sans hésiter : si l'un change, l'autre doit changer.
+///
+/// La liste fermée est celle du BFF (`specs_app_transporteur.md` §4.3) — un
+/// code absent de cette liste est refusé côté serveur en 400.
+const List<String> deliveryFailureReasons = [
+  'client_absent',
+  'adresse_introuvable',
+  'colis_refuse',
+  'colis_endommage',
+  'acces_impossible',
+  'autre',
+];
+
+/// Le libellé d'un motif, dans la langue courante.
+///
+/// Un code inconnu est rendu **tel quel** plutôt que remplacé par un message
+/// générique : si le serveur en introduit un, le voir à l'écran est le seul
+/// moyen de s'en apercevoir.
+String deliveryFailureLabel(String code, Locale locale) {
+  final key = 'order.failure.$code';
+  final label = orderLabel(key, locale);
+  return label == key ? code : label;
 }
 
 class DeliveryFailure extends Equatable {

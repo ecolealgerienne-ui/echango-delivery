@@ -41,6 +41,23 @@ export const ErrorCode = {
   AUTH_MERCHANT_NOT_FOUND: 'auth.merchant_not_found',
   AUTH_MERCHANT_REGISTRATION_FAILED: 'auth.merchant_registration_failed',
   AUTH_FLEET_REGISTRATION_FAILED: 'auth.fleet_registration_failed',
+  /**
+   * Entreprise de transport inscrite, pas encore validée par un admin Echango.
+   *
+   * Le pendant exact de `merchant_pending`, et il suit la même exception de
+   * nommage pour que les deux se lisent en parallèle — l'un sans point et
+   * l'autre avec aurait laissé croire à deux mécanismes différents.
+   */
+  AUTH_FLEET_PENDING: 'fleet_pending',
+  /**
+   * Une entreprise tente d'inviter un conducteur qui n'est pas le sien.
+   *
+   * Le garde `@Persona('fleet')` dit **qui** a le droit d'émettre une
+   * invitation, jamais **pour quel conducteur** : sans ce refus, un compte
+   * flotte pouvait inviter n'importe quel `Driver` du réseau non encore
+   * inscrit, et créer son compte applicatif à sa place.
+   */
+  AUTH_DRIVER_NOT_IN_FLEET: 'auth.driver_not_in_fleet',
   AUTH_DRIVER_REGISTRATION_FAILED: 'auth.driver_registration_failed',
   AUTH_DRIVER_NOT_FOUND: 'auth.driver_not_found',
   AUTH_DRIVER_UNKNOWN: 'auth.driver_unknown',
@@ -84,6 +101,14 @@ export const ErrorCode = {
   /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
   /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
   CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
+  /**
+   * L'identifiant de contrepartie d'une remise ne correspond à aucun compte.
+   *
+   * Le serveur type lui-même la contrepartie à partir de son identifiant (voir
+   * `declareRemittanceTo`) : ne rien trouver signifie que l'appelant a envoyé
+   * un identifiant qui n'existe dans aucune des trois tables.
+   */
+  CASH_COUNTERPARTY_NOT_FOUND: 'cash.counterparty_not_found',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   ORDER_NOT_FOUND: 'order.not_found',
@@ -106,6 +131,8 @@ export const ErrorCode = {
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
+  /** Le rattachement d'une course à une entreprise a échoué côté Fleetbase. */
+  ORDER_CLAIM_FAILED: 'order.claim_failed',
   /** Encaissement de la marchandise seule sans rémunération connue :
    *  impossible de savoir combien réclamer à la porte. */
   ORDER_COD_REQUIRES_PRICE: 'order.cod_requires_price',
@@ -134,6 +161,26 @@ export const ErrorCode = {
   DRIVER_POSITION_UPDATE_FAILED: 'driver.position_update_failed',
   DRIVER_ONLINE_TOGGLE_FAILED: 'driver.online_toggle_failed',
   DRIVER_SEARCH_UNAVAILABLE: 'driver.search_unavailable',
+  /// Recherche trop large : on demande de préciser plutôt que de tronquer, une
+  /// liste balayable étant l'annuaire qu'on refuse d'ouvrir (29/07).
+  DRIVER_SEARCH_TOO_BROAD: 'driver.search_too_broad',
+  /// Cette personne est déjà dans le réseau : on ne la crée pas une seconde
+  /// fois, on demande son rattachement. C'est la garde qui fait tenir toute la
+  /// multi-appartenance — sans elle, deux entreprises créent deux conducteurs
+  /// pour une seule personne, avec position et historique désynchronisés.
+  DRIVER_ALREADY_IN_NETWORK: 'driver.already_in_network',
+
+  // ── Adhésions conducteur ↔ entreprise ────────────────────────────────────
+  MEMBERSHIP_NOT_FOUND: 'membership.not_found',
+  MEMBERSHIP_ALREADY_EXISTS: 'membership.already_exists',
+  /// Le conducteur a déjà répondu — l'entreprise ne peut plus décider à sa place.
+  MEMBERSHIP_NOT_PENDING: 'membership.not_pending',
+  /// Seul un rattachement actif se suspend, et seul un suspendu se réactive.
+  /// Les deux gardes existent parce que **leur absence d'un seul côté** ouvrait
+  /// un chemin `pending → suspended → active` qui produisait un rattachement
+  /// sans le consentement du conducteur.
+  MEMBERSHIP_NOT_ACTIVE: 'membership.not_active',
+  MEMBERSHIP_NOT_SUSPENDED: 'membership.not_suspended',
 
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   FLEET_NOT_FOUND: 'fleet.not_found',

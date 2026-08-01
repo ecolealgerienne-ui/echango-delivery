@@ -103,8 +103,16 @@ export class AuthController {
 
   @Persona('fleet')
   @Post('transporteur/invitation')
-  async createDriverInvitation(@Body() dto: CreateDriverInvitationDto) {
+  async createDriverInvitation(@Request() req: any, @Body() dto: CreateDriverInvitationDto) {
+    // `req.user.id` est passé, et ce n'est pas cosmétique : le garde de persona
+    // dit **qui** a le droit d'émettre une invitation, jamais **pour quel
+    // conducteur**. Sans l'identité de l'appelant, n'importe quel compte flotte
+    // pouvait inviter un `Driver` d'une autre flotte — les uuid de conducteurs
+    // sortent dans `ORDER_LINK_FIELDS` — et créer son compte applicatif à sa
+    // place. Le correctif C2 du 28/07 avait fermé « uuid lu sur une commande » ;
+    // l'inscription flotte en libre-service le rouvrait.
     return this.authService.createDriverInvitation(
+      req.user.id,
       dto.fleetbaseDriverUuid,
       dto.email,
       dto.validForDays,

@@ -2,15 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
 import '../../models/cash.dart';
+import '../../state/locale_state.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
 import '../../services/photo_service.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../widgets/proof_image.dart';
+import '../../theme/app_buttons.dart';
+import '../../theme/app_semantic_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
+import 'status_colors.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/notice.dart';
+import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatelessWidget {
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final String orderId;
 
   const OrderDetailScreen({super.key, required this.orderId});
@@ -26,31 +43,39 @@ class OrderDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Détail de la commande'),
+          title: Text(_t(context, 'driver.order.title')),
           elevation: 0,
         ),
         body: Consumer<OrderState>(
           builder: (context, orderState, _) {
             final order = orderState.selectedOrder;
 
-            if (orderState.isLoading) {
+            // ⚠️ `order == null` en plus de `isLoading`. `OrderState._isLoading`
+            // est levé par **toutes** les écritures — accepter, démarrer,
+            // refuser, envoyer la preuve — et pas seulement par la lecture. Sans
+            // cette condition, chaque appui sur un bouton effaçait l'écran
+            // entier au profit d'un indicateur nu : le transporteur perdait
+            // l'adresse et le montant à encaisser qu'il était peut-être en train
+            // de lire, ainsi que sa position de défilement, et l'envoi d'une
+            // photo — le plus long des quatre — laissait l'écran vide plusieurs
+            // secondes. L'attente s'affiche désormais là où l'action a été
+            // déclenchée, cf. `_buildActionButtons`.
+            if (orderState.isLoading && order == null) {
               return const Center(child: CircularProgressIndicator());
             }
 
             if (order == null) {
-              return const Center(child: Text('Commande introuvable'));
+              return Center(child: Text(_t(context, 'driver.order.not_found')));
             }
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Order Header
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
+                  AppSectionCard(
+                    child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Expanded + ellipsis : le titre et la puce se
@@ -63,35 +88,44 @@ class OrderDetailScreen extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                  'Commande ${order.publicId}',
+                                  _t(context, 'driver.order.number',
+                                      {'id': order.publicId}),
                                   style: Theme.of(context).textTheme.titleLarge,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Chip(
-                                label: Text(order.status),
-                                backgroundColor: _getStatusColor(order.status),
-                                labelStyle: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              // Le fond et l'encre viennent du même appel :
+                              // un blanc unique sur cinq teintes laissait le
+                              // contraste au hasard, et deux appels séparés
+                              // laissaient l'oubli possible.
+                              Builder(builder: (context) {
+                                final c =
+                                    driverStatusColors(context, order.status);
+                                return Chip(
+                                  label: Text(order.status),
+                                  backgroundColor: c.background,
+                                  labelStyle: TextStyle(
+                                    color: c.foreground,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              }),
                             ],
                           ),
                           if (order.formattedPrice != null) ...[
-                            const SizedBox(height: 12),
+                            const SizedBox(height: AppSpacing.md),
                             Row(
                               children: [
                                 Icon(Icons.payments_outlined,
-                                    color: Colors.green.shade800),
-                                const SizedBox(width: 8),
+                                    color: context.semantic.success),
+                                const SizedBox(width: AppSpacing.sm),
                                 Text(
                                   order.formattedPrice!,
                                   style: Theme.of(context)
                                       .textTheme
                                       .titleLarge
-                                      ?.copyWith(color: Colors.green.shade800),
+                                      ?.copyWith(color: context.semantic.success),
                                 ),
                               ],
                             ),
@@ -102,13 +136,13 @@ class OrderDetailScreen extends StatelessWidget {
                           // transporteur gagne, l'autre ce qu'il transporte
                           // pour le compte du commerçant.
                           if (order.codAmount != null) ...[
-                            const SizedBox(height: 12),
+                            const SizedBox(height: AppSpacing.md),
                             Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.all(AppSpacing.md),
                               decoration: BoxDecoration(
-                                color: Colors.amber.shade100,
-                                borderRadius: BorderRadius.circular(8),
+                                color: context.semantic.warningContainer,
+                                borderRadius: BorderRadius.circular(AppRadius.md),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,11 +150,14 @@ class OrderDetailScreen extends StatelessWidget {
                                   Row(
                                     children: [
                                       const Icon(Icons.account_balance_wallet_outlined),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: AppSpacing.sm),
                                       Text(
-                                        'À encaisser : '
-                                        '${order.codAmount!.toStringAsFixed(0)} '
-                                        '${order.codCurrency ?? ''}'.trim(),
+                                        _t(context, 'driver.order.cod.label', {
+                                          'amount':
+                                              '${order.codAmount!.toStringAsFixed(0)} '
+                                                      '${order.codCurrency ?? ''}'
+                                                  .trim(),
+                                        }),
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleMedium
@@ -128,74 +165,71 @@ class OrderDetailScreen extends StatelessWidget {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 4),
-                                  const Text(
-                                    'Somme due par le destinataire au commerçant. '
-                                    'Vous la conservez et la lui remettez au '
-                                    'prochain enlèvement.',
-                                    style: TextStyle(fontSize: 12),
+                                  const SizedBox(height: AppSpacing.xs),
+                                  Text(
+                                    _t(context, 'driver.order.cod.hint'),
+                                    style: const TextStyle(fontSize: 12),
                                   ),
                                 ],
                               ),
                             ),
                           ],
-                          const SizedBox(height: 16),
-                          _buildInfoRow('Créée le :', order.createdAt.toString().split('.')[0]),
-                          _buildInfoRow('Mise à jour :', order.updatedAt.toString().split('.')[0]),
+                          const SizedBox(height: AppSpacing.lg),
+                          // ⚠️ `toString()` sans `toLocal()` affichait l'UTC :
+                          // « Créée le » était une heure trop tôt, juste
+                          // au-dessus d'une date d'échec que le même écran
+                          // localisait. `formatFull` porte le `toLocal()`.
+                          _buildInfoRow(_t(context, 'driver.order.created'), formatFull(order.createdAt)),
+                          _buildInfoRow(_t(context, 'driver.order.updated'), formatFull(order.updatedAt)),
                         ],
                       ),
-                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Locations
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
+                  AppSectionCard(
+                    child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // L'enlèvement est un commerce : rien n'y est
                           // masqué, hors son téléphone.
                           _PlaceBlock(
-                            label: 'Enlèvement',
+                            label: _t(context, 'order.schedule.title'),
                             place: order.pickupPlace,
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.lg),
                           _PlaceBlock(
-                            label: 'Livraison',
+                            label: _t(context, 'order.section.dropoff'),
                             place: order.dropoffPlace,
                             obscured: order.redacted,
                           ),
                         ],
                       ),
-                    ),
                   ),
                   // Dire pourquoi les contacts manquent. Sans ce message, une
                   // fiche expurgée se lit comme une commande mal saisie, et le
                   // transporteur cherche un numéro qui ne viendra qu'après
                   // acceptation.
                   if (order.redacted) ...[
-                    const SizedBox(height: 16),
-                    Card(
-                      color: Theme.of(context).colorScheme.secondaryContainer,
-                      child: const ListTile(
-                        leading: Icon(Icons.lock_outline),
-                        title: Text('Course non réclamée'),
-                        subtitle: Text(
-                          'Seule la commune de livraison est affichée. '
-                          'L\'adresse exacte, le nom du destinataire et les '
-                          'téléphones apparaissent dès que vous acceptez.',
-                        ),
-                      ),
+                    const SizedBox(height: AppSpacing.lg),
+                    AppNotice.info(
+                      icon: Icons.lock_outline,
+                      title: _t(context, 'driver.order.redacted.title'),
+                      // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
+                      // Il annonçait une adresse réduite à la commune, alors
+                      // que l'adresse complète est servie : le transporteur
+                      // cherchait une information déjà sous ses yeux. Un
+                      // libellé qui décrit l'ancienne règle est pire que pas
+                      // de libellé du tout.
+                      message: _t(context, 'driver.order.redacted.body'),
                     ),
                   ],
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   // Tous les signalements, du plus récent au plus ancien.
                   // N'en montrer qu'un effaçait l'historique des tentatives —
                   // et avec lui les photos des précédentes.
                   if (order.deliveryFailures.isNotEmpty) ...[
                     _FailureHistory(failures: order.deliveryFailures),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: AppSpacing.lg),
                   ],
                   // Action Buttons
                   _buildActionButtons(context, order, orderState),
@@ -230,9 +264,9 @@ class OrderDetailScreen extends StatelessWidget {
     final claimable = order.adhoc == true && order.driverId == null;
     if (claimable) {
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy ? null : () => _acceptOrder(context, order.id, orderState),
-          child: const Text('Accepter cette course'),
+          child: Text(_t(context, 'driver.order.accept')),
         ),
       );
     }
@@ -246,18 +280,22 @@ class OrderDetailScreen extends StatelessWidget {
           code) as String;
       final requiresPod = activity['require_pod'] == true;
 
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy
               ? null
               : () => requiresPod
                   ? _applyActivityWithProof(context, order, activity, orderState)
                   : _applyActivity(context, order, activity, orderState),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: code == 'completed' ? Colors.green : Colors.orange,
+          style: FilledButton.styleFrom(
+            backgroundColor: code == 'completed'
+                ? context.semantic.success
+                : context.semantic.warning,
           ),
-          child: Text(requiresPod ? '$label (preuve requise)' : label),
+          child: Text(requiresPod
+              ? _t(context, 'driver.order.activity.pod', {'label': label})
+              : label),
         ),
       );
     }
@@ -275,7 +313,7 @@ class OrderDetailScreen extends StatelessWidget {
     // présenter deux actions différentes sous un même mot.
     final returnable = !order.isFinished && !claimable && order.isPending;
     if (claimable || returnable) {
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
         OutlinedButton.icon(
           onPressed: busy
@@ -283,28 +321,45 @@ class OrderDetailScreen extends StatelessWidget {
               : () => _declineOrder(context, order.id, orderState,
                   assigned: returnable),
           icon: const Icon(Icons.do_not_disturb_on_outlined),
-          label: Text(claimable ? 'Refuser cette course' : 'Rendre cette course'),
-          style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+          label: Text(claimable ? _t(context, 'driver.order.decline') : _t(context, 'driver.order.release')),
+          style: AppButtonStyles.destructiveOutlined(context),
         ),
       );
     }
 
     // Signalement d'échec : pertinent tant que la commande n'est pas close.
     if (!order.isFinished && !claimable) {
-      buttons.add(const SizedBox(height: 12));
+      buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
-        ElevatedButton(
+        FilledButton(
           onPressed: busy
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/echec'),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-          child: const Text('Signaler un échec de livraison'),
+          style: AppButtonStyles.destructiveFilled(context),
+          child: Text(_t(context, 'driver.order.report_failure')),
         ),
       );
     }
 
     if (buttons.isEmpty) {
       return const SizedBox.shrink();
+    }
+
+    // L'attente se montre **ici**, à l'endroit d'où part l'action, et non en
+    // effaçant l'écran. Des boutons simplement grisés ne diraient pas si quelque
+    // chose est en cours — c'est la règle que porte déjà `AppLoadMore` : pendant
+    // le chargement, l'indicateur *remplace* le bouton au lieu de s'y ajouter.
+    //
+    // ⚠️ **Après** `buttons.isEmpty`, et non avant : une course close n'a aucun
+    // bouton, et un indicateur y apparaîtrait à chaque relecture, à l'endroit où
+    // il n'y a jamais rien eu. Les `busy ? null :` de chaque bouton deviennent
+    // de ce fait redondants ; ils restent, parce qu'un garde qui ne coûte rien
+    // vaut mieux qu'un ordre d'instructions qu'il faudrait se rappeler.
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons);
@@ -339,11 +394,9 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!sent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Envoi de la preuve impossible'),
-          backgroundColor: Colors.red,
-        ),
+      showAppError(
+        context,
+        orderState.errorMessage ?? _t(context, 'driver.order.proof.failed'),
       );
       return;
     }
@@ -400,16 +453,10 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (success) {
       final label = (activity['_resolved_status'] ?? activity['code'] ?? '') as String;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Étape appliquée : $label')),
-      );
+      showAppSnackBar(
+          context, _t(context, 'driver.order.activity.done', {'label': label}));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Échec de la mise à jour'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? _t(context, 'driver.order.activity.failed'));
     }
   }
 
@@ -435,7 +482,6 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (choice == null || !context.mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final success = await orderState.declineOrder(
       orderId: orderId,
       reason: choice.reason,
@@ -444,23 +490,15 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!success) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(orderState.errorMessage ?? 'Refus impossible'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      showAppError(context, orderState.errorMessage ?? _t(context, 'driver.order.decline.failed'));
       return;
     }
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          orderState.lastDeclineReleasedToPool == true
-              ? 'Course rendue au réseau. Le commerçant en a été informé.'
-              : 'Course écartée. Elle ne vous sera plus proposée.',
-        ),
-      ),
+    showAppSnackBar(
+      context,
+      orderState.lastDeclineReleasedToPool == true
+          ? _t(context, 'driver.order.release.done')
+          : _t(context, 'driver.order.decline.done'),
     );
 
     // Retour à la liste : la fiche d'une course qu'on vient d'écarter n'a plus
@@ -477,31 +515,10 @@ class OrderDetailScreen extends StatelessWidget {
     final success = await orderState.acceptOrder(orderId);
     if (success) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Course acceptée')),
-      );
+      showAppSnackBar(context, _t(context, 'driver.order.accept.done'));
     }
   }
 
-  /// Couleurs alignées sur les statuts Fleetbase réels. L'ancienne version
-  /// testait 'accepted' et 'picked_up', qui n'existent pas : tout tombait
-  /// dans le gris par défaut.
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'created':
-      case 'dispatched':
-        return Colors.orange;
-      case 'started':
-      case 'enroute':
-        return Colors.blue;
-      case 'completed':
-        return Colors.green;
-      case 'canceled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
 }
 
 /// Feuille de refus : motif obligatoire, précision facultative.
@@ -523,14 +540,20 @@ class _DeclineSheet extends StatefulWidget {
 }
 
 class _DeclineSheetState extends State<_DeclineSheet> {
-  static const _reasons = <(String, String, IconData)>[
-    ('prix_insuffisant', 'Le prix ne couvre pas le trajet', Icons.payments_outlined),
-    ('trop_loin', 'Trop loin de ma position', Icons.route_outlined),
-    ('vehicule_inadapte', 'Mon véhicule n\'est pas adapté', Icons.two_wheeler_outlined),
-    ('creneau_impossible', 'Je ne suis pas libre à cet horaire', Icons.schedule_outlined),
-    ('colis_inadapte', 'Le colis ne me convient pas', Icons.inventory_2_outlined),
-    ('indisponible', 'Je ne suis pas disponible', Icons.do_not_disturb_on_outlined),
-    ('autre', 'Autre raison', Icons.more_horiz),
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  // Le code part au serveur et sera compté, l'icône est de l'écran, le libellé
+  // est de la langue — d'où trois choses et non une map de deux. Même
+  // séparation que `deliveryFailureReasons` / `deliveryFailureLabel`.
+  static const _reasons = <(String, IconData)>[
+    ('prix_insuffisant', Icons.payments_outlined),
+    ('trop_loin', Icons.route_outlined),
+    ('vehicule_inadapte', Icons.two_wheeler_outlined),
+    ('creneau_impossible', Icons.schedule_outlined),
+    ('colis_inadapte', Icons.inventory_2_outlined),
+    ('indisponible', Icons.do_not_disturb_on_outlined),
+    ('autre', Icons.more_horiz),
   ];
 
   String? _reason;
@@ -546,8 +569,8 @@ class _DeclineSheetState extends State<_DeclineSheet> {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
@@ -557,49 +580,47 @@ class _DeclineSheetState extends State<_DeclineSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              widget.assigned ? 'Rendre cette course' : 'Refuser cette course',
+              widget.assigned ? _t('driver.order.release') : _t('driver.order.decline'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
               widget.assigned
-                  ? 'Elle sera proposée aux autres transporteurs du réseau, et '
-                      'le commerçant en sera informé.'
-                  : 'Elle ne vous sera plus proposée. Les autres transporteurs '
-                      'la voient toujours.',
+                  ? _t('driver.order.release.body')
+                  : _t('driver.order.decline.body'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             // Des ListTile sélectionnables plutôt que des RadioListTile : le
             // couple `groupValue`/`onChanged` est déprécié depuis Flutter 3.32
             // au profit de RadioGroup, et cet écran doit compiler sans
             // avertissement sur la version de l'utilisateur, que je ne peux
             // pas éprouver ici. Un tri visuel par coche rend d'ailleurs la
             // sélection plus lisible sur un téléphone tenu d'une main.
-            for (final (code, label, icon) in _reasons)
+            for (final (code, icon) in _reasons)
               ListTile(
                 onTap: () => setState(() => _reason = code),
                 leading: Icon(icon),
-                title: Text(label),
+                title: Text(_t('driver.reason.$code')),
                 trailing: _reason == code
-                    ? const Icon(Icons.check_circle, color: Colors.red)
+                    ? Icon(Icons.check_circle,
+                        color: Theme.of(context).colorScheme.error)
                     : null,
                 selected: _reason == code,
                 contentPadding: EdgeInsets.zero,
                 dense: true,
               ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: _notes,
               maxLines: 2,
               maxLength: 200,
-              decoration: const InputDecoration(
-                labelText: 'Précision (facultatif)',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: _t('driver.order.note'),
               ),
             ),
-            const SizedBox(height: 8),
-            ElevatedButton(
+            const SizedBox(height: AppSpacing.sm),
+            FilledButton(
               onPressed: _reason == null
                   ? null
                   : () => Navigator.pop(
@@ -609,16 +630,18 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                           notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
                         ),
                       ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+              // ⚠️ Le rembourrage vertical valait 14, hors barème — glissé sur
+              // `AppSpacing.md` (12), le jeton voisin. Deux pixels, mais la
+              // seule valeur d'espacement du fichier qui n'était pas nommée.
+              style: AppButtonStyles.destructiveFilled(
+                context,
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               ),
-              child: Text(widget.assigned ? 'Rendre la course' : 'Refuser'),
+              child: Text(widget.assigned ? _t('driver.order.release.confirm') : _t('driver.order.decline.confirm')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Annuler'),
+              child: Text(_t('common.cancel')),
             ),
           ],
         ),
@@ -639,43 +662,45 @@ class _ProofSheet extends StatefulWidget {
 }
 
 class _ProofSheetState extends State<_ProofSheet> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   CapturedPhoto? _photo;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 24,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
+        top: AppSpacing.xl,
         // Sans ça, le clavier ou la barre système recouvre le bouton de
         // validation sur les petits écrans.
-        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PhotoField(
-            label: 'Preuve de livraison',
+            label: _t('order.pod.label'),
             required: true,
-            helperText: 'Cette étape exige une photo : colis remis, '
-                'signature, ou dépôt convenu.',
+            helperText: _t('driver.order.proof.hint'),
             onChanged: (photo) => setState(() => _photo = photo),
           ),
-          const SizedBox(height: 24),
-          ElevatedButton(
+          const SizedBox(height: AppSpacing.xl),
+          FilledButton(
             onPressed: _photo == null
                 ? null
                 : () => Navigator.pop(context, _photo),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
-            child: const Text('Envoyer la preuve et valider l\'étape'),
+            child: Text(_t('driver.order.proof.submit')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
+            child: Text(_t('common.cancel')),
           ),
         ],
       ),
@@ -690,10 +715,18 @@ class _ProofSheetState extends State<_ProofSheet> {
 /// pouvoir la suivre et appeler sur place — sans ça il ressaisit tout à la
 /// main dans une autre application, au volant.
 class _PlaceBlock extends StatelessWidget {
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final String label;
   final Place? place;
 
-  /// Course pas encore réclamée : le serveur n'a transmis que la commune.
+  /// Course pas encore réclamée : le serveur a retiré le nom et le téléphone
+  /// du destinataire, et rien d'autre.
   final bool obscured;
 
   const _PlaceBlock({
@@ -711,8 +744,8 @@ class _PlaceBlock extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text('Adresse non renseignée', style: theme.textTheme.bodySmall),
+          const SizedBox(height: AppSpacing.xs),
+          Text(_t(context, 'driver.order.place.no_address'), style: theme.textTheme.bodySmall),
         ],
       );
     }
@@ -722,31 +755,42 @@ class _PlaceBlock extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Text(
-          p.name,
-          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        // Une adresse vide sur une course expurgée n'est pas une donnée
-        // manquante : c'est une adresse dont on n'a pas su extraire la
-        // commune. Le dire, sinon le bloc paraît incomplet.
+        const SizedBox(height: AppSpacing.sm),
+        // ⚠️ `name` est **absent** sur une course non réclamée (c'est celui du
+        // destinataire), donc `Place.fromJson` rend une chaîne vide : le bloc
+        // commençait par une ligne vide en gras.
+        if (p.name.isNotEmpty)
+          Text(
+            p.name,
+            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
         if (p.address.isNotEmpty)
           Text(p.address)
         else if (obscured)
-          Text('Commune non précisée', style: theme.textTheme.bodySmall),
-        if (p.contactName != null) Text('Contact : ${p.contactName}'),
-        const SizedBox(height: 8),
+          // Ni le nom ni l'adresse : le lieu n'a aucune composante structurée,
+          // ce qui est le cas courant des commandes saisies sans passer par la
+          // carte. L'adresse réelle est dans les précisions ci-dessous, et la
+          // porte dans l'itinéraire.
+          Text(_t(context, 'driver.order.place.address_in_notes'), style: theme.textTheme.bodySmall),
+        if (p.contactName != null) Text(_t(context, 'driver.order.place.contact', {'name': p.contactName!})),
+        const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
           children: [
-            // Pas d'itinéraire sur une course non réclamée : le serveur ne
-            // transmet pas les coordonnées, et proposer un bouton qui mènerait
-            // au centre de la carte serait pire que ne rien proposer.
-            if (!obscured)
+            // ⚠️ L'itinéraire est désormais offert **aussi** sur une course non
+            // réclamée : depuis le 31/07/2026 le serveur transmet la position
+            // (seule l'identité est retirée), et c'est le détour qui décide si
+            // la course vaut le déplacement. La garde porte donc sur la donnée
+            // réellement nécessaire — des coordonnées — et non sur un état.
+            //
+            // Sans ça, une entreprise obtenait « Ouvrir dans une carte » sur une
+            // opportunité et un indépendant regardant la MÊME course ne
+            // l'obtenait pas.
+            if (p.latitude != null && p.longitude != null)
               TextButton.icon(
                 onPressed: () => _navigate(context, p),
                 icon: const Icon(Icons.directions_outlined),
-                label: const Text('Itinéraire'),
+                label: Text(_t(context, 'driver.order.route')),
               ),
             if (p.contactPhone != null)
               TextButton.icon(
@@ -764,19 +808,16 @@ class _PlaceBlock extends StatelessWidget {
     final ok = await NavigationLauncher.navigateTo(p);
     if (!context.mounted || ok) return;
     // Un bouton qui ne fait rien est indiscernable d'une application figée.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Aucune application de navigation trouvée sur cet appareil.'),
-      ),
+    showAppError(
+      context,
+      _t(context, 'driver.order.nav.none'),
     );
   }
 
   Future<void> _call(BuildContext context, String phone) async {
     final ok = await NavigationLauncher.call(phone);
     if (!context.mounted || ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Impossible de lancer l\'appel.')),
-    );
+    showAppError(context, _t(context, 'driver.order.call.failed'));
   }
 }
 
@@ -794,7 +835,7 @@ class _PlaceBlock extends StatelessWidget {
 /// méthode privée de widget n'est pas atteignable depuis un autre widget.
 Widget _buildInfoRow(String label, String value) {
   return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
+    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -815,6 +856,13 @@ Widget _buildInfoRow(String label, String value) {
 /// décision de l'opérateur, et elle se perdrait dans une liste qu'il faut
 /// dénombrer soi-même.
 class _FailureHistory extends StatelessWidget {
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final List<DeliveryFailure> failures;
 
   const _FailureHistory({required this.failures});
@@ -824,68 +872,72 @@ class _FailureHistory extends StatelessWidget {
     final theme = Theme.of(context);
     final multiple = failures.length > 1;
 
-    return Card(
-      color: Colors.red.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    return AppSectionCard(
+      color: theme.colorScheme.errorContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.error_outline, color: Colors.red.shade700),
-                const SizedBox(width: 8),
+                Icon(Icons.error_outline,
+                    color: theme.colorScheme.onErrorContainer),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
                     multiple
-                        ? '${failures.length} échecs de livraison signalés'
-                        : 'Échec de livraison signalé',
+                        ? _t(context, 'driver.order.failures.many',
+                            {'count': '${failures.length}'})
+                        : _t(context, 'driver.order.failures.one'),
                     style: theme.textTheme.titleMedium
-                        ?.copyWith(color: Colors.red.shade700),
+                        ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
                 ),
               ],
             ),
             for (var i = 0; i < failures.length; i++) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpacing.md),
               if (multiple) ...[
                 const Divider(height: 1),
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.md),
                 Text(
                   // Numérotation à rebours : le plus récent porte le numéro le
                   // plus élevé, ce qui rend l'ordre chronologique lisible sans
                   // avoir à comparer les dates.
-                  'Tentative ${failures.length - i} — ${_formatDate(failures[i].createdAt)}',
+                  _t(context, 'driver.order.failures.attempt', {
+                    'n': '${failures.length - i}',
+                    'date': formatDayTime(failures[i].createdAt),
+                  }),
                   style: theme.textTheme.labelLarge
-                      ?.copyWith(color: Colors.red.shade700),
+                      ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
               ],
               _FailureEntry(failure: failures[i]),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: AppSpacing.md),
             // Le statut Fleetbase reste inchangé par un signalement (§6.5) :
             // le dire, sinon l'écart entre « échec signalé » et « statut
             // enroute » passe pour une incohérence.
             Text(
-              'La commande conserve son statut : le signalement est transmis '
-              'à l\'opérateur, qui décide de la suite.',
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.red.shade700),
+              _t(context, 'driver.order.failures.note'),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ],
         ),
-      ),
     );
   }
 
-  static String _formatDate(DateTime date) {
-    final local = date.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(local.day)}/${two(local.month)} à ${two(local.hour)}h${two(local.minute)}';
-  }
 }
 
 class _FailureEntry extends StatelessWidget {
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final DeliveryFailure failure;
 
   const _FailureEntry({required this.failure});
@@ -895,10 +947,10 @@ class _FailureEntry extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildInfoRow('Motif :', failure.reason),
-        if (failure.notes != null) _buildInfoRow('Notes :', failure.notes!),
+        _buildInfoRow(_t(context, 'driver.order.failures.reason'), failure.reason),
+        if (failure.notes != null) _buildInfoRow(_t(context, 'driver.order.failures.notes'), failure.notes!),
         if (failure.photoUrl != null) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           ProofImage(url: failure.photoUrl!),
         ],
       ],
@@ -939,6 +991,9 @@ class _CashSheet extends StatefulWidget {
 }
 
 class _CashSheetState extends State<_CashSheet> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   late final TextEditingController _amount =
       TextEditingController(text: widget.expected.toStringAsFixed(0));
   final _notes = TextEditingController();
@@ -966,8 +1021,8 @@ class _CashSheetState extends State<_CashSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
@@ -976,37 +1031,43 @@ class _CashSheetState extends State<_CashSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Encaissement', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
+            Text(_t('driver.order.cash.title'), style: theme.textTheme.titleMedium),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              'Montant attendu : ${widget.expected.toStringAsFixed(0)} '
-              '${widget.currency}',
+              _t('driver.order.cash.expected', {
+                'amount':
+                    '${widget.expected.toStringAsFixed(0)} ${widget.currency}',
+              }),
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.lg),
             TextField(
               controller: _amount,
               keyboardType: TextInputType.number,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Montant réellement perçu',
-                border: const OutlineInputBorder(),
+                labelText: _t('driver.order.cash.collected'),
                 prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
                 suffixText: widget.currency,
               ),
             ),
             if (_differs) ...[
-              const SizedBox(height: 16),
-              Text('Pourquoi l\'écart ?', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 4),
-              for (final entry in cashDiscrepancyLabels.entries)
+              const SizedBox(height: AppSpacing.lg),
+              Text(_t('driver.order.cash.why'), style: theme.textTheme.titleSmall),
+              const SizedBox(height: AppSpacing.xs),
+              // Le code part au serveur, le libellé suit la langue : la table
+              // mêlée figeait les deux dans le même objet.
+              for (final code in cashDiscrepancyReasons)
                 ListTile(
-                  onTap: () => setState(() => _reason = entry.key),
-                  title: Text(entry.value),
-                  trailing: _reason == entry.key
-                      ? const Icon(Icons.check_circle, color: Colors.orange)
+                  onTap: () => setState(() => _reason = code),
+                  title: Text(cashDiscrepancyLabel(
+                      code, context.watch<LocaleState>().locale,
+                      fallback: code)),
+                  trailing: _reason == code
+                      ? Icon(Icons.check_circle,
+                          color: context.semantic.warning)
                       : null,
-                  selected: _reason == entry.key,
+                  selected: _reason == code,
                   contentPadding: EdgeInsets.zero,
                   dense: true,
                 ),
@@ -1014,23 +1075,21 @@ class _CashSheetState extends State<_CashSheet> {
                 controller: _notes,
                 maxLines: 2,
                 maxLength: 200,
-                decoration: const InputDecoration(
-                  labelText: 'Précision (facultatif)',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: _t('driver.order.note'),
                 ),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               // Rappeler ce qu'implique la validation : la somme devient une
               // dette du transporteur envers le commerçant, et elle le suit
               // jusqu'à la remise.
-              'Cette somme sera ajoutée à ce que vous devez remettre au '
-              'commerçant. Vous la retrouverez dans « Ma caisse ».',
+              _t('driver.order.cash.hint'),
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
+            const SizedBox(height: AppSpacing.md),
+            FilledButton(
               onPressed: _canSubmit
                   ? () => Navigator.pop(
                         context,
@@ -1043,14 +1102,14 @@ class _CashSheetState extends State<_CashSheet> {
                         ),
                       )
                   : null,
-              style: ElevatedButton.styleFrom(
+              style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              child: const Text('Valider et clôturer la livraison'),
+              child: Text(_t('driver.order.cash.submit')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Retour'),
+              child: Text(_t('common.back')),
             ),
           ],
         ),

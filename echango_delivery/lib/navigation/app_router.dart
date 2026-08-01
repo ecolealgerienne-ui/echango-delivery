@@ -9,10 +9,13 @@ import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
-import '../screens/flotte/flotte_placeholder_screen.dart';
+import '../screens/flotte/driver_map_screen.dart';
+import '../screens/flotte/flotte_home_screen.dart';
+import '../screens/flotte/flotte_order_detail_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
+import '../screens/transporteur/my_fleets_screen.dart';
 import '../screens/transporteur/order_detail_screen.dart' as transporteur;
 import '../state/auth_state.dart';
 
@@ -80,6 +83,12 @@ GoRouter buildAppRouter(AuthState authState) {
               ),
             ],
           ),
+          // Les entreprises du conducteur. Ce n'est pas un écran administratif :
+          // un rattachement décide à qui il devra les espèces d'une course.
+          GoRoute(
+            path: 'entreprises',
+            builder: (_, __) => const MyFleetsScreen(),
+          ),
         ],
       ),
 
@@ -126,12 +135,48 @@ GoRouter buildAppRouter(AuthState authState) {
         ],
       ),
 
-      // Le rôle existe côté serveur et son espace n'est pas construit : lui
-      // donner un écran qui l'explique, plutôt que l'écran d'erreur de
-      // go_router sur une route absente.
+      // L'espace entreprise de transport. `FlottePlaceholderScreen` disait
+      // « Espace non disponible » alors que six routes BFF l'attendaient depuis
+      // le 28/07 — le serveur savait, l'app ignorait (défaut D20).
       GoRoute(
         path: '/flotte',
-        builder: (_, __) => const FlottePlaceholderScreen(),
+        builder: (_, __) => const FlotteHomeScreen(),
+        routes: [
+          // Le registre vu de l'entreprise : ce que ses conducteurs lui doivent,
+          // ce qu'elle doit aux commerçants. Même écran que les deux autres
+          // personas — c'est le même registre, vu d'un troisième bout.
+          GoRoute(
+            path: 'caisse',
+            builder: (_, __) => const CashScreen(persona: 'fleet'),
+          ),
+          // Une route et non un cinquième onglet : les positions se chargent à
+          // la demande. Un onglet les chargerait — flotte entière et tuiles de
+          // carte comprises — à chaque ouverture de l'espace entreprise, y
+          // compris pour venir consulter une course.
+          GoRoute(
+            path: 'carte',
+            builder: (_, __) => const FlotteDriverMapScreen(),
+          ),
+          // Deux chemins pour un écran, et non un drapeau dans l'URL : ils
+          // n'interrogent pas la même route serveur et n'obéissent pas à la
+          // même garde (appartenance d'un côté, disponibilité de l'autre).
+          // Un `?unclaimed=true` laisserait croire à un affichage qui se
+          // paramètre, alors que ce sont deux lectures distinctes.
+          GoRoute(
+            path: 'commandes/:id',
+            builder: (_, s) => FlotteOrderDetailScreen(
+              orderId: s.pathParameters['id']!,
+              unclaimed: false,
+            ),
+          ),
+          GoRoute(
+            path: 'opportunites/:id',
+            builder: (_, s) => FlotteOrderDetailScreen(
+              orderId: s.pathParameters['id']!,
+              unclaimed: true,
+            ),
+          ),
+        ],
       ),
     ],
   );

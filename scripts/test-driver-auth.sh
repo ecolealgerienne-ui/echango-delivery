@@ -94,21 +94,48 @@ pass "BFF joignable"
 # opérateur (correction de sécurité C2 : l'ancienne version laissait n'importe
 # qui s'enregistrer sur n'importe quel driver dont il connaissait l'uuid).
 # L'émission est réservée au persona `fleet` : il faut donc un compte flotte.
+#
+# ⚠️ Depuis le Lot 0 du chantier facilitateur, l'inscription d'une entreprise
+# ne délivre plus de jeton — elle enregistre une demande et répond
+# `403 fleet_pending` — et la connexion est refusée tant que le `Vendor` n'est
+# pas `active`. Le script tient donc le rôle de l'admin qui valide, avec la clé
+# de service. Le garde n'est pas contourné : il est franchi par le geste prévu,
+# et `register-merchant.sh` reste le script qui le prouve à la main.
+# shellcheck source=lib/fleetbase.sh
+. "$(dirname "$0")/lib/fleetbase.sh"
+
 FLEET_EMAIL="${FLEET_EMAIL:-flotte-test-$RANDOM@echango.local}"
-FLEET_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/flotte/register" \
+
+REG_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BFF_URL/auth/flotte/register" \
   -H 'Content-Type: application/json' \
   -d "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" \
-     '{email:$e, password:$p, businessName:"Flotte de test"}')" \
+     '{email:$e, password:$p, businessName:"Flotte de test"}')")
+
+# 403 = demande enregistrée (le cas nominal) ; 409 = compte déjà là, réutilisé.
+case "$REG_STATUS" in
+  403|409) ;;
+  2*) fail "l'inscription flotte a délivré un accès immédiat — le garde du Lot 0 ne s'applique pas" "HTTP $REG_STATUS" ;;
+  *)  fail "inscription flotte en échec" "HTTP $REG_STATUS" ;;
+esac
+
+fb_activate_vendor_by_email "$FLEET_EMAIL" \
+  || fail "activation du fournisseur opérateur impossible" "${FLEETBASE_ERROR:-}"
+
+# Second geste d'admin : l'invitation n'est permise que si l'émetteur est le
+# prestataire **plateforme** — un conducteur du pool n'appartient à aucune
+# entreprise, et seul Echango peut l'inviter (Lot 0, `assertDriverBelongsToFleet`).
+# shellcheck source=lib/driver-session.sh
+. "$(dirname "$0")/lib/driver-session.sh"
+_promote_operator_to_platform "$FLEET_EMAIL" \
+  || fail "promotion de l'opérateur en prestataire plateforme impossible" "${PLATFORM_PROMOTION_ERROR:-}"
+
+FLEET_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/flotte/login" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
   | jq -r '.token // empty')
 
-if [ -z "$FLEET_TOKEN" ]; then
-  FLEET_TOKEN=$(curl -sS -X POST "$BFF_URL/auth/flotte/login" \
-    -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')" \
-    | jq -r '.token // empty')
-fi
 [ -n "$FLEET_TOKEN" ] || fail "impossible d'obtenir un compte opérateur (flotte)" "-"
-pass "opérateur — compte flotte obtenu (émetteur d'invitations)"
+pass "opérateur — compte flotte validé, promu plateforme, connecté"
 
 INVITE=$(curl -sS -X POST "$BFF_URL/auth/transporteur/invitation" \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $FLEET_TOKEN" \

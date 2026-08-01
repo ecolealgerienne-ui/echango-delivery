@@ -1,13 +1,25 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 
-import '../errors/app_error.dart';
-import '../errors/error_translator.dart';
 import '../models/order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'write_envelope.dart';
+import '../errors/error_message.dart';
 
 /// État de gestion des commandes pour le driver.
-class OrderState extends ChangeNotifier {
+class OrderState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
@@ -25,7 +37,6 @@ class OrderState extends ChangeNotifier {
 
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
-  String get _genericError => translateErrorCode(AppError.unknown, _localeState.locale);
 
   List<Order> get orders => _orders;
   Order? get selectedOrder => _selectedOrder;
@@ -76,10 +87,8 @@ class OrderState extends ChangeNotifier {
       _orders = buckets['active'] ?? [];
       _adhocOrders = buckets['adhoc'] ?? [];
       _historyOrders = buckets['history'] ?? [];
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -109,10 +118,8 @@ class OrderState extends ChangeNotifier {
       } else {
         _nextActivities = [];
       }
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -133,25 +140,10 @@ class OrderState extends ChangeNotifier {
     String orderId,
     Future<void> Function() action,
   ) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await action();
+    return runWrite(action, reload: () async {
       await selectOrder(orderId);
       await loadOrders();
-      return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
-    } catch (e) {
-      _errorMessage = _genericError;
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    });
   }
 
   /// Accepte une commande.
@@ -206,11 +198,8 @@ class OrderState extends ChangeNotifier {
       _nextActivities = [];
       await loadOrders();
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;
@@ -234,11 +223,8 @@ class OrderState extends ChangeNotifier {
     try {
       await _apiClient.captureProofPhoto(orderId, [photoBase64]);
       return true;
-    } on AppException catch (e) {
-      _errorMessage = translateErrorCode(e.code, _localeState.locale);
-      return false;
     } catch (e) {
-      _errorMessage = _genericError;
+      _errorMessage = messageForError(e, _localeState.locale);
       return false;
     } finally {
       _isLoading = false;

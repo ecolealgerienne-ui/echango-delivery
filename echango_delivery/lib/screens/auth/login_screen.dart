@@ -4,8 +4,13 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/dev_accounts.dart';
+import '../../i18n/auth_strings.dart';
+import '../../state/locale_state.dart';
 import '../../state/auth_state.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
+import '../../theme/app_spacing.dart';
 
 /// Dernier email utilisé, pré-rempli au lancement suivant. L'email seul —
 /// jamais le mot de passe, qui n'a rien à faire dans des préférences en clair.
@@ -19,6 +24,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      authLabel(key, context.read<LocaleState>().locale, vars);
+
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -57,9 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = account?.password ?? _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Renseigner l\'email et le mot de passe')),
-      );
+      showAppError(context, _t('auth.login.missing'));
       return;
     }
 
@@ -81,7 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpacing.xl),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
@@ -94,13 +100,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   Icon(Icons.local_shipping,
                       size: 56, color: Theme.of(context).primaryColor),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: AppSpacing.md),
                   Text(
                     'Echango Delivery',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: AppSpacing.xxl),
 
                   // Aucun choix de profil demandé : le serveur le résout depuis
                   // l'email, seul à savoir dans quelle table le compte existe.
@@ -108,25 +114,23 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.email_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.login.email'),
+                      prefixIcon: const Icon(Icons.email_outlined),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
                     onSubmitted: (_) => _submit(authState),
-                    decoration: const InputDecoration(
-                      labelText: 'Mot de passe',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.login.password'),
+                      prefixIcon: const Icon(Icons.lock_outlined),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
+                  const SizedBox(height: AppSpacing.xl),
+                  FilledButton(
                     onPressed:
                         authState.isLoading ? null : () => _submit(authState),
                     child: authState.isLoading
@@ -135,10 +139,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             width: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Se connecter'),
+                        : Text(_t('auth.login.submit')),
                   ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.sm),
                   // Seul le commerçant peut s'inscrire seul : un transporteur
                   // est provisionné par un opérateur, son compte Echango se
                   // rattache ensuite à son Driver Fleetbase. Comme on ignore
@@ -146,10 +150,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   // l'ambiguïté.
                   TextButton(
                     onPressed: () => context.push('/register'),
-                    child: const Text('Créer un compte commerçant'),
+                    child: Text(_t('auth.login.register')),
                   ),
                   Text(
-                    'Les accès transporteur sont créés par Echango.',
+                    _t('auth.login.driver_note'),
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
@@ -157,10 +161,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Cas rare : un même identifiant vaut pour plusieurs profils.
                   // Le serveur refuse de trancher à la place de l'utilisateur.
                   if (authState.ambiguousRoles.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    Text('Ouvrir en tant que',
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(_t('auth.login.open_as'),
                         style: Theme.of(context).textTheme.bodySmall),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppSpacing.sm),
                     Wrap(
                       spacing: 8,
                       children: authState.ambiguousRoles
@@ -175,19 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
 
                   if (authState.errorMessage != null) ...[
-                    const SizedBox(height: 16),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        border: Border.all(color: Colors.red),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        authState.errorMessage!,
-                        style: TextStyle(color: Colors.red.shade700),
-                      ),
-                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    AppErrorBanner(message: authState.errorMessage!),
                   ],
                   _buildDevAccounts(authState),
                 ],
@@ -209,15 +202,14 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 24),
+        const SizedBox(height: AppSpacing.xl),
         Text(
-          'Comptes de test (debug)',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: Colors.grey[600]),
+          _t('auth.login.dev_accounts'),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
           runSpacing: 8,

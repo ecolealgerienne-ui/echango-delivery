@@ -1,12 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/cash_strings.dart';
 import '../../models/cash.dart';
 // Pour `orderStatusLabel` : le libellé d'un statut vit à un seul endroit
 // (règle 4 du projet), même quand l'écran ne manipule pas de `MerchantOrder`.
 import '../../models/merchant_order.dart' show KnownDriver, orderStatusLabel;
 import '../../services/navigation_launcher.dart';
 import '../../state/cash_state.dart';
+import '../../state/locale_state.dart';
+import '../../config/app_rules.dart';
+import '../../theme/app_buttons.dart';
+import '../../theme/app_semantic_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../utils/dates.dart';
+import '../../widgets/app_snack_bar.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/error_banner.dart';
+import '../../widgets/confirm_dialog.dart';
+import '../../widgets/section_card.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
 ///
@@ -32,6 +44,19 @@ class CashScreen extends StatefulWidget {
 class _CashScreenState extends State<CashScreen> {
   bool get _isDriver => widget.persona == 'driver';
 
+  /// Traduction depuis un **callback** — `read`, jamais `watch`.
+  ///
+  /// ⚠️ `watch` hors d'une phase de build lève chez Provider, et ces méthodes
+  /// (`_declare`, `_dispute`, …) s'exécutent après un appui. C'est le défaut
+  /// qui faisait planter les deux actions principales de l'écran flotte le
+  /// 31/07, et que `flutter analyze` ne voit pas : c'est une règle d'exécution,
+  /// pas de typage.
+  ///
+  /// Ne pas observer ici ne perd rien : un changement de langue reconstruit
+  /// toute l'application (`Consumer<LocaleState>` dans `main.dart`).
+  String _t(String key, [Map<String, String>? vars]) =>
+      cashLabel(key, context.read<LocaleState>().locale, vars);
+
   @override
   void initState() {
     super.initState();
@@ -46,27 +71,31 @@ class _CashScreenState extends State<CashScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<CashState>();
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isDriver ? 'Ma caisse' : 'Encaissements'),
+        title: Text(switch (widget.persona) {
+          'driver' => t('cash.title.driver'),
+          'fleet' => t('cash.title.fleet'),
+          _ => t('cash.title.merchant'),
+        }),
       ),
       body: RefreshIndicator(
         onRefresh: state.load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
             if (state.errorMessage != null)
-              Card(
-                color: Theme.of(context).colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(state.errorMessage!),
-                ),
+              AppErrorBanner(
+                message: state.errorMessage!,
+                onRetry: () => context.read<CashState>().load(),
               ),
-            _totalCard(state),
-            const SizedBox(height: 16),
+            _totalCard(state, t),
+            const SizedBox(height: AppSpacing.lg),
 
             // Ce qui appelle une action passe en premier. Une confirmation en
             // attente bloque une dette : la reléguer sous l'historique la ferait
@@ -78,26 +107,25 @@ class _CashScreenState extends State<CashScreen> {
             // que dans « À confirmer » en ferait deux mécaniques distinctes
             // pour une seule règle.
             if (state.collectionsToConfirm.isNotEmpty) ...[
-              _sectionTitle('Encaissements à confirmer'),
+              _sectionTitle(t('cash.section.collections_to_confirm')),
               for (final c in state.collectionsToConfirm)
                 _CollectionToConfirmCard(
                   entry: c,
                   onConfirm: () => _confirmCollection(state, c),
                   onDispute: () => _disputeCollection(state, c),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
             if (state.awaitingMyConfirmation.isNotEmpty) ...[
-              _sectionTitle('À confirmer'),
+              _sectionTitle(t('cash.section.to_confirm')),
               for (final r in state.awaitingMyConfirmation)
                 _PendingRemittanceCard(
                   remittance: r,
-                  isDriver: _isDriver,
                   onConfirm: () => _confirm(state, r),
                   onDispute: () => _dispute(state, r),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
             // ── L'anomalie passe avant les soldes ────────────────────────────
@@ -120,17 +148,22 @@ class _CashScreenState extends State<CashScreen> {
                   isAnomaly: true,
                   onRegularise: () => _regularise(state, p),
                 ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.lg),
             ],
 
-            _sectionTitle(_isDriver ? 'Mes comptes' : 'Mes transporteurs'),
+            // « Mes transporteurs » est faux pour une entreprise : sa liste
+            // mêle ses conducteurs et les commerçants qu'elle sert.
+            _sectionTitle(t(_isDriver || widget.persona == 'fleet'
+                ? 'cash.section.accounts'
+                : 'cash.section.carriers')),
             if (state.isLoading && state.ledger == null)
               const Padding(
-                padding: EdgeInsets.all(32),
+                padding: EdgeInsets.all(AppSpacing.xxl),
                 child: Center(child: CircularProgressIndicator()),
               )
             else if (state.ledger?.isEmpty ?? true)
               _empty(
+                t,
                 hasPending: state.pending.isNotEmpty,
                 hasUnrecorded: state.unrecorded.isNotEmpty,
               )
@@ -139,7 +172,7 @@ class _CashScreenState extends State<CashScreen> {
                 _BalanceCard(
                   balance: balance,
                   currency: state.currency,
-                  isDriver: _isDriver,
+                  persona: widget.persona,
                   onDeclare: () => _declare(state, balance),
                 ),
 
@@ -147,8 +180,8 @@ class _CashScreenState extends State<CashScreen> {
             // c'est l'ordre du temps. Ce qu'on détient, ce qui va venir, puis
             // d'où venait ce qu'on détient.
             if (state.pending.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _sectionTitle('En cours — pas encore encaissé'),
+              const SizedBox(height: AppSpacing.lg),
+              _sectionTitle(t('cash.section.pending')),
               for (final p in state.pending)
                 _PendingCard(entry: p, currency: state.currency),
             ],
@@ -157,38 +190,48 @@ class _CashScreenState extends State<CashScreen> {
             // d'abord combien, ensuite d'où ça vient. L'inverse noierait le
             // chiffre qui intéresse dans une liste de lignes.
             if (state.collections.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _sectionTitle('Détail des encaissements'),
-              for (final c in state.collections.take(20))
-                _CollectionCard(entry: c, isDriver: _isDriver),
-              if (state.collections.length > 20)
+              const SizedBox(height: AppSpacing.lg),
+              _sectionTitle(t('cash.section.collections')),
+              for (final c in state.collections.take(AppRules.cashCollectionsPreview))
+                _CollectionCard(entry: c, persona: widget.persona),
+              if (state.collections.length > AppRules.cashCollectionsPreview)
                 Padding(
-                  padding: const EdgeInsets.only(top: 4),
+                  padding: const EdgeInsets.only(top: AppSpacing.xs),
                   child: Text(
-                    '20 dernières livraisons encaissées sur '
-                    '${state.collections.length}.',
+                    // ⚠️ Le nombre était écrit en dur ICI AUSSI. Trois
+                    // occurrences du même 20 dans le même bloc : en changer une
+                    // seule aurait fait mentir l'écran — vingt-cinq lignes sous
+                    // un titre en annonçant vingt.
+                    t('cash.collections.preview', {
+                      'count': '${AppRules.cashCollectionsPreview}',
+                      'total': '${state.collections.length}',
+                    }),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
             ],
 
             if (state.awaitingOther.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _sectionTitle('En attente de l\'autre partie'),
+              const SizedBox(height: AppSpacing.lg),
+              _sectionTitle(t('cash.section.awaiting_other')),
               for (final r in state.awaitingOther)
                 Card(
                   child: ListTile(
                     leading: const Icon(Icons.hourglass_empty),
                     title: Text(r.formattedAmount),
-                    subtitle: Text(
-                      _isDriver
-                          ? 'Le commerçant n\'a pas encore confirmé la réception.'
-                          : 'Le transporteur n\'a pas encore confirmé.',
-                    ),
+                    subtitle: Text(t(switch (widget.persona) {
+                      'driver' => 'cash.awaiting.driver',
+                      // `CashRemittance` ne porte pas le type de la
+                      // contrepartie : une entreprise remet à un commerçant et
+                      // reçoit d'un conducteur, et on ne peut pas dire lequel
+                      // ici. On reste neutre plutôt que de deviner.
+                      'fleet' => 'cash.awaiting.fleet',
+                      _ => 'cash.awaiting.merchant',
+                    })),
                   ),
                 ),
             ],
-            const SizedBox(height: 32),
+            const SizedBox(height: AppSpacing.xxl),
           ],
         ),
       ),
@@ -196,42 +239,79 @@ class _CashScreenState extends State<CashScreen> {
   }
 
   Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: Text(text, style: Theme.of(context).textTheme.titleMedium),
       );
 
-  Widget _totalCard(CashState state) {
+  Widget _totalCard(CashState state, _T t) {
     final theme = Theme.of(context);
-    return Card(
-      color: _isDriver ? Colors.orange.shade50 : Colors.green.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    // ⚠️ **Deux totaux, pas un — parce qu'une entreprise de transport est au
+    // MILIEU de la chaîne.** Ses conducteurs lui doivent, elle doit aux
+    // commerçants : `CashLedger.total` soustrayait donc sa créance de sa dette
+    // et affichait leur différence sous le libellé « Espèces encaissées pour
+    // vous ». Un nombre qui ne désignait rien.
+    //
+    // La structure suit la DONNÉE et non le profil : `totalOn` rend `null`
+    // quand personne ne se trouve de ce côté, donc le conducteur et le
+    // commerçant — qui ne font face qu'à un seul côté — gardent exactement leur
+    // ligne unique d'avant.
+    final owedToMe = state.totalOn(CashSide.upstream);
+    final iHold = state.totalOn(CashSide.downstream);
+    final bothSides = owedToMe != null && iHold != null;
+
+    Widget line(String label, double amount) => Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Text(label, style: theme.textTheme.bodyMedium),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              _isDriver
-                  ? 'Espèces que vous détenez'
-                  : 'Espèces encaissées pour vous',
-              style: theme.textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${state.total.toStringAsFixed(0)} ${state.currency}',
+              '${amount.toStringAsFixed(0)} ${state.currency}',
               style: theme.textTheme.headlineMedium,
             ),
-            const SizedBox(height: 8),
+          ],
+        );
+
+    return AppSectionCard(
+      // Un ton unique ne peut pas décrire les deux côtés à la fois : ce que
+      // l'entreprise détient appelle une action, ce qu'on lui doit non. Neutre
+      // pour elle, plutôt qu'une couleur qui affirmerait l'un des deux.
+      color: bothSides
+          ? Theme.of(context).colorScheme.secondaryContainer
+          : _isDriver
+              ? context.semantic.warningContainer
+              : context.semantic.successContainer,
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (owedToMe != null)
+              line(
+                t(bothSides
+                    ? 'cash.total.owed_by_drivers'
+                    : 'cash.total.collected_for_you'),
+                owedToMe,
+              ),
+            if (bothSides) const Divider(height: 24),
+            if (iHold != null)
+              line(
+                t(bothSides
+                    ? 'cash.total.owed_to_merchants'
+                    : 'cash.total.you_hold'),
+                iHold,
+              ),
+            // Aucun côté renseigné : le serveur n'a pas typé les contreparties.
+            // On sert le total brut plutôt qu'un écran vide, en le disant.
+            if (owedToMe == null && iHold == null)
+              line(t('cash.total.position'), state.total),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               // Dire que ce total ne se règle pas d'un coup : il est dû à
               // plusieurs personnes, et c'est le point qui distingue ce modèle
               // d'un compte chez un transporteur classique.
-              _isDriver
-                  ? 'Votre rémunération est déjà déduite. Le reste est à remettre '
-                      'à chaque commerçant lors de votre prochain enlèvement chez '
-                      'lui. Echango ne détient jamais cet argent.'
-                  : 'Détenues par vos transporteurs, rémunération déduite, '
-                      'jusqu\'à leur prochain passage. Echango ne détient jamais '
-                      'cet argent.',
+              t(bothSides
+                  ? 'cash.total.note.both'
+                  : _isDriver
+                      ? 'cash.total.note.driver'
+                      : 'cash.total.note.merchant'),
               style: theme.textTheme.bodySmall,
             ),
             // ── Ce qui est attendu, et qui n'est encore à personne ───────────
@@ -242,16 +322,23 @@ class _CashScreenState extends State<CashScreen> {
             if (!_isDriver && state.expectedTotal > 0) ...[
               const Divider(height: 24),
               Text(
-                'À encaisser aux portes : '
-                '${state.expectedTotal.toStringAsFixed(0)} ${state.currency}',
+                t('cash.expected.total', {
+                  'amount': state.expectedTotal.toStringAsFixed(0),
+                  'currency': state.currency,
+                }),
                 style: theme.textTheme.bodyMedium
                     ?.copyWith(fontWeight: FontWeight.w600),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
-                '${state.pending.length} livraison'
-                '${state.pending.length > 1 ? 's' : ''} en cours. '
-                'Cet argent n\'a pas encore été perçu.',
+                // Deux formes seulement, choisies ici : l'arabe en distingue
+                // davantage, et `cash_strings.dart` dit pourquoi on s'arrête là.
+                t(
+                  state.pending.length > 1
+                      ? 'cash.expected.count.many'
+                      : 'cash.expected.count.one',
+                  {'count': '${state.pending.length}'},
+                ),
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -263,21 +350,21 @@ class _CashScreenState extends State<CashScreen> {
             if (_isDriver && (state.ledger?.platformCommission ?? 0) > 0) ...[
               const Divider(height: 24),
               Text(
-                'Commission Echango cumulée : '
-                '${state.ledger!.platformCommission!.toStringAsFixed(0)} '
-                '${state.currency}',
+                t('cash.commission.total', {
+                  'amount':
+                      state.ledger!.platformCommission!.toStringAsFixed(0),
+                  'currency': state.currency,
+                }),
                 style: theme.textTheme.bodyMedium,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppSpacing.xs),
               Text(
-                'Déjà prélevée sur vos courses. Facturée séparément par Echango, '
-                'pas depuis cette application.',
+                t('cash.commission.note'),
                 style: theme.textTheme.bodySmall,
               ),
             ],
           ],
         ),
-      ),
     );
   }
 
@@ -287,42 +374,48 @@ class _CashScreenState extends State<CashScreen> {
   /// en route : rien n'était *détenu*, mais de l'argent était bel et bien
   /// attendu. C'est la formulation qui rassure à tort — celle qui coûte le plus
   /// cher, parce qu'on ne va pas vérifier ce qu'un écran déclare tranquille.
-  Widget _empty({bool hasPending = false, bool hasUnrecorded = false}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32),
-        child: Column(
-          children: [
-            Icon(
-              hasPending ? Icons.schedule_outlined : Icons.payments_outlined,
-              size: 56,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _isDriver
-                  ? 'Vous ne détenez aucune somme'
-                  // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus,
-                  // « aucune somme en attente » contredirait la bannière qui
-                  // vient d'annoncer des livraisons non enregistrées.
-                  : hasUnrecorded
-                      ? 'Aucun solde ouvert — mais voir l\'alerte ci-dessus'
-                      : hasPending
-                          ? 'Rien à récupérer pour l\'instant :\n'
-                              'les livraisons en cours ne sont pas encore encaissées'
-                          : 'Aucune somme en attente',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
+  Widget _empty(_T t, {bool hasPending = false, bool hasUnrecorded = false}) {
+    // ⚠️ L'ordre des cas compte : avec une anomalie au-dessus, « aucune somme
+    // en attente » contredirait la bannière qui vient d'annoncer des
+    // livraisons non enregistrées.
+    if (widget.persona == 'fleet') {
+      // `hasPending`/`hasUnrecorded` sont toujours faux ici : « l'argent
+      // attendu aux portes » est une lecture propre au commerçant, et
+      // `CashState.load()` ne la demande pas pour une entreprise. Les brancher
+      // aurait affiché une consigne sur une donnée jamais chargée.
+      return AppEmptyState(
+        title: t('cash.empty.fleet.title'),
+        hint: t('cash.empty.fleet.hint'),
+        icon: Icons.payments_outlined,
+        scrollable: false,
       );
+    }
+
+    final String prefix = _isDriver
+        ? 'cash.empty.driver'
+        : hasUnrecorded
+            ? 'cash.empty.unrecorded'
+            : hasPending
+                ? 'cash.empty.pending'
+                : 'cash.empty.none';
+
+    return AppEmptyState(
+      title: t('$prefix.title'),
+      hint: t('$prefix.hint'),
+      icon: hasPending ? Icons.schedule_outlined : Icons.payments_outlined,
+      // Déjà dans un `ListView` : une seconde liste imbriquée ne défilerait pas.
+      scrollable: false,
+    );
+  }
 
   Future<void> _declare(CashState state, CashBalance balance) async {
     final amount = await showDialog<double>(
       context: context,
       builder: (_) => _AmountDialog(
-        title: 'Enregistrer un versement',
-        subtitle: 'Avec ${balance.displayName}. '
-            'La somme ne sera déduite qu\'après confirmation par l\'autre partie.',
+        title: _t('cash.declare.title'),
+        subtitle: _t('cash.declare.subtitle', {
+          'name': balance.displayName(context.read<LocaleState>().locale),
+        }),
         maximum: balance.outstanding,
         currency: state.currency,
       ),
@@ -330,32 +423,24 @@ class _CashScreenState extends State<CashScreen> {
 
     if (amount == null || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.declareRemittance(balance.counterpartyId, amount);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise déclarée. Elle sera déduite après confirmation.'
-            : state.errorMessage ?? 'Déclaration impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.declare.failed'),
+      _t('cash.declare.done'),
     );
   }
 
   Future<void> _confirm(CashState state, CashRemittance r) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.confirmRemittance(r.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise confirmée — ${r.formattedAmount} déduits.'
-            : state.errorMessage ?? 'Confirmation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.confirm.failed'),
+      _t('cash.confirm.done', {'amount': r.formattedAmount}),
     );
   }
 
@@ -369,12 +454,10 @@ class _CashScreenState extends State<CashScreen> {
     final amount = await showDialog<double>(
       context: context,
       builder: (_) => _AmountDialog(
-        title: 'Déclarer l\'encaissement',
+        title: _t('cash.regularise.title'),
         subtitle: p.driverName != null
-            ? '${p.driverName} a encaissé combien sur cette livraison ? '
-                'Il devra confirmer avant que la somme ne soit comptée.'
-            : 'Combien a été encaissé sur cette livraison ? '
-                'Le transporteur devra confirmer avant que la somme ne soit comptée.',
+            ? _t('cash.regularise.subtitle.named', {'name': p.driverName!})
+            : _t('cash.regularise.subtitle.anon'),
         maximum: p.expectedAmount,
         currency: state.currency,
         // Zéro est une réponse légitime ici — « le client n'a pas payé » est un
@@ -409,12 +492,12 @@ class _CashScreenState extends State<CashScreen> {
       reason = await showDialog<String>(
         context: context,
         builder: (dialogContext) => SimpleDialog(
-          title: const Text('Pourquoi ce montant diffère ?'),
+          title: Text(_t('cash.discrepancy.why')),
           children: [
-            for (final entry in cashDiscrepancyLabels.entries)
+            for (final code in cashDiscrepancyReasons)
               SimpleDialogOption(
-                onPressed: () => Navigator.pop(dialogContext, entry.key),
-                child: Text(entry.value),
+                onPressed: () => Navigator.pop(dialogContext, code),
+                child: Text(_t('cash.discrepancy.$code')),
               ),
           ],
         ),
@@ -422,7 +505,6 @@ class _CashScreenState extends State<CashScreen> {
       if (reason == null || !mounted) return;
     }
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.declareMissingCollection(
       orderId: p.orderUuid,
       collectedAmount: amount,
@@ -431,149 +513,172 @@ class _CashScreenState extends State<CashScreen> {
     );
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Déclaré. En attente de confirmation du transporteur.'
-            : state.errorMessage ?? 'Déclaration impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.declare.failed'),
+      _t('cash.regularise.done'),
     );
   }
 
   Future<void> _confirmCollection(CashState state, CashCollectionEntry c) async {
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.confirmCollection(c.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Encaissement confirmé — il entre dans votre caisse.'
-            : state.errorMessage ?? 'Confirmation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.confirm.failed'),
+      _t('cash.collection.confirm.done'),
     );
   }
 
   Future<void> _disputeCollection(CashState state, CashCollectionEntry c) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Contester cet encaissement ?'),
-        content: Text(
-          'Vous déclarez ne pas avoir encaissé '
-          '${c.collectedAmount.toStringAsFixed(0)} ${c.currency} sur cette '
-          'livraison. Rien ne sera compté et Echango sera alerté.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Retour'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Contester'),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: _t('cash.collection.dispute.title'),
+      message: _t('cash.collection.dispute.body', {
+        'amount': c.collectedAmount.toStringAsFixed(0),
+        'currency': c.currency,
+      }),
+      cancelLabel: _t('cash.action.back'),
+      confirmLabel: _t('cash.action.dispute'),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.disputeCollection(c.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Encaissement contesté.'
-            : state.errorMessage ?? 'Contestation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.dispute.failed'),
+      _t('cash.collection.dispute.done'),
     );
   }
 
   Future<void> _dispute(CashState state, CashRemittance r) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Contester cette remise ?'),
-        content: Text(
-          'Vous déclarez ne pas avoir reçu ${r.formattedAmount}. '
-          'La somme reste due et Echango sera alerté.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Retour'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Contester'),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: _t('cash.remittance.dispute.title'),
+      message: _t('cash.remittance.dispute.body', {
+        'amount': r.formattedAmount,
+      }),
+      cancelLabel: _t('cash.action.back'),
+      confirmLabel: _t('cash.action.dispute'),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final ok = await state.disputeRemittance(r.id);
     if (!mounted) return;
 
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(ok
-            ? 'Remise contestée. La somme reste due.'
-            : state.errorMessage ?? 'Contestation impossible'),
-        backgroundColor: ok ? null : Colors.red,
-      ),
+    showAppOutcome(
+      context,
+      ok ? null : state.errorMessage ?? _t('cash.dispute.failed'),
+      _t('cash.remittance.dispute.done'),
     );
   }
 }
 
+/// La fonction de traduction telle qu'elle circule dans cet écran.
+///
+/// Nommée plutôt que réécrite à chaque signature : c'est le même contrat
+/// partout, et une variante qui accepterait un autre type de variables se
+/// verrait à la compilation plutôt qu'à l'exécution.
+typedef _T = String Function(String key, [Map<String, String>? vars]);
+
 class _BalanceCard extends StatelessWidget {
   final CashBalance balance;
   final String currency;
-  final bool isDriver;
+
+  /// Le profil qui regarde — `driver`, `fleet` ou `merchant`.
+  ///
+  /// ⚠️ Remplace un `bool isDriver`. Un booléen ne peut pas distinguer trois
+  /// positions dans une chaîne, et c'est exactement ce qui rangeait
+  /// l'entreprise de transport du côté du commerçant.
+  final String persona;
   final VoidCallback onDeclare;
 
   const _BalanceCard({
     required this.balance,
     required this.currency,
-    required this.isDriver,
+    required this.persona,
     required this.onDeclare,
   });
 
+  bool get isDriver => persona == 'driver';
+
+  /// « J'ai remis » ou « J'ai reçu » : qui verse dépend de qui détient.
+  ///
+  /// Une entreprise **reçoit** de son conducteur et **verse** à un commerçant,
+  /// sur le même écran — d'où un libellé calculé par solde et non par profil.
+  String _declareLabel(CashBalance balance, _T t) {
+    final holdsIt = switch (cashSide(persona, balance.counterpartyType)) {
+      // La contrepartie encaisse : c'est elle qui détient quand la dette est
+      // positive, donc c'est moi qui reçois.
+      CashSide.upstream => !balance.upstreamHolds,
+      // C'est moi qui encaisse pour elle.
+      CashSide.downstream => balance.upstreamHolds,
+      // Sans type de contrepartie, on retombe sur l'ancien raisonnement par
+      // profil plutôt que d'inventer : le conducteur détient, les autres non.
+      CashSide.unknown => isDriver == balance.upstreamHolds,
+    };
+    return t(holdsIt ? 'cash.action.remitted' : 'cash.action.received');
+  }
+
   /// Qui doit à qui, en toutes lettres. Un montant nu sur un solde signé se
   /// lit dans le mauvais sens une fois sur deux.
-  String _sense(CashBalance balance) {
-    if (balance.merchantOwes) {
-      return isDriver
-          ? 'Ce commerçant vous doit cette somme (course non couverte par '
-              'l\'encaissement).'
-          : 'Vous devez cette somme à ce transporteur.';
+  ///
+  /// ⚠️ **Le sens vient de la POSITION de la contrepartie, plus du profil qui
+  /// regarde.** L'écran testait `isDriver`, donc toute entreprise de transport
+  /// était traitée comme un commerçant — or elle est au milieu de la chaîne, et
+  /// ses soldes face à un commerçant se lisaient exactement à l'envers :
+  /// « Détenue par ce transporteur » alors que c'est elle qui détient, et
+  /// qu'elle doit.
+  ///
+  /// La règle tient en une ligne et vaut pour les trois profils : une dette
+  /// positive signifie que la partie **en amont** détient l'argent.
+  String _sense(CashBalance balance, _T t, Locale locale) {
+    final who = cashPartyLabel(balance.counterpartyType, locale);
+    switch (cashSide(persona, balance.counterpartyType)) {
+      case CashSide.upstream:
+        return t(
+          balance.upstreamHolds ? 'cash.sense.held_by' : 'cash.sense.you_owe',
+          {'who': who},
+        );
+      case CashSide.downstream:
+        return balance.upstreamHolds
+            ? t('cash.sense.you_hold', {'who': who})
+            // La majuscule initiale reste ici : en tête de phrase en français,
+            // et sans effet en arabe, qui n'a pas de casse. La faire porter par
+            // la table aurait demandé deux entrées pour un même mot.
+            : t('cash.sense.owes_you', {
+                'who': '${who[0].toUpperCase()}${who.substring(1)}',
+              });
+      case CashSide.unknown:
+        // Le serveur n'a pas dit de quel type est la contrepartie : on montre
+        // le montant sans affirmer un sens. Se tromper de sens sur de l'argent
+        // coûte plus cher que de ne rien dire.
+        return t(balance.upstreamHolds
+            ? 'cash.sense.upstream_unknown'
+            : 'cash.sense.reverse_unknown');
     }
-    return isDriver
-        ? 'Vous détenez cette somme pour ce commerçant.'
-        : 'Détenue par ce transporteur.';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
+
+    return AppSectionCard.dense(
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    balance.displayName,
+                    balance.displayName(locale),
                     style: const TextStyle(fontWeight: FontWeight.bold),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -584,9 +689,9 @@ class _BalanceCard extends StatelessWidget {
                         // Le sens se lit à la couleur avant le texte : ce que je
                         // dois n'est pas ce qu'on me doit, même quand c'est le
                         // même nombre.
-                        color: balance.merchantOwes
-                            ? Colors.green.shade800
-                            : null,
+                        color: balance.upstreamHolds
+                            ? null
+                            : context.semantic.success,
                       ),
                 ),
               ],
@@ -595,36 +700,42 @@ class _BalanceCard extends StatelessWidget {
             // qui cesse de recevoir des courses encaissées sans savoir pourquoi
             // conclurait à une panne, ou à une mise à l'écart.
             if (balance.blocked) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
-                  Icon(Icons.block, size: 16, color: Colors.red.shade700),
+                  Icon(Icons.block,
+                      size: 16, color: Theme.of(context).colorScheme.error),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       isDriver
-                          ? 'Plafond atteint : plus de course encaissée pour ce '
-                              'commerçant avant votre remise.'
-                          : 'Plafond atteint pour ce transporteur.',
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                          ? t('cash.blocked.driver')
+                          : t('cash.blocked.other', {
+                              'who': cashPartyLabel(
+                                  balance.counterpartyType, locale),
+                            }),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
                 ],
               ),
             ],
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              _sense(balance),
+              _sense(balance, t, locale),
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
                 if (balance.phone != null)
                   TextButton.icon(
                     onPressed: () => NavigationLauncher.call(balance.phone!),
                     icon: const Icon(Icons.phone, size: 18),
-                    label: const Text('Appeler'),
+                    label: Text(t('cash.action.call')),
                   ),
                 const Spacer(),
                 FilledButton.tonal(
@@ -632,70 +743,73 @@ class _BalanceCard extends StatelessWidget {
                   // Le libellé suit le sens réel du versement, pas le profil :
                   // un transporteur à qui le commerçant doit de l'argent
                   // *reçoit*, il ne remet pas.
-                  child: Text(
-                    balance.driverOwes
-                        ? (isDriver ? 'J\'ai remis' : 'J\'ai reçu')
-                        : (isDriver ? 'J\'ai reçu' : 'J\'ai versé'),
-                  ),
+                  // Qui remet dépend de qui détient, donc du CÔTÉ de la
+                  // contrepartie : une entreprise reçoit de son conducteur et
+                  // verse à un commerçant, sur le même écran.
+                  child: Text(_declareLabel(balance, t)),
                 ),
               ],
             ),
           ],
         ),
-      ),
     );
   }
 }
 
 class _PendingRemittanceCard extends StatelessWidget {
   final CashRemittance remittance;
-  final bool isDriver;
   final VoidCallback onConfirm;
   final VoidCallback onDispute;
 
   const _PendingRemittanceCard({
     required this.remittance,
-    required this.isDriver,
     required this.onConfirm,
     required this.onDispute,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: Colors.amber.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key) => cashLabel(key, locale);
+
+    return AppSectionCard.dense(
+      color: context.semantic.warningContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(remittance.formattedAmount,
                 style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              isDriver
-                  ? 'Le commerçant déclare vous avoir remis cette somme.'
-                  : 'Le transporteur déclare vous avoir remis cette somme.',
+              // Le déclarant est NOMMÉ par la donnée (`declared_by`), pas
+              // déduit du profil qui regarde. L'ancienne version disait
+              // « Le transporteur déclare… » à toute entreprise de transport,
+              // y compris quand c'était un commerçant qui avait déclaré.
+              t(switch (remittance.declaredBy) {
+                'driver' => 'cash.declared_by.driver',
+                'fleet' => 'cash.declared_by.fleet',
+                'merchant' => 'cash.declared_by.merchant',
+                _ => 'cash.declared_by.unknown',
+              }),
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
                 TextButton(
                   onPressed: onDispute,
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Je n\'ai rien reçu'),
+                  style: AppButtonStyles.destructiveText(context),
+                  child: Text(t('cash.action.received_nothing')),
                 ),
                 const Spacer(),
                 FilledButton(
                   onPressed: onConfirm,
-                  child: const Text('Confirmer'),
+                  child: Text(t('cash.action.confirm')),
                 ),
               ],
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -748,6 +862,10 @@ class _AmountDialogState extends State<_AmountDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
+
     return AlertDialog(
       title: Text(widget.title),
       content: Column(
@@ -755,16 +873,17 @@ class _AmountDialogState extends State<_AmountDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(widget.subtitle, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.lg),
           TextField(
             controller: _controller,
             keyboardType: TextInputType.number,
             autofocus: true,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              labelText: 'Montant (${widget.currency})',
-              border: const OutlineInputBorder(),
-              helperText: 'Maximum ${widget.maximum.toStringAsFixed(0)}',
+              labelText: t('cash.amount.label', {'currency': widget.currency}),
+              helperText: t('cash.amount.max', {
+                'amount': widget.maximum.toStringAsFixed(0),
+              }),
             ),
           ),
         ],
@@ -772,11 +891,11 @@ class _AmountDialogState extends State<_AmountDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Annuler'),
+          child: Text(t('cash.action.cancel')),
         ),
         FilledButton(
           onPressed: _value == null ? null : () => Navigator.pop(context, _value),
-          child: const Text('Valider'),
+          child: Text(t('cash.action.validate')),
         ),
       ],
     );
@@ -798,28 +917,36 @@ class _AmountDialogState extends State<_AmountDialog> {
 /// course, et afficher le prix théorique ferait mentir la soustraction.
 class _CollectionCard extends StatelessWidget {
   final CashCollectionEntry entry;
-  final bool isDriver;
+  /// `driver`, `fleet` ou `merchant`. Un booléen ne suffisait pas : le net
+  /// d'un encaissement **revient** au commerçant, il ne fait que **transiter**
+  /// par l'entreprise qui a facilité la course.
+  final String persona;
 
-  const _CollectionCard({required this.entry, required this.isDriver});
+  const _CollectionCard({required this.entry, required this.persona});
+
+  bool get isDriver => persona == 'driver';
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
     String money(double amount) =>
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
+    return AppSectionCard.dense(
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  entry.collectedAt.toLocal().toString().split(' ')[0],
+                  // « 2026-07-31 » était un format ISO au milieu d'un écran
+                  // en jj/MM/aaaa.
+                  formatDay(entry.collectedAt),
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(
@@ -829,16 +956,22 @@ class _CollectionCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 6),
-            _line(theme, 'Perçu du destinataire', money(entry.collectedAmount)),
+            _line(theme, t('cash.line.collected'), money(entry.collectedAmount)),
             if (entry.retainedAmount > 0)
               _line(
                 theme,
-                isDriver ? 'Votre rémunération retenue' : 'Retenu par le transporteur',
+                t(isDriver
+                    ? 'cash.line.retained.driver'
+                    : 'cash.line.retained.other'),
                 '− ${money(entry.retainedAmount)}',
               ),
             _line(
               theme,
-              isDriver ? 'Reste à remettre' : 'Vous revient',
+              t(switch (persona) {
+                'driver' => 'cash.line.net.driver',
+                'fleet' => 'cash.line.net.fleet',
+                _ => 'cash.line.net.merchant',
+              }),
               money(entry.netAmount),
               strong: true,
             ),
@@ -847,16 +980,22 @@ class _CollectionCard extends StatelessWidget {
             if (entry.hasDiscrepancy) ...[
               const SizedBox(height: 6),
               Text(
-                '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? 'Écart signalé'}'
-                ' — ${money(entry.expectedAmount)} étaient attendus.',
-                style: TextStyle(color: Colors.orange.shade900, fontSize: 12),
+                t('cash.discrepancy.line', {
+                  'reason': cashDiscrepancyLabel(
+                      entry.discrepancyReason, locale,
+                      fallback: t('cash.discrepancy.default')),
+                  'amount': money(entry.expectedAmount),
+                }),
+                style: TextStyle(
+                  color: context.semantic.onWarningContainer,
+                  fontSize: 12,
+                ),
               ),
               if (entry.notes != null && entry.notes!.isNotEmpty)
                 Text(entry.notes!, style: theme.textTheme.bodySmall),
             ],
           ],
         ),
-      ),
     );
   }
 
@@ -905,10 +1044,13 @@ class _PendingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
 
     return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      color: isAnomaly ? Colors.orange.shade50 : null,
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      color: isAnomaly ? context.semantic.warningContainer : null,
       child: ListTile(
         leading: Icon(
           isAnomaly
@@ -916,20 +1058,23 @@ class _PendingCard extends StatelessWidget {
               : entry.isUnderway
                   ? Icons.local_shipping_outlined
                   : Icons.search,
-          color: isAnomaly ? Colors.orange.shade800 : Colors.grey[600],
+          color: isAnomaly
+              ? context.semantic.warning
+              : theme.colorScheme.onSurfaceVariant,
         ),
-        title: Text(entry.dropoffName ?? 'Livraison'),
+        title: Text(entry.dropoffName ?? t('cash.pending.delivery')),
         subtitle: Text(
           isAnomaly
               // Pas le statut ici : « Livrée » est vrai mais ne dit pas ce qui
               // manque, et c'est ce qui manque qui appelle une action.
               ? entry.driverName != null
-                  ? 'Livrée par ${entry.driverName} · encaissement non déclaré'
-                  : 'Livrée · encaissement non déclaré'
+                  ? t('cash.pending.anomaly.named', {'name': entry.driverName!})
+                  : t('cash.pending.anomaly.anon')
               : [
                   // Le libellé vient de la table partagée : deux écrans ne
                   // doivent pas nommer différemment le même statut (règle 4).
-                  orderStatusLabel(entry.status ?? '', driverName: entry.driverName),
+                  orderStatusLabel(entry.status ?? '', locale,
+                      driverName: entry.driverName),
                   if (entry.driverName != null) entry.driverName!,
                 ].join(' · '),
         ),
@@ -939,7 +1084,9 @@ class _PendingCard extends StatelessWidget {
             fontWeight: FontWeight.w600,
             // Gris et non vert : cet argent n'est pas encore là — et sur une
             // anomalie, on ignore même s'il a été perçu.
-            color: isAnomaly ? Colors.orange.shade900 : Colors.grey[700],
+            color: isAnomaly
+                ? context.semantic.onWarningContainer
+                : theme.colorScheme.onSurfaceVariant,
           ),
         ),
         // Le geste vit sur la ligne et non dans la bannière : chaque livraison
@@ -970,47 +1117,57 @@ class _CollectionToConfirmCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
     String money(double amount) =>
         '${amount.toStringAsFixed(0)} ${entry.currency}'.trim();
 
-    return Card(
-      color: Colors.orange.shade50,
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
+    return AppSectionCard.dense(
+      color: context.semantic.warningContainer,
+      margin: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Le commerçant déclare que vous avez encaissé '
-              '${money(entry.collectedAmount)}',
+              t('cash.to_confirm.title', {
+                'amount': money(entry.collectedAmount),
+              }),
               style: theme.textTheme.titleSmall,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              'Montant annoncé sur la livraison : ${money(entry.expectedAmount)}.'
-              '${entry.hasDiscrepancy ? ' Écart déclaré : '
-                  '${cashDiscrepancyLabels[entry.discrepancyReason] ?? entry.discrepancyReason ?? ''}.' : ''}',
+              t('cash.to_confirm.expected',
+                      {'amount': money(entry.expectedAmount)}) +
+                  (entry.hasDiscrepancy
+                      ? t('cash.to_confirm.discrepancy', {
+                          'reason': cashDiscrepancyLabel(
+                              entry.discrepancyReason, locale,
+                              fallback: ''),
+                        })
+                      : ''),
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppSpacing.xs),
             Text(
-              'Tant que vous n\'avez pas confirmé, cette somme n\'entre dans '
-              'aucun compte.',
+              t('cash.to_confirm.note'),
               style: theme.textTheme.bodySmall,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton(onPressed: onDispute, child: const Text('Contester')),
-                const SizedBox(width: 8),
-                FilledButton(onPressed: onConfirm, child: const Text('Confirmer')),
+                TextButton(
+                    onPressed: onDispute,
+                    child: Text(t('cash.action.dispute'))),
+                const SizedBox(width: AppSpacing.sm),
+                FilledButton(
+                    onPressed: onConfirm,
+                    child: Text(t('cash.action.confirm'))),
               ],
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -1036,38 +1193,43 @@ class _UnrecordedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      color: Colors.orange.shade100,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        cashLabel(key, locale, vars);
+
+    return AppSectionCard(
+      color: context.semantic.warningContainer,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.report_problem_outlined, color: Colors.orange.shade900),
-                const SizedBox(width: 8),
+                Icon(Icons.report_problem_outlined,
+                    color: context.semantic.onWarningContainer),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    '$count livraison${count > 1 ? 's' : ''} '
-                    'sans encaissement enregistré',
+                    t(
+                      count > 1
+                          ? 'cash.unrecorded.title.many'
+                          : 'cash.unrecorded.title.one',
+                      {'count': '$count'},
+                    ),
                     style: theme.textTheme.titleSmall,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppSpacing.sm),
             Text(
-              'Montant annoncé : ${total.toStringAsFixed(0)} $currency. '
-              'La livraison est terminée, mais le transporteur n\'a pas déclaré '
-              'ce qu\'il a encaissé — cela arrive quand la course est clôturée '
-              'depuis l\'administration et non depuis son application. '
-              'Contactez-le pour régulariser.',
+              t('cash.unrecorded.body', {
+                'amount': total.toStringAsFixed(0),
+                'currency': currency,
+              }),
               style: theme.textTheme.bodySmall,
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -1100,7 +1262,12 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
   List<KnownDriver> _results = const [];
   bool _searching = false;
   bool _tooMany = false;
-  String? _error;
+
+  /// ⚠️ La **clé**, pas le message. Elle est posée dans un `catch`, donc hors
+  /// de toute phase de build : y traduire imposerait un `read` de la locale au
+  /// pire endroit, et surtout figerait la langue au moment de l'échec — un
+  /// changement de langue laisserait le message précédent à l'écran.
+  String? _errorKey;
   bool _searched = false;
 
   @override
@@ -1111,11 +1278,18 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
 
   Future<void> _search() async {
     final query = _controller.text.trim();
-    if (query.length < 2) return;
+    // ⚠️ **Valait 2, alors que le serveur exige 3.**
+    //
+    // Une saisie de deux caractères passait donc cette garde et se faisait
+    // refuser par le serveur : l'utilisateur voyait une erreur de validation sur
+    // une recherche que l'application venait d'accepter. Trois écrans
+    // reproduisaient cette règle, et celui-ci était le seul à se tromper —
+    // corrigé le 31/07/2026 en instruisant le chantier des valeurs.
+    if (query.length < ServerRules.driverSearchMinLength) return;
 
     setState(() {
       _searching = true;
-      _error = null;
+      _errorKey = null;
     });
 
     try {
@@ -1128,7 +1302,7 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Recherche impossible');
+      setState(() => _errorKey = 'cash.picker.failed');
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -1137,28 +1311,26 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key) => cashLabel(key, locale);
+
     return AlertDialog(
-      title: const Text('Qui a effectué cette livraison ?'),
+      title: Text(t('cash.picker.title')),
       content: SizedBox(
         width: double.maxFinite,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Cette livraison ne désigne aucun transporteur. '
-              'Cherchez-le par son nom ou son téléphone.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
+            Text(t('cash.picker.hint'), style: theme.textTheme.bodySmall),
+            const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _controller,
               autofocus: true,
               textInputAction: TextInputAction.search,
               onSubmitted: (_) => _search(),
               decoration: InputDecoration(
-                labelText: 'Nom ou téléphone',
-                border: const OutlineInputBorder(),
+                labelText: t('cash.picker.field'),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: _searching ? null : _search,
@@ -1167,27 +1339,28 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
             ),
             if (_searching)
               const Padding(
-                padding: EdgeInsets.all(16),
+                padding: EdgeInsets.all(AppSpacing.lg),
                 child: Center(child: CircularProgressIndicator()),
               ),
-            if (_error != null)
+            if (_errorKey != null)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
+                child: Text(t(_errorKey!),
+                    style: TextStyle(color: theme.colorScheme.error)),
               ),
             if (_tooMany)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(
-                  'Trop de correspondances — précisez le nom.',
+                  t('cash.picker.too_many'),
                   style: theme.textTheme.bodySmall,
                 ),
               ),
             if (_searched && !_searching && _results.isEmpty && !_tooMany)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.only(top: AppSpacing.md),
                 child: Text(
-                  'Aucun transporteur trouvé.',
+                  t('cash.picker.none'),
                   style: theme.textTheme.bodySmall,
                 ),
               ),
@@ -1201,13 +1374,10 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
                       leading: Icon(
                         d.hasAccount ? Icons.person : Icons.person_off_outlined,
                       ),
-                      title: Text(d.name ?? 'Transporteur'),
+                      title: Text(d.name ?? t('cash.picker.driver')),
                       subtitle: d.hasAccount
                           ? null
-                          : const Text(
-                              'Pas de compte dans l\'application : '
-                              'il ne pourrait rien confirmer',
-                            ),
+                          : Text(t('cash.picker.no_account')),
                       onTap: d.hasAccount
                           ? () => Navigator.pop(context, d.driverUuid)
                           : null,
@@ -1221,7 +1391,7 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Annuler'),
+          child: Text(t('cash.action.cancel')),
         ),
       ],
     );
