@@ -65,7 +65,10 @@ export class FlotteService {
       const page = query.page || 1;
       const limit = query.limit || 25;
       const total = owned.length;
-      const paged = owned.slice((page - 1) * limit, (page - 1) * limit + limit);
+      // Hydratée APRÈS la pagination : le coût suit la page, pas l'historique.
+      const paged = await this.hydratePage(
+        owned.slice((page - 1) * limit, (page - 1) * limit + limit),
+      );
 
       return {
         // Projection en liste d'autorisation : le BFF décide de ce qui sort,
@@ -111,7 +114,9 @@ export class FlotteService {
       const page = query.page || 1;
       const limit = query.limit || 25;
       const total = claimable.length;
-      const paged = claimable.slice((page - 1) * limit, (page - 1) * limit + limit);
+      const paged = await this.hydratePage(
+        claimable.slice((page - 1) * limit, (page - 1) * limit + limit),
+      );
 
       return {
         data: paged.map((o: any) =>
@@ -1319,6 +1324,76 @@ export class FlotteService {
     // La spécification est un filet posé sur les commandes créées PAR un
     // commerçant d'Echango ; une entreprise lit ce que Fleetbase porte.
     return { ...order, meta: effectiveOrderMeta(order, null) };
+  }
+
+  /**
+   * Recharge une page de commandes en **lecture unitaire**, seule forme qui
+   * porte les montants.
+   *
+   * ── Le défaut que ceci répare (revue du 01/08/2026, C1) ──────────────────
+   *
+   * `withEffectiveMeta()` recompose `meta` depuis `custom_field_values`. Sur une
+   * commande issue d'une **liste**, il n'y a rien à recomposer : Fleetbase sert
+   * une ressource d'index allégée, qui remplace `meta` par le seul drapeau
+   * `{_index_resource: true}` et **n'inclut aucune valeur de champ
+   * personnalisé**.
+   *
+   * ⚠️ Le commentaire de `getAllOrders` affirmait le contraire — « le demander
+   * ici les charge en une fois » — et **c'est cette phrase qui a servi
+   * d'argument** pour écrire l'hydratation des deux listes de ce module. Mesuré
+   * le 01/08/2026 : `GET /int/v1/orders?limit=2&with[]=customFieldValues.customField`
+   * rend `meta = {_index_resource: true}`, `custom_field_values` absent,
+   * `meta.price = null` ; la même commande en lecture unitaire rend `meta` réel
+   * et huit valeurs. Une donnée d'appui fausse ne dort pas dans un commentaire,
+   * elle fait conclure.
+   *
+   * Conséquence de l'ancien état : une entreprise décidait de prendre une course
+   * **sans voir le prix, le montant à encaisser, le véhicule exigé ni les
+   * consignes** — c'est-à-dire le défaut D6 que ce module croyait avoir fermé.
+   * Rien ne le signalait : `pick()` omet les clés absentes, la ligne s'affiche,
+   * seuls les chiffres manquent. Les modules commerçant et transporteur y
+   * échappaient parce qu'ils hydratent depuis `Order.specMeta`, le filet local
+   * que ce module n'a pas.
+   *
+   * ── Pourquoi une lecture par commande, et pas une requête groupée ─────────
+   *
+   * Il n'y en a pas. Mesuré : `custom-field-values?subject_uuid=` est bien
+   * honoré (13 valeurs contre 0 pour un uuid inventé — le témoin le prouve),
+   * mais `subject_uuid[]=A&subject_uuid[]=B` n'en retient **qu'un**, et la forme
+   * à virgule rend 0. Le coût est donc borné par la **page** — 25 lignes — et
+   * non par le nombre de courses de l'entreprise : d'où l'hydratation **après**
+   * la pagination, jamais avant.
+   *
+   * ⚠️ Une lecture qui échoue ne fait pas tomber la liste : la ligne reste,
+   * amputée de ses montants, et le journal le dit. Perdre vingt-quatre lignes
+   * lisibles parce que la vingt-cinquième a échoué serait le remède pire que le
+   * mal — mais un montant manquant sans trace serait le défaut qu'on corrige.
+   */
+  private async hydratePage(orders: any[]): Promise<any[]> {
+    const BATCH = 8;
+    const out: any[] = [];
+
+    for (let i = 0; i < orders.length; i += BATCH) {
+      const slice = orders.slice(i, i + BATCH);
+      const loaded = await Promise.all(
+        slice.map(async (o: any) => {
+          if (!o?.uuid) return o;
+          try {
+            const full = await this.fleetbaseClient.getOrderWithRelations(o.uuid);
+            return full ?? o;
+          } catch (error) {
+            this.logger.warn(
+              `Commande ${o.uuid} non rechargée (${error?.message}) — elle s'affichera ` +
+                'sans ses montants',
+            );
+            return o;
+          }
+        }),
+      );
+      out.push(...loaded);
+    }
+
+    return out;
   }
 
   private async getFleetWithValidation(fleetId: string) {

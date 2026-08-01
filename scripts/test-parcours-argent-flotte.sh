@@ -278,6 +278,24 @@ echo "$opps" | jq -e --arg u "$FB_UUID" \
      "$(echo "$opps" | jq -c '[.data[].uuid]')"
 pass "La course figure dans les courses libres"
 
+# ⚠️ **Et elle porte ses montants.** Le contrôle ci-dessus ne vérifiait que la
+# PRÉSENCE de la ligne, jamais son contenu — il est resté vert pendant que la
+# liste servait des courses sans prix ni montant à encaisser (revue du
+# 01/08/2026, C1). Fleetbase sert une ressource d'index allégée, dont `meta` est
+# remplacé par le seul drapeau `_index_resource` : la liste n'a jamais porté un
+# seul champ personnalisé, et aucun paramètre `with[]` n'y change rien.
+#
+# C'est le contrôle qui manquait : on demandait à une entreprise de décider si
+# elle prend une course, sans lui montrer aucun des deux montants sur lesquels
+# elle décide. Une ligne qui s'affiche sans ses chiffres ne lève aucune erreur —
+# `pick()` omet simplement les clés absentes.
+echo "$opps" | jq -e --arg u "$FB_UUID" \
+  '[.data[] | select(.uuid == $u)] | first
+   | (.meta.price // 0) == 650 and (.meta.cod_amount // 0) == 1950' >/dev/null \
+  || fail "La course libre est servie sans ses montants — l'entreprise déciderait à l'aveugle" \
+     "$(echo "$opps" | jq -c --arg u "$FB_UUID" '[.data[] | select(.uuid == $u)] | first | .meta')"
+pass "Prix 650 et à encaisser 1950 servis dans la LISTE, pas seulement sur la fiche"
+
 # ⚠️ L'identité du destinataire est masquée tant que personne ne s'est engagé
 # (décision produit du 31/07). L'adresse, elle, est servie — c'est le critère de
 # décision. Le contrôle porte sur le NOM, pas sur l'absence de données.

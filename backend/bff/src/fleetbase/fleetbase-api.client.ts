@@ -729,12 +729,30 @@ export class FleetbaseApiClient {
     const response = await this.callFleetOps('GET', '/orders', undefined, {
       page,
       limit,
-      // Charge les valeurs de champs personnalisés avec leur définition.
+      // ⚠️ **CE PARAMÈTRE EST SANS EFFET, ET LA LISTE NE PORTE AUCUN MONTANT.**
       //
-      // Sans ça elles arrivent quand même — `withCustomFields()` fait un
-      // `loadMissing()` sur chaque ressource — mais **une requête par
-      // commande** : cent commandes, deux cents requêtes côté Fleetbase.
-      // Le demander ici les charge en une fois.
+      // Le commentaire qui vivait ici affirmait qu'il chargeait les valeurs
+      // « en une fois ». C'est faux, mesuré le 01/08/2026 :
+      //
+      //   GET /int/v1/orders?limit=2&with[]=customFieldValues.customField
+      //     → meta = {"_index_resource": true}
+      //       custom_field_values ABSENT · meta.price = null
+      //   GET /int/v1/orders/{uuid}   (sans aucun with[])
+      //     → meta réel · 8 valeurs de champs personnalisés
+      //
+      // Fleetbase sert une **ressource d'index allégée** (`Http/Resources/v1/
+      // Index/Order.php`), qui remplace `meta` par un drapeau signalant que
+      // l'enregistrement est partiel. Aucun paramètre ne la rend complète.
+      //
+      // Le paramètre est conservé : il ne coûte rien, et il redeviendra utile si
+      // l'amont enrichit la ressource d'index. Mais **tout appelant qui a besoin
+      // d'un montant doit recharger la commande unitairement** — c'est ce que
+      // fait `FlotteService.hydratePage()`, et ce que les modules commerçant et
+      // transporteur obtiennent autrement, par `Order.specMeta`.
+      //
+      // Cette phrase fausse a servi d'argument, textuellement, pour écrire une
+      // hydratation qui ne recomposait rien : une donnée d'appui fausse ne dort
+      // pas dans un commentaire, elle fait conclure (cf. la borne du `pubspec`).
       with: ['customFieldValues.customField'],
       ...filters,
     });
