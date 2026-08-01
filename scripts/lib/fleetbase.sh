@@ -116,9 +116,74 @@ fb_drivers() { # -> tableau JSON des conducteurs
 # La recherche se fait par **email** et non par nom : les comptes de test
 # partagent tous « Flotte de test », et activer le mauvais fournisseur produit
 # un refus qu'on met dix minutes à comprendre.
+# ⚠️ **Fleetbase plafonne `limit` à 100, en silence** — mesuré le 01/08/2026 :
+# `?limit=200` et `?limit=500` rendent l'un et l'autre **100** enregistrements.
+#
+# Ce plafond est resté invisible pendant des semaines, puis a fait échouer **cinq
+# scénarios d'un coup** le jour où la base a dépassé cent fournisseurs : les
+# comptes que les scripts venaient de créer étaient hors de la fenêtre, et le
+# message accusait leur absence — « aucun fournisseur d'email X » — alors qu'ils
+# existaient. Exactement le défaut que ce dépôt a déjà corrigé deux fois côté
+# BFF (« plafond silencieux limit=100 »), à un troisième endroit.
+#
+# La parade est un **filtre serveur** : `?email=` réduit le jeu bien en deçà de
+# cent. Il est réellement appliqué — un email inexistant rend **0**, et c'est le
+# témoin qui le prouve ; sans lui on ne saurait pas distinguer « filtre honoré »
+# de « paramètre ignoré », qui est le mode de défaut habituel de Fleetbase.
+#
+# L'égalité est **revérifiée en jq** parce qu'on ne sait pas si le filtre est
+# exact ou partiel — et s'appuyer sur une correspondance approximative pour
+# activer un fournisseur, c'est risquer d'en activer un autre.
+# Le prestataire « plateforme », s'il est provisionné.
+#
+# ── Pourquoi dans la bibliothèque ────────────────────────────────────────
+#
+# Depuis que le facilitateur de pool existe (01/08/2026), **la contrepartie du
+# conducteur dépend de cette valeur** : Echango quand un compte plateforme est
+# désigné, le commerçant sinon. Trois scénarios d'argent doivent donc la
+# connaître, et une copie qui diverge ferait lire la dette au mauvais endroit —
+# c'est-à-dire rendre `0` sur un registre parfaitement juste, ce qui s'est
+# produit avant cette extraction (règle 5).
+#
+# Renseigne `PLATFORM_ID` et `PLATFORM_EMAIL`, vides s'il n'y en a pas.
+PLATFORM_ID=""; PLATFORM_EMAIL=""
+fb_resolve_platform() {
+  local row
+  PLATFORM_ID=""; PLATFORM_EMAIL=""
+  row="$(docker exec "${PGC:-echango_bff_postgres}" psql -U "${PGUSER:-bff_user}" \
+    -d "${PGDB:-echango_bff}" -tAc \
+    'SELECT id || E'"'"'\t'"'"' || email FROM "FleetAccount" WHERE "isPlatform" = true AND active = true;' \
+    2>/dev/null)" || return 0
+  [ -n "$row" ] || return 0
+
+  # Plusieurs = le BFF refuse (`cash.platform_ambiguous`) ; ne pas en choisir un
+  # au hasard, ce serait décider à quel compte l'argent revient.
+  if [ "$(echo "$row" | wc -l)" -ne 1 ]; then
+    FLEETBASE_ERROR="plusieurs prestataires plateforme actifs : $(echo "$row" | tr '\n' ' ')"
+    return 1
+  fi
+
+  PLATFORM_ID="${row%%	*}"; PLATFORM_EMAIL="${row#*	}"
+}
+
+# La contrepartie d'un conducteur pour un commerçant donné, sur une course du
+# pool : Echango s'il est provisionné, le commerçant sinon. Rend l'identifiant
+# sur stdout et renseigne `COUNTERPARTY_LABEL`.
+COUNTERPARTY_LABEL=""
+fb_pool_counterparty() { # merchant_id -> identifiant sur stdout
+  fb_resolve_platform || return 1
+  if [ -n "$PLATFORM_ID" ]; then
+    COUNTERPARTY_LABEL="Echango ($PLATFORM_EMAIL)"
+    printf '%s' "$PLATFORM_ID"
+  else
+    COUNTERPARTY_LABEL="ce commerçant"
+    printf '%s' "$1"
+  fi
+}
+
 fb_activate_vendor_by_email() { # email
   local vendors uuid now
-  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
+  vendors="$(fb_get "/int/v1/vendors?email=$1&limit=100")" || return 1
 
   uuid="$(echo "$vendors" | jq -r --arg e "$1" \
     '(.vendors // .data // []) | map(select(.email == $e)) | last.uuid // empty')"
@@ -129,9 +194,11 @@ fb_activate_vendor_by_email() { # email
   # Relu, jamais déduit du code HTTP : `status` n'est pas garanti `fillable`,
   # et un `PUT` qui l'ignore répond 200 sans rien changer. Le refus de connexion
   # suivant serait alors mis sur le compte du garde plutôt que du PUT.
-  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
-  now="$(echo "$vendors" | jq -r --arg u "$uuid" \
-    '(.vendors // .data // []) | map(select(.uuid == $u)) | first.status // empty')"
+  #
+  # Relu **par uuid**, la lecture la plus étroite qui soit : elle ne dépend ni
+  # du plafond, ni du filtre, ni de l'ordre de tri.
+  now="$(fb_get "/int/v1/vendors/$uuid" \
+    | jq -r '(.vendor // .data // .) | .status // empty')" || return 1
   [ "$now" = "active" ] \
     || { FLEETBASE_ERROR="statut resté « ${now:-inconnu} » après le PUT"; return 1; }
 }

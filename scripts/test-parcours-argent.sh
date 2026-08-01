@@ -122,48 +122,10 @@ step "Sessions"
 # un état transitoire. Le §5 de `specs_facilitateur.md` annonçait ce changement
 # de contrat : le voici, sous condition plutôt qu'en rupture.
 PLATFORM_ID=""; PLATFORM_EMAIL=""; OPERATOR_TOKEN=""
-_resolve_platform() {
-  local row
-  row="$(docker exec "${PGC:-echango_bff_postgres}" psql -U "${PGUSER:-bff_user}" \
-    -d "${PGDB:-echango_bff}" -tAc \
-    'SELECT id || E'"'"'\t'"'"' || email FROM "FleetAccount" WHERE "isPlatform" = true AND active = true;' \
-    2>/dev/null)" || return 0
-  [ -n "$row" ] || return 0
-  # Plusieurs = le BFF refuse (`cash.platform_ambiguous`) ; ne pas en choisir un.
-  [ "$(echo "$row" | wc -l)" -eq 1 ] || {
-    fail "Plusieurs prestataires plateforme actifs — le BFF refusera toute clôture encaissée" \
-         "$(echo "$row" | tr '\n' ' ')"
-  }
-  PLATFORM_ID="${row%%	*}"; PLATFORM_EMAIL="${row#*	}"
-}
-_resolve_platform
-
-# Active le fournisseur du commerçant, comme le ferait un admin dans la console.
-#
-# Le nom porte un suffixe unique parce que la recherche se fait par nom : la
-# console affiche déjà une douzaine de « Test Argent », et « prendre le plus
-# récent » est une mauvaise instruction — la liste n'est pas triée par date, et
-# activer le mauvais fournisseur produit un refus qu'on met dix minutes à
-# comprendre.
-activate_vendor() { # nom du fournisseur
-  local vendors uuid
-  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
-  uuid="$(echo "$vendors" | jq -r --arg n "$1" \
-    '(.vendors // .data // []) | map(select(.name == $n)) | last.uuid // empty')"
-  [ -n "$uuid" ] || { FLEETBASE_ERROR="fournisseur « $1 » introuvable côté Fleetbase"; return 1; }
-
-  fb_api PUT "/int/v1/vendors/$uuid" '{"status":"active"}' >/dev/null || return 1
-
-  # Relu plutôt que déduit du code HTTP : `status` n'est pas garanti `fillable`,
-  # et un `PUT` qui l'ignore renvoie 200 sans rien changer. Le refus de
-  # connexion trois lignes plus bas serait alors mis sur le compte du garde.
-  vendors="$(fb_get "/int/v1/vendors?limit=200")" || return 1
-  local now
-  now="$(echo "$vendors" | jq -r --arg u "$uuid" \
-    '(.vendors // .data // []) | map(select(.uuid == $u)) | first.status // empty')"
-  [ "$now" = "active" ] || {
-    FLEETBASE_ERROR="statut du fournisseur resté « ${now:-inconnu} » après le PUT"; return 1; }
-}
+# La resolution vit dans lib/fleetbase.sh : trois scenarios en dependent, et
+# une copie qui diverge ferait lire la dette au mauvais endroit — donc 0 sur
+# un registre parfaitement juste, ce qui s'est produit (regle 5).
+fb_resolve_platform || fail "${FLEETBASE_ERROR:-}"
 
 if [ -z "$EMAIL" ]; then
   SUFFIX="$(date +%s)"
@@ -191,7 +153,7 @@ if [ -z "$EMAIL" ]; then
     fail "Inscription en échec (HTTP $status)" "$body"
   fi
 
-  activate_vendor "$BUSINESS" \
+  fb_activate_vendor_by_email "$EMAIL" \
     || fail "Activation du fournisseur impossible : ${FLEETBASE_ERROR:-}
    Activez « $BUSINESS » dans la console (Fleet-Ops → Fournisseurs → Statut),
    puis relancez avec EMAIL=$EMAIL"

@@ -165,9 +165,21 @@ pass "Commerçant NEUF : $MERCHANT_EMAIL"
 
 # Un commerçant neuf ⇒ dette de couple à zéro. C'est ce qui rend les deux
 # montants lisibles sans soustraire un résidu.
-D0="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")")"
-[ "$D0" = "0" ] || fail "La dette envers un commerçant neuf devrait être nulle, elle vaut $D0"
-pass "Dette de départ : 0"
+# La contrepartie depend du provisionnement : Echango est le facilitateur des
+# courses du pool quand un compte plateforme existe, et la dette du conducteur
+# va alors a LUI. Lire le commercant rendrait 0 sur un registre juste.
+CP="$(fb_pool_counterparty "$MERCHANT_ID")" || fail "${FLEETBASE_ERROR:-}"
+D0="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$CP")")"
+
+# ⚠️ **On mesure des DELTAS, jamais des totaux** — troisieme occurrence du meme
+# piege dans ce depot. La parade d origine etait « un commercant neuf a chaque
+# run, donc sa dette part de zero ». Elle ne tient plus depuis que la
+# contrepartie du pool est Echango : ce compte est UNIQUE et partage entre
+# toutes les executions, et son encours s accumule.
+#
+# Toute assertion sur une valeur ABSOLUE du registre est fausse des lors que la
+# contrepartie est partagee. Seul l ecart cree par CETTE livraison est stable.
+pass "Dette de depart envers $COUNTERPARTY_LABEL : $D0"
 
 # ── 1. Les deux refus ──────────────────────────────────────────────────────
 step "1. Les gardes sur le montant perçu"
@@ -195,16 +207,17 @@ echo "$closed" | is_error && fail "Clôture avec écart refusée" "$(echo "$clos
 pass "Livrée, $N_COLLECTED déclarés perçus, motif « somme_incomplete »"
 
 EXPECT_NEG=$((N_COLLECTED - N_FEE))
-D1="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")")"
-[ "$D1" = "$EXPECT_NEG" ] \
-  || fail "Dette attendue $EXPECT_NEG (perçu $N_COLLECTED − course $N_FEE), obtenue $D1"
+D1="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$CP")")"
+ADDED1=$((D1 - D0))
+[ "$ADDED1" = "$EXPECT_NEG" ] \
+  || fail "Cette livraison doit ajouter $EXPECT_NEG (percu $N_COLLECTED - course $N_FEE), elle ajoute $ADDED1 (avant $D0, apres $D1)"
 
 # ⚠️ Le SIGNE, explicitement. Un plancher à zéro rendrait 0 ici, ce qui est un
 # nombre parfaitement plausible — et le transporteur aurait travaillé sans que
 # rien n'enregistre ce qui lui est dû.
-case "$D1" in
-  -*) pass "Dette NÉGATIVE : $D1 — le commerçant doit $((0 - D1)) au transporteur" ;;
-  *)  fail "La dette devrait être négative, elle vaut $D1 — un plancher à zéro l'a écrasée" ;;
+case "$ADDED1" in
+  -*) pass "Apport NEGATIF : $ADDED1 — le commercant doit $((0 - ADDED1)) au transporteur" ;;
+  *)  fail "L apport devrait etre negatif, il vaut $ADDED1 — un plancher a zero l a ecrase" ;;
 esac
 
 # Le détail dit la même chose : la retenue affichée est plafonnée au perçu,
@@ -231,14 +244,14 @@ echo "$closed" | is_error && fail "Clôture refusée" "$(echo "$closed" | jq -c 
 pass "Livrée, $E_COLLECTED perçus sur $E_EXPECTED, motif « pas_de_monnaie »"
 
 EXPECT_TOTAL=$(( (N_COLLECTED - N_FEE) + (E_COLLECTED - E_FEE) ))
-D2="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")")"
+D2="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$CP")")"
 
 # ⚠️ La COMPOSITION, et pas seulement la seconde jambe. Si la négative avait été
 # écrasée à zéro, on lirait ici 850 au lieu de 400 — un nombre plausible, et le
 # seul écart entre les deux est précisément ce que ce script existe pour voir.
-[ "$D2" = "$EXPECT_TOTAL" ] \
-  || fail "Dette totale attendue $EXPECT_TOTAL ($EXPECT_NEG puis +$((E_COLLECTED - E_FEE))), obtenue $D2"
-pass "Les deux jambes se composent : $EXPECT_NEG puis +$((E_COLLECTED - E_FEE)) = $D2"
+[ "$((D2 - D0))" = "$EXPECT_TOTAL" ] \
+  || fail "Les deux livraisons doivent ajouter $EXPECT_TOTAL, elles ajoutent $((D2 - D0))"
+pass "Les deux jambes se composent : $EXPECT_NEG puis +$((E_COLLECTED - E_FEE)) = $((D2 - D0))"
 
 echo
 echo "════════════════════════════════════════════════════════════════"
@@ -246,4 +259,4 @@ pass "Écart à la porte et dette négative vérifiés."
 echo "   percevoir plus que dû      → refusé"
 echo "   écart sans motif           → refusé"
 echo "   perçu $N_COLLECTED / $N_EXPECTED        → dette $EXPECT_NEG, le commerçant est débiteur"
-echo "   puis perçu $E_COLLECTED / $E_EXPECTED    → dette $D2 (les jambes se composent)"
+echo "   puis percu $E_COLLECTED / $E_EXPECTED    -> apport total $((D2 - D0))"
