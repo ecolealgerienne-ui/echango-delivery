@@ -112,8 +112,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       // afficherait « 8 caractères minimum » sous un champ qui
                       // en refuserait neuf le jour où le serveur passe à dix.
                       helperText: _t('auth.register.password.hint',
-                          {'n': '${ServerRules.passwordMinLength}'})
-                          'minimum',
+                          {'n': '${ServerRules.passwordMinLength}'}),
                       prefixIcon: const Icon(Icons.lock_outlined),
                     ),
                   ),

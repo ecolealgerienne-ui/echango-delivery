@@ -123,7 +123,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 /// ligne, Fleetbase ne diffuse aucune course à ce driver. Elle est donc à
 /// portée permanente dans la barre, et pas enterrée dans le profil.
 class _AvailabilitySwitch extends StatelessWidget {
-  String _d(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _d(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
   const _AvailabilitySwitch();
@@ -140,8 +144,8 @@ class _AvailabilitySwitch extends StatelessWidget {
               online == null
                   ? '—'
                   : online
-                      ? _d('driver.presence.online')
-                      : _d('driver.presence.offline'),
+                      ? _d(context, 'driver.presence.online')
+                      : _d(context, 'driver.presence.offline'),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             if (presence.isBusy)
@@ -175,7 +179,11 @@ class _AvailabilitySwitch extends StatelessWidget {
 /// écran vide indiscernable d'une absence réelle de course — le mode d'échec
 /// le plus coûteux à diagnostiquer sur le terrain.
 class _PresenceBanner extends StatelessWidget {
-  String _d(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _d(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
   const _PresenceBanner();
@@ -197,7 +205,7 @@ class _PresenceBanner extends StatelessWidget {
 
         if (presence.online == false) {
           return _banner(
-            _d('driver.presence.offline.warning'),
+            _d(context, 'driver.presence.offline.warning'),
             theme.colorScheme.secondaryContainer,
             theme.colorScheme.onSecondaryContainer,
           );
@@ -205,7 +213,7 @@ class _PresenceBanner extends StatelessWidget {
 
         if (presence.online == true && !presence.pushAvailable) {
           return _banner(
-            _d('driver.presence.push.unavailable'),
+            _d(context, 'driver.presence.push.unavailable'),
             theme.colorScheme.surfaceContainerHighest,
             theme.colorScheme.onSurfaceVariant,
           );
@@ -306,7 +314,9 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
   Widget _buildOrdersList(
     List<dynamic> orders, {
-    String emptyLabel = _d('driver.empty.default'),
+    // ⚠️ Nullable et non « = _d(…) » : un défaut de paramètre doit être une
+    // constante de compilation, et un appel de traduction n'en est pas une.
+    String? emptyLabel,
     // Non nullable : `AppEmptyState` exige sa consigne, et une liste vide sans
     // explication se lit comme une panne.
     required String emptyHint,
@@ -322,7 +332,8 @@ class _OrdersListScreenState extends State<OrdersListScreen>
           children: [
             SizedBox(
               height: MediaQuery.of(context).size.height * 0.6,
-              child: _emptyState(emptyLabel, emptyHint),
+              child: _emptyState(
+                  emptyLabel ?? _d('driver.empty.default'), emptyHint),
             ),
           ],
         ),
@@ -408,7 +419,11 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
 /// Écran de la carte.
 class MapScreen extends StatelessWidget {
-  String _d(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _d(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
   const MapScreen({super.key});
@@ -426,12 +441,12 @@ class MapScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            _d('driver.map.unavailable'),
+            _d(context, 'driver.map.unavailable'),
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            _d('driver.map.unavailable.hint'),
+            _d(context, 'driver.map.unavailable.hint'),
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -445,10 +460,17 @@ class MapScreen extends StatelessWidget {
 
 /// Écran de profil avec logout.
 class ProfileScreen extends StatelessWidget {
-  String _d(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _d(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
-  String _c(String key) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _c(BuildContext context, String key) =>
       commonLabel(key, context.read<LocaleState>().locale);
 
   const ProfileScreen({super.key});
@@ -477,12 +499,12 @@ class ProfileScreen extends StatelessWidget {
                       return Column(
                         children: [
                           Text(
-                            authState.email ?? _d('driver.profile.fallback'),
+                            authState.email ?? _d(context, 'driver.profile.fallback'),
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           Text(
-                            _d('driver.profile.role',
+                            _d(context, 'driver.profile.role',
                                 {'role': authState.role?.label ?? '—'}),
                             style: Theme.of(context)
                                 .textTheme
@@ -522,7 +544,7 @@ class ProfileScreen extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Text(
-                        _d('driver.logout'),
+                        _d(context, 'driver.logout'),
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -542,10 +564,10 @@ class ProfileScreen extends StatelessWidget {
   ) async {
     final confirmed = await AppConfirmDialog.destructive(
       context,
-      title: _d('driver.logout'),
-      message: _d('driver.logout.body'),
-      cancelLabel: _c('common.cancel'),
-      confirmLabel: _d('driver.logout'),
+      title: _d(context, 'driver.logout'),
+      message: _d(context, 'driver.logout.body'),
+      cancelLabel: _c(context, 'common.cancel'),
+      confirmLabel: _d(context, 'driver.logout'),
     );
 
     if (confirmed) {
@@ -564,7 +586,11 @@ class ProfileScreen extends StatelessWidget {
 /// toutes les courses. Le dire explicitement à l'écran évite qu'il croie devoir
 /// remplir le champ pour recevoir du travail — l'inverse serait vrai.
 class _VehicleTypeCard extends StatelessWidget {
-  String _d(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _d(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
   const _VehicleTypeCard();
@@ -575,12 +601,16 @@ class _VehicleTypeCard extends StatelessWidget {
   /// téléphone ordinaire. L'information qu'il portait n'est pas perdue : elle
   /// passe dans le texte d'aide ci-dessous, qui a la place de la dire en entier
   /// et peut l'adapter au choix courant.
-  static final _options = {
-    null: _d('driver.vehicle.none'),
-    'moto': _d('driver.vehicle.moto'),
-    'voiture': _d('driver.vehicle.voiture'),
-    'utilitaire': _d('driver.vehicle.utilitaire'),
-  };
+  ///
+  /// ⚠️ Construite dans le `build` et non en champ `static final` : un
+  /// initialiseur de champ ne peut pas appeler un membre d'instance, et la
+  /// table dépend de toute façon de la langue courante.
+  Map<String?, String> _options(BuildContext context) => {
+        null: _d(context, 'driver.vehicle.none'),
+        'moto': _d(context, 'driver.vehicle.moto'),
+        'voiture': _d(context, 'driver.vehicle.voiture'),
+        'utilitaire': _d(context, 'driver.vehicle.utilitaire'),
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -589,7 +619,7 @@ class _VehicleTypeCard extends StatelessWidget {
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_d('driver.vehicle.title'), style: Theme.of(context).textTheme.titleMedium),
+              Text(_d(context, 'driver.vehicle.title'), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String?>(
                 initialValue: presence.vehicleType,
@@ -602,7 +632,7 @@ class _VehicleTypeCard extends StatelessWidget {
                   prefixIcon: Icon(vehicleIcon(presence.vehicleType)),
                   isDense: true,
                 ),
-                items: _options.entries
+                items: _options(context).entries
                     .map((e) => DropdownMenuItem<String?>(
                           value: e.key,
                           child: Text(e.value, overflow: TextOverflow.ellipsis),
@@ -619,8 +649,8 @@ class _VehicleTypeCard extends StatelessWidget {
               // une règle inactive est pire qu'une absence d'aide.
               Text(
                 presence.vehicleType == null
-                    ? _d('driver.vehicle.hint.none')
-                    : _d('driver.vehicle.hint.set'),
+                    ? _d(context, 'driver.vehicle.hint.none')
+                    : _d(context, 'driver.vehicle.hint.set'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

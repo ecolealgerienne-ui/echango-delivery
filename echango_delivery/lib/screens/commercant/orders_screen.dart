@@ -154,7 +154,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
 }
 
 class _OrderList extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final List<MerchantOrder> orders;
@@ -212,7 +216,7 @@ class _OrderList extends StatelessWidget {
           if (index == orders.length) {
             return AppLoadMore(
               isLoading: state.isLoadingMore,
-              label: _t('order.list.more'),
+              label: _t(context, 'order.list.more'),
               onPressed: state.loadMoreOrders,
             );
           }
@@ -225,7 +229,7 @@ class _OrderList extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      order.dropoff?.name ?? _t('order.list.fallback'),
+                      order.dropoff?.name ?? _t(context, 'order.list.fallback'),
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
@@ -244,7 +248,7 @@ class _OrderList extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (order.driverName != null)
-                    Text(_t('order.list.driver', {'name': order.driverName!}),
+                    Text(_t(context, 'order.list.driver', {'name': order.driverName!}),
                         style: const TextStyle(fontSize: 12)),
                 ],
               ),
@@ -262,7 +266,11 @@ class _OrderList extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final MerchantOrder order;
@@ -285,7 +293,7 @@ class _StatusChip extends StatelessWidget {
 
     if (order.degraded) {
       return Chip(
-        label: Text(_t('order.list.status.unavailable'),
+        label: Text(_t(context, 'order.list.status.unavailable'),
             style: TextStyle(fontSize: 11, color: neutral.$2)),
         backgroundColor: neutral.$1,
         padding: EdgeInsets.zero,

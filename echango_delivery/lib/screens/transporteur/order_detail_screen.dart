@@ -21,7 +21,11 @@ import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final String orderId;
@@ -39,7 +43,7 @@ class OrderDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_t('driver.order.title')),
+          title: Text(_t(context, 'driver.order.title')),
           elevation: 0,
         ),
         body: Consumer<OrderState>(
@@ -61,7 +65,7 @@ class OrderDetailScreen extends StatelessWidget {
             }
 
             if (order == null) {
-              return Center(child: Text(_t('driver.order.not_found')));
+              return Center(child: Text(_t(context, 'driver.order.not_found')));
             }
 
             return SingleChildScrollView(
@@ -84,7 +88,7 @@ class OrderDetailScreen extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                  _t('driver.order.number',
+                                  _t(context, 'driver.order.number',
                                       {'id': order.publicId}),
                                   style: Theme.of(context).textTheme.titleLarge,
                                   overflow: TextOverflow.ellipsis,
@@ -144,7 +148,7 @@ class OrderDetailScreen extends StatelessWidget {
                                       const Icon(Icons.account_balance_wallet_outlined),
                                       const SizedBox(width: AppSpacing.sm),
                                       Text(
-                                        _t('driver.order.cod.label', {
+                                        _t(context, 'driver.order.cod.label', {
                                           'amount':
                                               '${order.codAmount!.toStringAsFixed(0)} '
                                                       '${order.codCurrency ?? ''}'
@@ -159,7 +163,7 @@ class OrderDetailScreen extends StatelessWidget {
                                   ),
                                   const SizedBox(height: AppSpacing.xs),
                                   Text(
-                                    _t('driver.order.cod.hint'),
+                                    _t(context, 'driver.order.cod.hint'),
                                     style: const TextStyle(fontSize: 12),
                                   ),
                                 ],
@@ -171,8 +175,8 @@ class OrderDetailScreen extends StatelessWidget {
                           // « Créée le » était une heure trop tôt, juste
                           // au-dessus d'une date d'échec que le même écran
                           // localisait. `formatFull` porte le `toLocal()`.
-                          _buildInfoRow(_t('driver.order.created'), formatFull(order.createdAt)),
-                          _buildInfoRow(_t('driver.order.updated'), formatFull(order.updatedAt)),
+                          _buildInfoRow(_t(context, 'driver.order.created'), formatFull(order.createdAt)),
+                          _buildInfoRow(_t(context, 'driver.order.updated'), formatFull(order.updatedAt)),
                         ],
                       ),
                   ),
@@ -185,12 +189,12 @@ class OrderDetailScreen extends StatelessWidget {
                           // L'enlèvement est un commerce : rien n'y est
                           // masqué, hors son téléphone.
                           _PlaceBlock(
-                            label: _t('order.schedule.title'),
+                            label: _t(context, 'order.schedule.title'),
                             place: order.pickupPlace,
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _PlaceBlock(
-                            label: _t('order.section.dropoff'),
+                            label: _t(context, 'order.section.dropoff'),
                             place: order.dropoffPlace,
                             obscured: order.redacted,
                           ),
@@ -205,14 +209,14 @@ class OrderDetailScreen extends StatelessWidget {
                     const SizedBox(height: AppSpacing.lg),
                     AppNotice.info(
                       icon: Icons.lock_outline,
-                      title: _t('driver.order.redacted.title'),
+                      title: _t(context, 'driver.order.redacted.title'),
                       // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
                       // Il annonçait une adresse réduite à la commune, alors
                       // que l'adresse complète est servie : le transporteur
                       // cherchait une information déjà sous ses yeux. Un
                       // libellé qui décrit l'ancienne règle est pire que pas
                       // de libellé du tout.
-                      message: _t('driver.order.redacted.body'),
+                      message: _t(context, 'driver.order.redacted.body'),
                     ),
                   ],
                   const SizedBox(height: AppSpacing.lg),
@@ -258,7 +262,7 @@ class OrderDetailScreen extends StatelessWidget {
       buttons.add(
         FilledButton(
           onPressed: busy ? null : () => _acceptOrder(context, order.id, orderState),
-          child: Text(_t('driver.order.accept')),
+          child: Text(_t(context, 'driver.order.accept')),
         ),
       );
     }
@@ -286,7 +290,7 @@ class OrderDetailScreen extends StatelessWidget {
                 : context.semantic.warning,
           ),
           child: Text(requiresPod
-              ? _t('driver.order.activity.pod', {'label': label})
+              ? _t(context, 'driver.order.activity.pod', {'label': label})
               : label),
         ),
       );
@@ -313,7 +317,7 @@ class OrderDetailScreen extends StatelessWidget {
               : () => _declineOrder(context, order.id, orderState,
                   assigned: returnable),
           icon: const Icon(Icons.do_not_disturb_on_outlined),
-          label: Text(claimable ? _t('driver.order.decline') : _t('driver.order.release')),
+          label: Text(claimable ? _t(context, 'driver.order.decline') : _t(context, 'driver.order.release')),
           style: AppButtonStyles.destructiveOutlined(context),
         ),
       );
@@ -328,7 +332,7 @@ class OrderDetailScreen extends StatelessWidget {
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/echec'),
           style: AppButtonStyles.destructiveFilled(context),
-          child: Text(_t('driver.order.report_failure')),
+          child: Text(_t(context, 'driver.order.report_failure')),
         ),
       );
     }
@@ -388,7 +392,7 @@ class OrderDetailScreen extends StatelessWidget {
     if (!sent) {
       showAppError(
         context,
-        orderState.errorMessage ?? _t('driver.order.proof.failed'),
+        orderState.errorMessage ?? _t(context, 'driver.order.proof.failed'),
       );
       return;
     }
@@ -446,9 +450,9 @@ class OrderDetailScreen extends StatelessWidget {
     if (success) {
       final label = (activity['_resolved_status'] ?? activity['code'] ?? '') as String;
       showAppSnackBar(
-          context, _t('driver.order.activity.done', {'label': label}));
+          context, _t(context, 'driver.order.activity.done', {'label': label}));
     } else {
-      showAppError(context, orderState.errorMessage ?? _t('driver.order.activity.failed'));
+      showAppError(context, orderState.errorMessage ?? _t(context, 'driver.order.activity.failed'));
     }
   }
 
@@ -482,15 +486,15 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!success) {
-      showAppError(context, orderState.errorMessage ?? _t('driver.order.decline.failed'));
+      showAppError(context, orderState.errorMessage ?? _t(context, 'driver.order.decline.failed'));
       return;
     }
 
     showAppSnackBar(
       context,
       orderState.lastDeclineReleasedToPool == true
-          ? _t('driver.order.release.done')
-          : _t('driver.order.decline.done'),
+          ? _t(context, 'driver.order.release.done')
+          : _t(context, 'driver.order.decline.done'),
     );
 
     // Retour à la liste : la fiche d'une course qu'on vient d'écarter n'a plus
@@ -507,7 +511,7 @@ class OrderDetailScreen extends StatelessWidget {
     final success = await orderState.acceptOrder(orderId);
     if (success) {
       if (!context.mounted) return;
-      showAppSnackBar(context, _t('driver.order.accept.done'));
+      showAppSnackBar(context, _t(context, 'driver.order.accept.done'));
     }
   }
 
@@ -589,11 +593,11 @@ class _DeclineSheetState extends State<_DeclineSheet> {
             // avertissement sur la version de l'utilisateur, que je ne peux
             // pas éprouver ici. Un tri visuel par coche rend d'ailleurs la
             // sélection plus lisible sur un téléphone tenu d'une main.
-            for (final (code, label, icon) in _reasons)
+            for (final (code, icon) in _reasons)
               ListTile(
                 onTap: () => setState(() => _reason = code),
                 leading: Icon(icon),
-                title: Text(label),
+                title: Text(_t('driver.reason.$code')),
                 trailing: _reason == code
                     ? Icon(Icons.check_circle,
                         color: Theme.of(context).colorScheme.error)
@@ -707,7 +711,11 @@ class _ProofSheetState extends State<_ProofSheet> {
 /// pouvoir la suivre et appeler sur place — sans ça il ressaisit tout à la
 /// main dans une autre application, au volant.
 class _PlaceBlock extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final String label;
@@ -733,7 +741,7 @@ class _PlaceBlock extends StatelessWidget {
         children: [
           Text(label, style: theme.textTheme.titleMedium),
           const SizedBox(height: AppSpacing.xs),
-          Text(_t('driver.order.place.no_address'), style: theme.textTheme.bodySmall),
+          Text(_t(context, 'driver.order.place.no_address'), style: theme.textTheme.bodySmall),
         ],
       );
     }
@@ -759,8 +767,8 @@ class _PlaceBlock extends StatelessWidget {
           // ce qui est le cas courant des commandes saisies sans passer par la
           // carte. L'adresse réelle est dans les précisions ci-dessous, et la
           // porte dans l'itinéraire.
-          Text(_t('driver.order.place.address_in_notes'), style: theme.textTheme.bodySmall),
-        if (p.contactName != null) Text(_t('driver.order.place.contact', {'name': p.contactName!})),
+          Text(_t(context, 'driver.order.place.address_in_notes'), style: theme.textTheme.bodySmall),
+        if (p.contactName != null) Text(_t(context, 'driver.order.place.contact', {'name': p.contactName!})),
         const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
@@ -778,7 +786,7 @@ class _PlaceBlock extends StatelessWidget {
               TextButton.icon(
                 onPressed: () => _navigate(context, p),
                 icon: const Icon(Icons.directions_outlined),
-                label: Text(_t('driver.order.route')),
+                label: Text(_t(context, 'driver.order.route')),
               ),
             if (p.contactPhone != null)
               TextButton.icon(
@@ -798,14 +806,14 @@ class _PlaceBlock extends StatelessWidget {
     // Un bouton qui ne fait rien est indiscernable d'une application figée.
     showAppError(
       context,
-      _t('driver.order.nav.none'),
+      _t(context, 'driver.order.nav.none'),
     );
   }
 
   Future<void> _call(BuildContext context, String phone) async {
     final ok = await NavigationLauncher.call(phone);
     if (!context.mounted || ok) return;
-    showAppError(context, _t('driver.order.call.failed'));
+    showAppError(context, _t(context, 'driver.order.call.failed'));
   }
 }
 
@@ -844,7 +852,11 @@ Widget _buildInfoRow(String label, String value) {
 /// décision de l'opérateur, et elle se perdrait dans une liste qu'il faut
 /// dénombrer soi-même.
 class _FailureHistory extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final List<DeliveryFailure> failures;
@@ -869,9 +881,9 @@ class _FailureHistory extends StatelessWidget {
                 Expanded(
                   child: Text(
                     multiple
-                        ? _t('driver.order.failures.many',
+                        ? _t(context, 'driver.order.failures.many',
                             {'count': '${failures.length}'})
-                        : _t('driver.order.failures.one'),
+                        : _t(context, 'driver.order.failures.one'),
                     style: theme.textTheme.titleMedium
                         ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
@@ -887,7 +899,7 @@ class _FailureHistory extends StatelessWidget {
                   // Numérotation à rebours : le plus récent porte le numéro le
                   // plus élevé, ce qui rend l'ordre chronologique lisible sans
                   // avoir à comparer les dates.
-                  _t('driver.order.failures.attempt', {
+                  _t(context, 'driver.order.failures.attempt', {
                     'n': '${failures.length - i}',
                     'date': formatDayTime(failures[i].createdAt),
                   }),
@@ -903,7 +915,7 @@ class _FailureHistory extends StatelessWidget {
             // le dire, sinon l'écart entre « échec signalé » et « statut
             // enroute » passe pour une incohérence.
             Text(
-              _t('driver.order.failures.note'),
+              _t(context, 'driver.order.failures.note'),
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
@@ -915,7 +927,11 @@ class _FailureHistory extends StatelessWidget {
 }
 
 class _FailureEntry extends StatelessWidget {
-  String _t(String key, [Map<String, String>? vars]) =>
+  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
+  // `context`, contrairement à un `State`. La même signature partout aurait
+  // été plus jolie — elle ne compile pas.
+  String _t(BuildContext context, String key,
+          [Map<String, String>? vars]) =>
       orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final DeliveryFailure failure;
@@ -927,8 +943,8 @@ class _FailureEntry extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildInfoRow(_t('driver.order.failures.reason'), failure.reason),
-        if (failure.notes != null) _buildInfoRow(_t('driver.order.failures.notes'), failure.notes!),
+        _buildInfoRow(_t(context, 'driver.order.failures.reason'), failure.reason),
+        if (failure.notes != null) _buildInfoRow(_t(context, 'driver.order.failures.notes'), failure.notes!),
         if (failure.photoUrl != null) ...[
           const SizedBox(height: AppSpacing.sm),
           ProofImage(url: failure.photoUrl!),
