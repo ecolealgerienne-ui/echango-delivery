@@ -249,7 +249,7 @@ found="$(echo "$coll" | jq -r --arg u "$FB_UUID" '[.data[]? | select(.order_uuid
           "$(echo "$coll" | jq -c '.data')"
 pass "Aucun encaissement enregistré, comme attendu"
 
-# ⚠️ La dette se lit du côté du CONDUCTEUR, avec `MERCHANT_ID` pour contrepartie.
+# ⚠️ La dette se lit du côté du CONDUCTEUR, et la contrepartie est celle du POOL.
 #
 # Côté commerçant, la contrepartie est l'identifiant du **compte Echango** du
 # conducteur, que ce script n'a pas : il ne connaît que l'uuid Fleetbase. Le lui
@@ -258,10 +258,37 @@ pass "Aucun encaissement enregistré, comme attendu"
 # de ce scénario passait **à vide**. Un identifiant qui ne correspond à rien ne
 # produit pas d'erreur, il produit un zéro rassurant (règle 10).
 #
-# Un commerçant NEUF est créé à chaque exécution, donc cette dette part
-# nécessairement de rien : aucun résidu des runs précédents, contrairement au
-# conducteur qui est réutilisé.
-DEBT_BEFORE="$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")"
+# ⚠️ **Et ce n'est pas `MERCHANT_ID`** — c'était le miroir, dans l'outillage, du
+# défaut C2 de la revue du 01/08/2026. Le module commerçant rendait `null` sur
+# une course du pool là où le module transporteur rendait Echango : une même
+# livraison créait donc deux contreparties selon qu'elle était close par l'app
+# ou régularisée ici. Ce script, écrit contre le chemin fautif, lisait la jambe
+# conducteur ↔ commerçant. Depuis que la résolution est unique, cette jambe est
+# vide et le contrôle rendait 0 sur un registre parfaitement juste.
+#
+# `fb_pool_counterparty` est ce que `test-parcours-argent.sh` interroge déjà :
+# une seule façon de savoir à qui le conducteur doit, dans les deux scripts
+# (règle 5).
+#
+# ⚠️ **Résolue hors de toute substitution de commande.** `fb_pool_counterparty`
+# renseigne `COUNTERPARTY_LABEL` dans le shell où elle s'exécute : appelée en
+# `$(...)`, l'étiquette meurt avec le sous-shell — et un `fail()` déclenché là
+# n'arrêterait que lui, laissant `set -e` tuer le script sans un mot. C'est le
+# défaut déjà payé deux fois dans ce dépôt (`RESOLVE_DRIVER_ERROR`, la lecture
+# des courses bloquantes). `fb_resolve_platform` puis une affectation simple,
+# exactement comme le fait `test-parcours-argent.sh`.
+fb_resolve_platform || fail "Contrepartie du pool indéterminable" "${FLEETBASE_ERROR:-}"
+if [ -n "$PLATFORM_ID" ]; then
+  COUNTERPARTY="$PLATFORM_ID"; COUNTERPARTY_LABEL="Echango ($PLATFORM_EMAIL)"
+else
+  COUNTERPARTY="$MERCHANT_ID"; COUNTERPARTY_LABEL="ce commerçant"
+fi
+echo "   contrepartie du conducteur sur une course du pool : $COUNTERPARTY_LABEL"
+
+# Un commerçant NEUF est créé à chaque exécution — mais sur le pool, le compte
+# plateforme est PARTAGÉ entre exécutions : d'où ce point de départ, sans lequel
+# le §7 lirait un cumul au lieu de la dette de cette livraison.
+DEBT_BEFORE="$(debt_toward "$(dapi GET /transporteur/caisse)" "$COUNTERPARTY")"
 echo "   dette du conducteur envers CE commerçant, avant régularisation : $DEBT_BEFORE"
 
 # ── 4. Le commerçant déclare ───────────────────────────────────────────────
@@ -287,7 +314,7 @@ step "5. La dette ne bouge pas tant que le transporteur n'a pas confirmé"
 # d'autre, donc elle ne compte pas encore. Un script qui vérifierait seulement
 # « la dette apparaît après confirmation » passerait au vert même si elle était
 # déjà comptée avant.
-DEBT_DECLARED="$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")"
+DEBT_DECLARED="$(debt_toward "$(dapi GET /transporteur/caisse)" "$COUNTERPARTY")"
 [ "$DEBT_DECLARED" = "$DEBT_BEFORE" ] \
   || fail "La dette a bougé sur une simple déclaration du commerçant : $DEBT_BEFORE → $DEBT_DECLARED"
 pass "Dette inchangée ($DEBT_DECLARED) — une déclaration unilatérale n'engage personne"
@@ -327,7 +354,7 @@ expect_refusal "Confirmer une seconde fois" "cash.collection_already_confirmed" 
 # ── 7. La dette naît, et la rémunération avec elle ────────────────────────
 step "7. La dette apparaît — et la rémunération naît au même instant"
 
-DEBT_AFTER="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$MERCHANT_ID")")"
+DEBT_AFTER="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$COUNTERPARTY")")"
 
 # ⚠️ **Le montant, et pas seulement le mouvement.** Sur une course du pool la
 # rémunération revient au conducteur : il retient FEE et ne doit que GOODS.
@@ -335,8 +362,14 @@ DEBT_AFTER="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$
 # écrite — exactement le défaut que « la rémunération naît à la confirmation »
 # corrige, et qui produirait sinon une dette négative une fois la retenue
 # appliquée. C'est l'ÉCART entre le perçu et la dette qui prouve la retenue.
-[ "$DEBT_AFTER" = "$GOODS" ] \
-  || fail "Dette attendue $GOODS (soit $EXPECTED perçus − $FEE de rémunération), obtenue $DEBT_AFTER"
+# ⚠️ En **delta**, pas en absolu : sur le pool la contrepartie est le compte
+# plateforme, partagé entre exécutions, donc une valeur absolue ne tiendrait
+# qu'au premier passage. C'est la leçon déjà payée trois fois sur les autres
+# scénarios d'argent.
+DEBT_DELTA="$(awk -v a="$DEBT_AFTER" -v b="$(amount_number "$DEBT_BEFORE")" 'BEGIN{printf "%.0f", a-b}')"
+[ "$DEBT_DELTA" = "$GOODS" ] \
+  || fail "Dette attendue $GOODS (soit $EXPECTED perçus − $FEE de rémunération), obtenue $DEBT_DELTA" \
+          "avant $DEBT_BEFORE, après $DEBT_AFTER, contrepartie $COUNTERPARTY_LABEL"
 pass "Le conducteur doit $DEBT_AFTER — la retenue de $FEE est appliquée"
 
 # Vue du commerçant, la même course, ligne par ligne. `retained_amount` vient de
