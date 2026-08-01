@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../errors/error_message.dart';
 import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
@@ -93,8 +94,10 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       });
     } catch (e) {
       if (mounted) {
-        setState(() =>
-            _error = _t('order.fav.search.failed', {'error': '$e'}));
+        // ⚠️ `messageForError` et non `'$e'`. `AppException.toString()` rend
+        // `message ?? code` : interpoler affichait le message serveur FRANÇAIS
+        // à un arabophone, ou le code nu, ou le `SocketException` anglais.
+        setState(() => _error = messageForError(e, context.read<LocaleState>().locale));
       }
     } finally {
       if (mounted) setState(() => _searching = false);
@@ -137,8 +140,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       if (mounted) setState(() => _known = known);
     } catch (e) {
       if (mounted) {
-        setState(() =>
-            _error = _t('order.fav.load.failed', {'error': '$e'}));
+        setState(() => _error = messageForError(e, context.read<LocaleState>().locale));
       }
     } finally {
       if (mounted) {
@@ -271,7 +273,22 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                   const SizedBox(height: AppSpacing.xl),
                   Text(_t('order.fav.section'), style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: AppSpacing.sm),
-                  if (state.favourites.isEmpty)
+                  // ⚠️ L'indisponibilité AVANT le vide. « Aucun favori. Vos
+                  // livraisons sont proposées à tout le réseau » décrit une
+                  // POLITIQUE DE DIFFUSION : l'affirmer sur une lecture qui a
+                  // échoué faisait croire au commerçant qu'il avait perdu ses
+                  // favoris, et il les ré-ajoutait.
+                  if (state.favouritesUnavailable)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.cloud_off_outlined),
+                        title: Text(_t('order.fav.unavailable')),
+                        subtitle: Text(_t('order.fav.unavailable.hint')),
+                      ),
+                    )
+                  else if (state.favourites.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(

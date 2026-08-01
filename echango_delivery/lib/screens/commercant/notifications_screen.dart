@@ -62,7 +62,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: () => state.loadNotifications(),
-        child: items.isEmpty
+        // ⚠️ L'indisponibilité AVANT le vide, comme partout. Cet écran est le
+        // SUBSTITUT du push, qui n'est pas branché : « Aucune notification » s'y
+        // lit « personne n'a pris ma course ». L'affirmer sur un relevé qui a
+        // échoué est le pire endroit où le faire.
+        child: state.notificationsUnavailable && items.isEmpty
+            ? AppEmptyState.unavailable(
+                title: _t('order.notif.unavailable'),
+                hint: _t('order.notif.unavailable.hint'),
+                onRetry: () => state.loadNotifications(),
+              )
+            : items.isEmpty
             ? AppEmptyState(
                 title: _t('order.notifications.empty'),
                 hint: _t('order.notifications.empty.hint'),

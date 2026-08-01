@@ -266,6 +266,18 @@ class _OpportunitiesTab extends StatelessWidget {
     // et un nom de véhicule, qui se formatent avec la locale et non avec une
     // clé.
     final locale = context.watch<LocaleState>().locale;
+    // ⚠️ « Indisponible » AVANT « vide », toujours dans cet ordre : les deux
+    // donnent une liste vide, et tester le vide en premier ferait affirmer
+    // qu'il n'y a rien à un onglet qui n'a rien pu lire. C'est l'onglet où une
+    // entreprise vient chercher du travail — s'y tromper la fait refermer
+    // l'application en concluant que le réseau est vide.
+    if (state.opportunitiesUnavailable) {
+      return AppEmptyState.unavailable(
+        title: t('fleet.opportunities.unavailable'),
+        hint: t('fleet.opportunities.unavailable.hint'),
+        onRetry: () => context.read<FleetState>().load(),
+      );
+    }
     if (state.opportunities.isEmpty) {
       return AppEmptyState(
         title: t('fleet.opportunities.empty'),

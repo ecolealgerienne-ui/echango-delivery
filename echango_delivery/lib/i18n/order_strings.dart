@@ -451,9 +451,21 @@ const Map<String, String> _fr = {
 
   // ── Transporteurs favoris ───────────────────────────────────────────────
   'order.fav.title': 'Mes transporteurs',
-  'order.fav.search.failed': 'Recherche impossible : {error}',
+  // ⚠️ **Plus de `{error}`.** Ces deux clés interpolaient l'exception brute —
+  // les seuls sites du dépôt à le faire —, ce qui affichait soit le message
+  // serveur en français à un utilisateur arabophone (règle 4), soit le code nu
+  // `merchant.favourite_not_found`, soit le texte technique anglais d'un
+  // `SocketException: Failed host lookup…`. Le message traduit vient désormais
+  // de `messageForError()`, comme partout ailleurs.
+  'order.fav.search.failed': 'Recherche impossible.',
   'order.fav.add.failed': 'Ajout impossible',
-  'order.fav.load.failed': 'Chargement impossible : {error}',
+  'order.fav.load.failed': 'Chargement impossible.',
+  'order.fav.unavailable': 'Impossible de charger vos favoris.',
+  'order.fav.unavailable.hint':
+      'Vos favoris sont toujours enregistrés. Réessayez dans un instant.',
+  'order.notif.unavailable': 'Impossible de relever votre journal.',
+  'order.notif.unavailable.hint':
+      'Des évènements ont peut-être eu lieu. Réessayez dans un instant.',
   'order.fav.add.section': 'Ajouter un transporteur',
   'order.fav.search': 'Nom ou téléphone du transporteur',
   'order.fav.search.hint':
@@ -842,9 +854,14 @@ const Map<String, String> _ar = {
 
   // ── Transporteurs favoris ───────────────────────────────────────────────
   'order.fav.title': 'ناقليّ',
-  'order.fav.search.failed': 'تعذّر البحث: {error}',
+  'order.fav.search.failed': 'تعذّر البحث.',
   'order.fav.add.failed': 'تعذّرت الإضافة',
-  'order.fav.load.failed': 'تعذّر التحميل: {error}',
+  'order.fav.load.failed': 'تعذّر التحميل.',
+  'order.fav.unavailable': 'تعذّر تحميل مفضّليك.',
+  'order.fav.unavailable.hint': 'مفضّلوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',
+  'order.notif.unavailable': 'تعذّر تحديث سجلّك.',
+  'order.notif.unavailable.hint':
+      'ربما وقعت أحداث. أعد المحاولة بعد قليل.',
   'order.fav.add.section': 'إضافة ناقل',
   'order.fav.search': 'اسم الناقل أو هاتفه',
   'order.fav.search.hint':
