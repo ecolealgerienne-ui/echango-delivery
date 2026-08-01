@@ -70,6 +70,15 @@ export const ErrorCode = {
   AUTH_SESSION_REVOKED: 'auth.session_revoked',
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  /**
+   * Plusieurs prestataires « plateforme » actifs.
+   *
+   * Refus délibéré plutôt qu'un choix au hasard : c'est ce compte qui reçoit
+   * l'argent des courses du pool, donc en prendre un arbitrairement routerait
+   * une somme réelle vers la mauvaise partie, et le défaut ne se verrait qu'au
+   * règlement.
+   */
+  CASH_PLATFORM_AMBIGUOUS: 'cash.platform_ambiguous',
   CASH_AMOUNT_NEGATIVE: 'cash.amount_negative',
   CASH_AMOUNT_EXCEEDS_EXPECTED: 'cash.amount_exceeds_expected',
   CASH_DISCREPANCY_REASON_REQUIRED: 'cash.discrepancy_reason_required',

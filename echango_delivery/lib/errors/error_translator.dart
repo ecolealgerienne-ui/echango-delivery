@@ -53,6 +53,8 @@ const Map<String, String> _fr = {
   'auth.session_revoked': 'Session révoquée, reconnectez-vous.',
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  'cash.platform_ambiguous':
+      'Configuration incomplète côté Echango. Contactez le support.',
   'cash.amount_negative': 'Le montant ne peut pas être négatif.',
   'cash.amount_exceeds_expected': 'Le montant dépasse celui attendu.',
   'cash.discrepancy_reason_required':
@@ -239,6 +241,7 @@ const Map<String, String> _ar = {
   'auth.session_revoked': 'تم إلغاء الجلسة، يرجى تسجيل الدخول مجدداً.',
 
   // ── الصندوق (التحصيل والتسليم) ───────────────────────────────────────────
+  'cash.platform_ambiguous': 'إعداد غير مكتمل لدى Echango. اتصل بالدعم.',
   'cash.amount_negative': 'لا يمكن أن يكون المبلغ سالباً.',
   'cash.amount_exceeds_expected': 'المبلغ يتجاوز المبلغ المتوقع.',
   'cash.discrepancy_reason_required': 'يرجى توضيح سبب الفرق في المبلغ المتوقع.',

@@ -1295,7 +1295,20 @@ export class TransporteurService {
     order: any,
   ): Promise<{ id: string; isPlatform: boolean } | null> {
     const vendorUuid = order?.facilitator_uuid;
-    if (!vendorUuid) return null;
+
+    // ── Une course du pool a Echango pour facilitateur ────────────────────
+    //
+    // Décision produit du 31/07/2026 (`specs_facilitateur.md` §2.2/§2.3) : le
+    // pool n'est pas l'absence de prestataire, c'est Echango. Un seul chemin de
+    // registre, un seul couple de parties, et le cas « indépendant » cesse
+    // d'être une exception.
+    //
+    // ⚠️ Le repli est ici et **nulle part ailleurs**, parce que tout converge
+    // vers `driverCounterparty(facilitatorId, merchantId)` : poser le
+    // facilitateur à cet endroit suffit à changer la contrepartie du conducteur,
+    // celle du commerçant, les deux plafonds et les deux chaînes de remise. Le
+    // reproduire chez les appelants créerait des chemins qui divergent (règle 5).
+    if (!vendorUuid) return this.platformFacilitator();
 
     const fleet = await this.prisma.fleetAccount.findUnique({
       where: { fleetbaseVendorUuid: vendorUuid },
@@ -1311,6 +1324,61 @@ export class TransporteurService {
     }
 
     return fleet;
+  }
+
+  /**
+   * Le prestataire **plateforme** — Echango — s'il est provisionné.
+   *
+   * ── Pourquoi `null` quand il n'y en a pas, et pas une erreur ─────────────
+   *
+   * Une installation qui n'a pas encore d'opérateur doit continuer de
+   * fonctionner **exactement comme avant** : la course se règle alors
+   * conducteur ↔ commerçant, ce qui est le comportement de tout le code écrit
+   * jusqu'au 01/08/2026 et de toutes les lignes déjà en base. Lever ici ferait
+   * échouer la clôture de chaque livraison encaissée sur une base non migrée —
+   * c'est-à-dire casser le produit pour installer une amélioration.
+   *
+   * ⚠️ **Deux prestataires plateforme sont un refus, pas un choix.** `findFirst`
+   * en prendrait un au hasard, donc l'argent d'une course irait à l'un ou à
+   * l'autre selon l'ordre d'insertion — un défaut qui ne se voit qu'au moment
+   * du règlement, sur une somme réelle, et qui serait attribué à autre chose.
+   * On refuse bruyamment plutôt que de router de l'argent au hasard.
+   *
+   * ⚠️ **Aucune route ne pose `isPlatform`**, et c'est délibéré (schéma Prisma,
+   * `FleetAccount.isPlatform`) : un compte flotte qui pourrait se déclarer
+   * plateforme ferait retenir à ses conducteurs une rémunération qui ne leur
+   * revient pas. Le provisionnement est un geste d'admin —
+   * `scripts/provision-platform.sh`.
+   */
+  private async platformFacilitator(): Promise<{ id: string; isPlatform: boolean } | null> {
+    const platforms = await this.prisma.fleetAccount.findMany({
+      where: { isPlatform: true, active: true },
+      select: { id: true, isPlatform: true },
+      take: 2,
+    });
+
+    if (platforms.length === 0) {
+      // En `debug` et non en `warn` : sur une installation sans opérateur c'est
+      // l'état normal, et un avertissement à chaque livraison apprendrait à
+      // ignorer les avertissements.
+      this.logger.debug(
+        'Aucun prestataire plateforme provisionné — la course se règle conducteur ↔ commerçant',
+      );
+      return null;
+    }
+
+    if (platforms.length > 1) {
+      this.logger.error(
+        `Plusieurs prestataires plateforme actifs (${platforms.map((p) => p.id).join(', ')}) — ` +
+          "impossible de décider à qui l'argent d'une course du pool revient",
+      );
+      conflict(
+        'cash.platform_ambiguous',
+        "Plusieurs prestataires plateforme sont configurés : contactez Echango.",
+      );
+    }
+
+    return platforms[0];
   }
 
   /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */

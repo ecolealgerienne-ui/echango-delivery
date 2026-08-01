@@ -44,6 +44,10 @@ class AppError {
   static const String authSessionRevoked = 'auth.session_revoked';
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  /// Plusieurs prestataires « plateforme » configurés côté serveur : l'argent
+  /// des courses du pool ne peut plus être routé sans ambiguïté. Refus
+  /// délibéré du serveur, pas une panne — il faut un opérateur.
+  static const String cashPlatformAmbiguous = 'cash.platform_ambiguous';
   static const String cashAmountNegative = 'cash.amount_negative';
   static const String cashAmountExceedsExpected = 'cash.amount_exceeds_expected';
   static const String cashDiscrepancyReasonRequired = 'cash.discrepancy_reason_required';
