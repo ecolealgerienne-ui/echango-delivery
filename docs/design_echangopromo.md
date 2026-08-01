@@ -471,3 +471,72 @@ deux teintes restent le même indigo*.
 3. **Un `check_theme.dart`** qui refuserait un `Color(0x…)` hors de `lib/theme/`. À écrire
    une fois le rendu validé, pas avant : un contrôle écrit sur une cible mouvante ne prouve
    rien.
+
+---
+
+# Correction — le lot plantait à l'ouverture (02/08/2026)
+
+L'application a levé au premier lancement, sur le sélecteur de langue :
+
+```
+Failed to interpolate TextStyles with different inherit values.
+  from: (englishLike labelLarge 2021).merge(…)  inherit: false  family: Roboto
+  to:   (lerp(unknown ⎯0.6→ unknown)).copyWith  inherit: true   family: IBMPlexSansArabic
+```
+
+**Cause.** La palette typographique était construite avec des `TextStyle(...)` neufs — donc
+`inherit: true` — là où la typographie Material porte `inherit: false`. `TextStyle.lerp`
+**refuse d'interpoler deux styles dont l'`inherit` diffère**, et `Material` enveloppe ses
+enfants dans un `AnimatedDefaultTextStyle` : au premier changement de thème, il interpole
+l'ancien style contre le nouveau, et lève.
+
+**Correction.** L'échelle est désormais **dérivée** de la typographie Material
+(`typo.englishLike.merge(typo.black|white)`) et n'y modifie que ce que le système décide.
+`copyWith` préserve `inherit: false`, et rend en prime tout ce que Material renseigne et
+qu'on n'aurait pas pensé à écrire — `leadingDistribution`, `textBaseline`, `decoration`.
+
+Un **second** fautif de la même classe subsistait après cette correction : `hintStyle`,
+créé à neuf lui aussi. Il n'a été trouvé que parce que le contrôle balaie **tout le
+thème** et pas seulement `textTheme` — un contrôle qui ne regarde que l'endroit qu'on vient
+de corriger ne trouve rien.
+
+## ⚠️ L'interlettrage, décidé au passage
+
+Material accorde son `letterSpacing` à Roboto et au latin — jusqu'à 0,5 sur les corps de
+texte. Appliqué à l'arabe, il **écarte des lettres que le tracé est censé raccorder** : la
+graphie y est cursive. Il est donc remis à zéro sur tous les niveaux, ce qui est aussi la
+transposition fidèle — le système d'origine construisant ses styles à neuf, son
+`letterSpacing` y est nul.
+
+## ⚠️ Quatre tentatives de garde qui ne gardaient rien
+
+C'est la partie qui vaut d'être lue. J'ai essayé quatre fois de reproduire le plantage par
+un test d'interpolation, et **aucune n'a refusé le code fautif** :
+
+| tentative | pourquoi elle ne valait rien |
+|---|---|
+| `lerp(clair, sombre)` | nos deux thèmes sont construits pareil, donc partagent leur `inherit` — **passait sur le code fautif**, en se disant « reproduction exacte » |
+| `lerp(ThemeData(), nôtre)` | **échouait sur le code corrigé** : mesuré, un `ThemeData()` nu ne s'interpole avec aucun thème Material 3 dérivé d'un `ColorScheme`, personnalisation ou non |
+| `lerp(voisin M3, nôtre)` | même échec : `ThemeData.textTheme` **brut** porte `inherit: true` même en M3 |
+| `lerp(thèmes localisés)` | le chemin réel — et il **passait sur le code fautif**, la localisation fusionnant la géométrie et masquant la divergence |
+
+Ce qui reste est **une seule assertion** : tout `TextStyle` du thème porte
+`inherit: false`. Elle refuse les deux fautifs, et la seconde mutation nomme
+`input.hint` précisément.
+
+Les trois premières tentatives auraient été gardées « pour la forme » dans beaucoup de
+dépôts. Elles auraient rassuré sans rien tenir — et la deuxième aurait fait chercher un
+défaut inexistant dans un code correct. **Un contrôle qui ne sait pas dire non n'est pas un
+contrôle** (règle 8) ; on le retire.
+
+## Ce que cet épisode dit du lot
+
+Les 17 premiers cas de `theme_test.dart` lisaient le thème **sans jamais le faire vivre**.
+Un thème n'est pas un objet : c'est quelque chose qui se **transitionne**, et la transition
+n'existe qu'à l'exécution. C'est la démonstration exacte de la réserve posée en tête du
+lot — *« aucun de ces écrans n'a été ouvert »* —, et elle a coûté un plantage à
+l'ouverture.
+
+`flutter analyze` 0, `flutter test` **78/78**, cinq vérificateurs verts. **Toujours pas
+regardé à l'écran** : ce qui suit reste à valider par le rendu, en particulier le fond
+légèrement violacé.

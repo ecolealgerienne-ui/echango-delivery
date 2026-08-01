@@ -109,6 +109,84 @@ void main() {
       }
     });
 
+    test('les styles s’interpolent — `inherit: false` partout', () {
+      // ⚠️ **Ce cas vient d'un plantage à l'ouverture, pas d'une hypothèse.**
+      //
+      // La palette était construite avec des `TextStyle(...)` neufs, donc
+      // `inherit: true`, là où la typographie Material porte `inherit: false`.
+      // `TextStyle.lerp` refuse d'interpoler deux styles dont l'`inherit`
+      // diffère — et `MaterialApp` enveloppe tout dans un `AnimatedTheme`, donc
+      // le premier changement de thème levait :
+      //
+      //     Failed to interpolate TextStyles with different inherit values.
+      //
+      // Les seize autres cas de ce fichier lisaient le thème sans le faire
+      // vivre, et aucun ne pouvait le voir. Celui-ci teste la seule propriété
+      // qui décide si un thème est *transitionnable*.
+      // ⚠️ **Le balayage porte sur TOUT le thème, pas sur `textTheme` seul.**
+      // C'est lui qui a trouvé le second fautif — un `hintStyle` créé à neuf,
+      // resté après la correction de la typographie. Un contrôle qui ne regarde
+      // que l'endroit où l'on vient de corriger ne trouve rien.
+      //
+      // ⚠️ Et il ne reste **que** cette assertion, après quatre tentatives de
+      // reproduire le plantage par `ThemeData.lerp` : lerp de nos deux thèmes,
+      // contre un `ThemeData()` nu, contre un voisin M3, contre des thèmes
+      // localisés. Aucune n'a refusé le code fautif — la dernière passait
+      // dessus sans broncher. Un contrôle qui ne sait pas dire non n'est pas un
+      // contrôle, c'est une décoration qui rassure ; on le retire plutôt que de
+      // le garder pour la forme (règle 8).
+      for (final theme in [light, dark]) {
+        final t = theme.textTheme;
+        final styles = <String, TextStyle?>{
+          'displayLarge': t.displayLarge,
+          'displayMedium': t.displayMedium,
+          'displaySmall': t.displaySmall,
+          'headlineLarge': t.headlineLarge,
+          'headlineMedium': t.headlineMedium,
+          'headlineSmall': t.headlineSmall,
+          'titleLarge': t.titleLarge,
+          'titleMedium': t.titleMedium,
+          'titleSmall': t.titleSmall,
+          'bodyLarge': t.bodyLarge,
+          'bodyMedium': t.bodyMedium,
+          'bodySmall': t.bodySmall,
+          'labelLarge': t.labelLarge,
+          'labelMedium': t.labelMedium,
+          'labelSmall': t.labelSmall,
+          'appBar.title': theme.appBarTheme.titleTextStyle,
+          'appBar.toolbar': theme.appBarTheme.toolbarTextStyle,
+          'input.hint': theme.inputDecorationTheme.hintStyle,
+          'input.label': theme.inputDecorationTheme.labelStyle,
+          'input.error': theme.inputDecorationTheme.errorStyle,
+          'input.helper': theme.inputDecorationTheme.helperStyle,
+          'chip.label': theme.chipTheme.labelStyle,
+          'chip.secondaryLabel': theme.chipTheme.secondaryLabelStyle,
+          'tab.label': theme.tabBarTheme.labelStyle,
+          'tab.unselectedLabel': theme.tabBarTheme.unselectedLabelStyle,
+        };
+        styles.forEach((name, style) {
+          if (style == null) return; // non posé = laissé au défaut, très bien
+          expect(style.inherit, isFalse, reason: name);
+        });
+      }
+    });
+
+    test('l’interlettrage est nul — l’arabe est cursif', () {
+      // Material accorde son interlettrage à Roboto et au latin, jusqu'à 0,5 sur
+      // les corps de texte : appliqué à l'arabe, il écarte des lettres que le
+      // tracé est censé raccorder. Un `copyWith` qui oublierait cette ligne
+      // rendrait tout l'interlettrage Material sans que rien ne le signale, et
+      // le défaut ne se verrait que sur un écran arabe.
+      for (final style in [
+        light.textTheme.bodyMedium,
+        light.textTheme.bodySmall,
+        light.textTheme.labelLarge,
+        light.textTheme.titleMedium,
+      ]) {
+        expect(style!.letterSpacing, 0);
+      }
+    });
+
     test('l’échelle est celle du système repris', () {
       expect(light.textTheme.headlineMedium?.fontSize, 28); // H1
       expect(light.textTheme.titleLarge?.fontSize, 22); // H2

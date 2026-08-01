@@ -141,45 +141,88 @@ const _bodyFont = 'IBMPlexSansArabic';
 /// Les quatre niveaux `display*` prolongent l'échelle au-dessus de ce que les
 /// écrans emploient : ils existent pour que le thème soit complet, et pour qu'un
 /// futur écran de mise en avant n'invente pas sa propre taille.
-TextTheme _textTheme(ColorScheme scheme) {
-  TextStyle title(double size, double lineHeight, FontWeight weight) => TextStyle(
-        fontFamily: _titleFont,
+TextTheme _textTheme(ColorScheme scheme, Brightness brightness) {
+  // ⚠️ **DÉRIVÉE de la typographie Material, jamais reconstruite.**
+  //
+  // ── Le plantage que ceci répare (02/08/2026) ────────────────────────────
+  //
+  // Cette fonction créait des `TextStyle(...)` neufs. Or un `TextStyle` naît
+  // avec `inherit: true`, tandis que la typographie Material porte
+  // `inherit: false` — et `TextStyle.lerp` **refuse d'interpoler deux styles
+  // dont l'`inherit` diffère** :
+  //
+  //     Failed to interpolate TextStyles with different inherit values.
+  //
+  // `MaterialApp` enveloppe l'application dans un `AnimatedTheme` : au premier
+  // changement de thème, il interpole entre l'ancien et le nouveau, et lève.
+  // Constaté à l'ouverture, sur le sélecteur de langue — un `TextButton.icon`,
+  // qui contient un `AnimatedDefaultTextStyle`.
+  //
+  // ⚠️ **Aucun test ne pouvait l'attraper**, et c'est la leçon : les 17 cas de
+  // `theme_test.dart` lisent le thème sans jamais le faire *vivre*. Un thème
+  // n'est pas un objet, c'est quelque chose qui se transitionne — et la
+  // transition n'existe qu'à l'écran. C'est la démonstration exacte de la
+  // réserve posée en tête du lot (« rien n'a été regardé »).
+  //
+  // Partir du socle et n'y changer que ce que le système décide règle le
+  // problème à sa racine, et rend en plus tout ce que Material renseigne et que
+  // je n'aurais pas pensé à écrire : `leadingDistribution`, `textBaseline`,
+  // `decoration`.
+  final typo = Typography.material2021(colorScheme: scheme);
+  final base = typo.englishLike
+      .merge(brightness == Brightness.dark ? typo.white : typo.black);
+
+  // ⚠️ `letterSpacing: 0` sur TOUS les niveaux, et ce n'est pas un oubli.
+  //
+  // Material accorde son interlettrage à Roboto et au latin — jusqu'à 0,5 sur
+  // les corps de texte. Appliqué à l'arabe, il **écarte des lettres qui doivent
+  // rester liées** : la graphie y est cursive, et l'espace s'insère entre des
+  // glyphes que le tracé est censé raccorder. Le système repris n'en spécifie
+  // aucun (il construit ses styles à neuf, donc `letterSpacing` y est nul) : le
+  // remettre à zéro est la transposition fidèle, pas une licence.
+  TextStyle style(
+    TextStyle? from,
+    String family,
+    double size,
+    double lineHeight,
+    FontWeight weight,
+  ) =>
+      (from ?? const TextStyle()).copyWith(
+        fontFamily: family,
         fontSize: size,
         height: lineHeight / size,
         fontWeight: weight,
+        letterSpacing: 0,
         color: scheme.onSurface,
       );
 
-  TextStyle body(double size, double lineHeight, FontWeight weight) => TextStyle(
-        fontFamily: _bodyFont,
-        fontSize: size,
-        height: lineHeight / size,
-        fontWeight: weight,
-        color: scheme.onSurface,
-      );
+  TextStyle title(TextStyle? f, double s, double l, FontWeight w) =>
+      style(f, _titleFont, s, l, w);
+  TextStyle body(TextStyle? f, double s, double l, FontWeight w) =>
+      style(f, _bodyFont, s, l, w);
 
-  return TextTheme(
-    displayLarge: title(40, 46, FontWeight.w700),
-    displayMedium: title(34, 40, FontWeight.w700),
-    displaySmall: title(30, 36, FontWeight.w700),
-    headlineLarge: title(32, 38, FontWeight.w700),
+  return base.copyWith(
+    displayLarge: title(base.displayLarge, 40, 46, FontWeight.w700),
+    displayMedium: title(base.displayMedium, 34, 40, FontWeight.w700),
+    displaySmall: title(base.displaySmall, 30, 36, FontWeight.w700),
+    headlineLarge: title(base.headlineLarge, 32, 38, FontWeight.w700),
     // H1
-    headlineMedium: title(28, 34, FontWeight.w700),
-    headlineSmall: title(24, 30, FontWeight.w700),
+    headlineMedium: title(base.headlineMedium, 28, 34, FontWeight.w700),
+    headlineSmall: title(base.headlineSmall, 24, 30, FontWeight.w700),
     // H2
-    titleLarge: title(22, 28, FontWeight.w600),
+    titleLarge: title(base.titleLarge, 22, 28, FontWeight.w600),
     // H3
-    titleMedium: title(18, 24, FontWeight.w600),
-    titleSmall: title(16, 22, FontWeight.w600),
-    bodyLarge: body(16, 24, FontWeight.w400),
+    titleMedium: title(base.titleMedium, 18, 24, FontWeight.w600),
+    titleSmall: title(base.titleSmall, 16, 22, FontWeight.w600),
+    bodyLarge: body(base.bodyLarge, 16, 24, FontWeight.w400),
     // Corps
-    bodyMedium: body(15, 22, FontWeight.w400),
+    bodyMedium: body(base.bodyMedium, 15, 22, FontWeight.w400),
     // Caption
-    bodySmall: body(12, 16, FontWeight.w400),
+    bodySmall: body(base.bodySmall, 12, 16, FontWeight.w400),
     // Bouton / label
-    labelLarge: body(14, 20, FontWeight.w500),
-    labelMedium: body(12, 16, FontWeight.w500),
-    labelSmall: body(11, 14, FontWeight.w500),
+    labelLarge: body(base.labelLarge, 14, 20, FontWeight.w500),
+    labelMedium: body(base.labelMedium, 12, 16, FontWeight.w500),
+    labelSmall: body(base.labelSmall, 11, 14, FontWeight.w500),
   );
 }
 
@@ -310,7 +353,8 @@ ChipThemeData _chipTheme(ColorScheme scheme, TextTheme text) => ChipThemeData(
 /// **plus complet que celui dont il hérite**, et il faut le garder ainsi : le
 /// reprendre tel quel rouvrirait le défaut du 01/08.
 InputDecorationTheme _inputDecorationTheme(
-  ColorScheme scheme, {
+  ColorScheme scheme,
+  TextTheme text, {
   required Color fill,
   required Color hint,
 }) {
@@ -332,7 +376,13 @@ InputDecorationTheme _inputDecorationTheme(
       horizontal: AppSpacing.lg,
       vertical: AppSpacing.md,
     ),
-    hintStyle: TextStyle(color: hint),
+    // ⚠️ Dérivé de l'échelle, jamais créé à neuf : un `TextStyle(color: …)` nu
+    // naît avec `inherit: true` et rouvrirait, sur ce seul champ, le plantage
+    // d'interpolation que tout ce fichier vient de fermer. Il était resté après
+    // la correction de la typographie — le test qui balaie **tous** les styles
+    // du thème l'a trouvé, celui qui ne regardait que `textTheme` ne l'aurait
+    // jamais vu.
+    hintStyle: text.bodyLarge?.copyWith(color: hint),
   );
 }
 
@@ -404,7 +454,7 @@ AppBarTheme _appBarTheme(ColorScheme scheme, TextTheme text) => AppBarTheme(
 
 ThemeData _build(Brightness brightness) {
   final scheme = _scheme(brightness);
-  final text = _textTheme(scheme);
+  final text = _textTheme(scheme, brightness);
   final isDark = brightness == Brightness.dark;
 
   return ThemeData(
@@ -424,6 +474,7 @@ ThemeData _build(Brightness brightness) {
     appBarTheme: _appBarTheme(scheme, text),
     inputDecorationTheme: _inputDecorationTheme(
       scheme,
+      text,
       // ⚠️ Un rôle du schéma, plus un `Colors.grey[100]` : le remplissage était
       // le dernier gris figé du thème, et il ne s'accordait avec aucune des deux
       // surfaces teintées.
