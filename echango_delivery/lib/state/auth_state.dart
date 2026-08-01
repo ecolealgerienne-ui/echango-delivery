@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../errors/app_error.dart';
+import '../errors/error_message.dart';
+import '../errors/error_translator.dart';
 import '../i18n/common_strings.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
@@ -237,6 +239,102 @@ class AuthState extends ChangeNotifier with WriteEnvelope {
   /// Un transporteur ne s'inscrit pas seul : son `Driver` Fleetbase est
   /// provisionné par un opérateur, et le compte Echango s'y rattache
   /// (docs/specs_app_transporteur.md §2.1).
+  /// Message d'une demande **enregistrée mais pas encore validée**.
+  ///
+  /// ⚠️ Distinct d'`errorMessage`, et c'est tout l'intérêt : côté serveur,
+  /// l'inscription d'un commerçant comme d'une entreprise se termine par un
+  /// `forbidden('merchant_pending' | 'fleet_pending')` — un refus d'ENTRER, pas
+  /// un échec d'inscription. Le compte existe.
+  ///
+  /// Sans cette distinction, une inscription réussie s'affichait en **bandeau
+  /// rouge**, exactement comme un mot de passe trop court. Même famille que les
+  /// dix refus qui s'affichaient comme des confirmations, corrigés le 31/07 —
+  /// pris par l'autre bout.
+  String? get pendingMessage => _pendingMessage;
+  String? _pendingMessage;
+
+  /// Inscription d'une **entreprise de transport**.
+  ///
+  /// Rend `true` quand la demande est enregistrée — y compris, et surtout,
+  /// quand le serveur répond `fleet_pending` : c'est le chemin nominal.
+  Future<bool> registerFleet({
+    required String email,
+    required String password,
+    required String businessName,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) =>
+      _runPending(() => _apiClient.registerFleet(
+            email: email,
+            password: password,
+            businessName: businessName,
+            firstName: firstName,
+            lastName: lastName,
+            phone: phone,
+          ));
+
+  /// Inscription d'un **transporteur**, sur invitation.
+  ///
+  /// Elle délivre un jeton, contrairement aux deux autres : le transporteur est
+  /// déjà connu du réseau — son `Driver` Fleetbase a été provisionné par un
+  /// opérateur, et l'invitation prouve qu'il est bien la personne visée. Il n'y
+  /// a rien de plus à valider.
+  ///
+  /// ⚠️ `registerDriverWithInvitation` était écrite côté client depuis le
+  /// 28/07 et **n'avait aucun appelant** : un opérateur remettait un jeton
+  /// d'invitation à un transporteur qui n'avait aucun écran pour s'en servir
+  /// (revue du 01/08/2026, A1).
+  Future<bool> registerDriver({
+    required String invitationToken,
+    required String email,
+    required String password,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) =>
+      _run(() async {
+        final response = await _apiClient.registerDriverWithInvitation(
+          invitationToken: invitationToken,
+          email: email,
+          password: password,
+          firstName: firstName,
+          lastName: lastName,
+          phone: phone,
+        );
+        await _persist(
+            role: UserRole.transporteur, response: response, email: email);
+      });
+
+  /// Enveloppe des inscriptions **à validation** : le refus `*_pending` est un
+  /// succès, tout autre refus est une erreur.
+  Future<bool> _runPending(Future<void> Function() body) async {
+    _isLoading = true;
+    _errorMessage = null;
+    _pendingMessage = null;
+    notifyListeners();
+    try {
+      await body();
+      return true;
+    } on AppException catch (e) {
+      // Le code fait autorité, jamais le statut HTTP : les deux refus sortent
+      // en 403 comme n'importe quel autre.
+      if (e.code == AppError.authMerchantPending ||
+          e.code == AppError.authFleetPending) {
+        _pendingMessage = translateErrorCode(e.code, _localeState.locale);
+        return true;
+      }
+      _errorMessage = messageForError(e, _localeState.locale);
+      return false;
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> registerMerchant({
     required String email,
     required String password,
@@ -245,7 +343,10 @@ class AuthState extends ChangeNotifier with WriteEnvelope {
     String? lastName,
     String? phone,
   }) =>
-      _run(() async {
+      // ⚠️ `_runPending` et non `_run` : le serveur termine cette inscription
+      // par `merchant_pending`, donc `_run` la classait en ERREUR et l'écran
+      // affichait une demande réussie en bandeau rouge.
+      _runPending(() async {
         final response = await _apiClient.registerMerchant(
           email: email,
           password: password,

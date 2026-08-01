@@ -262,6 +262,46 @@ class BffApiClient {
     }
   }
 
+  /// Inscription d'une **entreprise de transport**.
+  ///
+  /// ⚠️ Elle se termine par un refus, et c'est normal : le `Vendor` naît
+  /// `inactive` et `registerFleet` lève `fleet_pending` — la demande est
+  /// enregistrée, l'accès pas encore ouvert (Lot 4 du 29/07). Aucun jeton n'est
+  /// délivré : le faire aurait fait entrer l'entreprise immédiatement, et le
+  /// garde n'aurait servi qu'à sa deuxième visite.
+  ///
+  /// ⚠️ `POST /auth/flotte/register` existait depuis le chantier facilitateur
+  /// et **n'avait aucun appelant Dart** — seulement quatre scripts (revue du
+  /// 01/08/2026, A1). Une entreprise ne pouvait pas s'inscrire du tout, avec
+  /// cinq lots d'écrans construits derrière.
+  Future<Map<String, dynamic>> registerFleet({
+    required String email,
+    required String password,
+    required String businessName,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) async {
+    try {
+      final data = await _post('/auth/flotte/register', {
+        'email': email,
+        'password': password,
+        'businessName': businessName,
+        if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
+        if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
+        if (phone != null && phone.isNotEmpty) 'phone': phone,
+      });
+      return (data ?? <String, dynamic>{}) as Map<String, dynamic>;
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw AppException(
+        code: AppError.networkError,
+        message: _networkErrorMessage(e),
+        originalError: e,
+      );
+    }
+  }
+
   /// Inscription transporteur, sur invitation d'un opérateur.
   ///
   /// Le driver visé est porté par le jeton d'invitation, plus par la requête :

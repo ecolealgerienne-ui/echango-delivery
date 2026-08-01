@@ -9,6 +9,7 @@ import '../../config/app_rules.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/notice.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -21,10 +22,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _t(String key, [Map<String, String>? vars]) =>
       authLabel(key, context.read<LocaleState>().locale, vars);
 
+  /// Le profil que l'on crée.
+  ///
+  /// ⚠️ Les trois parcours existaient côté serveur ; deux n'avaient **aucun
+  /// écran** (revue du 01/08/2026, A1). Un seul formulaire les sert, parce
+  /// qu'ils demandent presque les mêmes champs : ce qui change, c'est le nom
+  /// (commerce / entreprise / personne) et le code d'invitation.
+  UserRole _as = UserRole.commercant;
+
   final _businessController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _phoneController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _invitationController = TextEditingController();
 
   @override
   void dispose() {
@@ -32,6 +44,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _phoneController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _invitationController.dispose();
     super.dispose();
   }
 
@@ -39,9 +54,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final business = _businessController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
+    final invitation = _invitationController.text.trim();
 
-    if (business.isEmpty || email.isEmpty || password.isEmpty) {
-      showAppError(context, _t('auth.register.missing'));
+    // Le champ qui manque n'est pas le même selon le profil, et le message le
+    // dit : « Commerce, email et mot de passe sont requis » sous un formulaire
+    // qui demande un code d'invitation enverrait chercher au mauvais endroit.
+    final missing = switch (_as) {
+      UserRole.commercant => business.isEmpty || email.isEmpty || password.isEmpty
+          ? 'auth.register.missing'
+          : null,
+      UserRole.flotte => business.isEmpty || email.isEmpty || password.isEmpty
+          ? 'auth.register.missing.fleet'
+          : null,
+      UserRole.transporteur => invitation.isEmpty || email.isEmpty || password.isEmpty
+          ? 'auth.register.missing.driver'
+          : null,
+    };
+    if (missing != null) {
+      showAppError(context, _t(missing));
       return;
     }
     // Contrainte serveur : la vérifier ici évite un aller-retour pour un
@@ -57,14 +87,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     final router = GoRouter.of(context);
-    final success = await authState.registerMerchant(
-      email: email,
-      password: password,
-      businessName: business,
-      phone: _phoneController.text.trim(),
-    );
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final phone = _phoneController.text.trim();
+
+    final success = switch (_as) {
+      UserRole.commercant => await authState.registerMerchant(
+          email: email,
+          password: password,
+          businessName: business,
+          phone: phone,
+        ),
+      UserRole.flotte => await authState.registerFleet(
+          email: email,
+          password: password,
+          businessName: business,
+          firstName: firstName,
+          lastName: lastName,
+          phone: phone,
+        ),
+      UserRole.transporteur => await authState.registerDriver(
+          invitationToken: invitation,
+          email: email,
+          password: password,
+          firstName: firstName,
+          lastName: lastName,
+          phone: phone,
+        ),
+    };
     if (!mounted) return;
-    if (success) router.go(authState.homePath);
+
+    // ⚠️ On ne navigue que si une session existe VRAIMENT.
+    //
+    // Commerçant et entreprise se terminent par `*_pending` : la demande est
+    // enregistrée, l'accès pas encore ouvert, et il n'y a pas de jeton. Aller
+    // sur `homePath` renverrait aussitôt vers `/login` par le garde du routeur,
+    // en effaçant au passage le message qui explique pourquoi. Seul le
+    // transporteur, dont l'invitation vaut validation, entre directement.
+    if (success && authState.isAuthenticated) router.go(authState.homePath);
   }
 
   @override
@@ -83,15 +143,85 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  TextField(
-                    controller: _businessController,
-                    decoration: InputDecoration(
-                      labelText: _t('auth.register.name'),
-                      helperText: _t('auth.register.name.hint'),
-                      prefixIcon: const Icon(Icons.storefront_outlined),
-                    ),
+                  Text(_t('auth.register.as'),
+                      style: Theme.of(context).textTheme.labelLarge),
+                  const SizedBox(height: AppSpacing.sm),
+                  SegmentedButton<UserRole>(
+                    segments: [
+                      ButtonSegment(
+                        value: UserRole.commercant,
+                        label: Text(_t('auth.register.as.merchant')),
+                        icon: const Icon(Icons.storefront_outlined),
+                      ),
+                      ButtonSegment(
+                        value: UserRole.flotte,
+                        label: Text(_t('auth.register.as.fleet')),
+                        icon: const Icon(Icons.business_outlined),
+                      ),
+                      ButtonSegment(
+                        value: UserRole.transporteur,
+                        label: Text(_t('auth.register.as.driver')),
+                        icon: const Icon(Icons.two_wheeler_outlined),
+                      ),
+                    ],
+                    selected: {_as},
+                    onSelectionChanged: (v) => setState(() => _as = v.first),
                   ),
-                  const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: AppSpacing.xl),
+
+                  // Le code d'invitation vient EN PREMIER pour un transporteur :
+                  // c'est ce qu'il tient dans la main, et sans lui rien d'autre
+                  // ne sert. Personne ne s'inscrit transporteur de soi-même.
+                  if (_as == UserRole.transporteur) ...[
+                    TextField(
+                      controller: _invitationController,
+                      autocorrect: false,
+                      decoration: InputDecoration(
+                        labelText: _t('auth.register.invitation'),
+                        helperText: _t('auth.register.invitation.hint'),
+                        prefixIcon: const Icon(Icons.confirmation_number_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _firstNameController,
+                            decoration: InputDecoration(
+                              labelText: _t('auth.register.driver.name'),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: TextField(
+                            controller: _lastNameController,
+                            decoration: InputDecoration(
+                              labelText: _t('auth.register.driver.lastname'),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ] else
+                    TextField(
+                      controller: _businessController,
+                      decoration: InputDecoration(
+                        labelText: _as == UserRole.flotte
+                            ? _t('auth.register.fleet.name')
+                            : _t('auth.register.name'),
+                        helperText: _as == UserRole.flotte
+                            ? _t('auth.register.fleet.name.hint')
+                            : _t('auth.register.name.hint'),
+                        prefixIcon: Icon(_as == UserRole.flotte
+                            ? Icons.business_outlined
+                            : Icons.storefront_outlined),
+                      ),
+                    ),
+                  if (_as != UserRole.transporteur)
+                    const SizedBox(height: AppSpacing.lg),
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -136,6 +266,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           )
                         : Text(_t('auth.register.submit')),
                   ),
+                  // ⚠️ Une demande enregistrée n'est PAS une erreur. Avant, le
+                  // serveur terminant l'inscription par `merchant_pending`, une
+                  // inscription réussie s'affichait en bandeau rouge — comme un
+                  // mot de passe trop court.
+                  if (authState.pendingMessage != null) ...[
+                    const SizedBox(height: AppSpacing.lg),
+                    AppNotice.success(
+                      icon: Icons.mark_email_read_outlined,
+                      title: _t('auth.register.pending.title'),
+                      message: authState.pendingMessage!,
+                    ),
+                  ],
                   if (authState.errorMessage != null) ...[
                     const SizedBox(height: AppSpacing.lg),
                     AppErrorBanner(message: authState.errorMessage!),
