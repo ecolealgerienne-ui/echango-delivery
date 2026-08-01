@@ -1,3 +1,5 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 
 import '../models/cash.dart';
@@ -6,6 +8,7 @@ import '../models/cash.dart';
 import '../models/merchant_order.dart' show DriverSearchResult;
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'write_envelope.dart';
 import '../errors/error_message.dart';
 
 /// Registre de caisse, partagé par les deux profils.
@@ -22,7 +25,17 @@ import '../errors/error_message.dart';
 /// routes appeler, et quelles remises appellent une action de l'utilisateur
 /// (jamais les siennes — le serveur refuse qu'on confirme sa propre
 /// déclaration).
-class CashState extends ChangeNotifier {
+class CashState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
@@ -263,23 +276,8 @@ class CashState extends ChangeNotifier {
   /// des encaissements et des remises confirmées, et l'ajuster ici en parallèle
   /// créerait deux vérités dont rien ne dirait laquelle est la bonne. Sur de
   /// l'argent, la divergence n'est pas un détail d'affichage.
-  Future<bool> _mutate(Future<void> Function() action) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await action();
-      await load();
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> _mutate(Future<void> Function() action) =>
+      runWrite(action, reload: load);
 
   void clearError() {
     _errorMessage = null;

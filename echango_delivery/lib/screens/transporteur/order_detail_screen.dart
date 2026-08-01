@@ -95,18 +95,22 @@ class OrderDetailScreen extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(width: AppSpacing.sm),
-                              Chip(
-                                label: Text(order.status),
-                                backgroundColor:
-                                    driverStatusColor(context, order.status),
-                                // Le texte suit le fond : un blanc unique sur
-                                // cinq teintes laissait le contraste au hasard.
-                                labelStyle: TextStyle(
-                                  color: onDriverStatusColor(
-                                      context, order.status),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              // Le fond et l'encre viennent du même appel :
+                              // un blanc unique sur cinq teintes laissait le
+                              // contraste au hasard, et deux appels séparés
+                              // laissaient l'oubli possible.
+                              Builder(builder: (context) {
+                                final c =
+                                    driverStatusColors(context, order.status);
+                                return Chip(
+                                  label: Text(order.status),
+                                  backgroundColor: c.background,
+                                  labelStyle: TextStyle(
+                                    color: c.foreground,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                );
+                              }),
                             ],
                           ),
                           if (order.formattedPrice != null) ...[

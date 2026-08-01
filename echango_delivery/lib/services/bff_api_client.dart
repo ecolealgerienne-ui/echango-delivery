@@ -190,17 +190,24 @@ class BffApiClient {
   /// Écriture. [body] est sérialisé ici : aucun appelant ne doit avoir à se
   /// souvenir de `jsonEncode`, et l'oublier produisait un corps `toString()`
   /// que le serveur refusait avec un message qui ne parlait pas de JSON.
-  Future<dynamic> _post(String path, [Object? body]) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl$path'),
-      headers: _buildHeaders(),
-      body: body == null ? null : jsonEncode(body),
-    );
-    return _parseResponse(response);
-  }
+  Future<dynamic> _post(String path, [Object? body]) =>
+      _write(_httpClient.post, path, body);
 
-  Future<dynamic> _put(String path, [Object? body]) async {
-    final response = await _httpClient.put(
+  Future<dynamic> _put(String path, [Object? body]) =>
+      _write(_httpClient.put, path, body);
+
+  /// Le corps commun de [_post] et [_put] — elles ne différaient que par le
+  /// verbe, et le détecteur les donnait à 99 %. Deux noms restent au niveau
+  /// des appelants, parce que `_post(path)` se lit mieux que
+  /// `_write(client.post, path)` sur quatre-vingts sites.
+  Future<dynamic> _write(
+    Future<http.Response> Function(Uri, {Map<String, String>? headers, Object? body,
+            Encoding? encoding})
+        send,
+    String path,
+    Object? body,
+  ) async {
+    final response = await send(
       Uri.parse('$baseUrl$path'),
       headers: _buildHeaders(),
       body: body == null ? null : jsonEncode(body),

@@ -542,6 +542,54 @@ export class CashService {
   }
 
   /**
+   * Les trois refus qui gardent un montant encaissé — **écrits une seule fois**.
+   *
+   * ⚠️ Ils existaient en deux copies (détecteur de corps similaires,
+   * 01/08/2026), et **elles avaient déjà divergé** : la seconde annonçait
+   * « Montant supérieur à ce qui était annoncé » sans la phrase qui dit quoi
+   * faire (« Contactez Echango si le montant à encaisser était incorrect »).
+   * Deux refus du même fait, dont un seul est actionnable — et rien ne disait
+   * lequel des deux chemins l'utilisateur avait pris.
+   *
+   * Le critère de la règle 5 : si l'un de ces trois seuils change, les deux
+   * chemins doivent changer. Sur de l'argent, une divergence ne se voit pas —
+   * elle laisse passer d'un côté ce qu'elle refuse de l'autre.
+   *
+   * Rend le montant arrondi, seule sortie utile aux deux appelants.
+   */
+  private assertCollectedAmount(
+    collectedAmount: number,
+    expectedAmount: number,
+    discrepancyReason?: string | null,
+  ): number {
+    const collected = Math.round(collectedAmount * 100) / 100;
+
+    if (collected < 0) {
+      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
+    }
+
+    if (collected > expectedAmount) {
+      // Un transporteur qui perçoit plus que dû n'est pas un cas à absorber en
+      // silence : soit le montant annoncé était faux, soit la déclaration l'est.
+      // Les deux appellent une correction humaine.
+      badRequest(
+        'cash.amount_exceeds_expected',
+        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}). ` +
+          'Contactez Echango si le montant à encaisser était incorrect.',
+      );
+    }
+
+    if (collected !== expectedAmount && !discrepancyReason) {
+      badRequest(
+        'cash.discrepancy_reason_required',
+        'Un écart entre le montant annoncé et le montant perçu exige un motif',
+      );
+    }
+
+    return collected;
+  }
+
+  /**
    * Enregistre l'encaissement d'une livraison.
    *
    * ── Pourquoi c'est indissociable de la clôture ──────────────────────────────
@@ -570,30 +618,12 @@ export class CashService {
      */
     facilitatorId?: string | null,
   ) {
-    const collected = Math.round(input.collectedAmount * 100) / 100;
-
-    if (collected < 0) {
-      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
-    }
-
-    if (collected > expectedAmount) {
-      // Un transporteur qui perçoit plus que dû n'est pas un cas à absorber en
-      // silence : soit le montant annoncé était faux, soit la déclaration l'est.
-      // Les deux appellent une correction humaine.
-      badRequest(
-        'cash.amount_exceeds_expected',
-        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}). ` +
-          'Contactez Echango si le montant à encaisser était incorrect.',
-      );
-    }
-
+    const collected = this.assertCollectedAmount(
+      input.collectedAmount,
+      expectedAmount,
+      input.discrepancyReason,
+    );
     const differs = collected !== expectedAmount;
-    if (differs && !input.discrepancyReason) {
-      badRequest(
-        'cash.discrepancy_reason_required',
-        'Un écart entre le montant annoncé et le montant perçu exige un motif',
-      );
-    }
 
     // ── Idempotence, et pourquoi elle est indispensable ────────────────────
     //
@@ -1412,25 +1442,12 @@ export class CashService {
      */
     facilitatorId?: string | null,
   ) {
-    const collected = Math.round(input.collectedAmount * 100) / 100;
-
-    if (collected < 0) {
-      badRequest('cash.amount_negative', 'Le montant encaissé ne peut pas être négatif');
-    }
-    if (collected > expectedAmount) {
-      badRequest(
-        'cash.amount_exceeds_expected',
-        `Montant supérieur à ce qui était annoncé (${expectedAmount} ${this.currency}).`,
-      );
-    }
-
+    const collected = this.assertCollectedAmount(
+      input.collectedAmount,
+      expectedAmount,
+      input.discrepancyReason,
+    );
     const differs = collected !== expectedAmount;
-    if (differs && !input.discrepancyReason) {
-      badRequest(
-        'cash.discrepancy_reason_required',
-        'Un écart entre le montant annoncé et le montant perçu exige un motif',
-      );
-    }
 
     const existing = await this.prisma.cashCollection.findUnique({
       where: { fleetbaseOrderUuid },

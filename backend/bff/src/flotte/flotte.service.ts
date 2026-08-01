@@ -246,15 +246,33 @@ export class FlotteService {
    * La contrepartie est le commerçant, et le débiteur l'entreprise : c'est son
    * exposition à elle qu'on borne, tous conducteurs confondus.
    */
-  private async assertClaimCashCeiling(fleetId: string, order: any): Promise<void> {
+  /**
+   * Le plafond de dette de l'ENTREPRISE, vérifié et refusé.
+   *
+   * ⚠️ **Ces dix-neuf lignes existaient en deux copies** (détecteur de corps
+   * similaires, 01/08/2026, 100 %) — une sur la prise d'une course libre, une
+   * sur l'affectation à un conducteur. Le critère de la règle 5 ne laisse
+   * aucun doute : si le plafond change de portée, de message ou de code
+   * d'erreur, les deux DOIVENT changer. Et ici une divergence ne se voit
+   * pas — elle produit un refus qui annonce un montant faux, ou pire, un refus
+   * d'un côté et un passage de l'autre pour la même course.
+   *
+   * Rend `false` quand il n'y a rien à vérifier (course sans encaissement,
+   * commande absente du cache) : l'appelant sait alors qu'aucun montant n'est
+   * en jeu. Les deux appelants en profitent pour s'arrêter là.
+   */
+  private async assertFleetCeiling(
+    fleetId: string,
+    order: any,
+  ): Promise<{ codAmount: number; merchantId: string } | null> {
     const codAmount = Number(order?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return;
+    if (codAmount <= 0) return null;
 
     const cached = await this.prisma.order.findFirst({
       where: { fleetbaseOrderId: order?.uuid },
       select: { merchantId: true },
     });
-    if (!cached) return;
+    if (!cached) return null;
 
     const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
       fleetParty(fleetId),
@@ -275,6 +293,12 @@ export class FlotteService {
               `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
       );
     }
+
+    return { codAmount, merchantId: cached.merchantId };
+  }
+
+  private async assertClaimCashCeiling(fleetId: string, order: any): Promise<void> {
+    await this.assertFleetCeiling(fleetId, order);
   }
 
   /**
@@ -1117,34 +1141,9 @@ export class FlotteService {
       return;
     }
 
-    const codAmount = Number(order?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return;
-
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order?.uuid },
-      select: { merchantId: true },
-    });
-    if (!cached) return;
-
-    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
-      fleetParty(fleetId),
-      merchantParty(cached.merchantId),
-      codAmount,
-    );
-
-    if (!allowed) {
-      // ⚠️ Le message suit le plafond qui a refusé. Dire « pour ce commerçant »
-      // quand c'est le plafond global qui a mordu enverrait chercher une remise
-      // auprès de quelqu'un qui n'est pour rien dans le blocage.
-      badRequest(
-        'cash.ceiling_exceeded',
-        scope === 'person'
-          ? `Votre entreprise détient déjà ${debt} ${this.cash.currency} au total, et cette ` +
-              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
-          : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
-              `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
-      );
-    }
+    const fleetSide = await this.assertFleetCeiling(fleetId, order);
+    if (!fleetSide) return;
+    const { codAmount, merchantId } = fleetSide;
 
     // ⚠️ **Le plafond du CONDUCTEUR, vérifié ici et pas seulement au démarrage.**
     //
@@ -1168,7 +1167,7 @@ export class FlotteService {
 
     const forDriver = await this.cash.canTakeCashOrder(
       driverParty(driverAccount.id),
-      this.cash.driverCounterparty(fleetId, cached.merchantId),
+      this.cash.driverCounterparty(fleetId, merchantId),
       codAmount,
     );
 

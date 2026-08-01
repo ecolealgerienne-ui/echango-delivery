@@ -1,5 +1,7 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// L'espace transporteur : navigation, présence, profil, véhicule déclaré.
 ///
 /// ── Pourquoi une table à part de `order_strings` ──────────────────────────
@@ -11,17 +13,8 @@ import 'dart:ui' show Locale;
 /// répond non — si un onglet change, aucune fiche de livraison ne bouge.
 ///
 /// Pendant exact de `fleet_strings.dart` pour le profil entreprise.
-String driverLabel(String key, Locale locale, [Map<String, String>? vars]) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  var value = table[key] ?? _fr[key] ?? key;
-
-  if (vars != null) {
-    for (final entry in vars.entries) {
-      value = value.replaceAll('{${entry.key}}', entry.value);
-    }
-  }
-  return value;
-}
+String driverLabel(String key, Locale locale, [Map<String, String>? vars]) =>
+    translate(_fr, _ar, key, locale, vars);
 
 /// Les deux tables, exposées pour le vérificateur de clés.
 const Map<String, Map<String, String>> driverLabelTables = {'fr': _fr, 'ar': _ar};

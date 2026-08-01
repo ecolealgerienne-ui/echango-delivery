@@ -1,5 +1,7 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// Les mots que **tous** les profils emploient.
 ///
 /// ── Pourquoi une table de plus, et pas une clé dans celle des livraisons ──
@@ -14,17 +16,8 @@ import 'dart:ui' show Locale;
 /// copies du même défaut, dans trois composants partagés dont le rôle est
 /// justement d'empêcher ça. Trouvé en corrigeant l'extracteur de chaînes, pas
 /// en relisant.
-String commonLabel(String key, Locale locale, [Map<String, String>? vars]) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  var value = table[key] ?? _fr[key] ?? key;
-
-  if (vars != null) {
-    for (final entry in vars.entries) {
-      value = value.replaceAll('{${entry.key}}', entry.value);
-    }
-  }
-  return value;
-}
+String commonLabel(String key, Locale locale, [Map<String, String>? vars]) =>
+    translate(_fr, _ar, key, locale, vars);
 
 /// Les deux tables, exposées pour le vérificateur de clés.
 const Map<String, Map<String, String>> commonLabelTables = {'fr': _fr, 'ar': _ar};

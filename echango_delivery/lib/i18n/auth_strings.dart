@@ -1,21 +1,14 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// Connexion et création de compte.
 ///
 /// Les seuls écrans qu'un utilisateur voit **avant** d'avoir un profil : la
 /// langue y est donc choisie sans qu'on sache encore à qui l'on parle, et c'est
 /// exactement pourquoi le sélecteur de langue y est posé (29/07/2026).
-String authLabel(String key, Locale locale, [Map<String, String>? vars]) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  var value = table[key] ?? _fr[key] ?? key;
-
-  if (vars != null) {
-    for (final entry in vars.entries) {
-      value = value.replaceAll('{${entry.key}}', entry.value);
-    }
-  }
-  return value;
-}
+String authLabel(String key, Locale locale, [Map<String, String>? vars]) =>
+    translate(_fr, _ar, key, locale, vars);
 
 /// Les deux tables, exposées pour le vérificateur de clés.
 const Map<String, Map<String, String>> authLabelTables = {'fr': _fr, 'ar': _ar};

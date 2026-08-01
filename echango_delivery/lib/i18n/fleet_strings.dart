@@ -1,5 +1,7 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// Libellés d'interface du profil « entreprise de transport » — **et des écrans
 /// de rattachement vus du conducteur**.
 ///
@@ -39,10 +41,8 @@ import 'dart:ui' show Locale;
 /// Un libellé manquant retombe sur sa clé plutôt que sur du français brut :
 /// une clé à l'écran est laide et se corrige, une phrase dans la mauvaise
 /// langue au milieu d'un écran arabe passe pour un défaut de l'application.
-String fleetLabel(String key, Locale locale) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  return table[key] ?? _fr[key] ?? key;
-}
+String fleetLabel(String key, Locale locale) =>
+    translate(_fr, _ar, key, locale);
 
 const Map<String, String> _fr = {
   // ── Navigation et titres ────────────────────────────────────────────────

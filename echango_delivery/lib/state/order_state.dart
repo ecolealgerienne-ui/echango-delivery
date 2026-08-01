@@ -1,12 +1,25 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 
 import '../models/order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'write_envelope.dart';
 import '../errors/error_message.dart';
 
 /// État de gestion des commandes pour le driver.
-class OrderState extends ChangeNotifier {
+class OrderState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
@@ -127,22 +140,10 @@ class OrderState extends ChangeNotifier {
     String orderId,
     Future<void> Function() action,
   ) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      await action();
+    return runWrite(action, reload: () async {
       await selectOrder(orderId);
       await loadOrders();
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+    });
   }
 
   /// Accepte une commande.

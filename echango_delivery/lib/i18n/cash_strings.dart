@@ -1,5 +1,7 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// Libellés du registre de caisse, dans les deux langues.
 ///
 /// ── Pourquoi cet écran-ci, avant les autres ───────────────────────────────
@@ -46,17 +48,8 @@ import 'dart:ui' show Locale;
 /// Jamais sur du français brut : une clé à l'écran est laide et se corrige, une
 /// phrase française au milieu d'un écran arabe passe pour un défaut de
 /// l'application.
-String cashLabel(String key, Locale locale, [Map<String, String>? vars]) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  var value = table[key] ?? _fr[key] ?? key;
-
-  if (vars != null) {
-    for (final entry in vars.entries) {
-      value = value.replaceAll('{${entry.key}}', entry.value);
-    }
-  }
-  return value;
-}
+String cashLabel(String key, Locale locale, [Map<String, String>? vars]) =>
+    translate(_fr, _ar, key, locale, vars);
 
 /// Les deux tables, exposées pour le vérificateur de clés.
 const Map<String, Map<String, String>> cashLabelTables = {'fr': _fr, 'ar': _ar};

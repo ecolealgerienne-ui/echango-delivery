@@ -1,12 +1,25 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
+import 'write_envelope.dart';
 import 'paged_list.dart';
 import '../errors/error_message.dart';
 
-class MerchantOrderState extends ChangeNotifier {
+class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
 
@@ -314,45 +327,29 @@ class MerchantOrderState extends ChangeNotifier {
   }
 
   /// Publie un brouillon : déclenche le dispatch (favori ou pool commun).
-  Future<bool> publishOrder(String id) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _apiClient.publishMerchantOrder(id);
-      await loadOrders();
-      if (_selected?.id == id || _selected?.publicId == id) {
-        await selectOrder(id);
-      }
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> publishOrder(String id) =>
+      _orderWrite(id, () => _apiClient.publishMerchantOrder(id));
 
-  Future<bool> cancelOrder(String id) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _apiClient.cancelMerchantOrder(id);
-      await loadOrders();
-      if (_selected?.id == id || _selected?.publicId == id) {
-        await selectOrder(id);
-      }
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> cancelOrder(String id) =>
+      _orderWrite(id, () => _apiClient.cancelMerchantOrder(id));
+
+  /// Écrire sur une commande, puis **relire la liste et la fiche ouverte**.
+  ///
+  /// La relecture n'est pas cosmétique : sans elle, l'écran de détail continue
+  /// d'afficher l'état d'avant l'écriture, et le commerçant republie ou
+  /// réannule une commande qui a déjà changé.
+  ///
+  /// ⚠️ `publishOrder` et `cancelOrder` étaient identiques à 98 % — même
+  /// drapeau, même relecture, même traduction d'erreur, à un appel près. Le
+  /// jour où la relecture change (ou disparaît), une copie oubliée laisse un
+  /// écran périmé sans lever la moindre erreur.
+  Future<bool> _orderWrite(String id, Future<void> Function() action) =>
+      runWrite(action, reload: () async {
+        await loadOrders();
+        if (_selected?.id == id || _selected?.publicId == id) {
+          await selectOrder(id);
+        }
+      });
 
   Future<void> loadAddresses() async {
     try {
@@ -471,22 +468,8 @@ class MerchantOrderState extends ChangeNotifier {
   /// Toute écriture sur le carnet est suivie d'une relecture : la liste est la
   /// seule vue de ce carnet, et la laisser périmée après une modification
   /// donnerait à croire que rien ne s'est passé.
-  Future<bool> _addressWrite(Future<void> Function() action) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await action();
-      await loadAddresses();
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> _addressWrite(Future<void> Function() action) =>
+      runWrite(action, reload: loadAddresses);
 
   void clearError() {
     _errorMessage = null;

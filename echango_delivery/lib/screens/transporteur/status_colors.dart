@@ -32,36 +32,38 @@ import '../../theme/app_semantic_colors.dart';
 /// Si l'un change, l'autre ne doit pas suivre : ce sont deux lectures de la
 /// même donnée, pas deux copies. Les fusionner obligerait à réintroduire une
 /// branche par persona, ce qui est la duplication déguisée en factorisation.
-Color driverStatusColor(BuildContext context, String status) {
-  final scheme = Theme.of(context).colorScheme;
-  final semantic = context.semantic;
-
-  return switch (status) {
-    // Alignés sur les statuts Fleetbase réels : une version antérieure testait
-    // `accepted` et `picked_up`, qui n'existent pas, et tout tombait dans le
-    // gris par défaut.
-    'created' || 'dispatched' => semantic.warning,
-    'started' || 'enroute' => scheme.primary,
-    'completed' => semantic.success,
-    'canceled' || 'cancelled' => scheme.error,
-    _ => scheme.outline,
-  };
-}
-
-/// Couleur du texte posé sur [driverStatusColor].
+/// Le fond **et** le texte d'un statut, rendus ensemble.
 ///
-/// Rendue par une fonction jumelle plutôt que laissée à l'appelant : la version
-/// précédente posait un `Colors.white` unique sur cinq fonds, donc le contraste
-/// dépendait de la teinte qui sortait du `switch`.
-Color onDriverStatusColor(BuildContext context, String status) {
+/// ⚠️ **C'étaient deux fonctions jumelles, et le détecteur les a désignées à
+/// 93 %** (01/08/2026). Le critère de la règle 5 tranche sans hésiter : si l'une
+/// gagne un statut, l'autre DOIT le gagner. Une valeur ajoutée d'un seul côté
+/// ne produit aucune erreur — seulement un texte qui retombe sur `surface`
+/// par-dessus une teinte inattendue, donc un contraste que personne ne garantit
+/// plus. C'est exactement le défaut que la seconde fonction avait été écrite
+/// pour corriger (un `Colors.white` unique sur cinq fonds), reproduit un cran
+/// plus haut.
+///
+/// Un enregistrement `(background, foreground)` plutôt que deux appels : le
+/// dépôt emploie déjà cette forme (`orders_screen.dart`), et surtout elle rend
+/// l'oubli **impossible** au lieu de simplement improbable.
+({Color background, Color foreground}) driverStatusColors(
+    BuildContext context, String status) {
   final scheme = Theme.of(context).colorScheme;
   final semantic = context.semantic;
 
+  // Alignés sur les statuts Fleetbase réels : une version antérieure testait
+  // `accepted` et `picked_up`, qui n'existent pas, et tout tombait dans le
+  // gris par défaut. Les deux orthographes de l'annulation sont là parce que
+  // Fleetbase émet les deux.
   return switch (status) {
-    'created' || 'dispatched' => semantic.onWarning,
-    'started' || 'enroute' => scheme.onPrimary,
-    'completed' => semantic.onSuccess,
-    'canceled' || 'cancelled' => scheme.onError,
-    _ => scheme.surface,
+    'created' || 'dispatched' =>
+      (background: semantic.warning, foreground: semantic.onWarning),
+    'started' || 'enroute' =>
+      (background: scheme.primary, foreground: scheme.onPrimary),
+    'completed' =>
+      (background: semantic.success, foreground: semantic.onSuccess),
+    'canceled' || 'cancelled' =>
+      (background: scheme.error, foreground: scheme.onError),
+    _ => (background: scheme.outline, foreground: scheme.surface),
   };
 }

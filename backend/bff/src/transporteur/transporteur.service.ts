@@ -740,6 +740,51 @@ export class TransporteurService {
    * learning that a given order id exists at all.
    */
   /**
+   * La garde d'accès à une course, **écrite une seule fois**.
+   *
+   * Un transporteur peut ouvrir une course si elle lui est assignée, ou si
+   * c'est une adhoc encore libre. Tout le reste est un `404` — jamais un `403`,
+   * qui confirmerait l'existence de la commande à qui n'y a pas droit.
+   *
+   * ⚠️ **Ces dix lignes existaient en deux copies** (détecteur de corps
+   * similaires, 01/08/2026, 97 %), ne différant que par l'`action` inscrite au
+   * journal d'audit. C'est exactement la forme du défaut fondateur de la
+   * règle 5 : `isClaimable` et `isClaimableAdhoc`, deux copies d'une même
+   * décision d'accès, qui ont divergé sur `completed` et affiché une course
+   * livrée dans « Courses libres » avec un bouton pour la prendre. Une garde de
+   * sécurité recopiée est une garde qui finira par ne plus protéger qu'un
+   * chemin sur deux.
+   */
+  private assertOrderVisible(
+    order: any,
+    driverId: string,
+    driverUuid: string,
+    orderId: string,
+    action: string,
+  ): { mine: boolean; claimableAdhoc: boolean } {
+    if (!order) {
+      notFound('order.not_found', 'Order not found');
+    }
+
+    const mine = this.isAssignedTo(order, driverUuid);
+    const claimableAdhoc = this.isClaimableAdhoc(order);
+
+    if (!mine && !claimableAdhoc) {
+      this.audit.denied({
+        actorType: 'transporteur',
+        actorId: driverId,
+        action,
+        resourceType: 'Order',
+        resourceId: orderId,
+        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
+      });
+      notFound('order.not_found', 'Order not found');
+    }
+
+    return { mine, claimableAdhoc };
+  }
+
+  /**
    * Confirme un encaissement que le commerçant a déclaré à la place du
    * transporteur, après une clôture faite hors application.
    *
@@ -805,24 +850,13 @@ export class TransporteurService {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    if (!order) {
-      notFound('order.not_found', 'Order not found');
-    }
-
-    const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = this.isClaimableAdhoc(order);
-
-    if (!mine && !claimableAdhoc) {
-      this.audit.denied({
-        actorType: 'transporteur',
-        actorId: driverId,
-        action: 'order.access',
-        resourceType: 'Order',
-        resourceId: orderId,
-        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
-      });
-      notFound('order.not_found', 'Order not found');
-    }
+    const { mine, claimableAdhoc } = this.assertOrderVisible(
+      order,
+      driverId,
+      driver.fleetbaseDriverUuid,
+      orderId,
+      'order.access',
+    );
 
     // Une adhoc que ce driver n'a pas encore réclamée passe par la même
     // expurgation que la liste. Sans ça, la protection ne tiendrait pas une
@@ -865,24 +899,13 @@ export class TransporteurService {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    if (!order) {
-      notFound('order.not_found', 'Order not found');
-    }
-
-    const mine = this.isAssignedTo(order, driver.fleetbaseDriverUuid);
-    const claimableAdhoc = this.isClaimableAdhoc(order);
-
-    if (!mine && !claimableAdhoc) {
-      this.audit.denied({
-        actorType: 'transporteur',
-        actorId: driverId,
-        action: 'order.decline',
-        resourceType: 'Order',
-        resourceId: orderId,
-        reason: 'Commande ni assignée à ce driver ni adhoc disponible',
-      });
-      notFound('order.not_found', 'Order not found');
-    }
+    const { mine, claimableAdhoc } = this.assertOrderVisible(
+      order,
+      driverId,
+      driver.fleetbaseDriverUuid,
+      orderId,
+      'order.decline',
+    );
 
     if (mine && !['created', 'dispatched'].includes(order?.status)) {
       badRequest(

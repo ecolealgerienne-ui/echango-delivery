@@ -1,5 +1,7 @@
 import 'dart:ui' show Locale;
 
+import 'translate.dart';
+
 /// Libellés du formulaire de demande de livraison (commerçant).
 ///
 /// ── Pourquoi cet écran en premier ─────────────────────────────────────────
@@ -36,17 +38,8 @@ import 'dart:ui' show Locale;
 /// pluriels sont approximatifs (« favori(s) » n'a pas d'équivalent direct), et
 /// le vocabulaire monétaire mériterait une passe. Le dire ici plutôt que
 /// laisser croire à une traduction validée.
-String orderLabel(String key, Locale locale, [Map<String, String>? vars]) {
-  final table = locale.languageCode == 'ar' ? _ar : _fr;
-  var value = table[key] ?? _fr[key] ?? key;
-
-  if (vars != null) {
-    for (final entry in vars.entries) {
-      value = value.replaceAll('{${entry.key}}', entry.value);
-    }
-  }
-  return value;
-}
+String orderLabel(String key, Locale locale, [Map<String, String>? vars]) =>
+    translate(_fr, _ar, key, locale, vars);
 
 /// Les deux tables, exposées pour le vérificateur de clés.
 const Map<String, Map<String, String>> orderLabelTables = {

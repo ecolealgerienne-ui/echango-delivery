@@ -624,3 +624,65 @@ capacité à se taire.
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
 | 7 — 335 chaînes | **fait** (01/08) | **569 clés** sur six tables, parité stricte partout ; **zéro chaîne d'interface en dur** dans `screens/` et `widgets/` ; 220 chaînes du dernier lot prouvées par resubstitution |
+
+---
+
+## Deuxième passe (01/08/2026) — ce que les sept lots avaient laissé
+
+Question posée après la clôture : *« est-ce que les **fonctions** sont
+mutualisées ? est-ce que les **composants graphiques** le sont ? »* Réponse
+mesurée, pas remémorée — avec le détecteur de corps similaires, l'outil qui
+avait trouvé trois défauts sur quatre le 31/07.
+
+### Fonctions : 41 couples ≥ 90 % → 12
+
+| couple | verdict |
+|---|---|
+| les **six `xxxLabel`** des tables i18n, **100 %** | ❌ créés le jour même. → `i18n/translate.dart` |
+| `flotte.service` — le refus de plafond de dette, **100 %**, 19 lignes | ❌ **porte des montants d'argent**. → `assertFleetCeiling()` |
+| `cash.service` — les trois refus sur un montant encaissé, **100 %** | ❌ et **déjà divergés** : une copie omettait la phrase qui dit quoi faire. → `assertCollectedAmount()` |
+| `transporteur.service` — la garde d'accès à une course, **97 %** | ❌ **garde de sécurité recopiée**, même forme que `isClaimable`/`isClaimableAdhoc`. → `assertOrderVisible()` |
+| `auth.service` — « email déjà pris », **96 %** | ❌ les deux copies portaient le commentaire « même raison que côté commerçant » : l'aveu de la règle 5. → `assertEmailFree()` |
+| `status_colors` — deux `switch` jumeaux, **93 %** | ❌ si l'un gagne un statut, l'autre **doit**. → un seul appel rendant `(background, foreground)` |
+| les **cinq enveloppes d'écriture** des classes d'état, 90-98 % | ❌ → `mixin WriteEnvelope` |
+| `publishOrder` ≈ `cancelOrder`, 98 % | ❌ → `_orderWrite()` |
+| `_post` ≈ `_put`, 99 % | ❌ → `_write()`, deux noms conservés aux appelants |
+| `getOrderProof` ≈ `getFailureProof`, 94 % | ✅ **refusé** — deux routes distinctes, deux contrôles d'appartenance ; ce qu'elles partagent (`sendImage`) est déjà extrait. Même arbitrage que les trois `confirm*Remittance` du 31/07. |
+| cinq `initState`, 90-95 % | ✅ **refusé** — `addPostFrameCallback` → charger est l'idiome Flutter, il ne porte aucune décision. |
+| trois lectures d'API de 4 lignes | ✅ **refusé** — même forme depuis le lot 1, endpoints différents. |
+
+⚠️ **Correction d'une décision du 31/07.** J'avais refusé de fusionner les
+enveloppes d'écriture, « un mixin devrait accéder aux champs privés de quatre
+classes ». C'était la bonne objection à la mauvaise solution : le mixin n'a pas
+besoin des champs, il a besoin de **savoir les écrire**. Trois membres d'une
+ligne par classe, et les 109 autres références à `_isLoading` /
+`_errorMessage` ne bougent pas.
+
+⚠️ **Et le détecteur lui-même était faux** : il supprimait les commentaires
+avant de scanner, donc les numéros de ligne qu'il rapportait étaient ceux du
+texte dépouillé — ils envoyaient à un endroit du fichier sans rapport. Corrigé
+en **blanchissant** les commentaires au lieu de les retirer.
+
+### Composants graphiques : onze partagés, 96 emplois
+
+| encore brut dans `lib/screens/` | | composant partagé | emplois |
+|---|---|---|---|
+| `TextField` | 22 | `showAppOutcome/Error/SnackBar` | 41 |
+| `CircularProgressIndicator` | 20 | `AppSectionCard` | 14 |
+| `Card(` | 15 | `AppEmptyState` | 13 |
+| `AlertDialog` | 4 | `AppNotice` | 12 |
+| `BoxDecoration` | 1 | `AppErrorBanner` | 8 |
+| `SnackBar` | **0** | `AppConfirmDialog` | 6 |
+| `Colors.*` | **0** | `LanguageSelector` | 5 |
+| `ElevatedButton` | **0** | `AppLoadMore` | 3 |
+| `border:` de champ | **0** | `ProofImage` / `AppConsultationMap` / `PhotoField` | 7 |
+
+**Les cinq zéros sont tenus par un contrôle exécuté**, pas par une intention :
+`check_buttons`, `check_inputs`, `check_spacing`, `check_server_rules`,
+`check_error_codes`.
+
+**Les motifs bruts restants ont tous été jugés site par site** dans les lots 2,
+3, 4 et 5, et chacun a sa raison écrite : lignes de liste (densité propre),
+formulaires (ils rendent une valeur, pas un booléen), champs de saisie (le
+motif *est* déjà un widget), indicateurs d'attente (le défaut Material, sans
+décision).

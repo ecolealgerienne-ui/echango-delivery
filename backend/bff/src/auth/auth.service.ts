@@ -62,6 +62,28 @@ export class AuthService {
   ) {}
 
   /**
+   * Un email déjà pris : la réponse ne dépend pas du persona.
+   *
+   * Une seconde tentative après une inscription **en attente de validation**
+   * doit dire la même chose que la première. Sans ce contrôle, le compte lisait
+   * « en cours de validation », réessayait, et s'entendait répondre « email déjà
+   * utilisé » — deux messages qui se contredisent sur le même fait, dont aucun
+   * ne dit quoi faire.
+   *
+   * ⚠️ Les deux copies portaient chacune un commentaire disant « même raison que
+   * côté commerçant » : c'est le signal exact de la règle 5 — la phrase avoue
+   * l'invariant que rien ne tient. Un commentaire ne peut pas échouer.
+   */
+  private async assertEmailFree(
+    existing: { fleetbaseVendorUuid: string } | null,
+    persona: 'merchant' | 'fleet',
+  ): Promise<void> {
+    if (!existing) return;
+    await this.assertVendorApproved(existing.fleetbaseVendorUuid, persona);
+    conflict('auth.email_taken', 'Email already registered');
+  }
+
+  /**
    * Register a new merchant
    * Creates Echango account + Fleetbase Vendor + Customer
    */
@@ -71,15 +93,7 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (existing) {
-      // Une seconde tentative après une inscription en attente doit dire la
-      // même chose que la première. Sans ce contrôle, le commerçant lisait
-      // « compte en cours de validation », réessayait, et s'entendait répondre
-      // « email déjà utilisé » — deux messages qui se contredisent sur le même
-      // fait, et dont aucun ne dit quoi faire.
-      await this.assertVendorApproved(existing.fleetbaseVendorUuid, 'merchant');
-      conflict('auth.email_taken', 'Email already registered');
-    }
+    await this.assertEmailFree(existing, 'merchant');
 
     // Retenu pour la compensation ci-dessous : une inscription qui échoue
     // après la création du Vendor laissait un enregistrement orphelin dans
@@ -431,14 +445,7 @@ export class AuthService {
       where: { email: dto.email },
     });
 
-    if (existing) {
-      // Même raison que côté commerçant : une seconde tentative après une
-      // inscription en attente doit dire la même chose que la première, sinon
-      // l'entreprise lit « en cours de validation » puis « email déjà utilisé »,
-      // deux réponses qui se contredisent sur le même fait.
-      await this.assertVendorApproved(existing.fleetbaseVendorUuid, 'fleet');
-      conflict('auth.email_taken', 'Email already registered');
-    }
+    await this.assertEmailFree(existing, 'fleet');
 
     // Même compensation que côté commerçant : sans elle, un échec après la
     // création du Vendor laissait un enregistrement orphelin que le `@unique`

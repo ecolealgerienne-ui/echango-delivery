@@ -1,10 +1,12 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../errors/app_error.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
-import '../errors/error_message.dart';
+import 'write_envelope.dart';
 
 /// Profil de l'utilisateur connecté.
 ///
@@ -56,7 +58,17 @@ const _lastActivityKey = 'echango_last_activity';
 /// plan, en complément de l'expiration du jeton côté serveur.
 const sessionInactivityLimit = Duration(hours: 24);
 
-class AuthState extends ChangeNotifier {
+class AuthState extends ChangeNotifier with WriteEnvelope {
+
+  // Les trois lignes que `WriteEnvelope` demande : le mixin sait écrire les
+  // champs sans les posséder, donc les autres références à `_isLoading` et
+  // `_errorMessage` de cette classe ne bougent pas.
+  @override
+  set busy(bool value) => _isLoading = value;
+  @override
+  set failure(String? value) => _errorMessage = value;
+  @override
+  Locale get writeLocale => _localeState.locale;
   final SharedPreferences _prefs;
   final BffApiClient _apiClient;
   final LocaleState _localeState;
@@ -156,21 +168,7 @@ class AuthState extends ChangeNotifier {
     touchActivity();
   }
 
-  Future<bool> _run(Future<void> Function() action) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await action();
-      return true;
-    } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
+  Future<bool> _run(Future<void> Function() action) => runWrite(action);
 
   /// Profils possibles quand un même couple email/mot de passe existe pour
   /// plusieurs personas. Vide dans le cas normal.

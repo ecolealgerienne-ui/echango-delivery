@@ -399,7 +399,10 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 Text(
                   _d('driver.order.card.status', {'status': order.status}),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: driverStatusColor(context, order.status),
+                        // Le fond seul : ici le statut est du texte sur la carte,
+                        // pas une puce — c'est la teinte de statut qui sert
+                        // d'encre.
+                        color: driverStatusColors(context, order.status).background,
                       ),
                 ),
               ],
