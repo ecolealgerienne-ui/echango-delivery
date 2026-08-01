@@ -155,6 +155,14 @@ register_fleet() { # variable_prefixe libellé -> renseigne <PREFIXE>_TOKEN et _
   local var="$1" label="$2" email reg status body login token id
   email="ma-$(echo "$var" | tr 'A-Z' 'a-z')-$SUFFIX@test.dz"
 
+  # ⚠️ Le nom commercial porte le SUFFIXE de l'exécution.
+  #
+  # Sans lui, chaque passage ajoutait une « Transports Alpha » de plus, et la
+  # recherche du §9 a fini par rendre `too_many` — quatorze homonymes. Le
+  # scénario devenait injouable pour une raison qui n'a rien à voir avec ce
+  # qu'il teste, et le message accusait une absence là où il y avait excès.
+  label="$label $SUFFIX"
+
   reg="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/flotte/register" \
     -H 'Content-Type: application/json' \
     -d "$(jq -n --arg e "$email" --arg p "$PASSWORD" --arg n "$label" '{
@@ -182,6 +190,7 @@ register_fleet() { # variable_prefixe libellé -> renseigne <PREFIXE>_TOKEN et _
   printf -v "${var}_TOKEN" '%s' "$token"
   printf -v "${var}_ID" '%s' "$id"
   printf -v "${var}_EMAIL" '%s' "$email"
+  printf -v "${var}_NAME" '%s' "$label"
   pass "$label : $email ($id)"
 }
 
@@ -475,14 +484,23 @@ capi() { # method path [body] — commerçant
 
 # ── La recherche rend les DEUX familles ──────────────────────────────────
 #
-# « Transports Alpha » est le nom donné plus haut ; la recherche porte sur le
-# nom commercial du `FleetAccount`.
-found="$(capi GET "/commercant/transporteurs/recherche?q=$(printf 'Transports Alpha' | jq -sRr @uri)")"
+# Le nom porte le suffixe de l execution — voir `register_fleet`. La recherche
+# porte sur le nom commercial du `FleetAccount`.
+found="$(capi GET "/commercant/transporteurs/recherche?q=$(printf '%s' "$FLEET_A_NAME" | jq -sRr @uri)")"
 echo "$found" | is_error && fail "Recherche refusée" "$(echo "$found" | jq -c '.')"
+
+# ⚠️ **`too_many` AVANT `data`.** Les deux donnent une liste vide, et les
+# confondre fait lire « aucune entreprise » là où le serveur dit « précisez ».
+# C'est ce qui est arrivé à la première version de ce contrôle : quatorze
+# homonymes accumulés par les exécutions précédentes, un `data: []` parfaitement
+# correct, et un message qui accusait le serveur de ne rien trouver.
+[ "$(echo "$found" | jq -r '.too_many')" = "false" ] \
+  || fail "La recherche est saturee — le nom « $FLEET_A_NAME » n est pas assez discriminant" \
+          "$(echo "$found" | jq -c '.')"
 
 ALPHA_VENDOR="$(echo "$found" | jq -r '[.data[]? | select(.party_type == "fleet")] | first.driver_uuid // empty')"
 [ -n "$ALPHA_VENDOR" ] \
-  || fail "La recherche ne rend aucune entreprise pour « Transports Alpha »" \
+  || fail "La recherche ne rend aucune entreprise pour « $FLEET_A_NAME »" \
           "$(echo "$found" | jq -c '.data')"
 pass "La recherche rend l'entreprise, typée « fleet »"
 
@@ -516,7 +534,7 @@ row="$(echo "$favs" | jq -c --arg v "$ALPHA_VENDOR" '.data[]? | select(.driver_u
 [ -n "$row" ] || fail "Le favori n'est pas relu" "$(echo "$favs" | jq -c '.data')"
 [ "$(echo "$row" | jq -r '.party_type')" = "fleet" ] \
   || fail "Le favori devrait être typé « fleet »" "$row"
-[ "$(echo "$row" | jq -r '.name')" = "Transports Alpha" ] \
+[ "$(echo "$row" | jq -r '.name')" = "$FLEET_A_NAME" ] \
   || fail "Le nom doit venir du serveur, pas de la requête" "$row"
 pass "Relu : typé « fleet », nommé par le serveur"
 
