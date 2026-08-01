@@ -508,7 +508,11 @@ class ProfileScreen extends StatelessWidget {
                           const SizedBox(height: AppSpacing.sm),
                           Text(
                             _d(context, 'driver.profile.role',
-                                {'role': authState.role?.label ?? '—'}),
+                                {
+                                  'role': authState.role
+                                          ?.label(context.read<LocaleState>().locale) ??
+                                      '—'
+                                }),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium

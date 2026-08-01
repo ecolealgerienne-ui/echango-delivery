@@ -100,7 +100,7 @@ class DriverPresenceState extends ChangeNotifier {
     // pour rien.
     if (_online == true) {
       await _location.startTracking();
-      await _foregroundService.start();
+      await _foregroundService.start(_localeState.locale);
     }
 
     _restartPolling();
@@ -191,7 +191,7 @@ class DriverPresenceState extends ChangeNotifier {
     // est gardé de côté puis réappliqué après la remise à zéro ci-dessous, qui
     // l'effacerait sinon.
     String? warning;
-    if (value && !await _foregroundService.requestPermissions()) {
+    if (value && !await _foregroundService.requestPermissions(_localeState.locale)) {
       warning =
           translateErrorCode(AppError.foregroundServiceDenied, _localeState.locale);
     }
@@ -209,7 +209,7 @@ class DriverPresenceState extends ChangeNotifier {
         // Le service au premier plan et le suivi GPS vont ensemble : sans lui,
         // Android suspend le processus dès que l'écran s'éteint et le suivi
         // s'arrête sans rien signaler.
-        await _foregroundService.start();
+        await _foregroundService.start(_localeState.locale);
         // Un premier point tout de suite : sans ça le driver reste invisible
         // jusqu'à ce qu'il se déplace du seuil de distance configuré.
         await _location.pushCurrentPosition();

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../errors/app_error.dart';
+import '../i18n/common_strings.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
 import 'write_envelope.dart';
@@ -24,11 +25,18 @@ extension UserRoleX on UserRole {
         UserRole.flotte => 'fleet',
       };
 
-  String get label => switch (this) {
-        UserRole.transporteur => 'Transporteur',
-        UserRole.commercant => 'Commerçant',
-        UserRole.flotte => 'Gestionnaire de flotte',
-      };
+  /// Le nom du profil, dans la langue courante.
+  ///
+  /// Servi en français en dur jusqu'au 01/08/2026, et injecté tel quel dans une
+  /// phrase traduite du tableau de bord transporteur.
+  String label(Locale locale) => commonLabel(
+        switch (this) {
+          UserRole.transporteur => 'common.role.transporteur',
+          UserRole.commercant => 'common.role.commercant',
+          UserRole.flotte => 'common.role.flotte',
+        },
+        locale,
+      );
 
   /// Écran d'accueil du profil.
   String get homePath => switch (this) {

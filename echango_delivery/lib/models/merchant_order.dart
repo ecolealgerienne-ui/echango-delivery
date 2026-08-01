@@ -2,6 +2,8 @@ import 'dart:ui' show Locale;
 
 import 'package:equatable/equatable.dart';
 
+import '../i18n/order_strings.dart';
+import '../utils/dates.dart';
 import 'cash.dart';
 import 'fleetbase_json.dart';
 // `DeliveryFailure` est partagé avec le transporteur : c'est le même
@@ -307,11 +309,16 @@ class OrderItemLine extends Equatable {
 
   /// Une ligne lisible : « Gâteau · 2 kg · fragile ». Les parties absentes
   /// disparaissent au lieu d'afficher un tiret.
-  String get label => [
+  ///
+  /// `2×` reste littéral : c'est un signe, pas un mot, et il se lit dans les
+  /// deux langues. `kg` et `fragile` non — ils étaient en français en dur au
+  /// milieu d'une fiche par ailleurs traduite.
+  String label(Locale locale) => [
         if (quantity > 1) '$quantity×',
         description,
-        if (weight != null) '$weight kg',
-        if (fragile) 'fragile',
+        if (weight != null)
+          orderLabel('order.item.weight', locale, {'weight': '$weight'}),
+        if (fragile) orderLabel('order.item.fragile', locale),
       ].where((p) => p.isNotEmpty).join(' · ');
 
   @override
@@ -560,15 +567,25 @@ class DriverPosition extends Equatable {
 
   /// Ancienneté du relevé, en clair. `null` quand la date manque — on ne
   /// prétend alors pas savoir.
-  String? get freshness {
+  ///
+  /// ── C'était un second formateur de durée, et il ne parlait que français ──
+  ///
+  /// Cette méthode portait sa propre échelle — « à l'instant », « il y a X min »,
+  /// « il y a X h », « position ancienne » — c'est-à-dire une **copie** de
+  /// [formatRelative], à trois mots près et sans arabe. Règle 5 : la question
+  /// n'est pas si les deux se ressemblent, mais si l'une doit changer quand
+  /// l'autre change. Reformuler « il y a » ici et pas là afficherait deux
+  /// tournures pour la même idée dans la même application.
+  ///
+  /// ⚠️ **Un changement d'affichage assumé** : au-delà de 24 h, le texte était
+  /// « position ancienne » et devient « il y a 2 j », puis la date au-delà
+  /// d'une semaine. C'est plus précis, et l'information que le point est périmé
+  /// n'est pas perdue — elle est portée par [isStale], qui grise le repère dès
+  /// dix minutes. « Position ancienne » ne disait pas *à quel point*.
+  String? freshness(Locale locale) {
     final at = recordedAt;
     if (at == null) return null;
-
-    final delta = DateTime.now().difference(at);
-    if (delta.inMinutes < 2) return 'à l\'instant';
-    if (delta.inMinutes < 60) return 'il y a ${delta.inMinutes} min';
-    if (delta.inHours < 24) return 'il y a ${delta.inHours} h';
-    return 'position ancienne';
+    return formatRelative(at, locale);
   }
 
   /// Au-delà de dix minutes, le point ne décrit plus où se trouve le

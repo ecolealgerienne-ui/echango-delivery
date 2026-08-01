@@ -36,6 +36,20 @@ const Map<String, String> _fr = {
       'Notifications indisponibles sur cet appareil — la liste se rafraîchit '
           'automatiquement, avec un léger délai.',
 
+  // ── Notification du service au premier plan ─────────────────────────────
+  //
+  // Ces quatre libellés s'affichent **hors de l'application** : dans le volet
+  // de notifications Android et dans les réglages système du téléphone. Ce
+  // sont les seules chaînes du projet dans ce cas, et c'est pourquoi elles
+  // avaient échappé au relevé — personne ne cherche du texte d'interface dans
+  // `services/`.
+  'driver.presence.channel.name': 'Disponibilité transporteur',
+  'driver.presence.channel.description':
+      'Maintient le partage de position pendant que vous êtes en ligne.',
+  'driver.presence.notification.title': 'Vous êtes en ligne',
+  'driver.presence.notification.text':
+      'Votre position est partagée pour recevoir des courses.',
+
   // ── Onglets et listes vides ─────────────────────────────────────────────
   'driver.tab.opportunities': 'Opportunités',
   'driver.tab.active': 'En cours',
@@ -95,6 +109,13 @@ const Map<String, String> _ar = {
   'driver.presence.push.unavailable':
       'الإشعارات غير متاحة على هذا الجهاز — تتحدّث القائمة تلقائيًا، مع تأخر '
           'بسيط.',
+
+  // ── Notification du service au premier plan ─────────────────────────────
+  'driver.presence.channel.name': 'توفّر الناقل',
+  'driver.presence.channel.description':
+      'يُبقي مشاركة الموقع فعّالة ما دمت متصلًا.',
+  'driver.presence.notification.title': 'أنت متصل',
+  'driver.presence.notification.text': 'يُشارَك موقعك لتلقّي المهام.',
 
   // ── Onglets et listes vides ─────────────────────────────────────────────
   'driver.tab.opportunities': 'الفرص',

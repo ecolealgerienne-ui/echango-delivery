@@ -179,8 +179,14 @@ class OrderDetailScreen extends StatelessWidget {
                           // « Créée le » était une heure trop tôt, juste
                           // au-dessus d'une date d'échec que le même écran
                           // localisait. `formatFull` porte le `toLocal()`.
-                          _buildInfoRow(_t(context, 'driver.order.created'), formatFull(order.createdAt)),
-                          _buildInfoRow(_t(context, 'driver.order.updated'), formatFull(order.updatedAt)),
+                          _buildInfoRow(
+                              _t(context, 'driver.order.created'),
+                              formatFull(order.createdAt,
+                                  context.read<LocaleState>().locale)),
+                          _buildInfoRow(
+                              _t(context, 'driver.order.updated'),
+                              formatFull(order.updatedAt,
+                                  context.read<LocaleState>().locale)),
                         ],
                       ),
                   ),
@@ -905,7 +911,8 @@ class _FailureHistory extends StatelessWidget {
                   // avoir à comparer les dates.
                   _t(context, 'driver.order.failures.attempt', {
                     'n': '${failures.length - i}',
-                    'date': formatDayTime(failures[i].createdAt),
+                    'date': formatDayTime(
+                        failures[i].createdAt, context.read<LocaleState>().locale),
                   }),
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: theme.colorScheme.onErrorContainer),

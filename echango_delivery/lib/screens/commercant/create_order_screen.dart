@@ -848,7 +848,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         ? _t('order.schedule.asap')
         // Le jour et le mois étaient écrits SANS rembourrage : « 5/8 à 09h30 »
         // là où le reste de l'application écrit « 05/08 à 09h30 ».
-        : formatDayTime(_scheduledAt!);
+        : formatDayTime(_scheduledAt!, context.read<LocaleState>().locale);
 
     return ListTile(
       contentPadding: EdgeInsets.zero,

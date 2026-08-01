@@ -171,8 +171,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ],
                             const SizedBox(height: AppSpacing.sm),
                             Text(
-                              _t('order.detail.created',
-                                  {'date': formatFull(order.createdAt)}),
+                              _t('order.detail.created', {
+                                'date': formatFull(order.createdAt,
+                                    context.read<LocaleState>().locale)
+                              }),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -489,7 +491,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (
           Icons.schedule_outlined,
           _t('order.schedule.title'),
-          formatDayTime(order.scheduledAt!),
+          formatDayTime(order.scheduledAt!, context.read<LocaleState>().locale),
         )
       else
         (Icons.schedule_outlined, _t('order.schedule.title'), _t('order.schedule.asap')),
@@ -497,8 +499,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (
           vehicleIcon(order.vehicleType),
           _t('order.detail.row.vehicle'),
-          _t('order.detail.row.vehicle.value',
-              {'vehicle': vehicleLabel(order.vehicleType)}),
+          _t('order.detail.row.vehicle.value', {
+            'vehicle': vehicleLabel(
+                order.vehicleType, context.read<LocaleState>().locale)
+          }),
         ),
       if (order.podMethod != null)
         (
@@ -532,7 +536,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       // puis invisibles, alors que ce sont eux qui fondent un refus pour
       // « colis inadapté ».
       for (final item in order.items)
-        (Icons.inventory_2_outlined, _t('order.section.parcel'), item.label),
+        (
+          Icons.inventory_2_outlined,
+          _t('order.section.parcel'),
+          item.label(context.read<LocaleState>().locale)
+        ),
       // Repli pour les commandes d'avant la projection détaillée des articles.
       if (order.items.isEmpty && order.packageContents != null)
         (Icons.inventory_2_outlined, _t('order.section.parcel'), order.packageContents!),
@@ -797,10 +805,14 @@ class _DriverMapState extends State<_DriverMap> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  position.freshness == null
-                      ? _t('order.detail.driver.position.unknown')
-                      : _t('order.detail.driver.position.seen',
-                          {'when': position.freshness!}),
+                  switch (position
+                      .freshness(context.read<LocaleState>().locale)) {
+                    null => _t('order.detail.driver.position.unknown'),
+                    // `when` est un mot réservé des motifs Dart — d'où `seen`,
+                    // alors que la clé de traduction, elle, garde `{when}`.
+                    final seen =>
+                      _t('order.detail.driver.position.seen', {'when': seen}),
+                  },
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

@@ -35,15 +35,38 @@ import 'dart:ui' show Locale;
 
 String _two(int n) => n.toString().padLeft(2, '0');
 
+/// L'heure seule, dans la convention de la langue.
+///
+/// ⚠️ **C'est ici que se trouvait l'erreur** (corrigée le 01/08/2026). Le
+/// commentaire de [formatRelative] affirmait que les trois autres fonctions
+/// « ne rendent que des chiffres et deux séparateurs » et « se lisent aussi
+/// bien dans les deux langues ». C'était faux de deux d'entre elles : « 15**h**23 »
+/// est une convention française, et le « **à** » qui la précède est une
+/// préposition française. Un écran arabe affichait donc « 05/08 à 15h23 ».
+///
+/// Seule [formatDay] tenait la promesse, n'étant que des chiffres et des
+/// barres obliques. Elle reste sans locale, et c'est délibéré : lui en imposer
+/// une pour l'uniformité obligerait chaque appelant à en fournir une là où
+/// aucune décision de langue n'existe.
+String _hourMinute(DateTime d, Locale locale) =>
+    locale.languageCode == 'ar'
+        ? '${_two(d.hour)}:${_two(d.minute)}'
+        : '${_two(d.hour)}h${_two(d.minute)}';
+
+/// Le mot qui relie une date à son heure — « à » en français, rien en arabe.
+String _at(Locale locale) => locale.languageCode == 'ar' ? ' ' : ' à ';
+
 /// « 31/07 à 15h23 » — jour et heure, sans l'année.
 ///
 /// Le format des évènements récents, où l'année n'apprend rien.
-String formatDayTime(DateTime date) {
+String formatDayTime(DateTime date, Locale locale) {
   final d = date.toLocal();
-  return '${_two(d.day)}/${_two(d.month)} à ${_two(d.hour)}h${_two(d.minute)}';
+  return '${_two(d.day)}/${_two(d.month)}${_at(locale)}${_hourMinute(d, locale)}';
 }
 
 /// « 31/07/2026 » — le jour seul, année comprise.
+///
+/// La seule des quatre qui n'a pas besoin de locale : que des chiffres.
 String formatDay(DateTime date) {
   final d = date.toLocal();
   return '${_two(d.day)}/${_two(d.month)}/${d.year}';
@@ -54,9 +77,9 @@ String formatDay(DateTime date) {
 /// Pour ce qui doit être daté sans ambiguïté : création, dernière mise à jour.
 /// Remplace `toString().split('.')[0]`, qui rendait « 2026-07-31 14:23:05 » —
 /// un horodatage de journal serveur, pas une date lisible, et en UTC.
-String formatFull(DateTime date) {
+String formatFull(DateTime date, Locale locale) {
   final d = date.toLocal();
-  return '${formatDay(d)} à ${_two(d.hour)}h${_two(d.minute)}';
+  return '${formatDay(d)}${_at(locale)}${_hourMinute(d, locale)}';
 }
 
 /// « il y a 12 min », puis la date au-delà d'une semaine.
@@ -65,12 +88,17 @@ String formatFull(DateTime date) {
 /// plutôt que *quand* —, d'où une fonction distincte et non un paramètre. Elle
 /// retombe sur [formatDay] pour que le basculement ne change pas de format.
 ///
-/// ── Pourquoi celle-ci prend une locale, et les trois autres non ───────────
+/// ── Pourquoi une locale, comme [formatDayTime] et [formatFull] ────────────
 ///
-/// Parce qu'elle est la seule à produire des **mots**. `formatDayTime`,
-/// `formatDay` et `formatFull` ne rendent que des chiffres et deux séparateurs :
-/// elles se lisent aussi bien dans les deux langues. Celle-ci écrit « il y a »,
-/// ce qu'un écran arabe ne peut pas afficher.
+/// Parce qu'elle produit des **mots** — « il y a » —, ce qu'un écran arabe ne
+/// peut pas afficher.
+///
+/// ⚠️ Ce commentaire affirmait jusqu'au 01/08/2026 que les trois autres
+/// fonctions s'en passaient parce qu'elles « ne rendent que des chiffres ».
+/// C'était vrai de [formatDay] seule ; les deux autres écrivaient « à » et
+/// « h ». La phrase était le seul endroit où le manque était visible, et elle
+/// le niait — un commentaire qui se trompe est pire qu'aucun commentaire,
+/// parce qu'il fait cesser de chercher.
 ///
 /// ⚠️ **La locale est exigée, pas optionnelle.** Un paramètre facultatif qui
 /// vaut « français » par défaut aurait laissé chaque nouvel appelant introduire

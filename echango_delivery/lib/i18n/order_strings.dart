@@ -90,6 +90,25 @@ const Map<String, String> _fr = {
   'order.form.vehicle.voiture': 'Voiture minimum',
   'order.form.vehicle.utilitaire': 'Utilitaire requis',
 
+  // Le véhicule **nu**, sans « minimum ». Les clés `order.form.vehicle.*`
+  // ci-dessus empaquettent l'exigence dans le libellé, ce qui convient à un
+  // sélecteur mais pas à `order.detail.row.vehicle.value` ('{vehicle} minimum'),
+  // qui compose la phrase lui-même. `vehicleLabel` servait ces quatre mots en
+  // français uniquement, donc un écran arabe recevait « Moto » au milieu de
+  // « {vehicle} على الأقل ».
+  'order.vehicle.any': 'Indifférent',
+  'order.vehicle.moto': 'Moto',
+  'order.vehicle.voiture': 'Voiture',
+  'order.vehicle.utilitaire': 'Utilitaire',
+
+  // ── Ligne de colis ──────────────────────────────────────────────────────
+  //
+  // Le résumé « Gâteau · 2 kg · fragile » de `OrderItemLine.label`. Distinct de
+  // `order.form.item.fragile` ('Contenu fragile'), qui est le libellé d'une
+  // case à cocher : ici c'est une mention dans une énumération.
+  'order.item.weight': '{weight} kg',
+  'order.item.fragile': 'fragile',
+
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'Rémunération proposée (DZD)',
   'order.form.price.hint':
@@ -518,6 +537,15 @@ const Map<String, String> _ar = {
   'order.form.vehicle.moto': 'دراجة نارية على الأقل',
   'order.form.vehicle.voiture': 'سيارة على الأقل',
   'order.form.vehicle.utilitaire': 'شاحنة صغيرة إلزامية',
+
+  'order.vehicle.any': 'لا يهم',
+  'order.vehicle.moto': 'دراجة نارية',
+  'order.vehicle.voiture': 'سيارة',
+  'order.vehicle.utilitaire': 'شاحنة صغيرة',
+
+  // ── Ligne de colis ──────────────────────────────────────────────────────
+  'order.item.weight': '{weight} كغ',
+  'order.item.fragile': 'قابل للكسر',
 
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'الأجر المقترح (دج)',

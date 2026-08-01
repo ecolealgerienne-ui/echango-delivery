@@ -1,5 +1,8 @@
+import 'dart:ui' show Locale;
+
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../i18n/driver_strings.dart';
 import '../utils/logger.dart';
 
 /// Service au premier plan qui maintient le suivi de position quand l'app
@@ -24,17 +27,25 @@ class DriverForegroundService {
   factory DriverForegroundService() => _instance;
   DriverForegroundService._internal();
 
-  bool _initialized = false;
+  /// La langue avec laquelle le canal a été déclaré, `null` avant la première
+  /// initialisation.
+  ///
+  /// ⚠️ Ce n'est pas un simple booléen `_initialized`, et la nuance compte :
+  /// le nom du canal s'affiche dans les **réglages Android** du téléphone, où
+  /// il survit à la fermeture de l'application. Un transporteur qui bascule en
+  /// arabe verrait donc « Disponibilité transporteur » en français tant qu'il
+  /// n'a pas désinstallé. On redéclare le canal quand la langue change.
+  Locale? _initializedFor;
 
-  void _ensureInitialized() {
-    if (_initialized) return;
+  void _ensureInitialized(Locale locale) {
+    if (_initializedFor == locale) return;
 
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'echango_presence',
-        channelName: 'Disponibilité transporteur',
+        channelName: driverLabel('driver.presence.channel.name', locale),
         channelDescription:
-            'Maintient le partage de position pendant que vous êtes en ligne.',
+            driverLabel('driver.presence.channel.description', locale),
         // Discret volontairement : cette notification est permanente pendant
         // tout un service. La faire sonner ou vibrer la rendrait odieuse et
         // pousserait le transporteur à la couper — donc à se rendre invisible.
@@ -57,15 +68,15 @@ class DriverForegroundService {
       ),
     );
 
-    _initialized = true;
+    _initializedFor = locale;
   }
 
   /// Demande les autorisations nécessaires.
   ///
   /// Renvoie `false` si la notification est refusée : sans elle, Android ne
   /// laisse pas tourner de service au premier plan.
-  Future<bool> requestPermissions() async {
-    _ensureInitialized();
+  Future<bool> requestPermissions(Locale locale) async {
+    _ensureInitialized(locale);
 
     try {
       final status = await FlutterForegroundTask.checkNotificationPermission();
@@ -95,15 +106,17 @@ class DriverForegroundService {
   Future<bool> get isRunning => FlutterForegroundTask.isRunningService;
 
   /// Démarre le service. Idempotent.
-  Future<void> start() async {
-    _ensureInitialized();
+  Future<void> start(Locale locale) async {
+    _ensureInitialized(locale);
 
     try {
       if (await FlutterForegroundTask.isRunningService) return;
 
       await FlutterForegroundTask.startService(
-        notificationTitle: 'Vous êtes en ligne',
-        notificationText: 'Votre position est partagée pour recevoir des courses.',
+        notificationTitle:
+            driverLabel('driver.presence.notification.title', locale),
+        notificationText:
+            driverLabel('driver.presence.notification.text', locale),
       );
       AppLogger.info('ForegroundService', 'Service au premier plan démarré');
     } catch (e) {
