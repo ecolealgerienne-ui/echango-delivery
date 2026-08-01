@@ -232,7 +232,6 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
           decoration: const InputDecoration(
             hintText: 'Rechercher une adresse…',
             prefixIcon: Icon(Icons.search),
-            border: OutlineInputBorder(),
             isDense: true,
           ),
         ),

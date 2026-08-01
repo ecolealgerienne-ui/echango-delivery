@@ -520,7 +520,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           onChanged: onChanged,
           decoration: InputDecoration(
             labelText: label,
-            border: const OutlineInputBorder(),
             prefixIcon: Icon(icon),
             isDense: true,
           ),
@@ -611,7 +610,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         initialValue: _vehicleType,
         decoration: InputDecoration(
           labelText: 'Véhicule nécessaire',
-          border: const OutlineInputBorder(),
           // L'icône suit la sélection : figée sur la moto, elle contredisait le
           // libellé et laissait croire que le choix n'avait pas été pris en
           // compte.
@@ -888,7 +886,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         initialValue: _podMethod,
         decoration: const InputDecoration(
           labelText: 'Preuve de livraison',
-          border: OutlineInputBorder(),
           prefixIcon: Icon(Icons.verified_outlined),
           isDense: true,
         ),
@@ -1035,7 +1032,6 @@ class _AddressBookSheetState extends State<_AddressBookSheet> {
             decoration: const InputDecoration(
               hintText: 'Rechercher dans le carnet…',
               prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(),
               isDense: true,
             ),
           ),

@@ -111,7 +111,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     autocorrect: false,
                     decoration: const InputDecoration(
                       labelText: 'Email',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
                   ),
@@ -122,7 +121,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     onSubmitted: (_) => _submit(authState),
                     decoration: const InputDecoration(
                       labelText: 'Mot de passe',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.lock_outlined),
                     ),
                   ),

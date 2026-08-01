@@ -132,9 +132,6 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
               controller: _notesController,
               decoration: InputDecoration(
                 hintText: 'Précisions éventuelles…',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
               ),
               maxLines: 4,
             ),

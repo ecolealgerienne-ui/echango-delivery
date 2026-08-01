@@ -83,7 +83,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Nom du commerce *',
                       helperText: 'Affiché aux transporteurs',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.storefront_outlined),
                     ),
                   ),
@@ -94,7 +93,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     autocorrect: false,
                     decoration: const InputDecoration(
                       labelText: 'Email *',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.email_outlined),
                     ),
                   ),
@@ -110,7 +108,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       // en refuserait neuf le jour où le serveur passe à dix.
                       helperText: '${ServerRules.passwordMinLength} caractères '
                           'minimum',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.lock_outlined),
                     ),
                   ),
@@ -120,7 +117,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: const InputDecoration(
                       labelText: 'Téléphone',
-                      border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.phone_outlined),
                     ),
                   ),

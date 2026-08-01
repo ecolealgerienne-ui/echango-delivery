@@ -900,7 +900,6 @@ class _AmountDialogState extends State<_AmountDialog> {
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               labelText: t('cash.amount.label', {'currency': widget.currency}),
-              border: const OutlineInputBorder(),
               helperText: t('cash.amount.max', {
                 'amount': widget.maximum.toStringAsFixed(0),
               }),
@@ -1351,7 +1350,6 @@ class _DriverPickerDialogState extends State<_DriverPickerDialog> {
               onSubmitted: (_) => _search(),
               decoration: InputDecoration(
                 labelText: t('cash.picker.field'),
-                border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: _searching ? null : _search,

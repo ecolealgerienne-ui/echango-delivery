@@ -584,7 +584,6 @@ class _VehicleTypeCard extends StatelessWidget {
                 // écran étroit se tronque au lieu de casser la mise en page.
                 isExpanded: true,
                 decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
                   prefixIcon: Icon(vehicleIcon(presence.vehicleType)),
                   isDense: true,
                 ),

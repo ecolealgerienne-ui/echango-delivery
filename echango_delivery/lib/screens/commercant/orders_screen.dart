@@ -106,7 +106,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 decoration: InputDecoration(
                   hintText: 'Rechercher un destinataire, une adresse…',
                   prefixIcon: const Icon(Icons.search),
-                  border: const OutlineInputBorder(),
                   isDense: true,
                   suffixIcon: orderState.search.isEmpty
                       ? null

@@ -40,6 +40,56 @@ final ButtonStyle _outlinedStyle = OutlinedButton.styleFrom(
   shape: _buttonShape,
 );
 
+/// Les champs de saisie, décidés une fois pour les deux thèmes.
+///
+/// ── Pourquoi ce n'était pas le thème qui décidait (01/08/2026) ────────────
+///
+/// Mesuré : **21 des 25 `InputDecoration` du dépôt repassaient un
+/// `border: OutlineInputBorder()` nu**, qui écrase celui du thème. Résultat,
+/// deux apparences dans la même application — 21 champs à contour visible et
+/// coins de 4 px (le défaut Material), 4 champs remplis sans contour à coins de
+/// 8 px. Et les quatre étaient **tous dans le profil entreprise**, exactement
+/// comme pour les boutons : ce profil suit le thème, les deux autres se
+/// peignent eux-mêmes.
+///
+/// ⚠️ **Mais les 21 avaient une raison qu'ils ignoraient.** Le thème posait
+/// `borderSide: BorderSide.none` et **rien d'autre** : pas de `focusedBorder`.
+/// Un champ n'avait donc aucun contour au repos *ni au focus* — le seul signal
+/// restant était la couleur du libellé. Les 21 surcharges compensaient un
+/// défaut du thème sans le savoir. Retirer les surcharges sans corriger le
+/// thème aurait uniformisé l'application **vers le pire des deux états**.
+///
+/// Les cinq états sont donc posés **explicitement**, et non laissés au repli de
+/// `InputDecorator` : la façon dont Flutter dérive `focusedBorder` d'un `border`
+/// à `BorderSide.none` n'est pas vérifiable ici, et une apparence ne doit pas
+/// dépendre d'une règle interne qu'on croit se rappeler.
+InputDecorationTheme _inputDecorationTheme(
+  ColorScheme scheme, {
+  required Color fill,
+  required Color hint,
+}) {
+  OutlineInputBorder shape(BorderSide side) => OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderSide: side,
+      );
+
+  return InputDecorationTheme(
+    filled: true,
+    fillColor: fill,
+    border: shape(BorderSide.none),
+    enabledBorder: shape(BorderSide.none),
+    // Le seul contour visible : celui qui dit où l'on tape.
+    focusedBorder: shape(BorderSide(color: scheme.primary, width: 2)),
+    errorBorder: shape(BorderSide(color: scheme.error)),
+    focusedErrorBorder: shape(BorderSide(color: scheme.error, width: 2)),
+    contentPadding: const EdgeInsets.symmetric(
+      horizontal: AppSpacing.lg,
+      vertical: AppSpacing.md,
+    ),
+    hintStyle: TextStyle(color: hint),
+  );
+}
+
 /// Les onglets, décidés une fois pour les deux thèmes.
 ///
 /// ⚠️ **Écrits pour un fond clair, et le thème sombre n'en avait aucun.**
@@ -60,13 +110,14 @@ const _tabBarTheme = TabBarThemeData(
 /// Thème Echango Delivery — couleurs, typographie, et styles cohérents.
 ThemeData buildAppTheme() {
   const primaryColor = _primary;
+  final scheme = ColorScheme.fromSeed(
+    seedColor: primaryColor,
+    brightness: Brightness.light,
+  );
 
   return ThemeData(
     useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: primaryColor,
-      brightness: Brightness.light,
-    ),
+    colorScheme: scheme,
     // Les rôles que Material 3 ne fournit pas — succès et avertissement. Sans
     // eux, la règle 6 (« la couleur vient du thème ») n'a pas d'endroit où
     // envoyer un `Colors.green`.
@@ -78,18 +129,10 @@ ThemeData buildAppTheme() {
       elevation: 0,
       centerTitle: false,
     ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: Colors.grey[100],
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        borderSide: BorderSide.none,
-      ),
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
-      ),
-      hintStyle: TextStyle(color: Colors.grey[500]),
+    inputDecorationTheme: _inputDecorationTheme(
+      scheme,
+      fill: Colors.grey[100]!,
+      hint: Colors.grey[500]!,
     ),
     // ── Le bouton principal, et un seul (31/07/2026) ────────────────────────
     //
@@ -130,13 +173,14 @@ ThemeData buildAppTheme() {
 
 ThemeData buildAppDarkTheme() {
   const primaryColor = _primary;
+  final scheme = ColorScheme.fromSeed(
+    seedColor: primaryColor,
+    brightness: Brightness.dark,
+  );
 
   return ThemeData(
     useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: primaryColor,
-      brightness: Brightness.dark,
-    ),
+    colorScheme: scheme,
     extensions: const [AppSemanticColors.dark],
     primaryColor: primaryColor,
     appBarTheme: const AppBarTheme(
@@ -145,18 +189,13 @@ ThemeData buildAppDarkTheme() {
       elevation: 0,
       centerTitle: false,
     ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: Colors.grey[800],
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        borderSide: BorderSide.none,
-      ),
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
-      ),
-      hintStyle: TextStyle(color: Colors.grey[400]),
+    // Les mêmes qu'en clair, à la teinte de remplissage près : le thème sombre
+    // n'avait pas non plus de contour de focus, et une divergence de plus ici
+    // n'aurait été vue par personne.
+    inputDecorationTheme: _inputDecorationTheme(
+      scheme,
+      fill: Colors.grey[800]!,
+      hint: Colors.grey[400]!,
     ),
     // Les mêmes qu'en clair : sans elles, le même écran affichait des boutons
     // à coins arrondis en clair et des pilules Material 3 en sombre.

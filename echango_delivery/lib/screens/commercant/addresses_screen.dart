@@ -524,7 +524,6 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
           keyboardType: keyboard,
           decoration: InputDecoration(
             labelText: label,
-            border: const OutlineInputBorder(),
             prefixIcon: Icon(icon),
             isDense: true,
           ),

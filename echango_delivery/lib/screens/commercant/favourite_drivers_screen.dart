@@ -180,7 +180,6 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     decoration: InputDecoration(
                       hintText: 'Nom ou téléphone du transporteur',
                       prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
                       isDense: true,
                       suffixIcon: _searching
                           ? const Padding(

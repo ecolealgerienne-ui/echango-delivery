@@ -216,6 +216,65 @@ ce qui a été refusé pour les boutons.
 
 **Ce qui débloque le lot** : cette mesure. Elle peut le clore sans une ligne.
 
+### La mesure a dit l'inverse — et le remède n'était pas un composant
+
+**25 `InputDecoration` dans le dépôt** (22 `TextField`/`TextFormField`, plus
+trois champs de formulaire d'un autre type). Les clés employées :
+
+| clé | sites | nature |
+|---|---|---|
+| **`border`** | **21** | **apparence du cadre** |
+| `labelText` | 19 | contenu |
+| `prefixIcon` | 16 | contenu |
+| `isDense` | 9 | densité |
+| `hintText` | 6 | contenu |
+| `suffixIcon` | 4 | contenu |
+| `helperText` | 3 | contenu |
+| `suffixText` | 1 | contenu |
+
+**Les 21 passaient tous un `OutlineInputBorder()` nu**, qui **écrase** celui du
+thème. L'application avait donc deux apparences de champ : 21 à contour visible
+et coins de 4 px (le défaut Material), 4 remplis sans contour à coins de 8 px.
+Et les quatre étaient **tous dans le profil entreprise** — exactement le motif du
+lot des boutons : ce profil suit le thème, les deux autres se peignent eux-mêmes.
+
+⚠️ **Mais retirer les 21 aurait uniformisé vers le pire des deux états.** Le
+thème posait `borderSide: BorderSide.none` et **rien d'autre** — pas de
+`focusedBorder`. Un champ n'avait donc de contour ni au repos **ni au focus** :
+le seul signal restant était la couleur du libellé. Les 21 surcharges
+compensaient un défaut du thème sans le savoir. C'est le cas où « remettre la
+décision au thème » est juste **et** insuffisant : il faut d'abord que le thème
+décide correctement.
+
+**Ce qui a été fait, dans cet ordre** : (1) `_inputDecorationTheme(scheme, fill:,
+hint:)`, partagé par les deux thèmes — le thème sombre n'avait pas de contour de
+focus non plus, et une divergence de plus là n'aurait été vue par personne — avec
+les **cinq états posés explicitement** plutôt que laissés au repli de
+`InputDecorator`, dont la façon de dériver `focusedBorder` d'un `border` à
+`BorderSide.none` n'est pas vérifiable ici ; (2) les 21 surcharges retirées.
+
+**Aucun composant écrit**, et c'est le critère de la règle 6 : le motif **est
+déjà un widget**. Envelopper `TextField` demanderait de réexposer `controller`,
+`keyboardType`, `maxLines`, `onChanged`, `onSubmitted`, `textInputAction`… pour
+n'y rien ajouter — la faute exactement nommée à propos des boutons. Ce qui
+manquait n'était pas un composant, c'était une **décision**, plus un contrôle
+qui la tienne.
+
+**`tool/check_inputs.dart`** refuse les six clés de bordure hors de `lib/theme/`.
+16 cas de `--self-test` dont **8 refus**, et — parce que des cas fabriqués ne
+voient que ce qu'on imagine — **une mutation des vrais fichiers** : les onze
+versions d'avant sont resignalées, avec le compte exact des surcharges retirées
+(2+4+2+1+4+1+1+1+1+1+3 = 21). Il **recense** au passage les 9 `isDense: true`
+sans échouer : la divergence est réelle mais la corriger déplacerait des pixels
+sur le plus gros formulaire de l'application — décision de design, comme les
+littéraux hors barème de `check_spacing`.
+
+⚠️ **Ce que le contrôle ne sait pas voir, et qui est écrit dans son en-tête** :
+une bordure passée par une variable (`border: maBordure`). Accepter n'importe
+quelle valeur ferait signaler `BoxDecoration(border: Border.all(…))`, légitime
+et sans rapport. Aucune forme par variable n'existe aujourd'hui — le dire vaut
+mieux que laisser croire à une couverture complète.
+
 ---
 
 ## Lot 5 — Les indicateurs d'attente (21 sites)
@@ -351,7 +410,7 @@ littéral français visible restant, et toutes les clés employées déclarées.
 | 1 — enveloppes HTTP | **fait** (01/08) | inventaire verbe/chemin/query/corps identique HEAD↔courant, 86 appels ; 1620 → 1371 lignes |
 | 2 — `Card(` bruts | **fait** (01/08) | 12 sites vers `AppNotice`, 1 vers `AppErrorBanner`, **0** vers `AppSectionCard`, 15 laissés avec leur raison (ci-dessus) ; délimiteurs équilibrés, 0 chaîne visible perdue vs HEAD, 12 sites d'appel vérifiés paramètre par paramètre contre les six constructeurs |
 | 3 — dialogue de confirmation | à faire, **décision attendue** | |
-| 4 — champ de saisie | à mesurer | |
+| 4 — champ de saisie | **fait** (01/08) | 21 des 25 surcharges de bordure retirées, thème corrigé d'abord ; `check_inputs.dart` — 16 cas dont 8 refus, plus mutation des 11 vrais fichiers |
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
 | 7 — 335 chaînes | à faire, par écran | |

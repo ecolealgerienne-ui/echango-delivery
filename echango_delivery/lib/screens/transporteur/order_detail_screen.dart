@@ -598,7 +598,6 @@ class _DeclineSheetState extends State<_DeclineSheet> {
               maxLength: 200,
               decoration: const InputDecoration(
                 labelText: 'Précision (facultatif)',
-                border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -998,7 +997,6 @@ class _CashSheetState extends State<_CashSheet> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Montant réellement perçu',
-                border: const OutlineInputBorder(),
                 prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
                 suffixText: widget.currency,
               ),
@@ -1029,7 +1027,6 @@ class _CashSheetState extends State<_CashSheet> {
                 maxLength: 200,
                 decoration: const InputDecoration(
                   labelText: 'Précision (facultatif)',
-                  border: OutlineInputBorder(),
                 ),
               ),
             ],
