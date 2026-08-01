@@ -230,6 +230,55 @@ troisième. Le lot n'existe peut-être pas.
 **Ce qui débloque le lot** : le relevé par contexte. Le résultat attendu est
 « rien à faire », et il faut pouvoir le dire avec un chiffre.
 
+### Le relevé — et le résultat attendu était le bon, pour la mauvaise raison
+
+**22 occurrences, dont une dans un commentaire de documentation** (`app_spacing`
+cite le motif pour expliquer ce qui *n'est pas* un intervalle) : **21 réelles**,
+dans quatre contextes qui ne se ressemblent que de nom.
+
+| contexte | sites | tailles | verdict |
+|---|---|---|---|
+| **dans un bouton** — remplace le `child:` ou l'`icon:` | 6 | 20 (`child:`) ×4, 18 (`icon:`) ×2, `strokeWidth: 2` partout | mapping **parfaitement cohérent** : rien ne diverge |
+| **en ligne, à côté d'un contrôle** — action de ligne, `suffixIcon`, libellé de devis, bascule de présence | 4 | 16, 16, 12, 18 | quatre emplacements différents, quatre tailles dictées par l'emplacement |
+| **centré sur une page ou une section** | 10 | par défaut | `Center(child: CircularProgressIndicator())`, non stylé |
+| **pied de liste** | 1 | par défaut | c'est déjà `AppLoadMore` |
+
+**Rien à extraire, et le critère le dit.** `Center(child:
+CircularProgressIndicator())` ne porte **ni règle ni décision** — c'est le défaut
+Material, sans couleur, sans épaisseur, sans taille. L'envelopper dans un
+`AppLoading` serait la faute que la règle 6 nomme au sujet des boutons :
+réécrire l'API de Material pour n'y rien ajouter. Aucune divergence non plus :
+les six formes en bouton s'accordent, et les quatre formes en ligne diffèrent
+parce que leurs emplacements diffèrent.
+
+**Mais le relevé a trouvé autre chose**, et c'est la vraie question que ces 21
+sites posaient : **quand un indicateur a-t-il le droit de remplacer le
+contenu ?** Huit des dix indicateurs « pleine page » sont gardés par une
+condition ; trois ne l'étaient pas, et chacun produisait un défaut distinct.
+
+| site | garde | défaut |
+|---|---|---|
+| `cash_screen:158` | `isLoading && ledger == null` | ✅ |
+| `commercant/order_detail:128` | `isLoading && selected == null` | ✅ |
+| `driver_map:99` | `positions.isEmpty` puis `loading` | ✅ |
+| `flotte_home:148` | `isLoading && orders.isEmpty` | ✅ |
+| `my_fleets:135` | `_loading`, **jamais relevé** après le premier chargement | ✅ de fait — soupçonné, vérifié, innocent |
+| `transporteur/order_detail:45` | `isLoading` seul | ❌ `OrderState._isLoading` est levé par **toutes** les écritures : accepter, démarrer, refuser, envoyer la preuve. Chaque appui effaçait l'écran entier — adresse, montant à encaisser, position de défilement — et l'envoi d'une photo le laissait vide plusieurs secondes. |
+| `favourite_drivers:139` | `_loading` seul | ❌ **tirer pour recharger effaçait la liste** : un second indicateur sous celui que `RefreshIndicator` dessine, et l'enfant cessait d'être défilable au milieu du geste qui en dépend. Sa `ListView` n'avait par ailleurs **pas** d'`AlwaysScrollableScrollPhysics` — seul `RefreshIndicator` du dépôt dans ce cas —, donc sur deux favoris, le cas courant, le geste ne partait pas. |
+| `addresses_screen` | **aucune** | ❌ affirmait « aucune adresse enregistrée » pendant tout l'aller-retour, et **définitivement** quand la lecture échouait : `loadAddresses` avale son erreur et laisse le carnet vide. Règle 10, et le troisième site de cette forme après « aucun conducteur rattaché ». |
+
+**Corrigé** : garde sur « rien à montrer » aux trois sites, `_addressesUnavailable`
+sur `MerchantOrderState` (même forme que `FleetState.driversUnavailable`, et pour
+la même raison), et `AppEmptyState.unavailable` avec sa reprise sur le carnet.
+Sur la fiche transporteur, l'attente s'affiche désormais **là où l'action part** —
+l'indicateur remplace le bloc de boutons, ce qui est la règle que porte déjà
+`AppLoadMore`.
+
+**Corrigé aussi, trouvé en passant** : le commentaire d'en-tête d'`addresses_screen`
+affirmait que les filtres de `/orders` et `/drivers` sont « ignorés
+silencieusement » — démenti le 29/07/2026, c'étaient des noms de paramètre
+inexistants.
+
 ---
 
 ## Lot 6 — Les enveloppes Fleetbase (7 couples, TypeScript)
@@ -303,6 +352,6 @@ littéral français visible restant, et toutes les clés employées déclarées.
 | 2 — `Card(` bruts | **fait** (01/08) | 12 sites vers `AppNotice`, 1 vers `AppErrorBanner`, **0** vers `AppSectionCard`, 15 laissés avec leur raison (ci-dessus) ; délimiteurs équilibrés, 0 chaîne visible perdue vs HEAD, 12 sites d'appel vérifiés paramètre par paramètre contre les six constructeurs |
 | 3 — dialogue de confirmation | à faire, **décision attendue** | |
 | 4 — champ de saisie | à mesurer | |
-| 5 — indicateurs d'attente | à mesurer | |
+| 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
 | 7 — 335 chaînes | à faire, par écran | |

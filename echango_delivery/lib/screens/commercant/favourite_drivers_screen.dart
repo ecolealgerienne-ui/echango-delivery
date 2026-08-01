@@ -41,6 +41,13 @@ class FavouriteDriversScreen extends StatefulWidget {
 class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
   List<KnownDriver> _known = [];
   bool _loading = true;
+
+  /// Vrai jusqu'à ce que la première lecture ait abouti — d'où l'écran part.
+  ///
+  /// Seul ce premier chargement a le droit de remplacer le contenu : après, il
+  /// y a quelque chose à l'écran, et l'effacer pour montrer une attente est une
+  /// perte nette.
+  bool _firstLoad = true;
   String? _error;
 
   final _searchController = TextEditingController();
@@ -121,7 +128,12 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = 'Chargement impossible : $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _firstLoad = false;
+        });
+      }
     }
   }
 
@@ -136,9 +148,19 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       appBar: AppBar(title: const Text('Mes transporteurs')),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: _loading
+        // ⚠️ `_firstLoad` et non `_loading`. Avec `_loading`, **tirer pour
+        // recharger effaçait la liste** : le contenu était remplacé par un
+        // second indicateur, sous celui que `RefreshIndicator` dessine
+        // lui-même, et l'enfant cessait d'être défilable au milieu du geste qui
+        // en dépend. Un rechargement ne doit pas effacer ce qui était lisible —
+        // même règle qu'`AppErrorBanner`, appliquée à l'attente.
+        child: _loading && _firstLoad
             ? const Center(child: CircularProgressIndicator())
             : ListView(
+                // Sans ça, une liste courte — un commerçant avec deux favoris,
+                // c'est-à-dire le cas courant — ne défile pas, donc le geste de
+                // rechargement ne part jamais.
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(AppSpacing.lg),
                 children: [
                   if (_error != null) ...[

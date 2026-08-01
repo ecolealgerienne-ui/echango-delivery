@@ -14,8 +14,14 @@ import '../../widgets/empty_state.dart';
 /// Carnet d'adresses du commerçant.
 ///
 /// Côté Fleetbase ce sont des `Place` rattachés à son Vendor par `owner_uuid`,
-/// un filtre serveur réel — vérifié en pratique (journal §2.7), contrairement
-/// aux filtres de `/orders` et `/drivers` qui sont ignorés silencieusement.
+/// un filtre serveur réel — vérifié en pratique (journal §2.7).
+///
+/// ⚠️ La phrase qui suivait ici — « contrairement aux filtres de `/orders` et
+/// `/drivers`, ignorés silencieusement » — est **fausse depuis le 29/07/2026**.
+/// Fleetbase filtre bien côté serveur ; nous envoyions des noms de paramètre
+/// qui n'existent pas (`facilitator_uuid` au lieu de `facilitator`), et il
+/// abandonne un paramètre inconnu sans erreur. Voir
+/// `docs/architecture_bff_fleetbase.md`.
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
 
@@ -24,11 +30,19 @@ class AddressesScreen extends StatefulWidget {
 }
 
 class _AddressesScreenState extends State<AddressesScreen> {
+  /// ⚠️ Le carnet part vide, et l'écran s'ouvre **avant** la lecture. Sans ce
+  /// drapeau il affirmait « aucune adresse enregistrée » pendant tout
+  /// l'aller-retour, à un commerçant qui en a dix — une phrase fausse au
+  /// moment précis où elle est lue.
+  bool _loading = true;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<MerchantOrderState>().loadAddresses();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await context.read<MerchantOrderState>().loadAddresses();
+      if (mounted) setState(() => _loading = false);
     });
   }
 
@@ -102,76 +116,101 @@ class _AddressesScreenState extends State<AddressesScreen> {
         onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
       ),
-      body: orderState.addresses.isEmpty
-          ? const AppEmptyState(
-              title: 'Aucune adresse enregistrée',
-              hint: 'Enregistrez vos points de retrait et destinataires '
-                  'fréquents pour remplir une demande en un tap.',
-              icon: Icons.bookmark_border,
-              scrollable: false,
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(AppSpacing.sm),
-              itemCount: orderState.addresses.length,
-              itemBuilder: (context, index) {
-                final a = orderState.addresses[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  child: ListTile(
-                    leading: Icon(
-                      a.isDefault ? Icons.star : Icons.place_outlined,
-                      color: a.isDefault ? context.semantic.warning : null,
-                    ),
-                    title: Row(
-                      children: [
-                        Flexible(child: Text(a.name)),
-                        if (a.isDefault) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            '· Principale',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: context.semantic.warning),
-                          ),
-                        ],
-                      ],
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          [a.composedAddress, a.contactName, a.contactPhone]
-                              .where((e) => e != null && e.isNotEmpty)
-                              .join(' · '),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        // Une adresse sans position ne peut pas servir : le
-                        // formulaire de commande exige un point. Le dire ici
-                        // évite de le découvrir au moment de commander.
-                        if (!a.hasPosition)
-                          Text(
-                            'Position manquante — à compléter',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.error,
-                            ),
-                          ),
-                      ],
-                    ),
-                    // Toute la ligne ouvre la fiche : c'est le geste attendu, et
-                    // la liste n'était jusqu'ici qu'un affichage mort.
-                    onTap: () => _openForm(a),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      tooltip: 'Supprimer',
-                      onPressed: () => _delete(orderState, a),
+      body: _body(orderState),
+    );
+  }
+
+  /// ⚠️ **Trois états et non deux.** `loadAddresses` avale son erreur pour ne
+  /// pas faire remonter d'exception nue, et laisse donc le carnet vide. Une
+  /// liste vide peut alors vouloir dire « je n'ai pas pu lire » — et l'annoncer
+  /// « aucune adresse enregistrée » est faux, **définitif** (rien ne recharge
+  /// ensuite), et pousse le commerçant à ressaisir ce qu'il a déjà.
+  Widget _body(MerchantOrderState orderState) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (orderState.addressesUnavailable) {
+      return AppEmptyState.unavailable(
+        title: 'Carnet d\'adresses indisponible',
+        hint: 'Vos adresses n\'ont pas pu être lues. Vérifiez votre connexion, '
+            'puis réessayez.',
+        scrollable: false,
+        onRetry: () => orderState.loadAddresses(),
+      );
+    }
+
+    if (orderState.addresses.isEmpty) {
+      return const AppEmptyState(
+        title: 'Aucune adresse enregistrée',
+        hint: 'Enregistrez vos points de retrait et destinataires '
+            'fréquents pour remplir une demande en un tap.',
+        icon: Icons.bookmark_border,
+        scrollable: false,
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      itemCount: orderState.addresses.length,
+      itemBuilder: (context, index) {
+        final a = orderState.addresses[index];
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          child: ListTile(
+            leading: Icon(
+              a.isDefault ? Icons.star : Icons.place_outlined,
+              color: a.isDefault ? context.semantic.warning : null,
+            ),
+            title: Row(
+              children: [
+                Flexible(child: Text(a.name)),
+                if (a.isDefault) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '· Principale',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: context.semantic.warning),
+                  ),
+                ],
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  [a.composedAddress, a.contactName, a.contactPhone]
+                      .where((e) => e != null && e.isNotEmpty)
+                      .join(' · '),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // Une adresse sans position ne peut pas servir : le
+                // formulaire de commande exige un point. Le dire ici
+                // évite de le découvrir au moment de commander.
+                if (!a.hasPosition)
+                  Text(
+                    'Position manquante — à compléter',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
-                );
-              },
+              ],
             ),
+            // Toute la ligne ouvre la fiche : c'est le geste attendu, et
+            // la liste n'était jusqu'ici qu'un affichage mort.
+            onTap: () => _openForm(a),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Supprimer',
+              onPressed: () => _delete(orderState, a),
+            ),
+          ),
+        );
+      },
     );
   }
 }

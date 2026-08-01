@@ -42,7 +42,17 @@ class OrderDetailScreen extends StatelessWidget {
           builder: (context, orderState, _) {
             final order = orderState.selectedOrder;
 
-            if (orderState.isLoading) {
+            // ⚠️ `order == null` en plus de `isLoading`. `OrderState._isLoading`
+            // est levé par **toutes** les écritures — accepter, démarrer,
+            // refuser, envoyer la preuve — et pas seulement par la lecture. Sans
+            // cette condition, chaque appui sur un bouton effaçait l'écran
+            // entier au profit d'un indicateur nu : le transporteur perdait
+            // l'adresse et le montant à encaisser qu'il était peut-être en train
+            // de lire, ainsi que sa position de défilement, et l'envoi d'une
+            // photo — le plus long des quatre — laissait l'écran vide plusieurs
+            // secondes. L'attente s'affiche désormais là où l'action a été
+            // déclenchée, cf. `_buildActionButtons`.
+            if (orderState.isLoading && order == null) {
               return const Center(child: CircularProgressIndicator());
             }
 
@@ -319,6 +329,23 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (buttons.isEmpty) {
       return const SizedBox.shrink();
+    }
+
+    // L'attente se montre **ici**, à l'endroit d'où part l'action, et non en
+    // effaçant l'écran. Des boutons simplement grisés ne diraient pas si quelque
+    // chose est en cours — c'est la règle que porte déjà `AppLoadMore` : pendant
+    // le chargement, l'indicateur *remplace* le bouton au lieu de s'y ajouter.
+    //
+    // ⚠️ **Après** `buttons.isEmpty`, et non avant : une course close n'a aucun
+    // bouton, et un indicateur y apparaîtrait à chaque relecture, à l'endroit où
+    // il n'y a jamais rien eu. Les `busy ? null :` de chaque bouton deviennent
+    // de ce fait redondants ; ils restent, parce qu'un garde qui ne coûte rien
+    // vaut mieux qu'un ordre d'instructions qu'il faudrait se rappeler.
+    if (busy) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        child: Center(child: CircularProgressIndicator()),
+      );
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: buttons);

@@ -18,6 +18,18 @@ class MerchantOrderState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
+  /// ⚠️ Le carnet a-t-il **échoué**, ou est-il vraiment vide ?
+  ///
+  /// [loadAddresses] avale son erreur pour ne pas faire remonter une exception
+  /// nue, et laisse donc `_addresses` tel quel — c'est-à-dire vide au premier
+  /// chargement. Sans ce drapeau, un commerçant dont le BFF est injoignable
+  /// s'entend dire « aucune adresse enregistrée » alors qu'il en a dix, et le
+  /// message est **définitif** : rien ne le recharge ensuite.
+  ///
+  /// Même forme que `FleetState.driversUnavailable`, et pour la même raison —
+  /// une liste vide obtenue par échec ne se dit pas comme une liste vide.
+  bool _addressesUnavailable = false;
+
   MerchantOrderState({required BffApiClient apiClient, required LocaleState localeState})
       : _apiClient = apiClient,
         _localeState = localeState;
@@ -66,6 +78,7 @@ class MerchantOrderState extends ChangeNotifier {
     }).toList();
   }
   List<SavedAddress> get addresses => _addresses;
+  bool get addressesUnavailable => _addressesUnavailable;
 
   /// Transporteurs favoris. Sollicités en premier à la création d'une course,
   /// avec repli automatique sur le pool commun si aucun n'est disponible.
@@ -344,10 +357,17 @@ class MerchantOrderState extends ChangeNotifier {
   Future<void> loadAddresses() async {
     try {
       _addresses = await _apiClient.getMerchantAddresses();
+      _addressesUnavailable = false;
       notifyListeners();
     } catch (e) {
       // Même raison : `getMerchantAddresses` ne passe pas par une enveloppe,
       // et un carnet illisible ne doit pas faire remonter une exception nue.
+      //
+      // ⚠️ Mais avaler l'erreur laisse `_addresses` vide, et un écran ne peut
+      // pas distinguer « vous n'avez rien enregistré » de « je n'ai pas pu
+      // lire ». Le drapeau porte cette différence ; sans lui l'écran affirme
+      // la première, ce qui est faux et définitif.
+      _addressesUnavailable = true;
       _errorMessage = messageForError(e, _localeState.locale);
       notifyListeners();
     }
