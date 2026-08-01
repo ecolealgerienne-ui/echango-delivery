@@ -663,6 +663,18 @@ avant de scanner, donc les numéros de ligne qu'il rapportait étaient ceux du
 texte dépouillé — ils envoyaient à un endroit du fichier sans rapport. Corrigé
 en **blanchissant** les commentaires au lieu de les retirer.
 
+### Prolongement à l'outillage (01/08/2026)
+
+Le plan portait sur l'application et le BFF. Les scripts de contrôle en étaient absents, et la première exécution réelle de `test-parcours-argent-flotte.sh` a montré qu'ils relevaient de la même règle :
+
+| duplication | verdict |
+|---|---|
+| la lecture des conducteurs, écrite dans `resolve-driver.sh` et sur le point de l'être dans `driver-session.sh` | ❌ deux copies = deux bornes de pagination qui divergent, dont l'une déclare « introuvable » un conducteur que l'autre voit. → `fb_drivers()` dans `fleetbase.sh` |
+| la lecture d'un solde par contrepartie, dans les deux scripts d'argent | ❌ et **la seconde écriture portait le piège** : `first(…) // "aucune"` ne s'applique jamais à un flux vide. → `scripts/lib/ledger.sh` |
+| `printf '%.0f'` sur une valeur pouvant être vide, **13 sites** | ❌ rend `0` sans erreur : les trois contrôles qui prouvent qu'une remise a soldé passaient sur une réponse illisible. → `amount_number()` |
+
+Tenu par `scripts/lib/self-test.sh` — 47 cas hors ligne, dix mutations rejouées par `--mutations`.
+
 ### Composants graphiques : onze partagés, 96 emplois
 
 | encore brut dans `lib/screens/` | | composant partagé | emplois |
