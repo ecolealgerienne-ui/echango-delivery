@@ -385,12 +385,25 @@ export class CommerçantService {
     vehicleType?: string,
     codAmount?: number,
   ) {
+    // ⚠️ **Conducteurs seulement, et c'est un choix d'incrément.**
+    //
+    // Un favori peut désormais être une entreprise, mais la solliciter ne veut
+    // pas dire la même chose : on ne pose pas `driver_assigned_uuid`, on pose
+    // `facilitator_uuid`, et c'est l'entreprise qui désigne ensuite son
+    // conducteur. Deux écritures différentes, deux gardes différentes.
+    //
+    // Les mélanger ici ferait assigner un `Vendor` uuid dans la colonne du
+    // conducteur — une course confiée à personne, et le défaut ne se verrait
+    // qu'au moment où elle n'arrive pas. Tant que le second incrément n'est pas
+    // écrit, les favoris entreprise se **stockent et s'affichent** sans être
+    // sollicités : le commerçant peut préparer sa liste, rien ne se route de
+    // travers.
     const favourites = await this.prisma.driverFavourite.findMany({
-      where: { merchantId },
+      where: { merchantId, partyType: 'driver' },
     });
     if (!favourites.length) return null;
 
-    const uuids = favourites.map((f: any) => f.fleetbaseDriverUuid);
+    const uuids = favourites.map((f: any) => f.fleetbasePartyUuid);
 
     // Le compte Echango porte la catégorie de véhicule et sert de garde : un
     // favori sans compte applicatif ne peut de toute façon pas recevoir la
@@ -523,10 +536,16 @@ export class CommerçantService {
       orderBy: { createdAt: 'desc' },
     });
     return {
+      // ⚠️ `driver_uuid` garde son nom : c'est le contrat que l'application lit
+      // déjà, et le renommer casserait l'écran des favoris pour un gain de
+      // vocabulaire. `party_type` s'ajoute à côté — un écran qui l'ignore
+      // continue de fonctionner exactement comme avant, ce qui est la seule
+      // façon d'étendre un contrat sans coordonner un déploiement.
       data: favourites.map((f: any) => ({
         id: f.id,
-        driver_uuid: f.fleetbaseDriverUuid,
-        name: f.driverName,
+        party_type: f.partyType,
+        driver_uuid: f.fleetbasePartyUuid,
+        name: f.partyName,
       })),
     };
   }
@@ -684,8 +703,61 @@ export class CommerçantService {
     };
   }
 
-  async addFavourite(merchantId: string, fleetbaseDriverUuid: string, driverName?: string) {
+  async addFavourite(
+    merchantId: string,
+    fleetbaseDriverUuid: string,
+    driverName?: string,
+    partyType: 'driver' | 'fleet' = 'driver',
+  ) {
     await this.getMerchantWithValidation(merchantId);
+
+    // ── Une entreprise se vérifie chez NOUS, pas dans l'annuaire Fleetbase ──
+    //
+    // Un `Vendor` peut exister chez Fleetbase sans être une entreprise inscrite
+    // sur la plateforme — un opérateur en crée pour d'autres usages. La mettre
+    // en favori n'aurait alors aucun sens : elle ne peut recevoir aucune course,
+    // faute de compte pour se connecter. Le critère est donc le `FleetAccount`
+    // **actif**, qui est exactement « fait partie du réseau ».
+    if (partyType === 'fleet') {
+      const fleet = await this.prisma.fleetAccount.findUnique({
+        where: { fleetbaseVendorUuid: fleetbaseDriverUuid },
+        select: { id: true, active: true, businessName: true },
+      });
+
+      if (!fleet || !fleet.active) {
+        this.audit.denied({
+          actorType: 'merchant',
+          actorId: merchantId,
+          action: 'favourite.add',
+          resourceType: 'FleetAccount',
+          resourceId: fleetbaseDriverUuid,
+          reason: 'Entreprise inexistante ou inactive dans le réseau',
+        });
+        badRequest(
+          'merchant.fleet_not_in_network',
+          "Cette entreprise n'existe pas dans le réseau Echango",
+        );
+      }
+
+      // Le nom vient du serveur, comme pour un conducteur : une liste de favoris
+      // doit décrire des entités réelles, pas les étiquettes de son auteur.
+      return this.prisma.driverFavourite.upsert({
+        where: {
+          merchantId_partyType_fleetbasePartyUuid: {
+            merchantId,
+            partyType: 'fleet',
+            fleetbasePartyUuid: fleetbaseDriverUuid,
+          },
+        },
+        create: {
+          merchantId,
+          partyType: 'fleet',
+          fleetbasePartyUuid: fleetbaseDriverUuid,
+          partyName: fleet.businessName ?? driverName,
+        },
+        update: { partyName: fleet.businessName ?? driverName },
+      });
+    }
 
     // Le transporteur doit exister dans le réseau et y être actif.
     //
@@ -731,9 +803,20 @@ export class CommerçantService {
     const resolvedName = driver.name ?? driverName;
 
     return this.prisma.driverFavourite.upsert({
-      where: { merchantId_fleetbaseDriverUuid: { merchantId, fleetbaseDriverUuid } },
-      create: { merchantId, fleetbaseDriverUuid, driverName: resolvedName },
-      update: { driverName: resolvedName },
+      where: {
+        merchantId_partyType_fleetbasePartyUuid: {
+          merchantId,
+          partyType: 'driver',
+          fleetbasePartyUuid: fleetbaseDriverUuid,
+        },
+      },
+      create: {
+        merchantId,
+        partyType: 'driver',
+        fleetbasePartyUuid: fleetbaseDriverUuid,
+        partyName: resolvedName,
+      },
+      update: { partyName: resolvedName },
     });
   }
 

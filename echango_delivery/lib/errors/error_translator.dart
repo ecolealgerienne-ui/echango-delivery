@@ -53,6 +53,8 @@ const Map<String, String> _fr = {
   'auth.session_revoked': 'Session révoquée, reconnectez-vous.',
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  'merchant.fleet_not_in_network':
+      'Cette entreprise ne fait pas partie du réseau Echango.',
   'cash.platform_ambiguous':
       'Configuration incomplète côté Echango. Contactez le support.',
   'cash.amount_negative': 'Le montant ne peut pas être négatif.',
@@ -241,6 +243,7 @@ const Map<String, String> _ar = {
   'auth.session_revoked': 'تم إلغاء الجلسة، يرجى تسجيل الدخول مجدداً.',
 
   // ── الصندوق (التحصيل والتسليم) ───────────────────────────────────────────
+  'merchant.fleet_not_in_network': 'هذه الشركة ليست ضمن شبكة Echango.',
   'cash.platform_ambiguous': 'إعداد غير مكتمل لدى Echango. اتصل بالدعم.',
   'cash.amount_negative': 'لا يمكن أن يكون المبلغ سالباً.',
   'cash.amount_exceeds_expected': 'المبلغ يتجاوز المبلغ المتوقع.',

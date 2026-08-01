@@ -47,6 +47,9 @@ class AppError {
   /// Plusieurs prestataires « plateforme » configurés côté serveur : l'argent
   /// des courses du pool ne peut plus être routé sans ambiguïté. Refus
   /// délibéré du serveur, pas une panne — il faut un opérateur.
+  /// L'entreprise visée n'a pas de compte actif dans le réseau Echango.
+  static const String merchantFleetNotInNetwork = 'merchant.fleet_not_in_network';
+
   static const String cashPlatformAmbiguous = 'cash.platform_ambiguous';
   static const String cashAmountNegative = 'cash.amount_negative';
   static const String cashAmountExceedsExpected = 'cash.amount_exceeds_expected';

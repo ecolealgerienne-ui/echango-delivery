@@ -202,6 +202,9 @@ export const ErrorCode = {
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
   MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
+  /** L'entreprise visee n'a pas de compte actif chez nous : elle ne peut
+   *  recevoir aucune course, la mettre en favori n'aurait pas de sens. */
+  MERCHANT_FLEET_NOT_IN_NETWORK: 'merchant.fleet_not_in_network',
   MERCHANT_FAVOURITE_ADD_UNAVAILABLE: 'merchant.favourite_add_unavailable',
   MERCHANT_ADDRESS_SAVE_FAILED: 'merchant.address_save_failed',
   MERCHANT_ADDRESS_UPDATE_FAILED: 'merchant.address_update_failed',

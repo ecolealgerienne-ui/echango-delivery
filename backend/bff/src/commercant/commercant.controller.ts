@@ -171,6 +171,7 @@ export class CommerçantController {
       req.user.id,
       dto.fleetbaseDriverUuid,
       dto.driverName,
+      dto.partyType ?? 'driver',
     );
   }
 
