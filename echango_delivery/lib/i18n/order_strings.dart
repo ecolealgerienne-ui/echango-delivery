@@ -109,6 +109,14 @@ const Map<String, String> _fr = {
   'order.item.weight': '{weight} kg',
   'order.item.fragile': 'fragile',
 
+  // ── Favoris : le repli quand la partie n'a pas de nom ────────────────────
+  //
+  // Une entreprise et un transporteur ne se nomment pas pareil quand le nom
+  // manque : « Transporteur 3f2a… » sur une société serait faux, et le lecteur
+  // n'aurait aucun moyen de le savoir.
+  'order.party.driver.unnamed': 'Transporteur {id}',
+  'order.party.fleet.unnamed': 'Entreprise {id}',
+
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'Rémunération proposée (DZD)',
   'order.form.price.hint':
@@ -546,6 +554,10 @@ const Map<String, String> _ar = {
   // ── Ligne de colis ──────────────────────────────────────────────────────
   'order.item.weight': '{weight} كغ',
   'order.item.fragile': 'قابل للكسر',
+
+  // ── Favoris : le repli quand la partie n'a pas de nom ────────────────────
+  'order.party.driver.unnamed': 'ناقل {id}',
+  'order.party.fleet.unnamed': 'شركة {id}',
 
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'الأجر المقترح (دج)',

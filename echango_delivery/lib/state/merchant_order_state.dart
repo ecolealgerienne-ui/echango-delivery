@@ -173,7 +173,11 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
 
   Future<bool> addFavourite(KnownDriver driver) async {
     try {
-      await _apiClient.addFavouriteDriver(driver.driverUuid, name: driver.name);
+      await _apiClient.addFavouriteDriver(
+        driver.driverUuid,
+        name: driver.name,
+        partyType: driver.partyType,
+      );
       await loadFavourites();
       return true;
     } catch (e) {

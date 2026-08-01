@@ -108,7 +108,9 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
     if (ok) {
       // Le résultat disparaît de la recherche une fois ajouté : le laisser
       // ferait douter que l'ajout ait eu lieu.
-      setState(() => _results.removeWhere((r) => r.driverUuid == d.driverUuid));
+      // Par `partyKey` et non par uuid : sur l'uuid seul, ajouter une
+      // entreprise ferait disparaître un conducteur homonyme du résultat.
+      setState(() => _results.removeWhere((r) => r.partyKey == d.partyKey));
     } else {
       showAppError(context, state.errorMessage ?? _t('order.fav.add.failed'));
     }
@@ -151,9 +153,19 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<MerchantOrderState>();
-    final favouriteUuids = {for (final f in state.favourites) f.driverUuid};
+    // ⚠️ La clé est le couple **type + uuid**, jamais l'uuid seul.
+    //
+    // `Driver` et `Vendor` sont deux espaces d'identifiants distincts chez
+    // Fleetbase : rien n'interdit qu'un uuid apparaisse dans les deux. Sur
+    // l'uuid seul, une entreprise en favori marquerait un conducteur homonyme
+    // comme « déjà enregistré » — et il disparaîtrait de la liste des
+    // propositions sans que rien ne l'explique.
+    //
+    // C'est la même clé que celle de l'unicité côté serveur ; les deux côtés
+    // doivent raisonner pareil, sans quoi l'écran contredit la base.
+    final favouriteKeys = {for (final f in state.favourites) f.partyKey};
     final candidates =
-        _known.where((d) => !favouriteUuids.contains(d.driverUuid)).toList();
+        _known.where((d) => !favouriteKeys.contains(d.partyKey)).toList();
 
     return Scaffold(
       appBar: AppBar(title: Text(_t('order.fav.title'))),
@@ -230,8 +242,14 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     ..._results.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.person_search_outlined),
-                          title: Text(d.displayName),
+                          leading: Icon(
+                            // Une entreprise et un transporteur se ressemblent
+                            // trop dans une liste : sans marque visible, un
+                            // commerçant confie une course en croyant l'avoir
+                            // confiée à quelqu'un d'autre.
+                            d.isFleet ? Icons.business_outlined : Icons.person_outline,
+                          ),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           // Un transporteur de l'annuaire qui n'a pas encore
                           // l'application ne recevra aucune course : le mettre
                           // en favori serait un geste sans effet, et le taire
@@ -266,7 +284,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         child: ListTile(
                           leading:
                               Icon(Icons.star, color: context.semantic.warning),
-                          title: Text(d.displayName),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           trailing: IconButton(
                             icon: const Icon(Icons.remove_circle_outline),
                             tooltip: _t('order.fav.remove'),
@@ -292,8 +310,14 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     ...candidates.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.person_outline),
-                          title: Text(d.displayName),
+                          leading: Icon(
+                            // Une entreprise et un transporteur se ressemblent
+                            // trop dans une liste : sans marque visible, un
+                            // commerçant confie une course en croyant l'avoir
+                            // confiée à quelqu'un d'autre.
+                            d.isFleet ? Icons.business_outlined : Icons.person_outline,
+                          ),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
                             tooltip: _t('order.fav.add'),

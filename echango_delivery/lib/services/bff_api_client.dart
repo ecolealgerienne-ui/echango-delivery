@@ -1236,11 +1236,27 @@ class BffApiClient {
     return _listOf(await _get('/commercant/transporteurs/favoris'), 'data', KnownDriver.fromJson);
   }
 
-  Future<void> addFavouriteDriver(String driverUuid, {String? name}) async {
+  /// Met une partie en favori — un transporteur, ou une **entreprise**.
+  ///
+  /// ⚠️ `partyType` est envoyé même quand il vaut `driver`, sa valeur par
+  /// défaut côté serveur. L'omettre marcherait aujourd'hui, mais ferait
+  /// dépendre le sens de la requête d'un défaut distant : le jour où ce défaut
+  /// change, l'app enregistrerait des favoris du mauvais type sans qu'aucune
+  /// erreur ne le dise. On dit ce qu'on veut.
+  ///
+  /// Le nom du champ reste `fleetbaseDriverUuid` pour les deux familles : c'est
+  /// le contrat que le serveur expose, et le renommer demanderait de déployer
+  /// les deux côtés en même temps pour un gain de vocabulaire.
+  Future<void> addFavouriteDriver(
+    String partyUuid, {
+    String? name,
+    String partyType = 'driver',
+  }) async {
     await _post(
       '/commercant/transporteurs/favoris',
       {
-        'fleetbaseDriverUuid': driverUuid,
+        'partyType': partyType,
+        'fleetbaseDriverUuid': partyUuid,
         if (name != null) 'driverName': name,
       },
     );

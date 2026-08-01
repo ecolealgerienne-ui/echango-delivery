@@ -676,6 +676,24 @@ class KnownDriver extends Equatable {
   final String? name;
   final String? favouriteId;
 
+  /// `driver` ou `fleet` — un transporteur, ou une entreprise de transport.
+  ///
+  /// ── Pourquoi le type doit voyager, et pas seulement l'uuid ───────────────
+  ///
+  /// `Driver` et `Vendor` sont **deux espaces d'identifiants distincts** chez
+  /// Fleetbase : rien n'interdit qu'un uuid apparaisse dans les deux. C'est la
+  /// raison pour laquelle l'unicité, côté serveur, porte sur le couple
+  /// `(partyType, uuid)` et non sur l'uuid seul — et l'écran doit raisonner sur
+  /// la même clé, sinon une entreprise en favori marquerait un conducteur
+  /// homonyme comme « déjà en favori ».
+  ///
+  /// **`driver` par défaut** : c'est ce que valent toutes les réponses écrites
+  /// avant que le serveur serve ce champ, et toutes celles d'un serveur plus
+  /// ancien. Le défaut ne change donc le sens d'aucune donnée existante.
+  final String partyType;
+
+  bool get isFleet => partyType == 'fleet';
+
   /// Ce transporteur a-t-il installé l'application ?
   ///
   /// La recherche porte sur l'annuaire Fleetbase — celui que l'opérateur
@@ -693,6 +711,7 @@ class KnownDriver extends Equatable {
     this.name,
     this.favouriteId,
     this.hasAccount = true,
+    this.partyType = 'driver',
   });
 
   factory KnownDriver.fromJson(Map<String, dynamic> json) => KnownDriver(
@@ -700,14 +719,37 @@ class KnownDriver extends Equatable {
         name: json['name'] as String?,
         favouriteId: json['id'] as String?,
         hasAccount: json['has_account'] == null || json['has_account'] == true,
+        // Un type inconnu retombe sur `driver` plutôt que d'être propagé tel
+        // quel : l'écran s'en sert pour choisir une icône et un libellé, et un
+        // troisième type inattendu produirait une ligne muette.
+        partyType: json['party_type'] == 'fleet' ? 'fleet' : 'driver',
       );
 
-  String get displayName => (name != null && name!.isNotEmpty)
-      ? name!
-      : 'Transporteur ${driverUuid.substring(0, driverUuid.length.clamp(0, 8))}';
+  /// La clé qui identifie cette partie **sans ambiguïté**.
+  ///
+  /// L'uuid seul ne suffit pas : voir [partyType]. Utilisée par l'écran des
+  /// favoris pour savoir ce qui est déjà enregistré.
+  String get partyKey => '$partyType:$driverUuid';
+
+  /// Le nom affichable, avec un repli **traduit** quand il manque.
+  ///
+  /// ⚠️ La locale est exigée, comme pour `orderStatusLabel` et `vehicleLabel` :
+  /// le repli produit des mots. La version précédente rendait « Transporteur
+  /// 3f2a… » en français quelle que soit la langue — dette héritée que le
+  /// balayage i18n du 01/08 avait manquée, et que le passage aux entreprises
+  /// aurait doublée.
+  String displayName(Locale locale) {
+    if (name != null && name!.isNotEmpty) return name!;
+    final short = driverUuid.substring(0, driverUuid.length.clamp(0, 8));
+    return orderLabel(
+      isFleet ? 'order.party.fleet.unnamed' : 'order.party.driver.unnamed',
+      locale,
+      {'id': short},
+    );
+  }
 
   @override
-  List<Object?> get props => [driverUuid, name, favouriteId];
+  List<Object?> get props => [partyType, driverUuid, name, favouriteId];
 }
 
 /// Résultat d'une recherche de transporteur.

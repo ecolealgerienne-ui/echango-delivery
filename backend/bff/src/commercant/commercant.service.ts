@@ -775,7 +775,35 @@ export class CommerçantService {
       }
     }
 
-    if (matches.length > 10) {
+    // ── Les entreprises de transport, cherchées CHEZ NOUS ──────────────────
+    //
+    // Pas dans l'annuaire Fleetbase, et c'est le même critère que celui qu'
+    // `addFavourite` applique : un `Vendor` peut y exister sans être une
+    // entreprise inscrite sur la plateforme — un opérateur en crée pour
+    // d'autres usages. La proposer serait proposer quelqu'un qui ne peut
+    // recevoir aucune course, faute de compte pour se connecter.
+    //
+    // ⚠️ **Le prestataire plateforme est exclu.** Echango est déjà le
+    // facilitateur par défaut de toute course du pool : le mettre en favori ne
+    // changerait rien, et l'afficher dans une liste de prestataires « qu'on
+    // choisit » ferait croire à un choix qui n'en est pas un.
+    let fleets: any[] = [];
+    if (q.length >= 2) {
+      fleets = await this.prisma.fleetAccount.findMany({
+        where: {
+          active: true,
+          isPlatform: false,
+          businessName: { contains: q, mode: 'insensitive' },
+        },
+        select: { fleetbaseVendorUuid: true, businessName: true },
+        take: 11,
+      });
+    }
+
+    // Le plafond porte sur le TOTAL, pas sur chaque famille : c'est une seule
+    // liste à l'écran, et « trop de résultats » se juge sur ce qu'elle
+    // afficherait. Compter séparément laisserait passer 10 + 10.
+    if (matches.length + fleets.length > 10) {
       return { data: [], too_many: true };
     }
 
@@ -792,17 +820,36 @@ export class CommerçantService {
     );
 
     return {
-      data: matches.map((d: any) => {
-        const account = byUuid.get(d.uuid);
-        return {
-          driver_uuid: d.uuid,
-          name: d.name ?? null,
-          vehicle_type: account?.vehicleType ?? null,
-          // Le téléphone n'est jamais renvoyé : celui qui cherche le connaît
-          // déjà, c'est par là qu'il cherche.
-          has_account: Boolean(account?.active),
-        };
-      }),
+      // ⚠️ `driver_uuid` garde son nom pour les DEUX familles : c'est la clé que
+      // l'application lit déjà, et la renommer casserait l'écran des favoris
+      // pour un gain de vocabulaire. `party_type` s'ajoute à côté — un écran
+      // qui l'ignore continue de fonctionner comme avant.
+      data: [
+        ...matches.map((d: any) => {
+          const account = byUuid.get(d.uuid);
+          return {
+            party_type: 'driver',
+            driver_uuid: d.uuid,
+            name: d.name ?? null,
+            vehicle_type: account?.vehicleType ?? null,
+            // Le téléphone n'est jamais renvoyé : celui qui cherche le connaît
+            // déjà, c'est par là qu'il cherche.
+            has_account: Boolean(account?.active),
+          };
+        }),
+        ...fleets.map((f: any) => ({
+          party_type: 'fleet',
+          driver_uuid: f.fleetbaseVendorUuid,
+          name: f.businessName ?? null,
+          // Une entreprise n'a pas de catégorie de véhicule : c'est son
+          // conducteur qui en aura une, et il n'est pas encore désigné. `null`
+          // plutôt qu'une valeur inventée (règle 10).
+          vehicle_type: null,
+          // Vrai par construction : la requête ne rend que des `FleetAccount`
+          // actifs. Le champ garde son sens — « peut recevoir une course ».
+          has_account: true,
+        })),
+      ],
       too_many: false,
     };
   }
