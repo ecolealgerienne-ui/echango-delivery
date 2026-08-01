@@ -3,7 +3,10 @@ import { badRequest, notFound, forbidden } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
-import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+// `FACILITATOR_TYPE_VENDOR` est importé plutôt que réécrit : sa valeur
+// (`fleet-ops:vendor`) a été **mesurée** dans Fleetbase et non déduite, et la
+// recopier ici serait la deuxième copie d'un fait vérifié une fois (règle 5).
+import { FACILITATOR_TYPE_VENDOR, FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
@@ -15,7 +18,39 @@ import {
   projectPlace,
 } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
-import { CashService, driverParty, merchantParty } from '../cash/cash.service';
+import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
+
+/**
+ * Le favori retenu pour une course — **un conducteur ou une entreprise**.
+ *
+ * ── Pourquoi un type discriminé, et pas un objet à champs facultatifs ──────
+ *
+ * Les deux cas n'écrivent pas la même colonne chez Fleetbase :
+ *
+ *     conducteur ⇒ `driver_assigned_uuid`   (la course part à quelqu'un)
+ *     entreprise ⇒ `facilitator_uuid`       (la course est confiée, pas affectée)
+ *
+ * Un objet portant `driverUuid?` et `vendorUuid?` laisserait l'appelant lire le
+ * mauvais champ sans que rien ne l'arrête : un uuid de `Vendor` écrit dans la
+ * colonne du conducteur produit une course **confiée à personne**, et le défaut
+ * ne se voit qu'au moment où elle n'arrive pas. Le `kind` force la branche à
+ * l'écriture, et le compilateur refuse d'accéder au champ de l'autre cas.
+ */
+type PickedFavourite =
+  | { kind: 'driver'; driverUuid: string; accountId: string }
+  | { kind: 'fleet'; vendorUuid: string; fleetId: string };
+
+const asDriverPick = (account: any): PickedFavourite => ({
+  kind: 'driver',
+  driverUuid: account.fleetbaseDriverUuid,
+  accountId: account.id,
+});
+
+const asFleetPick = (fleet: any): PickedFavourite => ({
+  kind: 'fleet',
+  vendorUuid: fleet.fleetbaseVendorUuid,
+  fleetId: fleet.id,
+});
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
 import { isTerminalOrderStatus } from '../common/orders/order-status';
@@ -452,7 +487,10 @@ export class CommerçantService {
 
     const available = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
 
-    if (!codAmount) return available[0] ?? null;
+    if (!codAmount) {
+      if (available[0]) return asDriverPick(available[0]);
+      return this.pickFleetFavourite(merchantId, codAmount);
+    }
 
     // Course encaissée : on écarte en plus ceux dont la dette atteindrait le
     // plafond. Le premier garde-fou du modèle — sans dépôt physique, cesser de
@@ -467,9 +505,75 @@ export class CommerçantService {
         merchantParty(merchantId),
         codAmount,
       );
-      if (allowed) return account;
+      if (allowed) return asDriverPick(account);
       this.logger.log(
         `Favori ${account.id} écarté d'une course encaissée : dette ${debt} + ${codAmount} > ${ceiling}`,
+      );
+    }
+
+    return this.pickFleetFavourite(merchantId, codAmount);
+  }
+
+  /**
+   * Un favori **entreprise** disponible, quand aucun conducteur favori ne l'est.
+   *
+   * ── L'ordre est une décision produit, et c'est un défaut par défaut ───────
+   *
+   * ⚠️ **Les conducteurs passent avant les entreprises.** Le motif est qu'un
+   * conducteur est immédiatement actionnable — la course part à quelqu'un —,
+   * alors qu'une entreprise ajoute un temps : elle doit encore désigner le
+   * sien, et tant qu'elle ne l'a pas fait la course n'avance pas.
+   *
+   * Ce n'est pas une évidence : « je fais confiance à cette société » est une
+   * préférence aussi légitime que « je fais confiance à cette personne », et un
+   * commerçant qui met les deux en favori peut vouloir l'inverse. **À trancher
+   * avec le produit** ; l'ordre se renverse en échangeant les deux appels, et
+   * rien d'autre ne dépend de ce choix.
+   *
+   * ── Ce qui remplace la disponibilité ─────────────────────────────────────
+   *
+   * Une entreprise n'est ni en ligne ni hors ligne — la notion n'existe que
+   * pour un conducteur. L'équivalent est son **compte actif** : c'est ce qui
+   * dit qu'elle peut se connecter, voir la course et y affecter quelqu'un.
+   * Exiger davantage — par exemple qu'elle ait un conducteur libre — voudrait
+   * dire décider à sa place, ce que le §6.1 de `specs_facilitateur.md` écarte
+   * explicitement.
+   */
+  private async pickFleetFavourite(
+    merchantId: string,
+    codAmount?: number,
+  ): Promise<PickedFavourite | null> {
+    const favourites = await this.prisma.driverFavourite.findMany({
+      where: { merchantId, partyType: 'fleet' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!favourites.length) return null;
+
+    const fleets = await this.prisma.fleetAccount.findMany({
+      where: {
+        fleetbaseVendorUuid: { in: favourites.map((f: any) => f.fleetbasePartyUuid) },
+        active: true,
+      },
+      select: { id: true, fleetbaseVendorUuid: true },
+    });
+    if (!fleets.length) return null;
+
+    for (const fleet of fleets) {
+      if (!codAmount) return asFleetPick(fleet);
+
+      // Même garde-fou que pour un conducteur, et **contre la bonne partie** :
+      // sur une course confiée à une entreprise, c'est elle qui doit au
+      // commerçant. Vérifier le plafond du conducteur ici mesurerait une
+      // exposition qui n'existe pas encore — personne n'est désigné.
+      const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+        fleetParty(fleet.id),
+        merchantParty(merchantId),
+        codAmount,
+      );
+      if (allowed) return asFleetPick(fleet);
+      this.logger.log(
+        `Entreprise favorite ${fleet.id} écartée d'une course encaissée : ` +
+          `dette ${debt} + ${codAmount} > ${ceiling}`,
       );
     }
 
@@ -1454,9 +1558,19 @@ export class CommerçantService {
         // traiter leur absence comme un défaut permissif.
         ...(dto.draft
           ? { adhoc: false, dispatched: false }
-          : favourite
-            ? { driver_assigned_uuid: favourite.fleetbaseDriverUuid }
-            : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
+          : favourite?.kind === 'driver'
+            ? { driver_assigned_uuid: favourite.driverUuid }
+            : favourite?.kind === 'fleet'
+              // Confiée, PAS affectée : l'entreprise désigne ensuite le sien.
+              // `adhoc` reste faux — une course confiée ne doit pas continuer
+              // d'être proposée aux indépendants, et le dispatch relance tout
+              // seul toutes les ~4 minutes tant qu'elle l'est.
+              ? {
+                  facilitator_uuid: favourite.vendorUuid,
+                  facilitator_type: FACILITATOR_TYPE_VENDOR,
+                  adhoc: false,
+                }
+              : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
         pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
         pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
       }, [pickupPlace.place.uuid, dropoffPlace.place.uuid]);
@@ -1485,7 +1599,11 @@ export class CommerçantService {
           // réconciliateur y verrait un changement au premier passage et
           // notifierait une transition qui n'a jamais eu lieu.
           status: fleetbaseOrder?.status ?? 'created',
-          driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null,
+          // Seul un favori CONDUCTEUR renseigne cette colonne : une course
+          // confiée à une entreprise n'a pas encore de conducteur, et y écrire
+          // l'uuid du `Vendor` ferait mentir le cache que le réconciliateur
+          // relit.
+          driverAssignedUuid: favourite?.kind === 'driver' ? favourite.driverUuid : null,
           // ⚠️ **Ce que le commerçant a demandé, conservé ici.**
           //
           // Le Lot 2 avait retiré `codAmount` de ce cache au motif que
@@ -1507,7 +1625,9 @@ export class CommerçantService {
 
       if (favourite) {
         this.logger.log(
-          `Commande ${order.id} confiée au favori ${favourite.fleetbaseDriverUuid}`,
+          favourite.kind === 'driver'
+            ? `Commande ${order.id} confiée au favori ${favourite.driverUuid}`
+            : `Commande ${order.id} confiée à l'entreprise favorite ${favourite.vendorUuid}`,
         );
       }
 
@@ -1607,14 +1727,24 @@ export class CommerçantService {
 
     try {
       // Étape 1 — qui peut prendre la commande.
-      if (favourite) {
+      if (favourite?.kind === 'driver') {
         // Même route que le persona flotte (`flotte.service.ts`), déjà en
         // usage réel : `POST /drivers/{uuid}/assign-order` — int/v1
         // uniquement, cette route n'existe pas sur `v1` (vérifié dans
         // `server/src/routes.php`), d'où `callFleetOps` et l'uuid.
         await this.fleetbaseClient.assignOrderToDriver(
-          favourite.fleetbaseDriverUuid,
+          favourite.driverUuid,
           cached.fleetbaseOrderId,
+        );
+      } else if (favourite?.kind === 'fleet') {
+        // Confiée à l'entreprise, qui désignera son conducteur.
+        // `attachFacilitator` pose déjà `adhoc: false` dans le même appel —
+        // indispensable, sans quoi Fleetbase continuerait de proposer aux
+        // indépendants une course déjà réclamée, et relancerait ses pings
+        // toutes les ~4 minutes.
+        await this.fleetbaseClient.attachFacilitator(
+          cached.fleetbaseOrderId,
+          favourite.vendorUuid,
         );
       } else {
         await this.fleetbaseClient.releaseOrderToPool(
@@ -1676,7 +1806,9 @@ export class CommerçantService {
     try {
       await this.prisma.order.update({
         where: { id: cached.id },
-        data: { driverAssignedUuid: favourite?.fleetbaseDriverUuid ?? null },
+        data: {
+          driverAssignedUuid: favourite?.kind === 'driver' ? favourite.driverUuid : null,
+        },
       });
     } catch (error: any) {
       this.logger.warn(
@@ -1686,7 +1818,11 @@ export class CommerçantService {
     }
 
     if (favourite) {
-      this.logger.log(`Brouillon ${cached.id} publié vers le favori ${favourite.fleetbaseDriverUuid}`);
+      this.logger.log(
+        favourite.kind === 'driver'
+          ? `Brouillon ${cached.id} publié vers le favori ${favourite.driverUuid}`
+          : `Brouillon ${cached.id} confié à l'entreprise favorite ${favourite.vendorUuid}`,
+      );
     } else {
       this.logger.log(`Brouillon ${cached.id} publié vers le pool commun`);
     }
