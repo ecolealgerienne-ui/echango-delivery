@@ -50,14 +50,21 @@ q() { docker exec "$PGC" psql -U "$PGUSER" -d "$PGDB" -tAc "$1" 2>/dev/null; }
 
 # Le compte est cherché sur les deux identifiants : l'email est ce qu'on a sous
 # la main après un run, l'uuid ce que la console affiche.
-# ⚠️ **Le NOM aussi**, comme partout ailleurs dans cet outillage.
+# ⚠️ **Trois identifiants, et surtout un listing quand aucun ne matche.**
 #
-# Il n'acceptait qu'un email ou un uuid, alors que tous les autres scripts
-# prennent le nom (`resolve_driver`) — donc le geste naturel après un run,
-# `reset-test-ledger.sh Toto`, échouait avec « Aucun compte conducteur »
-# **sur un conducteur qui existe**. C'est le motif que ce dépôt a déjà corrigé
-# deux fois : le refus qui ne dit pas quoi faire (règle 10 — un message qui
-# accuse une absence inexistante envoie chercher au mauvais endroit).
+# Le script n'acceptait qu'un email ou un uuid, alors que tous les autres
+# prennent le nom (`resolve_driver`) : le geste naturel après un run,
+# `reset-test-ledger.sh Toto`, échouait sur « Aucun compte conducteur » **sans
+# dire quoi utiliser à la place**. Motif déjà corrigé deux fois ici.
+#
+# ⚠️ **Et le nom ne suffira souvent pas**, ce qui est la vraie leçon de ce
+# script : « Toto » est le nom du `Driver` **chez Fleetbase**, tandis que le
+# compte Echango porte ses propres `firstName`/`lastName` — « Test
+# Transporteur » sur nos jeux d'essai. Les deux ne coïncident pas, et rien ne
+# les oblige à coïncider. Le filtre par nom est donc un confort ; c'est le
+# **listing** qui fait le travail, en montrant les emails réellement
+# utilisables. Une correspondance qui échoue en disant ce qui existe vaut mieux
+# qu'une correspondance qui échoue en accusant une absence.
 DRIVER_ID="$(q "SELECT id FROM \"DriverAccount\"
                  WHERE email = '$TARGET'
                     OR \"fleetbaseDriverUuid\" = '$TARGET'
