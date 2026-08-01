@@ -1,3 +1,4 @@
 fleetbase-src/
 .env
 node_modules/
+graphify-out
