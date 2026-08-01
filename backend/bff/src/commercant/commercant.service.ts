@@ -382,21 +382,26 @@ export class CommerçantService {
 
 
   /**
-   * Identifiant du compte Echango du facilitateur d'une course, ou `null`.
+   * Identifiant du compte Echango du facilitateur d'une course — **délégué**.
    *
-   * Rend `null` quand le fournisseur n'a pas de compte chez nous : la course se
-   * comporte alors comme une course sans facilitateur, plutôt que de créer une
-   * dette envers une partie qui n'existe pas dans le registre.
+   * ── Le défaut que cette délégation répare (revue du 01/08/2026, C2) ──────
+   *
+   * Cette méthode rendait `null` sur une course du pool, pendant que son
+   * homonyme du module transporteur y rendait **Echango**. Les deux alimentent
+   * le même registre, et `legScope()` construit une jambe différente selon que
+   * `facilitatorId` est nul.
+   *
+   * Concrètement : la même livraison du pool créait une dette portée par Echango
+   * si elle était clôturée par l'application, et une dette portée par le
+   * conducteur si elle était clôturée en console puis régularisée ici. Le
+   * commerçant voyait deux contreparties pour deux courses identiques, et une
+   * remise n'en éteignait qu'une. Aucune erreur, deux nombres plausibles.
+   *
+   * La résolution vit désormais dans `CashService`, seul endroit que les deux
+   * modules partagent — et le seul qui puisse tenir l'invariant à leur place.
    */
-  private async resolveFacilitatorId(live: any): Promise<string | null> {
-    const vendorUuid = live?.facilitator_uuid;
-    if (!vendorUuid) return null;
-
-    const fleet = await this.prisma.fleetAccount.findUnique({
-      where: { fleetbaseVendorUuid: vendorUuid },
-      select: { id: true },
-    });
-    return fleet?.id ?? null;
+  private resolveFacilitatorId(live: any): Promise<string | null> {
+    return this.cash.resolveFacilitatorId(live);
   }
 
   /**
@@ -496,18 +501,32 @@ export class CommerçantService {
     // plafond. Le premier garde-fou du modèle — sans dépôt physique, cesser de
     // confier des espèces à qui en doit déjà trop est le seul instrument de
     // limitation du risque dont nous disposions.
+    // ⚠️ La contrepartie est celle que la course **portera**, pas le commerçant.
+    //
+    // Sollicité, un conducteur favori reçoit une course sans `facilitator_uuid` —
+    // c'est-à-dire une course du **pool**, dont le facilitateur est Echango
+    // depuis le 01/08/2026. Interroger la jambe conducteur ↔ commerçant y lisait
+    // `facilitatorId: null` (`legScope`), une jambe **structurellement vide** :
+    // le plafond rendait 0 quelle que soit la dette réelle et ne pouvait plus
+    // refuser personne.
+    //
+    // Le défaut ne se voyait pas ici : le favori recevait la course, puis
+    // `startOrder` la lui refusait contre la bonne jambe. La course restait
+    // assignée à quelqu'un qui ne pouvait pas la démarrer — le défaut même que
+    // `assertDriverCashCeiling` a fermé côté entreprise, resté ouvert ici.
+    const poolFacilitatorId = (await this.cash.platformFacilitator())?.id ?? null;
+    const driverCounterparty = this.cash.driverCounterparty(poolFacilitatorId, merchantId);
+
     for (const account of available) {
-      // À la création, la course ne porte pas encore de facilitateur : la
-      // contrepartie est donc le commerçant, comme avant ce chantier. Le
-      // plafond sera revérifié à l'acceptation, contre la contrepartie réelle.
-      const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+      const { allowed, held, ceiling } = await this.cash.canTakeCashOrder(
         driverParty(account.id),
-        merchantParty(merchantId),
+        driverCounterparty,
         codAmount,
       );
       if (allowed) return asDriverPick(account);
       this.logger.log(
-        `Favori ${account.id} écarté d'une course encaissée : dette ${debt} + ${codAmount} > ${ceiling}`,
+        `Favori ${account.id} écarté d'une course encaissée : ` +
+          `détenu ${held} + ${codAmount} > ${ceiling}`,
       );
     }
 
@@ -565,7 +584,7 @@ export class CommerçantService {
       // sur une course confiée à une entreprise, c'est elle qui doit au
       // commerçant. Vérifier le plafond du conducteur ici mesurerait une
       // exposition qui n'existe pas encore — personne n'est désigné.
-      const { allowed, debt, ceiling } = await this.cash.canTakeCashOrder(
+      const { allowed, held, ceiling } = await this.cash.canTakeCashOrder(
         fleetParty(fleet.id),
         merchantParty(merchantId),
         codAmount,
@@ -573,7 +592,7 @@ export class CommerçantService {
       if (allowed) return asFleetPick(fleet);
       this.logger.log(
         `Entreprise favorite ${fleet.id} écartée d'une course encaissée : ` +
-          `dette ${debt} + ${codAmount} > ${ceiling}`,
+          `détenu ${held} + ${codAmount} > ${ceiling}`,
       );
     }
 
@@ -2108,10 +2127,20 @@ export class CommerçantService {
 
     // Déjà au registre : leur montant est un fait enregistré, il n'appartient
     // ni à l'attente ni au trou.
+    //
+    // ⚠️ **Une déclaration contestée n'est PAS un enregistrement.** Elle ne
+    // compte dans aucune dette (`collectionsBetween` exige `confirmedAt`) — la
+    // retirer d'ici aussi la faisait disparaître des deux côtés à la fois : la
+    // livraison sortait de « non enregistré » sans être entrée au registre, et
+    // la somme quittait le système sans laisser d'écran où la voir.
+    //
+    // Le trou doit rester visible tant qu'il n'est pas comblé. C'est toute la
+    // raison d'être de cette liste (journal §30) : montrer ce qu'on ne peut pas
+    // deviner, plutôt que d'inventer un montant.
     const collected = new Set(
       (
         await this.prisma.cashCollection.findMany({
-          where: { merchantId },
+          where: { merchantId, disputedAt: null },
           select: { fleetbaseOrderUuid: true },
         })
       ).map((c: { fleetbaseOrderUuid: string }) => c.fleetbaseOrderUuid),

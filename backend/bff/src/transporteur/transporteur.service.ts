@@ -1276,114 +1276,29 @@ export class TransporteurService {
   }
 
   /**
-   * Le facilitateur de cette course, ou `null` si elle n'en porte pas.
+   * Le facilitateur de cette course — **délégué au registre**.
    *
-   * ── Où vit l'information ────────────────────────────────────────────────
+   * ── Pourquoi ce n'est plus écrit ici (revue du 01/08/2026, C2) ───────────
    *
-   * Sur `Order.facilitator_uuid` chez Fleetbase, natif et prévu pour ça. Le BFF
-   * ne le recopie nulle part : il le lit, et ne conserve que le lien vers le
-   * compte Echango correspondant, une fois figé dans une écriture comptable.
+   * Ces quatre-vingt-dix lignes existaient **en double**, une copie par module,
+   * et l'ancien commentaire de celle-ci affirmait que le repli plateforme était
+   * « ici et nulle part ailleurs ». Il était aussi dans `commercant.service.ts`,
+   * en sens inverse : un `return null` là où celle-ci rendait Echango.
    *
-   * ⚠️ Rend `null` quand le fournisseur n'a **aucun compte Echango**. Ce cas
-   * est réel : un opérateur peut rattacher une commande à un `Vendor` en
-   * console sans que ce fournisseur soit une entreprise inscrite chez nous. La
-   * course se comporte alors comme une course sans facilitateur — le conducteur
-   * règle avec le commerçant — plutôt que de créer une dette envers une partie
-   * qui n'existe pas dans le registre.
+   * Les deux alimentent le même registre, et `legScope()` construit une jambe
+   * différente selon que le facilitateur est nul — donc **deux contreparties
+   * pour deux courses identiques**, selon le chemin de clôture. Un commentaire
+   * ne peut pas échouer ; `CashService` le tient désormais pour les deux.
    */
-  private async resolveFacilitator(
+  private resolveFacilitator(
     order: any,
   ): Promise<{ id: string; isPlatform: boolean } | null> {
-    const vendorUuid = order?.facilitator_uuid;
-
-    // ── Une course du pool a Echango pour facilitateur ────────────────────
-    //
-    // Décision produit du 31/07/2026 (`specs_facilitateur.md` §2.2/§2.3) : le
-    // pool n'est pas l'absence de prestataire, c'est Echango. Un seul chemin de
-    // registre, un seul couple de parties, et le cas « indépendant » cesse
-    // d'être une exception.
-    //
-    // ⚠️ Le repli est ici et **nulle part ailleurs**, parce que tout converge
-    // vers `driverCounterparty(facilitatorId, merchantId)` : poser le
-    // facilitateur à cet endroit suffit à changer la contrepartie du conducteur,
-    // celle du commerçant, les deux plafonds et les deux chaînes de remise. Le
-    // reproduire chez les appelants créerait des chemins qui divergent (règle 5).
-    if (!vendorUuid) return this.platformFacilitator();
-
-    const fleet = await this.prisma.fleetAccount.findUnique({
-      where: { fleetbaseVendorUuid: vendorUuid },
-      select: { id: true, isPlatform: true },
-    });
-
-    if (!fleet) {
-      this.logger.warn(
-        `Commande ${order?.uuid} rattachée au fournisseur ${vendorUuid}, qui n'a pas de compte ` +
-          'Echango — traitée comme une course sans facilitateur',
-      );
-      return null;
-    }
-
-    return fleet;
-  }
-
-  /**
-   * Le prestataire **plateforme** — Echango — s'il est provisionné.
-   *
-   * ── Pourquoi `null` quand il n'y en a pas, et pas une erreur ─────────────
-   *
-   * Une installation qui n'a pas encore d'opérateur doit continuer de
-   * fonctionner **exactement comme avant** : la course se règle alors
-   * conducteur ↔ commerçant, ce qui est le comportement de tout le code écrit
-   * jusqu'au 01/08/2026 et de toutes les lignes déjà en base. Lever ici ferait
-   * échouer la clôture de chaque livraison encaissée sur une base non migrée —
-   * c'est-à-dire casser le produit pour installer une amélioration.
-   *
-   * ⚠️ **Deux prestataires plateforme sont un refus, pas un choix.** `findFirst`
-   * en prendrait un au hasard, donc l'argent d'une course irait à l'un ou à
-   * l'autre selon l'ordre d'insertion — un défaut qui ne se voit qu'au moment
-   * du règlement, sur une somme réelle, et qui serait attribué à autre chose.
-   * On refuse bruyamment plutôt que de router de l'argent au hasard.
-   *
-   * ⚠️ **Aucune route ne pose `isPlatform`**, et c'est délibéré (schéma Prisma,
-   * `FleetAccount.isPlatform`) : un compte flotte qui pourrait se déclarer
-   * plateforme ferait retenir à ses conducteurs une rémunération qui ne leur
-   * revient pas. Le provisionnement est un geste d'admin —
-   * `scripts/provision-platform.sh`.
-   */
-  private async platformFacilitator(): Promise<{ id: string; isPlatform: boolean } | null> {
-    const platforms = await this.prisma.fleetAccount.findMany({
-      where: { isPlatform: true, active: true },
-      select: { id: true, isPlatform: true },
-      take: 2,
-    });
-
-    if (platforms.length === 0) {
-      // En `debug` et non en `warn` : sur une installation sans opérateur c'est
-      // l'état normal, et un avertissement à chaque livraison apprendrait à
-      // ignorer les avertissements.
-      this.logger.debug(
-        'Aucun prestataire plateforme provisionné — la course se règle conducteur ↔ commerçant',
-      );
-      return null;
-    }
-
-    if (platforms.length > 1) {
-      this.logger.error(
-        `Plusieurs prestataires plateforme actifs (${platforms.map((p) => p.id).join(', ')}) — ` +
-          "impossible de décider à qui l'argent d'une course du pool revient",
-      );
-      conflict(
-        'cash.platform_ambiguous',
-        "Plusieurs prestataires plateforme sont configurés : contactez Echango.",
-      );
-    }
-
-    return platforms[0];
+    return this.cash.resolveFacilitator(order);
   }
 
   /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
-  private async resolveFacilitatorId(order: any): Promise<string | null> {
-    return (await this.resolveFacilitator(order))?.id ?? null;
+  private resolveFacilitatorId(order: any): Promise<string | null> {
+    return this.cash.resolveFacilitatorId(order);
   }
 
   /**
@@ -1416,26 +1331,39 @@ export class TransporteurService {
     // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
     // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
     const facilitatorId = await this.resolveFacilitatorId(order);
+    const counterparty = this.cash.driverCounterparty(facilitatorId, cached.merchantId);
 
-    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
+    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
       driverParty(driverId),
-      this.cash.driverCounterparty(facilitatorId, cached.merchantId),
+      counterparty,
       codAmount,
     );
 
     if (!allowed) {
-      // ⚠️ « pour ce commerçant » est faux quand c'est le plafond par personne
-      // qui a mordu : le conducteur irait remettre à celui-là, sans se
-      // débloquer, et conclurait à un défaut de l'application.
+      // ⚠️ Le message nomme la contrepartie RÉELLE, et il y en a trois.
+      //
+      // « pour ce commerçant » est faux dans deux cas sur trois, et chacun
+      // envoie le conducteur remettre au mauvais endroit — donc ne pas se
+      // débloquer, et conclure à un défaut de l'application :
+      //
+      //   · plafond par personne  → le total, toutes contreparties confondues ;
+      //   · contrepartie `fleet`  → une entreprise, ou **Echango** depuis que le
+      //     pool a un facilitateur (01/08/2026). C'est le cas le plus courant, et
+      //     le total y est agrégé sur TOUS les commerçants du pool : « pour ce
+      //     commerçant » y désignait un montant qui n'est pas le sien.
       badRequest(
         'cash.ceiling_exceeded',
         scope === 'person'
-          ? `Vous détenez déjà ${debt} ${this.cash.currency} au total, toutes entreprises et ` +
+          ? `Vous détenez déjà ${held} ${this.cash.currency} au total, toutes entreprises et ` +
               `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
               `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
-          : `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
-              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-              'Remettez les espèces avant de reprendre une course encaissée pour lui.',
+          : counterparty.type === 'fleet'
+            ? `Vous détenez déjà ${held} ${this.cash.currency} pour le compte de votre ` +
+                `donneur d'ordre, et cette course en ajouterait ${codAmount} — au-delà du ` +
+                `plafond de ${ceiling}. Remettez les espèces avant de reprendre une course encaissée.`
+            : `Vous détenez déjà ${held} ${this.cash.currency} pour ce commerçant, et cette ` +
+                `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
+                'Remettez les espèces avant de reprendre une course encaissée pour lui.',
       );
     }
   }

@@ -739,7 +739,14 @@ model CashCollection {
   /// C'est le comportement d'avant ce chantier, et c'est celui de toutes les
   /// lignes existantes : la reprise de données n'a rien à écrire.
   facilitatorId       String?
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
+  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
+  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
+  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
+  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
+  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
+  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
+  /// change rien au solde que voit le commerçant »).
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
 
   /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
   /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
@@ -925,7 +932,14 @@ model DriverEarning {
 
   /// Facilitateur de la course, figé — voir `CashCollection.facilitatorId`.
   facilitatorId       String?
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
+  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
+  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
+  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
+  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
+  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
+  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
+  /// change rien au solde que voit le commerçant »).
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
 
   /// Qui **encaisse** cette rémunération : `driver` ou `fleet`.
   ///

@@ -265,7 +265,16 @@ export class FlotteService {
     fleetId: string,
     order: any,
   ): Promise<{ codAmount: number; merchantId: string } | null> {
-    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    // ⚠️ Hydrate **lui-même**, plutôt que d'espérer que l'appelant l'ait fait.
+    //
+    // Depuis la migration du 30/07, `cod_amount` vit dans `custom_field_values`
+    // et non dans `meta`. Lire `order?.meta?.cod_amount` brut donnait `0` sur
+    // toute commande non recomposée — donc un `return null` silencieux, et le
+    // seul garde-fou du paiement à la livraison **désarmé sans un mot**. Son
+    // jumeau du module transporteur hydratait déjà, avec un commentaire disant
+    // exactement pourquoi ; la garde ne doit pas dépendre de la discipline de
+    // ses quatre appelants (règle 5).
+    const codAmount = Number(this.withEffectiveMeta(order)?.meta?.cod_amount) || 0;
     if (codAmount <= 0) return null;
 
     const cached = await this.prisma.order.findFirst({
@@ -274,7 +283,7 @@ export class FlotteService {
     });
     if (!cached) return null;
 
-    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
+    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
       fleetParty(fleetId),
       merchantParty(cached.merchantId),
       codAmount,
@@ -287,9 +296,9 @@ export class FlotteService {
       badRequest(
         'cash.ceiling_exceeded',
         scope === 'person'
-          ? `Votre entreprise détient déjà ${debt} ${this.cash.currency} au total, et cette ` +
+          ? `Votre entreprise détient déjà ${held} ${this.cash.currency} au total, et cette ` +
               `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
-          : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+          : `Votre entreprise détient déjà ${held} ${this.cash.currency} pour ce commerçant, et ` +
               `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
       );
     }
@@ -1172,10 +1181,22 @@ export class FlotteService {
     );
 
     if (!forDriver.allowed) {
-      conflict(
+      // ⚠️ **Avec les chiffres, et en `badRequest` comme partout ailleurs.**
+      //
+      // Cette copie levait un `conflict` (409) sans aucun montant, là où les deux
+      // autres lèvent un `badRequest` (400) en disant la somme détenue, celle de
+      // la course et le plafond. Deux défauts pour le même code d'erreur : un
+      // client qui distingue 400 et 409 traitait le même refus de deux façons
+      // selon le persona, et « refusé » sans chiffre laisse sans moyen de savoir
+      // combien faire remettre — le motif exact écrit dans le jumeau transporteur.
+      //
+      // Le message ne nomme toujours pas ce que le conducteur détient ailleurs :
+      // ce sont les affaires d'une autre entreprise (voir plus haut).
+      badRequest(
         'cash.ceiling_exceeded',
-        'Ce conducteur détient déjà trop d\'espèces non remises pour prendre ' +
-          'une course encaissée. Faites-lui remettre ce qu\'il doit.',
+        `Ce conducteur détient déjà ${forDriver.held} ${this.cash.currency} non remis, et cette ` +
+          `course en ajouterait ${codAmount} — au-delà du plafond de ${forDriver.ceiling}. ` +
+          'Faites-lui remettre les espèces avant de la lui confier.',
       );
     }
   }

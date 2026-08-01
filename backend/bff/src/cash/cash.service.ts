@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { badRequest, conflict, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -170,8 +171,68 @@ export class CashService {
    */
   async totalHeldBy(actor: Party): Promise<number> {
     const parties = await this.counterpartiesOf(actor);
-    const legs = await Promise.all(parties.map((p) => this.debtBetween(actor, p)));
+    const legs = await Promise.all(parties.map((p) => this.cashHeldBetween(actor, p)));
     return legs.reduce((sum, leg) => sum + Math.max(0, leg), 0);
+  }
+
+  /**
+   * Les espèces que `a` détient **physiquement** pour le compte de `b`.
+   *
+   * ── Pourquoi ce n'est pas `debtBetween`, et pourquoi la confusion coûtait cher
+   *
+   * Une dette et un encours de billets sont deux grandeurs différentes, et le
+   * plafond du paiement à la livraison borne la seconde — c'est ce que dit déjà
+   * le commentaire de `totalHeldBy` (« ce qu'on borne est ce qui est **détenu**,
+   * pas une position nette ») et `specs_paiement_livraison.md` §4.5.
+   *
+   * `debtBetween` soustrait `grossAmount`, la rémunération **due**. Le
+   * conducteur, lui, n'a retiré de la liasse que `retainedFromCash`, plafonné à
+   * ce qu'il a réellement perçu (`recordEarning`). Tant que le perçu couvre la
+   * rémunération, les deux coïncident et personne ne voit la différence.
+   *
+   * Dès qu'une course est **prépayée** ou payée en partie, elles divergent de
+   * `gross − retained`, et **toujours dans le sens dangereux** : la dette
+   * sous-estime les billets. Dix courses prépayées à 650 donnent une dette de
+   * −6500 pour zéro dinar en poche ; le plafond de 20 000 laisse alors accepter
+   * 20 000 encaissés, dont 19 350 restent en poche — puis recommencer. Le seul
+   * garde-fou du paiement à la livraison mesurait la mauvaise grandeur.
+   *
+   * ⚠️ `debtBetween` n'est pas touchée : la dette **est** `perçu − rémunération`,
+   * c'est ce que les deux parties se doivent et ce que les écrans affichent. Ce
+   * qui était faux, c'est de s'en servir pour compter des billets.
+   */
+  async cashHeldBetween(a: Party, b: Party): Promise<number> {
+    if (samePartyAs(a, b)) return 0;
+
+    const { up, down, flipped } = this.orient(a, b);
+    const [first, second] = [up, down];
+
+    const [collected, retained, out, back] = await Promise.all([
+      this.prisma.cashCollection.aggregate({
+        where: this.collectionsBetween(first, second),
+        _sum: { collectedAmount: true },
+      }),
+      this.prisma.driverEarning.aggregate({
+        where: this.earningsBetween(first, second),
+        _sum: { retainedFromCash: true },
+      }),
+      this.prisma.cashRemittance.aggregate({
+        where: this.remittancesFromTo(first, second),
+        _sum: { amount: true },
+      }),
+      this.prisma.cashRemittance.aggregate({
+        where: this.remittancesFromTo(second, first),
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const total =
+      Number(collected._sum.collectedAmount ?? 0) -
+      Number(retained._sum.retainedFromCash ?? 0) -
+      Number(out._sum.amount ?? 0) +
+      Number(back._sum.amount ?? 0);
+
+    return (flipped ? -1 : 1) * (Math.round(total * 100) / 100);
   }
 
   /**
@@ -495,16 +556,21 @@ export class CashService {
     amount: number,
   ): Promise<{
     allowed: boolean;
-    debt: number;
+    /**
+     * Les espèces **détenues**, pas la dette — voir `cashHeldBetween`. Le nom
+     * a changé avec la grandeur : garder `debt` aurait laissé les messages de
+     * refus annoncer une dette en montrant un encours de billets.
+     */
+    held: number;
     ceiling: number;
     /** Lequel des deux plafonds a refusé — pour que le message le dise. */
     scope: 'couple' | 'person';
   }> {
-    const debt = await this.debtBetween(debtor, creditor);
+    const held = await this.cashHeldBetween(debtor, creditor);
     const ceiling = this.debtCeiling();
 
-    if (debt + amount > ceiling) {
-      return { allowed: false, debt, ceiling, scope: 'couple' };
+    if (held + amount > ceiling) {
+      return { allowed: false, held, ceiling, scope: 'couple' };
     }
 
     // ⚠️ **Le plafond global ne s'applique qu'à une PERSONNE.**
@@ -524,7 +590,7 @@ export class CashService {
     // Un plafond mal dimensionné qui bloque l'exploitation ne protège rien : il
     // fait désactiver le garde-fou.
     if (debtor.type !== 'driver') {
-      return { allowed: true, debt, ceiling, scope: 'couple' };
+      return { allowed: true, held, ceiling, scope: 'couple' };
     }
 
     // Les deux plafonds sont vérifiés **ici**, et non chez les appelants. Il y a
@@ -535,10 +601,10 @@ export class CashService {
     const personCeiling = this.personDebtCeiling();
 
     if (total + amount > personCeiling) {
-      return { allowed: false, debt: total, ceiling: personCeiling, scope: 'person' };
+      return { allowed: false, held: total, ceiling: personCeiling, scope: 'person' };
     }
 
-    return { allowed: true, debt, ceiling, scope: 'couple' };
+    return { allowed: true, held, ceiling, scope: 'couple' };
   }
 
   /**
@@ -653,6 +719,91 @@ export class CashService {
         );
       }
 
+      // ── Une ligne déclarée par le COMMERÇANT n'est pas une reprise ────────
+      //
+      // ⚠️ Cette branche ne testait que `driverId`, et une régularisation du
+      // commerçant la traversait à l'identique : le conducteur recevait un
+      // succès, `settleCashIfDue` enchaînait sur `recordEarning`, mais
+      // `collectionsBetween` exclut une ligne non confirmée. La dette devenait
+      // **négative** — « vous devez 650 à ce transporteur » à un commerçant dont
+      // le transporteur détient 1950 de son argent.
+      //
+      // Ce que la situation veut dire est simple : le commerçant a signalé un
+      // encaissement manquant, et le conducteur vient de le déclarer lui-même.
+      // C'est un accord. Sa déclaration **confirme** celle du commerçant plutôt
+      // que de rester en suspens — et le montant qu'on rend est celui de la
+      // ligne, pour que la rémunération se calcule sur ce qui est enregistré.
+      //
+      // ⚠️ Une ligne **contestée** est réécrite, pas confirmée : voir plus bas.
+      if (existing.declaredBy !== 'driver' && !existing.confirmedAt && !existing.disputedAt) {
+        const confirmed = await this.prisma.cashCollection.update({
+          where: { id: existing.id },
+          data: { confirmedAt: new Date() },
+        });
+
+        this.logger.log(
+          `Encaissement ${fleetbaseOrderUuid} déclaré par le commerçant et confirmé par la ` +
+            'clôture du transporteur',
+        );
+
+        return {
+          id: confirmed.id,
+          expectedAmount: confirmed.expectedAmount,
+          collectedAmount: confirmed.collectedAmount,
+          currency: confirmed.currency,
+          debt: await this.debtBetween(
+            driverParty(driverId),
+            this.driverCounterparty(confirmed.facilitatorId, merchantId),
+          ),
+          replayed: true,
+        };
+      }
+
+      // ── Une ligne contestée est remplacée par la déclaration du conducteur ─
+      //
+      // ⚠️ Sans ceci, une régularisation contestée était une **impasse
+      // définitive** : la ligne ne comptait dans aucune dette (non confirmée),
+      // disparaissait de « non enregistré », et les deux chemins de
+      // redéclaration comme de confirmation la refusaient. La somme sortait du
+      // système, et le message « contactez Echango » ne renvoyait à aucune route.
+      //
+      // Le conducteur est celui qui tient l'argent : sa déclaration l'engage,
+      // donc elle fait foi. Contester puis déclarer soi-même est la sortie
+      // naturelle — « ce n'était pas ce montant, voici le bon ».
+      if (existing.disputedAt) {
+        const corrected = await this.prisma.cashCollection.update({
+          where: { id: existing.id },
+          data: {
+            collectedAmount: collected,
+            expectedAmount,
+            discrepancyReason: differs ? input.discrepancyReason : null,
+            notes: input.notes,
+            declaredBy: 'driver',
+            disputedAt: null,
+            disputeReason: null,
+            confirmedAt: new Date(),
+            facilitatorId: facilitatorId ?? null,
+          },
+        });
+
+        this.logger.log(
+          `Encaissement ${fleetbaseOrderUuid} était contesté — remplacé par la déclaration du ` +
+            `transporteur (${collected}/${expectedAmount} ${this.currency})`,
+        );
+
+        return {
+          id: corrected.id,
+          expectedAmount: corrected.expectedAmount,
+          collectedAmount: corrected.collectedAmount,
+          currency: corrected.currency,
+          debt: await this.debtBetween(
+            driverParty(driverId),
+            this.driverCounterparty(corrected.facilitatorId, merchantId),
+          ),
+          replayed: false,
+        };
+      }
+
       this.logger.log(
         `Encaissement ${fleetbaseOrderUuid} déjà enregistré — reprise après échec de clôture`,
       );
@@ -738,6 +889,117 @@ export class CashService {
    */
   driverCounterparty(facilitatorId: string | null | undefined, merchantId: string): Party {
     return facilitatorId ? fleetParty(facilitatorId) : merchantParty(merchantId);
+  }
+
+  /**
+   * Le facilitateur d'une course : celui qu'elle nomme, ou **Echango** pour le pool.
+   *
+   * ── Pourquoi cette fonction a dû remonter ici (revue du 01/08/2026, C2) ────
+   *
+   * Elle existait en **deux exemplaires**, un par module, et ils avaient déjà
+   * divergé : le module transporteur appliquait le repli plateforme, le module
+   * commerçant rendait `null`. Or les deux alimentent le même registre, et
+   * `legScope()` construit une **jambe différente** selon que `facilitatorId`
+   * est nul.
+   *
+   * Le défaut visible : deux livraisons du pool identiques, même commerçant,
+   * même conducteur. Clôturée par l'application, la dette est portée par
+   * Echango ; clôturée en console puis régularisée par le commerçant, elle est
+   * portée par le conducteur. Le commerçant voit **deux contreparties** pour
+   * deux courses identiques, une remise n'éteint que l'une des deux, et les
+   * deux nombres sont plausibles.
+   *
+   * ⚠️ La copie du module transporteur portait le commentaire « le repli est ici
+   * et **nulle part ailleurs** […] le reproduire chez les appelants créerait des
+   * chemins qui divergent (règle 5) ». La phrase énonçait l'invariant, sa raison
+   * et le défaut exact qu'une divergence produirait — et **un commentaire ne
+   * peut pas échouer**. C'est la forme d'`isClaimable`/`isClaimableAdhoc`.
+   *
+   * Le seul endroit qui connaisse les deux modules est ce service, que tous
+   * deux injectent déjà : la fusion ne crée aucune dépendance nouvelle.
+   */
+  async resolveFacilitator(
+    order: any,
+  ): Promise<{ id: string; isPlatform: boolean } | null> {
+    const vendorUuid = order?.facilitator_uuid;
+
+    // Une course du pool a Echango pour facilitateur (`specs_facilitateur.md`
+    // §2.2/§2.3) : le pool n'est pas l'absence de prestataire. Un seul chemin de
+    // registre, un seul couple de parties.
+    if (!vendorUuid) return this.platformFacilitator();
+
+    const fleet = await this.prisma.fleetAccount.findUnique({
+      where: { fleetbaseVendorUuid: vendorUuid },
+      select: { id: true, isPlatform: true },
+    });
+
+    if (!fleet) {
+      this.logger.warn(
+        `Commande ${order?.uuid} rattachée au fournisseur ${vendorUuid}, qui n'a pas de compte ` +
+          'Echango — traitée comme une course sans facilitateur',
+      );
+      return null;
+    }
+
+    return fleet;
+  }
+
+  /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
+  async resolveFacilitatorId(order: any): Promise<string | null> {
+    return (await this.resolveFacilitator(order))?.id ?? null;
+  }
+
+  /**
+   * Le prestataire **plateforme** — Echango — s'il est provisionné.
+   *
+   * ── Pourquoi `null` quand il n'y en a pas, et pas une erreur ─────────────
+   *
+   * Une installation qui n'a pas encore d'opérateur doit continuer de
+   * fonctionner **exactement comme avant** : la course se règle alors
+   * conducteur ↔ commerçant, ce qui est le comportement de toutes les lignes
+   * déjà en base. Lever ici ferait échouer la clôture de chaque livraison
+   * encaissée sur une base non migrée — casser le produit pour installer une
+   * amélioration.
+   *
+   * ⚠️ **Deux prestataires plateforme sont un refus, pas un choix.** `findFirst`
+   * en prendrait un au hasard, donc l'argent d'une course irait à l'un ou à
+   * l'autre selon l'ordre d'insertion — un défaut qui ne se voit qu'au moment
+   * du règlement, sur une somme réelle, et qui serait attribué à autre chose.
+   *
+   * ⚠️ **Aucune route ne pose `isPlatform`**, et c'est délibéré : un compte
+   * flotte qui pourrait se déclarer plateforme ferait retenir à ses conducteurs
+   * une rémunération qui ne leur revient pas. Le provisionnement est un geste
+   * d'admin — `scripts/provision-platform.sh`.
+   */
+  async platformFacilitator(): Promise<{ id: string; isPlatform: boolean } | null> {
+    const platforms = await this.prisma.fleetAccount.findMany({
+      where: { isPlatform: true, active: true },
+      select: { id: true, isPlatform: true },
+      take: 2,
+    });
+
+    if (platforms.length === 0) {
+      // En `debug` et non en `warn` : sur une installation sans opérateur c'est
+      // l'état normal, et un avertissement à chaque livraison apprendrait à
+      // ignorer les avertissements.
+      this.logger.debug(
+        'Aucun prestataire plateforme provisionné — la course se règle conducteur ↔ commerçant',
+      );
+      return null;
+    }
+
+    if (platforms.length > 1) {
+      this.logger.error(
+        `Plusieurs prestataires plateforme actifs (${platforms.map((p) => p.id).join(', ')}) — ` +
+          "impossible de décider à qui l'argent d'une course du pool revient",
+      );
+      conflict(
+        'cash.platform_ambiguous',
+        'Plusieurs prestataires plateforme sont configurés : contactez Echango.',
+      );
+    }
+
+    return platforms[0];
   }
 
   /**
@@ -1358,29 +1620,93 @@ export class CashService {
       take: 100,
     });
 
-    if (!collections.length) return { data: [] };
+    // ── Les rémunérations SANS encaissement doivent figurer aussi ────────────
+    //
+    // ⚠️ Cette liste n'itérait que sur `cashCollection`, donc une course
+    // **prépayée** (`cod_amount = 0`) n'y apparaissait pas — alors qu'elle pèse
+    // sur le solde, `debtBetween` soustrayant toutes les rémunérations.
+    //
+    // Le détail ne se recomposait donc pas en solde : deux courses à 650, l'une
+    // encaissée 1950 et l'autre prépayée, affichaient une seule ligne à 1300
+    // pour un solde de 650. Or la docstring justifie l'existence de cette
+    // fonction par « c'est exactement ce qu'il doit contrôler **avant de
+    // confirmer une remise** » — et un solde qui ne se décompose pas se
+    // confirme sur la seule parole de l'autre, ce que la fonction prétend
+    // empêcher.
+    const earningScope =
+      persona === 'driver' ? { driverId: actorId }
+      : persona === 'merchant' ? { merchantId: actorId }
+      : { facilitatorId: actorId };
 
-    // Une requête pour toute la page, jamais une par ligne.
     const earnings = await this.prisma.driverEarning.findMany({
-      where: { fleetbaseOrderUuid: { in: collections.map((c: any) => c.fleetbaseOrderUuid) } },
-      select: { fleetbaseOrderUuid: true, retainedFromCash: true, grossAmount: true },
+      where: earningScope,
+      select: {
+        fleetbaseOrderUuid: true,
+        retainedFromCash: true,
+        grossAmount: true,
+        earnedAt: true,
+        currency: true,
+      },
+      orderBy: { earnedAt: 'desc' },
+      take: 200,
     });
     const byOrder = new Map<string, any>(
       earnings.map((e: any) => [e.fleetbaseOrderUuid, e]),
     );
 
-    return {
-      data: collections.map((c: any) => {
+    const collectedUuids = new Set(collections.map((c: any) => c.fleetbaseOrderUuid));
+
+    /**
+     * Une course rémunérée dont rien n'a été encaissé — prépayée, ou payée
+     * autrement. `collected_amount: 0` n'est pas un repli : c'est le fait, et
+     * c'est ce qui explique la part de solde que la ligne porte.
+     */
+    const earningOnly = earnings
+      .filter((e: any) => !collectedUuids.has(e.fleetbaseOrderUuid))
+      .slice(0, 100)
+      .map((e: any) => ({
+        id: `earning:${e.fleetbaseOrderUuid}`,
+        order_uuid: e.fleetbaseOrderUuid,
+        kind: 'earning_only',
+        expected_amount: 0,
+        collected_amount: 0,
+        retained_amount: e.retainedFromCash,
+        gross_amount: e.grossAmount,
+        net_amount: 0,
+        /** Ce que cette ligne ajoute au solde — négatif : elle creuse la dette. */
+        balance_contribution: -e.grossAmount,
+        discrepancy_reason: null as string | null,
+        notes: null as string | null,
+        currency: e.currency ?? this.currency,
+        collected_at: e.earnedAt.toISOString(),
+        declared_by: null as string | null,
+        confirmed_at: null as string | null,
+        disputed_at: null as string | null,
+        dispute_reason: null as string | null,
+      }));
+
+    if (!collections.length && !earningOnly.length) return { data: [] };
+
+    const fromCollections = collections.map((c: any) => {
         const earning = byOrder.get(c.fleetbaseOrderUuid);
         const retained = earning?.retainedFromCash ?? 0;
+
+        const gross = earning?.grossAmount ?? 0;
+        // Une ligne non confirmée ne compte dans aucune dette (`collectionsBetween`
+        // exige `confirmedAt`) : sa part de solde est donc nulle, et le dire
+        // évite qu'une somme affirmée se lise comme une somme acquise.
+        const counts = Boolean(c.confirmedAt) && !c.disputedAt;
 
         return {
           id: c.id,
           order_uuid: c.fleetbaseOrderUuid,
+          kind: 'collection',
           expected_amount: c.expectedAmount,
           collected_amount: c.collectedAmount,
           /** Ce que le transporteur a prélevé sur ces espèces. */
           retained_amount: retained,
+          /** La rémunération de la course — ce qui est **dû**, retenu ou non. */
+          gross_amount: gross,
           /**
            * Ce qui revient au commerçant sur cette course.
            *
@@ -1389,19 +1715,32 @@ export class CashService {
            * annoncerait de l'argent qui ne viendra pas.
            */
           net_amount: c.collectedAmount - retained,
+          /**
+           * Ce que la ligne ajoute au solde — `perçu − rémunération due`.
+           *
+           * ⚠️ Distinct de `net_amount`, et il faut les deux : `net_amount` dit
+           * ce que le transporteur rendra **en billets** (il ne peut retenir que
+           * ce qu'il tient), `balance_contribution` dit ce que la dette bouge.
+           * Ils ne diffèrent que sur une course dont le perçu ne couvre pas la
+           * rémunération — et c'est précisément le cas où la somme des détails
+           * ne retombait pas sur le solde affiché.
+           */
+          balance_contribution: counts ? c.collectedAmount - gross : 0,
           discrepancy_reason: c.discrepancyReason,
           notes: c.notes,
           currency: c.currency,
           collected_at: c.collectedAt.toISOString(),
-          // Une ligne déclarée par le commerçant et non encore confirmée ne
-          // compte dans aucune dette. L'afficher comme les autres ferait lire
-          // un montant acquis là où il n'y a qu'une affirmation.
           declared_by: c.declaredBy,
           confirmed_at: c.confirmedAt?.toISOString() ?? null,
           disputed_at: c.disputedAt?.toISOString() ?? null,
           dispute_reason: c.disputeReason,
         };
-      }),
+      });
+
+    return {
+      data: [...fromCollections, ...earningOnly].sort((a, b) =>
+        a.collected_at < b.collected_at ? 1 : -1,
+      ),
     };
   }
 
@@ -1452,7 +1791,7 @@ export class CashService {
     const existing = await this.prisma.cashCollection.findUnique({
       where: { fleetbaseOrderUuid },
     });
-    if (existing) {
+    if (existing && !existing.disputedAt) {
       // Pas d'idempotence permissive ici, contrairement à `declareCollection` :
       // celle-ci existe parce que le transporteur peut réessayer après un échec
       // de clôture. Le commerçant, lui, ne réessaie rien — une seconde
@@ -1464,21 +1803,36 @@ export class CashService {
       );
     }
 
-    const collection = await this.prisma.cashCollection.create({
-      data: {
-        driverId,
-        merchantId,
-        fleetbaseOrderUuid,
-        expectedAmount,
-        collectedAmount: collected,
-        facilitatorId: facilitatorId ?? null,
-        discrepancyReason: differs ? input.discrepancyReason : null,
-        notes: input.notes,
-        currency: this.currency,
-        declaredBy: 'merchant',
-        confirmedAt: null,
-      },
-    });
+    // ⚠️ **Une contestation rouvre la déclaration, elle ne la scelle pas.**
+    //
+    // Refuser ici après un `disputedAt` fermait la seule sortie : la ligne ne
+    // comptait dans aucune dette, la redéclaration était refusée, la
+    // confirmation aussi, et le message renvoyait à un « contactez Echango » qui
+    // ne correspond à aucune route ni à aucun persona. La somme sortait
+    // définitivement du système.
+    //
+    // Contester veut dire « pas ce montant-là ». La suite naturelle est que le
+    // commerçant en propose un autre — la contestation et son motif restent
+    // lisibles dans l'historique de la ligne jusqu'à ce qu'elle soit réécrite.
+    const data: Prisma.CashCollectionUncheckedCreateInput = {
+      driverId,
+      merchantId,
+      fleetbaseOrderUuid,
+      expectedAmount,
+      collectedAmount: collected,
+      facilitatorId: facilitatorId ?? null,
+      discrepancyReason: differs ? input.discrepancyReason : null,
+      notes: input.notes,
+      currency: this.currency,
+      declaredBy: 'merchant',
+      confirmedAt: null,
+      disputedAt: null,
+      disputeReason: null,
+    };
+
+    const collection = existing
+      ? await this.prisma.cashCollection.update({ where: { id: existing.id }, data })
+      : await this.prisma.cashCollection.create({ data });
 
     this.logger.log(
       `Encaissement ${fleetbaseOrderUuid} déclaré par le commerçant ${merchantId} : `
