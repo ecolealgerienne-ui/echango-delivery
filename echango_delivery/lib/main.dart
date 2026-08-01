@@ -1,9 +1,11 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 
+import 'services/notification_service.dart';
 import 'config/api_config.dart';
 import 'config/firebase_options.dart';
 import 'navigation/app_router.dart';
@@ -100,6 +102,8 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
   late final CashState _cashState;
   late final FleetState _fleetState;
   late final DriverPresenceState _presence;
+  final NotificationService _merchantNotifications = NotificationService();
+  bool _merchantPushStarted = false;
 
   bool _presenceStarted = false;
 
@@ -146,6 +150,56 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     } else if (!isDriver && _presenceStarted) {
       _presenceStarted = false;
       _presence.stop();
+    }
+
+    final isMerchant = widget.authState.isAuthenticated &&
+        widget.authState.role == UserRole.commercant;
+
+    if (isMerchant && !_merchantPushStarted) {
+      _merchantPushStarted = true;
+      _registerMerchantPush();
+    } else if (!isMerchant) {
+      _merchantPushStarted = false;
+    }
+  }
+
+  /// Enregistre le jeton push du commerçant — la moitié manquante de A3.
+  ///
+  /// ⚠️ **Ce que ça ne fait pas encore** : personne n'envoie de push aux
+  /// commerçants. Le credential Firebase serveur n'existe pas, et un commerçant
+  /// n'est délibérément pas un `User` Fleetbase, donc le push natif ne peut pas
+  /// l'atteindre — c'est écrit dans le journal depuis le 29/07. La collecte est
+  /// une préparation.
+  ///
+  /// Mais elle doit être VRAIE : le schéma Prisma et `CLAUDE.md` affirmaient
+  /// que les jetons étaient collectés alors que `POST /auth/device-token`
+  /// n'avait aucun appelant et que la table était structurellement vide. Le
+  /// jour où l'expéditeur arrive, on l'aurait branché sur une table vide et
+  /// cherché le défaut du côté de Firebase. Une documentation fausse coûte plus
+  /// que le manque qu'elle décrit.
+  Future<void> _registerMerchantPush() async {
+    try {
+      // La permission n'est demandée qu'ici, jamais dans `main()` : elle attend
+      // une réponse de l'utilisateur, et la placer avant `runApp` bloquait le
+      // démarrage sur un écran noir (défaut du 28/07).
+      await _merchantNotifications.initialize();
+      final token = await _merchantNotifications.currentToken();
+      if (token == null) return;
+
+      // La rotation compte autant que la première pose : Firebase renouvelle le
+      // jeton, et un jeton périmé ne se signale par rien.
+      _merchantNotifications.onTokenChanged = (t) => widget.apiClient
+          .registerMerchantDeviceToken(
+              token: t, platform: Platform.isIOS ? 'ios' : 'android')
+          .catchError((_) => <String, dynamic>{});
+
+      await widget.apiClient.registerMerchantDeviceToken(
+        token: token,
+        platform: Platform.isIOS ? 'ios' : 'android',
+      );
+    } catch (_) {
+      // Sans jeton, pas de push — mais le journal de l'écran d'accueil couvre
+      // le besoin. Ce n'est pas une raison de gêner une connexion.
     }
   }
 

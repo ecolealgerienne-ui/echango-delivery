@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { jwtExpirationSeconds } from './config/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -36,7 +37,7 @@ import { CommonModule } from './common/common.module';
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
         signOptions: {
-          expiresIn: parseInt(configService.get('JWT_EXPIRATION') || '86400', 10),
+          expiresIn: jwtExpirationSeconds(configService),
         },
       }),
     }),

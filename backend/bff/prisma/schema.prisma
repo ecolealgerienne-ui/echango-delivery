@@ -423,9 +423,10 @@ model Order {
   /// modifiée en amont reste donc autoritaire — seul l'effacement est réparé.
   specMeta          Json?
 
-  // Failure details
-  failureReason     String?
-  failureNotes      String?
+  // Le motif d'échec vit dans `DeliveryFailure`, jamais ici : `failureReason`
+  // et `failureNotes` ont existé sans être écrites ni lues une seule fois
+  // (revue du 01/08/2026, A7). Deux colonnes qui laissaient croire que la
+  // livraison portait son échec.
 
   // `totalAmount` et `commission` supprimés avec le modèle `Commission` :
   // jamais écrits, jamais lus. Deux colonnes de plus qui laissaient croire que
@@ -476,7 +477,6 @@ model AuditLog {
 
   // Details
   details           String?  @db.Text // JSON stringified
-  ipAddress         String?
   userAgent         String?
 
   // Status

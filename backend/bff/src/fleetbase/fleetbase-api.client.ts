@@ -32,8 +32,22 @@ export interface OrderFilters {
   facilitator?: string;
   /** uuid du Driver assigné. Accepte aussi un public_id. */
   driver?: string;
-  /** Non assignées **et** non terminées : `whereDoesntHave` + exclusion de completed/canceled/expired. */
-  without_driver?: boolean;
+  /**
+   * Non assignées **et** non terminées : `whereDoesntHave` + exclusion de
+   * completed/canceled/expired.
+   *
+   * ⚠️ Typé `true`, jamais `boolean`. C'est un filtre **à présence**, pas un
+   * booléen : mesuré le 01/08/2026, `?without_driver=true` rend 53 commandes et
+   * `?without_driver=false` en rend **178**, c'est-à-dire la totalité. Un
+   * `false` n'exclut donc pas, **il élargit**.
+   *
+   * Le type `boolean` invitait à écrire `{ without_driver: uneVariable }` — et
+   * ce jour-là la requête serait passée de « les courses libres » à « toutes
+   * les courses de la compagnie », sans erreur. C'est exactement le mode de
+   * panne que ces interfaces fermées existent pour empêcher (`facilitator_uuid`),
+   * reproduit à l'intérieur d'un nom pourtant valide.
+   */
+  without_driver?: true;
   status?: string;
 }
 
@@ -276,15 +290,33 @@ export class FleetbaseApiClient {
     const found = first.find((v: any) => v?.uuid === vendorUuid);
     if (found || first.length === 0) return found ?? null;
 
+    this.logger.warn(
+      `GET /vendors/${vendorUuid} a rendu une COLLECTION sans le fournisseur demandé — ` +
+        'le tampon de compatibilité sert, contrairement à ce qui a été mesuré sur 0.7.52',
+    );
     return this.findVendorAcrossPages(vendorUuid);
   }
 
   /**
    * Parcourt les pages de `/vendors` à la recherche d'un uuid.
    *
-   * Appelé seulement quand la première réponse était une collection ne le
-   * contenant pas — donc jamais sur le chemin nominal, où `GET /vendors/{uuid}`
-   * rend l'objet ou une première page qui suffit.
+   * Appelé seulement quand la première réponse était une **collection** ne le
+   * contenant pas.
+   *
+   * ⚠️ **Mesuré le 01/08/2026 : ce chemin ne sert plus.** Sur Fleetbase 0.7.52,
+   * `GET /int/v1/vendors/{uuid}` honore bien son paramètre — vérifié avec le
+   * test durci « demander le DERNIER élément, pas le premier », sans quoi un
+   * endpoint qui ignore son paramètre passerait au vert (la leçon de V9).
+   *
+   * Il est **conservé quand même** : c'est un tampon de compatibilité, et le
+   * retirer ferait échouer toute lecture de fournisseur sur une installation où
+   * l'ancien comportement existe — donc empêcher des commerçants de se
+   * connecter, pour supprimer soixante lignes.
+   *
+   * Ce qui change, c'est qu'il **le dit** quand il sert. Un tampon silencieux
+   * dont on croit qu'il ne sert jamais est indiscernable d'un tampon qui sert
+   * tous les jours (règle 9) : le jour où la mesure ci-dessus cesse d'être
+   * vraie, on veut le lire dans un journal, pas le redécouvrir.
    */
   private async findVendorAcrossPages(
     vendorUuid: string,
@@ -557,11 +589,54 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * List Places owned by a given Vendor (a merchant's saved addresses).
+   * Le carnet d'adresses d'un commerçant, **en entier**.
+   *
+   * ── Le plafond invisible que ceci ferme (revue du 01/08/2026, F1) ────────
+   *
+   * L'appel n'envoyait ni `page` ni `limit`, et **Fleetbase pagine `/places` à
+   * 30 par défaut** (mesuré le 01/08/2026 : `meta.per_page = 30`). Au 31ᵉ lieu
+   * enregistré, trois choses cassaient d'un coup, toutes en silence :
+   *
+   *   · le carnet affichait 30 adresses sans dire qu'il en manquait ;
+   *   · `assertOwnsPlace()` ne trouvait plus les adresses au-delà de la page 1
+   *     et refusait `PUT`/`DELETE` sur une adresse **qui existe et lui
+   *     appartient**, avec un message qui l'envoyait chercher une faute de
+   *     saisie ;
+   *   · `clearOtherDefaults()` laissait deux « adresse principale » coexister.
+   *
+   * Fail-closed, donc aucune fuite — mais la panne arrive par le simple usage,
+   * et rien ne la nomme. Troisième occurrence du même plafond dans ce dépôt
+   * après `/orders` et `/vendors`.
+   *
+   * ⚠️ La borne haute est **100 et non 200** : au-delà, Fleetbase plafonne sans
+   * le dire (`?limit=200` et `?limit=500` rendent l'un et l'autre 100), donc
+   * demander plus donne l'illusion que la question est traitée.
    */
   async getOwnedPlaces(ownerUuid: string) {
-    const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
-    return response.data;
+    const pageSize = 100;
+    const maxPages = 20;
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.callFleetOps('GET', '/places', undefined, {
+        owner_uuid: ownerUuid,
+        page,
+        limit: pageSize,
+      });
+      const batch = this.extractCollection(response.data, 'places');
+      all.push(...batch);
+
+      // On s'arrête sur ce que le serveur a SERVI, jamais sur un total annoncé :
+      // un total supérieur à ce qu'il sait rendre ferait boucler jusqu'au
+      // garde-fou.
+      if (batch.length < pageSize) return all;
+    }
+
+    this.logger.warn(
+      `getOwnedPlaces a atteint le garde-fou de ${maxPages} pages pour ${ownerUuid} — ` +
+        'le carnet est tronqué, et une adresse au-delà sera déclarée introuvable',
+    );
+    return all;
   }
 
   /**
@@ -573,9 +648,14 @@ export class FleetbaseApiClient {
    * (`custom-fields.js` : `store.query('custom-field', { subject_uuid: config.id })`).
    */
   async listCustomFields(subjectUuid: string) {
+    // ⚠️ 100 et non 200 : Fleetbase plafonne `limit` à 100 **en silence**
+    // (mesuré — `?limit=200` et `?limit=500` rendent l'un et l'autre 100).
+    // Demander davantage donnait l'impression que la borne était traitée alors
+    // qu'elle était ignorée. Treize définitions aujourd'hui, donc la marge est
+    // large ; ce qui se corrige ici, c'est la fausse assurance.
     const response = await this.callFleetOps('GET', '/custom-fields', undefined, {
       subject_uuid: subjectUuid,
-      limit: 200,
+      limit: 100,
     });
     return response.data;
   }
@@ -1510,38 +1590,49 @@ export class FleetbaseApiClient {
    * matches public_id and never uuid. Rather than assume which one DELETE
    * accepts, look the device up and try the public_id first.
    */
+  /**
+   * ⚠️ Paginé — sans quoi la purge des jetons morts cesse en silence.
+   *
+   * Cette lecture est le repli appelé quand la suppression par identifiant
+   * stocké a échoué, lors d'une rotation de jeton Firebase. Elle ne demandait
+   * ni `page` ni `limit`, et Fleetbase sert **30 lignes** par défaut (mesuré) :
+   * au-delà de 30 `UserDevice` dans l'organisation — un par téléphone, plus les
+   * rotations —, le jeton cherché est hors page 1, la fonction rend `null`, et
+   * il ne reste qu'un `warn`.
+   *
+   * Le `UserDevice` périmé survit alors, et comme `routeNotificationForFcm()`
+   * renvoie **tous** les devices du `user_uuid`, les `OrderPing` partent
+   * indéfiniment vers un jeton mort. Panne strictement silencieuse : des
+   * notifications qui n'arrivent pas, et rien dans les journaux (revue F2).
+   */
   async findUserDeviceByToken(token: string) {
+    const pageSize = 100;
+    const maxPages = 20;
+
     try {
-      const response = await this.callFleetOps('GET', '/user-devices');
-      const devices =
-        response.data?.user_devices || response.data?.data ||
-        (Array.isArray(response.data) ? response.data : []);
-      return (devices || []).find((d: any) => d?.token === token) || null;
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.callFleetOps('GET', '/user-devices', undefined, {
+          page,
+          limit: pageSize,
+        });
+        const devices = this.extractCollection(response.data, 'user_devices');
+        const hit = devices.find((d: any) => d?.token === token);
+        if (hit) return hit;
+        if (devices.length < pageSize) return null;
+      }
+
+      // Distinct de « pas trouvé » : ici on n'a pas fini de chercher, et taire
+      // la différence ferait conclure à l'absence d'un jeton qu'on n'a pas
+      // regardé (règle 10).
+      this.logger.warn(
+        `findUserDeviceByToken a atteint le garde-fou de ${maxPages} pages — ` +
+          'le jeton peut exister au-delà et ne sera pas purgé',
+      );
+      return null;
     } catch (error) {
       this.logger.warn(`UserDevice lookup by token failed: ${error.message}`);
       return null;
     }
   }
 
-  /**
-   * List ALL company Position records, unfiltered. Confirmed by reading
-   * PositionFilter.php (28/07/2026) that there is no `driver_uuid` (or any
-   * per-driver) query filter on this endpoint - it only supports a free-text
-   * `query` search, `createdAt`, and automatic company-wide scoping. `GET
-   * /int/v1/driver-positions` (previously assumed here) does not exist at
-   * all - confirmed 404 ("There is nothing to see here", the masked
-   * NotFoundHttpException pattern from docs/journal_implementation_bff.md
-   * §2.1). The real resource is the generic `/int/v1/positions` endpoint.
-   * Callers MUST filter the result client-side by `driver_uuid`.
-   *
-   * ⚠️ Plus utilisé par la carte de flotte : télécharger tout l'historique de
-   * la compagnie pour n'afficher qu'un point par driver ne tenait pas à
-   * l'échelle. `FlotteService.getDriverPositions()` sert désormais le miroir
-   * local alimenté par `POST /transporteur/position`. Cette méthode reste pour
-   * un besoin d'historique — ne pas la rebrancher sur la carte.
-   */
-  async getAllPositions() {
-    const response = await this.callFleetOps('GET', '/positions');
-    return response.data;
-  }
 }

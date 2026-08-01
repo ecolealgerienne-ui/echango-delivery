@@ -40,6 +40,30 @@ export function isTerminalOrderStatus(status: unknown): boolean {
   return typeof status === 'string' && TERMINAL_ORDER_STATUSES.includes(status);
 }
 
+/** Les orthographes qu'une annulation peut prendre chez Fleetbase. */
+export const CANCELLED_ORDER_STATUSES = ['canceled', 'cancelled'];
+
+/**
+ * Cette course s'est-elle terminée par une **annulation** ?
+ *
+ * ── Pourquoi ce prédicat, alors que la constante existait déjà ────────────
+ *
+ * `order-reconciler.service.ts` importait `TERMINAL_ORDER_STATUSES`, s'en
+ * servait deux fois — puis, dix lignes plus bas, réénumérait
+ * `status === 'canceled' || status === 'cancelled'` à la main pour choisir sa
+ * notification (revue du 01/08/2026, A5).
+ *
+ * Le jour où une quatrième graphie est ajoutée à la constante — **le motif même
+ * de son existence**, Fleetbase en émettant déjà deux —, le filtre de la ligne
+ * 109 la reconnaîtrait et la notification cesserait : le commerçant ne serait
+ * plus prévenu de l'annulation de sa livraison, sans erreur ni journal. La
+ * panne décrite dans l'en-tête de ce fichier, reproduite dans le fichier qui
+ * importe le correctif.
+ */
+export function isCancelledOrderStatus(status: unknown): boolean {
+  return typeof status === 'string' && CANCELLED_ORDER_STATUSES.includes(status);
+}
+
 /**
  * Cette course est-elle **libre** ?
  *

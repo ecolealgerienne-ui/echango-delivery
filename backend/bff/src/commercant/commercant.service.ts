@@ -2524,13 +2524,14 @@ export class CommerçantService {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
     try {
-      const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
+      // `getOwnedPlaces` rend un tableau plat, paginé jusqu'au bout : c'est LUI
+      // qui garantit qu'aucune adresse ne manque, pas l'appelant.
+      const places = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
       // Projeté comme partout ailleurs (revue M10) : cette route servait les
       // objets `Place` Fleetbase **bruts**, seul reliquat de la fuite corrigée
       // le 28/07. Ce qui sortait était donc décidé par Fleetbase — dont
       // `owner_uuid`, `company_uuid` et toute relation qu'une mise à jour
       // amont y ajouterait.
-      const places = this.fleetbaseClient.extractCollection(response, 'places');
       return { data: places.map((p: any) => projectPlace(p, 'full')) };
     } catch (error) {
       this.logger.error(`Failed to fetch addresses: ${error.message}`);
@@ -2633,8 +2634,7 @@ export class CommerçantService {
    */
   private async clearOtherDefaults(vendorUuid: string, exceptPlaceUuid?: string): Promise<void> {
     try {
-      const response = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
-      const places = this.fleetbaseClient.extractCollection(response, 'places');
+      const places = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
       const others = places.filter(
         (p: any) => p?.meta?.is_default === true && p?.uuid !== exceptPlaceUuid,
       );
@@ -2678,8 +2678,7 @@ export class CommerçantService {
   private async assertOwnsPlace(merchantId: string, placeId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
 
-    const response = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
-    const places = this.fleetbaseClient.extractCollection(response, 'places');
+    const places = await this.fleetbaseClient.getOwnedPlaces(merchant.fleetbaseVendorUuid);
     const place = places.find(
       (p: any) => p?.uuid === placeId || p?.public_id === placeId || p?.id === placeId,
     );

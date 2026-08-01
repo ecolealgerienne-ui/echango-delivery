@@ -7,6 +7,7 @@ import {
   ConflictException,
   HttpException,
 } from '@nestjs/common';
+import { jwtExpirationSeconds } from '../config/jwt';
 import { badRequest, unauthorized, forbidden, conflict, notFound } from '../common/errors/http-errors';
 import { AuditService } from '../common/audit/audit.service';
 import { JwtService } from '@nestjs/jwt';
@@ -1238,7 +1239,7 @@ export class AuthService {
     // Must be a number (seconds), not a bare numeric string: jsonwebtoken's `ms`
     // dependency interprets a unitless string like "86400" as milliseconds (~86s),
     // not seconds, silently producing tokens that expire almost immediately.
-    const expiresIn = parseInt(this.configService.get('JWT_EXPIRATION') || '86400', 10);
+    const expiresIn = jwtExpirationSeconds(this.configService);
     return this.jwtService.sign(
       {
         sub: userId,
