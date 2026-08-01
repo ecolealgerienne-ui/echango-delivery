@@ -99,6 +99,7 @@ dapi() {
 . "$(dirname "$0")/lib/fleetbase.sh"
 . "$(dirname "$0")/lib/resolve-driver.sh"
 . "$(dirname "$0")/lib/driver-session.sh"
+. "$(dirname "$0")/lib/free-driver.sh"
 . "$(dirname "$0")/lib/ledger.sh"
 
 SUFFIX="$(date +%s)"
@@ -144,6 +145,7 @@ step "0. Les acteurs"
 resolve_driver "$DRIVER_HINT" || fail "${RESOLVE_DRIVER_ERROR:-Conducteur introuvable}"
 obtain_driver_token "$DRIVER_UUID" || fail "${DRIVER_SESSION_ERROR:-Session conducteur impossible}"
 pass "Conducteur : ${DRIVER_LABEL:-$DRIVER_UUID}"
+require_free_driver
 
 MERCHANT_EMAIL="ecart-m-$SUFFIX@test.dz"
 reg="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/merchant/register" \

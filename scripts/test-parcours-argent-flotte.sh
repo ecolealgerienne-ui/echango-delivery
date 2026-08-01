@@ -121,100 +121,11 @@ echo "Attendu : conducteur doit $((GOODS + FEE)) à l'entreprise, qui doit $GOOD
 . "$(dirname "$0")/lib/driver-session.sh"
 . "$(dirname "$0")/lib/ledger.sh"
 
-# Les courses qui rendent le conducteur « occupé », **telles que le serveur les
-# compte**.
-#
-# ── Pourquoi cette fonction, et pourquoi elle passe en tête du script ──────
-#
-# `assignDriver()` refuse dès que le conducteur a une course en cours
-# (`driver.unavailable`) — c'est voulu : deux encaissements simultanés se
-# mélangent dans une seule poche et l'ordre des remises devient indéterminé. Le
-# refus, lui, **ne dit pas laquelle**, et c'est voulu aussi : un conducteur
-# roule pour plusieurs entreprises, nommer la course serait une fuite
-# commerciale.
-#
-# Nous ne sommes pas une entreprise, nous sommes l'opérateur : nous pouvons le
-# dire, et nous le devons — sinon le script relaie « attendez qu'il la
-# termine » sans dire quoi attendre, ce qui n'est pas un diagnostic.
-#
-# ⚠️ Le prédicat est **repris de `driverIsBusy()`**, ses deux moitiés
-# comprises : assignée et non terminale, **et sans signalement d'échec**.
-# Fleetbase n'ayant pas de statut « échec », une course dont l'échec a été
-# signalé reste assignée pour toujours ; sans cette seconde moitié, un client
-# absent immobiliserait le conducteur à vie. `?type=assigned` rend exactement
-# la première moitié, avec le signalement attaché quand il existe — les deux
-# se lisent donc ici sans rien redériver.
-#
-# ⚠️ **Renseigne `BLOCKING`, et n'imprime rien.** La première version rendait la
-# liste sur sa sortie standard, donc s'appelait `$(blocking_orders)` — et un
-# `fail()` déclenché là-dedans n'arrête que le SOUS-SHELL de la substitution :
-# son message part dans la variable au lieu de l'écran, et `set -e` tue ensuite
-# le script sans un mot. Le seul cas où ce contrôle avait quelque chose à dire
-# était donc le seul où il se taisait.
-BLOCKING=""
-read_blocking_orders() {
-  local list
-  list="$(dapi GET '/transporteur/commandes?type=assigned')"
-
-  if echo "$list" | is_error; then
-    fail "Lecture des courses du conducteur refusée" "$(echo "$list" | jq -c '.')"
-  fi
-  # Clé nommée et exigée, jamais un repli : `.orders // []` ferait passer un
-  # changement de contrat pour « conducteur libre », soit le mauvais côté de
-  # l'erreur — le script enchaînerait et échouerait dix étapes plus loin.
-  echo "$list" | jq -e 'has("orders")' >/dev/null \
-    || fail "Réponse inattendue : pas de clé « orders »" "$(echo "$list" | jq -c '.')"
-
-  BLOCKING="$(echo "$list" | jq -r \
-    '.orders[] | select(.delivery_failure == null) | "\(.uuid)  \(.status)"')"
-}
-
-# Refuse de commencer si le conducteur n'est pas libre — ou libère, sur demande
-# explicite.
-#
-# Un contrôle qu'on ne peut pas rejouer ne contrôle rien : ce script laisse le
-# conducteur occupé dès qu'il échoue après l'étape 4, donc **il se bloque
-# lui-même** à la tentative suivante. L'annulation tient le rôle de l'opérateur
-# qui le ferait en console, comme l'activation du fournisseur juste en dessous ;
-# elle reste sous `UNBLOCK=1` parce qu'elle annule des courses réelles.
-require_free_driver() {
-  local busy count uuid
-
-  read_blocking_orders
-  busy="$BLOCKING"
-  if [ -z "$busy" ]; then
-    pass "Conducteur libre — aucune course en cours"
-    return 0
-  fi
-
-  count="$(echo "$busy" | wc -l | tr -d ' ')"
-
-  if [ "${UNBLOCK:-0}" != "1" ]; then
-    echo "❌ ${DRIVER_LABEL:-$DRIVER_UUID} a déjà $count course(s) en cours."
-    echo "   L'affectation de l'étape 4 sera refusée (« driver.unavailable »)."
-    echo
-    echo "$busy" | sed 's/^/   /'
-    echo
-    echo "   Les terminer ou les annuler depuis la console, ou rejouer avec :"
-    echo "     UNBLOCK=1 $0 ${DRIVER_HINT:-}"
-    exit 1
-  fi
-
-  while read -r uuid _; do
-    [ -n "$uuid" ] || continue
-    fb_api PATCH /int/v1/orders/cancel "$(jq -n --arg o "$uuid" '{order:$o}')" >/dev/null \
-      || fail "Annulation de $uuid impossible : ${FLEETBASE_ERROR:-}"
-    echo "   annulée : $uuid"
-  done <<<"$busy"
-
-  # Relu, jamais déduit du code HTTP — même discipline que
-  # `fb_activate_vendor_by_email` : un `PATCH` qui ne change rien répond 200, et
-  # le refus de l'étape 4 serait alors mis sur le compte du garde.
-  read_blocking_orders
-  [ -z "$BLOCKING" ] \
-    || fail "Le conducteur reste occupé après annulation" "$(echo "$BLOCKING" | tr '\n' ' ')"
-  pass "Conducteur libéré — $count course(s) annulée(s)"
-}
+# `read_blocking_orders` et `require_free_driver` vivent dans la bibliothèque :
+# quatre scénarios créent des courses et se heurtent au même refus, et une copie
+# du prédicat « occupé » qui diverge déclare libre un conducteur qui ne l'est
+# pas (règle 5). Sourcée ici, après `dapi`, `is_error`, `pass` et `fail`.
+. "$(dirname "$0")/lib/free-driver.sh"
 
 # ── Sessions ───────────────────────────────────────────────────────────────
 step "Sessions"
