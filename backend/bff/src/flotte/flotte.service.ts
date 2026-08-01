@@ -1379,7 +1379,13 @@ export class FlotteService {
         slice.map(async (o: any) => {
           if (!o?.uuid) return o;
           try {
-            const full = await this.fleetbaseClient.getOrderWithRelations(o.uuid);
+            // ⚠️ Par `readOrder`, jamais par le client directement : la lecture
+            // unitaire est **enveloppée** dans `{order: {…}}` là où la liste rend
+            // l'objet nu. Appeler le client sans déballer rendait huit lignes
+            // d'`uuid: null` par page — soit exactement la taille d'un lot, la
+            // seule trace qu'il y ait eu. `readOrder` porte déjà cet unwrap,
+            // avec le commentaire qui dit pourquoi (règle 5).
+            const full = await this.readOrder(o.uuid);
             return full ?? o;
           } catch (error) {
             this.logger.warn(
