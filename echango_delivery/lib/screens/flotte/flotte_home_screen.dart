@@ -280,11 +280,15 @@ class _OpportunitiesTab extends StatelessWidget {
         if (masked)
           Container(
             width: double.infinity,
-            // ⚠️ `secondaryContainer` et non `surfaceContainerHighest` : ce
-            // dernier est arrivé en Flutter 3.22 et `pubspec.yaml` déclare
-            // `>=3.20.0`. Je venais de l'écrire après l'avoir moi-même consigné
-            // comme indisponible — la contrainte est dans le dépôt, pas dans ma
-            // mémoire.
+            // `secondaryContainer`, et c'est désormais un choix et non un
+            // repli. ⚠️ La raison inscrite ici jusqu'au 01/08/2026 était fausse :
+            // elle écartait `surfaceContainerHighest` (Flutter 3.22) au motif
+            // que le pubspec déclarait `>=3.20.0`, sans voir que la ligne `sdk:`
+            // du même fichier exigeait déjà Dart 3.5, donc Flutter >= 3.24.
+            // L'API était disponible depuis le début ; la borne, elle, nommait
+            // une version jamais sortie en stable. Borne corrigée, et la
+            // couleur laissée telle quelle — la changer déplacerait des pixels
+            // sans que personne ait regardé l'écran.
             color: Theme.of(context).colorScheme.secondaryContainer,
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.md,

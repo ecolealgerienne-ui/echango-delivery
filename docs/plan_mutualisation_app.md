@@ -163,14 +163,43 @@ qui est pire que trois copies cohérentes. **C'est un motif à part entière —
 bande d'état de page — et il n'a qu'un seul site.** À extraire le jour où un
 deuxième apparaît, pas avant.
 
-⚠️ **Et il emploie `surfaceContainerHighest`** (`dashboard_screen.dart:197`),
-arrivé en **Flutter 3.22**, alors que `pubspec.yaml` déclare `flutter:
-'>=3.20.0'`. `flutter analyze` est vert parce qu'il s'exécute contre le SDK
-**installé**, plus récent — la borne déclarée, elle, est fausse. Deux
-résolutions cohérentes, et une seule ligne à changer : retirer l'API, ou monter
-la borne à `>=3.22.0` pour qu'elle dise la vérité. **Laissé tel quel** : je ne
-connais pas la version réellement installée, et écrire une borne au jugé
-remplacerait une déclaration fausse par une autre.
+⚠️ **Et il emploie `surfaceContainerHighest`** (`dashboard_screen.dart`, ligne
+217 depuis), arrivé en **Flutter 3.22**, alors que `pubspec.yaml` déclarait
+`flutter: '>=3.20.0'`. Consigné ici comme une contradiction du code, à résoudre
+en retirant l'API ou en montant la borne « à `>=3.22.0` ».
+
+✅ **Résolu le 01/08/2026, et le diagnostic était faux** — c'est la borne qui
+mentait, pas le code. Deux faits qu'il suffisait de lire pour trancher, et que
+personne n'avait regardés parce que la ligne `flutter:` portait le bon nom :
+
+1. **La ligne du dessus est plus stricte.** `sdk: '>=3.5.0 <4.0.0'` est la
+   contrainte que `pub` applique réellement, et Dart 3.5 est livré par Flutter
+   **3.24**. Tout SDK acceptable était donc déjà ≥ 3.24, et
+   `surfaceContainerHighest` (3.22) disponible depuis toujours.
+2. **`>=3.20.0` nommait une version qui n'a jamais existé en stable** : le canal
+   passe de 3.19 à 3.22, 3.20 n'ayant vécu qu'en beta.
+
+La borne passe donc à `>=3.24.0`, **déduite** de la contrainte Dart et non
+choisie — ce qui répond à l'objection qui avait fait différer la correction
+(« écrire une borne au jugé remplacerait une déclaration fausse par une
+autre »). ⚠️ Et la résolution que ce paragraphe proposait, `>=3.22.0`, aurait
+été **fausse elle aussi**, étant sous le plancher imposé par Dart.
+
+⚠️ **Ce que la fausse borne avait coûté**, et qui est le vrai enseignement : elle
+ne dormait pas dans un coin du `pubspec`, elle **servait d'argument**. **Cinq
+passages** du dépôt écartaient une API en la citant — deux commentaires de code
+(`flotte_home_screen`, `notifications_screen`) et trois de documentation
+(`CLAUDE.md` deux fois, le journal une) —, dont un qui se donnait explicitement
+en leçon de méthode (« la contrainte est dans le dépôt, pas dans ma mémoire »).
+La règle invoquée était juste ; c'est la donnée sur laquelle elle s'appuyait qui
+n'avait jamais été vérifiée. **Une borne fausse est pire qu'une borne absente :
+elle se cite.**
+
+⚠️ **Et il fallait les trier, pas les corriger en bloc** : sur ces cinq, les
+**trois** qui visaient `surfaceContainerHighest` avaient tort (l'API était
+disponible), les **deux** qui visaient `Color.withValues` avaient raison — 3.27
+reste au-dessus de 3.24. Une borne fausse ne rend pas faux tout ce qui s'y
+appuie ; c'est précisément ce qui rend la relecture fastidieuse et nécessaire.
 
 **Également examiné et laissé** : le bloc « À encaisser » de
 `transporteur/order_detail_screen:117` (`Container` + `BoxDecoration`,

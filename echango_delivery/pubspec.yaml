@@ -6,7 +6,24 @@ version: 0.1.0+1
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
-  flutter: '>=3.20.0'
+  # ⚠️ Cette borne est **déduite de la ligne du dessus, pas choisie** : Dart 3.5
+  # est livré par Flutter 3.24, donc tout SDK qui satisfait `sdk: >=3.5.0` est
+  # déjà un Flutter >= 3.24. Une borne plus basse ne relâche donc rien — elle
+  # décrit un socle que `pub` refuserait de toute façon.
+  #
+  # Elle a déclaré `>=3.20.0` jusqu'au 01/08/2026, et cette valeur était fausse
+  # deux fois : Flutter 3.20 n'a **jamais existé en stable** (le canal passe de
+  # 3.19 à 3.22, 3.20 n'ayant vécu qu'en beta), et elle contredisait la
+  # contrainte Dart de la ligne au-dessus. Le coût n'était pas théorique : cinq
+  # passages du dépôt s'en servaient pour écarter une API — dont trois visant
+  # `surfaceContainerHighest`, disponible depuis le début. Il était même employé
+  # à deux endroits et refusé à un troisième, ce qui a été consigné comme une
+  # contradiction du code alors que c'était la borne qui mentait.
+  #
+  # ⚠️ Ne pas la baisser sans refaire les deux calculs : la contrainte que `pub`
+  # applique est celle de la ligne `sdk:`, et une borne `flutter:` plus permissive
+  # qu'elle est au mieux inutile, au pire un argument faux que quelqu'un citera.
+  flutter: '>=3.24.0'
 
 dependencies:
   flutter:
