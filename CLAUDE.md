@@ -10,7 +10,7 @@ Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse central
 
 ## Règles de développement — à respecter sans exception
 
-Sept règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
+Dix règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
 
 ⚠️ **Ce qu'un `tsc` vert vaut dans le sandbox Claude Code — et ce qu'il ne vaut pas (30/07/2026).** Le client Prisma n'y est **jamais généré** (le proxy sortant refuse `binaries.prisma.sh` par politique, y compris avec `--no-engine`), donc `@prisma/client` s'y résout sur un fichier de 4 ko où tout est `any`. Conséquence : **rien de ce qui traverse un type Prisma n'est vérifié ici**, et un `npx tsc --noEmit` vert ne dit rien de ces chemins-là. Constaté : `liveOrderDetailed(merchant.fleetbaseVendorUuid, order)` — arguments inversés — passait ici parce que `merchant` était `any`, et échouait à la compilation chez l'utilisateur, où le client est généré. La vérification a fonctionné, simplement pas de mon côté. À l'écriture : relire à la main toute signature dont un argument vient d'une ligne Prisma, et annoncer un `tsc` vert pour ce qu'il est — une vérification **partielle**.
 
@@ -80,6 +80,8 @@ En cherchant, cinq endroits nommaient « statut terminal » et trois divergeaien
 - **Non ⇒ deux endroits, et un commentaire qui dit pourquoi.** `orderStatusLabel` (commerçant) et `fleetOrderStateKey` (entreprise) se ressemblent beaucoup et répondent à deux questions différentes : où en est ma livraison / qu'est-ce que je dois en faire.
 - **Quand la fusion coûte plus qu'elle ne rapporte**, l'invariant se tient par un **contrôle exécuté**, jamais par une phrase : `projectOrderForDriver` et `projectOrderForFleet` restent séparées, et un test vérifie qu'elles servent le même niveau de détail.
 
+⚠️ **Deux thèmes sont deux copies, et personne ne les compare.** Le thème sombre n'avait **aucun style de bouton ni d'onglet** : rayon, rembourrage et couleurs n'étaient écrits que dans le thème clair, donc le même écran affichait des coins arrondis en clair et des pilules Material 3 en sombre. La couleur de marque, elle, était écrite **trois fois** — une par thème, plus un littéral dans le thème des onglets. Rien de tout ça ne se voit en relisant un thème : il faut les mettre côte à côte, ce que personne ne fait. Tout ce qui est décidé dans l'un doit l'être dans l'autre, donc être extrait.
+
 ⚠️ **Un test qui recopie ce qu'il vérifie ne vérifie que lui-même.** Le premier test de ce prédicat en contenait une **troisième** copie, « reproduction fidèle » pour contourner une dépendance à Prisma. Il serait resté vert pendant que les deux vrais prédicats divergeaient. Un test importe ce que le code exécute, ou il ne sert à rien.
 
 ### 6. Des composants graphiques réutilisables — l'homogénéité ne se maintient pas à la main
@@ -105,6 +107,10 @@ Et il n'existe **que trois widgets partagés** (`language_selector`, `photo_fiel
 - **Un motif répété se nomme.** Bandeau d'erreur, état vide avec sa consigne, carte de section, ligne libellé/valeur : ce sont des widgets, pas des copies.
 - **Un composant partagé porte sa règle métier avec lui.** `_Empty` accompagne toujours l'absence d'une consigne, parce qu'une liste vide sans explication se lit comme une panne (défaut corrigé deux fois) ; le bandeau d'erreur se pose **au-dessus** du contenu et ne le remplace pas, parce qu'un rechargement raté ne doit pas effacer ce qui était lisible. Recopier la mise en page sans la règle, c'est reproduire le défaut qu'elle corrige.
 - **Les nouveaux écrans n'ont aucune excuse** — comme pour la règle 4, la dette existante est assumée (`docs/audit_i18n_erreurs.md`), mais elle ne grandit pas.
+
+⚠️ **Extraire un widget, ou poser un contrôle — les deux réponses ne traitent pas le même manque (31/07/2026).** Mesuré sur les boutons : 15 `ElevatedButton` côté transporteur contre 5 `FilledButton` côté entreprise, soit **Material 2 d'un côté et Material 3 de l'autre, dans la même application** — et, dans un seul écran, l'action principale d'une ligne servie en bouton plein dans un onglet et en lien dans l'autre. La tentation était d'écrire un `AppButton`. C'eût été une faute : le motif **est déjà un widget**, et l'envelopper aurait demandé de réexposer `icon`/`label`/`style`/`onLongPress` pour n'y rien ajouter — réécrire l'API de Material.
+
+  Ce qui manquait n'était pas un composant, c'était **une décision**. Le critère : **le motif porte-t-il une règle, ou seulement un choix ?** Une règle ⇒ un widget qui la porte (`AppEmptyState` exige sa consigne, `AppLoadMore` ne s'affiche que s'il reste vraiment quelque chose). Un choix ⇒ le nommer une fois (`theme/app_buttons.dart`) et le faire tenir par un contrôle exécuté (`tool/check_buttons.dart`), parce qu'un commentaire ne peut pas échouer.
 
 ⚠️ **Dette connue** : les ~130 couleurs en dur de `screens/commercant/`, `screens/transporteur/` et `screens/cash/`, et les quatre motifs ci-dessus non extraits. Non traité au 31/07/2026 — à faire avant le pilote, c'est ce que voit l'utilisateur en premier.
 
@@ -143,6 +149,56 @@ Le critère n'est pas « est-ce un littéral » — `maxLines: 1` décrit la nat
 ⚠️ **Ce que ces deux scripts ont appris, et qui vaut plus que le lot** : les deux se sont trompés, et **aucune des erreurs n'a été trouvée en les relisant**. `check_server_rules` concluait à l'accord quand la déclaration d'un champ ne matchait pas (`readonly password:`, `password!:`) — un `@MinLength(12)` serveur passait pour un 8 — et acceptait un décorateur mis en commentaire ; `check_spacing` lisait `5` dans `EdgeInsets.all(16.5)`. Toutes trouvées en **faisant tourner le vérificateur sur des mutations**. Un vérificateur au vert n'a montré que sa capacité à dire oui ; il doit prouver qu'il sait dire non, et `--self-test` est là pour ça.
 
 ⚠️ **Dette restante** : les littéraux hors barème (1, 2, 6, 10, 14, 20, 36, 48 — une vingtaine, `check_spacing.dart` en imprime le compte exact plutôt que de le faire recopier) et les valeurs métier laissées délibérément littérales — bornes serveur sans copie côté app (`@Max(500000)` sur les prix, `@MaxLength(60)` sur les recherches). L'absence ne ment pas, contrairement à une copie divergente ; c'est un choix, pas un oubli.
+
+### 8. Un contrôle doit prouver qu'il sait refuser
+
+**Un vérificateur au vert n'a montré qu'une chose : sa capacité à dire oui.** Tant qu'on ne l'a pas vu refuser, on ne sait pas s'il regarde. C'est la leçon la plus répétée du dépôt, et elle a coûté quatre fois.
+
+**Les quatre cas, parce que c'est leur diversité qui rend la règle reconnaissable** :
+
+- `check_server_rules` concluait à l'accord quand la déclaration d'un champ ne matchait pas (`readonly password:`) — un `@MinLength(12)` serveur passait pour un 8 ;
+- `check_spacing` lisait `5` dans `EdgeInsets.all(16.5)` ;
+- `check_error_codes` ancrait sur `'… _ar'`, qui matche **`_arabe`** : renommer la table faisait repartir le contrôle en silence sur une table qui ne porte plus le nom attendu — exactement le fichier restructuré qu'il est censé refuser ;
+- le banc de `require_free_driver` exécutait tout dans un sous-shell, et masquait donc le défaut qu'il devait attraper.
+
+**Aucune de ces quatre erreurs n'a été trouvée en relisant.** Toutes l'ont été en faisant tourner le contrôle sur des **mutations** — du code volontairement cassé, dont on sait qu'il doit être refusé.
+
+**En pratique** :
+
+- **Un `--self-test`**, avec autant de cas qui doivent échouer que de cas qui doivent passer. `check_error_codes` en a 14 dont 9 refus, `check_buttons` 12 dont 6.
+- **Et une mutation du VRAI fichier**, pas seulement des cas fabriqués : c'est elle qui a trouvé le défaut de `_arabe`, que les treize cas fabriqués laissaient passer.
+- ⚠️ **Une vérification qui partage un composant avec ce qu'elle vérifie ne dit rien de ce composant.** Le contrôle par inversion des cartes de section réutilisait la fonction fautive : l'erreur s'annulait elle-même. Et le vérificateur du lot de traduction **normalisait les apostrophes**, donc il ne pouvait pas signaler les trente qui avaient changé — elles ont été comptées à part, à la main.
+
+**Ce que la règle ne dit pas** : que tout doit être vérifié par script. Elle dit que **ce qui est vérifié par script doit l'être pour de bon**, sans quoi le contrôle ne déplace pas l'erreur, il l'enterre.
+
+### 9. Ce que le serveur sert doit avoir un appelant
+
+**Le fil rouge de ce projet, et de loin le défaut le plus répété : le serveur savait, l'app ignorait.** Ce n'est jamais une panne — c'est une capacité écrite, testée, documentée, et appelée nulle part. Elle ne produit aucune erreur : elle produit une fonctionnalité absente que personne ne cherche, puisque le code existe.
+
+**Le relevé, parce qu'il est accablant** : `photoUploaded`, `online`, le jeton FCM, la position GPS, le suivi en tâche de fond, la capture photo — tous validés côté BFF par test réel et branchés nulle part (28/07). Le module `flotte` entier, six routes, pendant que l'app affichait « Espace non disponible ». `GET /flotte/drivers/positions`, écrite le 28/07, appelée le 31/07 — alors que la vision produit définit ce persona par « commandes entrantes, assignation, **position des conducteurs** ». Le total de pagination, servi et **jeté**, donc deux listes tronquées en silence. `driversUnavailable`, qui existait pendant que l'écran affirmait « aucun conducteur ».
+
+**En pratique** :
+
+- **Une route neuve n'est pas finie tant qu'un écran ne l'appelle pas.** Le contrat serveur n'est pas le livrable ; ce que l'utilisateur voit l'est.
+- **Une réponse serveur se lit en entier.** Un champ servi et non lu est soit un manque côté app, soit un champ à retirer du serveur — jamais « pas grave ».
+- **Réciproquement : ce qui n'a plus d'appelant se supprime.** Quatre colonnes mortes d'`Order` laissaient croire à une synchronisation inexistante.
+
+### 10. Un défaut n'a pas de valeur par défaut
+
+**Une valeur de repli détruit l'information d'absence**, et l'absence est presque toujours l'information qui compte.
+
+**Les cas fondateurs, tous constatés** : `data_get($this, 'online', false)` chez Fleetbase — un conducteur dont l'état est inconnu passait pour hors ligne ; des coordonnées manquantes valant `0`, soit un point au large du golfe de Guinée ; `[0,0]` lu comme une position alors que c'est une absence ; `photo_url: null` posé en dur ; un `catchError` rendant une liste vide, donc l'écran affirmant « aucun conducteur rattaché » à une entreprise dont le BFF était injoignable ; un script de test annonçant « Commerçant créé » sans l'avoir obtenu ; et le repli d'un titre de ligne sur `public_id`, qui affichait `order_1sn4fzn6e2` là où il fallait dire qu'on ne savait pas.
+
+**Le critère** : *si cette valeur est fausse, est-ce que quelque chose le dira ?* Si non, il ne faut pas de valeur.
+
+**En pratique** :
+
+- **`null` plutôt qu'un zéro, un `false` ou une chaîne vide**, quand la donnée peut manquer. `CashLedger.totalOn` rend `null` et non `0` : « vous devez 0 » à qui ne doit rien est une phrase fausse.
+- **Deux absences, deux messages.** Vide et illisible ne se disent pas pareil — `AppEmptyState.unavailable` existe pour forcer la question à l'écriture plutôt qu'à la relecture.
+- **Un repli qui affiche un identifiant technique est un repli qui ment poliment.** Dire « — » est plus honnête que dire `order_1sn4fzn6e2`.
+- ⚠️ **Le pire endroit pour un repli est un test.** Il y produit ce qu'on redoute le plus : un contrôle qui rassure.
+
+⚠️ **Une API n'existe pas parce qu'on s'en souvient — la borne du `pubspec` fait foi.** `surfaceContainerHighest` est arrivé en Flutter 3.22 et le projet déclare `>=3.20.0` ; je l'ai écrit **après l'avoir moi-même consigné comme indisponible**. Même motif pour `CameraFit`, écarté au profit d'un barycentre : la contrainte est dans le dépôt, pas dans la mémoire. Toute API employée se vérifie contre la version épinglée, ou ne s'emploie pas.
 
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
