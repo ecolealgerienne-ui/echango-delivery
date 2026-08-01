@@ -648,7 +648,20 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **Ce qu'il faut savoir pour s'en servir** : la sortie va dans `graphify-out/` (~8 Mo), **gitignorée** — c'est un artefact dérivé qui se régénère en onze secondes, il n'a rien à faire dans l'historique. Un hook `post-commit`/`post-checkout` rebâtit le graphe en tâche de fond après chaque commit (`graphify hook install`, journal dans `~/.cache/graphify-rebuild.log`) ; il épingle l'interpréteur Python et se désactive pendant rebase/merge/cherry-pick.
 
-  ⚠️ **Trois réserves, toutes mesurées et non reprises des articles qui en font la promotion.** (1) **Dart est extrait par expressions régulières, pas par tree-sitter** — c'est écrit dans le source (`"""Dart extractor… using regex."""`) et la grammaire `tree-sitter-dart` n'est pas installée, contrairement à ce qu'annonce le README. Vérifié plutôt que supposé : en pratique le résultat est bon — 1757 nœuds Dart (20,4 par fichier) contre 607 en TypeScript (8,3), et **3 nœuds sur 3956 (0,1 %)** sans libellé exploitable. (2) **Le gain n'est pas acquis pour un dépôt de cette taille** : 256 fichiers suivis, là où les sources donnent le bénéfice réel à 500+ et « peu d'intérêt » sous 30. (3) **`GRAPH_REPORT.md` fait 60 Ko**, soit ~15 000 jetons injectés par session : le gain n'existe que s'il évite de lire davantage que ça — plausible sur une exploration large, douteux quand on sait déjà quel fichier ouvrir. Les « 70× » qui circulent sont du contenu SEO sans mesure reproductible.
+  ⚠️ **Utilisable sur `backend/bff/` (TypeScript), à ne pas croire sur `echango_delivery/` (Dart).** Quatre requêtes sur du code dont la vérité était connue :
+
+  | requête | attendu | obtenu |
+  |---|---|---|
+  | TS — `CommerçantService` → `adhoc-radius.ts` | lien direct | **2 sauts, exact** |
+  | Dart — `vehicleLabel` → `orderLabel` | lien direct | **6 sauts, faux** |
+
+  **`formatRelative` a un degré de 1** : la seule arête est « dates.dart le définit », ses trois appelants réels sont absents. Et le pire n'est pas l'absence mais le succédané : pour `vehicleLabel → orderLabel` l'outil rend un détour par `merchant_order.dart` et `dart:ui` qui **a l'air d'une réponse**. Cause identifiée — les imports relatifs Dart ne sont pas résolus, d'où **64 nœuds fantômes** (2 %) au `source_file` vide, dont un second `../../i18n/order_strings.dart` en doublon du vrai ; les faux chemins passent par eux. Densité : **3,83 arêtes par nœud en TS contre 1,61 en Dart**, et **67 % des nœuds sont de degré ≤ 1**. Sur 6386 arêtes, seulement **839 `calls`**.
+
+  ⚠️ **Correction d'une conclusion écrite deux heures plus tôt dans cette même entrée** : j'avais jugé l'extraction Dart satisfaisante sur le **volume** de nœuds (20,4 par fichier, 0,1 % de libellés vides). Les deux chiffres étaient exacts et la conclusion fausse — je n'avais pas regardé les **arêtes**, seule chose qui distingue un graphe d'une liste de symboles. Même forme que le commentaire de `dates.dart` corrigé le matin même : une mesure juste sur la mauvaise grandeur fait conclure aussi sûrement qu'une mesure fausse.
+
+  **Deux autres réserves** : (1) le dépôt fait 256 fichiers suivis là où les sources donnent le bénéfice réel à 500+ et « peu d'intérêt » sous 30 ; (2) **`GRAPH_REPORT.md` fait 60 Ko**, soit ~15 000 jetons injectés par session — un gain seulement s'il évite d'en lire davantage. Les « 70× » qui circulent sont du contenu SEO sans mesure reproductible.
+
+  **À signaler en amont** (`Graphify-Labs/graphify`) : un import relatif Dart non résolu crée un nœud fantôme au `source_file` vide au lieu de pointer sur le fichier existant, ce qui fabrique des chemins plausibles et faux.
 
   **Retiré à l'installation** : le `.gitattributes` que `hook install` crée, avec une règle de fusion pour `graphify-out/graph.json` — un fichier justement gitignoré, donc une règle qui ne peut jamais s'appliquer (règle 9 : ce qui n'a pas d'appelant se supprime).
 
