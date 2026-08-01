@@ -397,7 +397,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  _d('driver.order.card.status', {'status': order.status}),
+                  _d('driver.order.card.status', {'status': orderStateLabelForDriver(order, _d)}),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         // Le fond seul : ici le statut est du texte sur la carte,
                         // pas une puce — c'est la teinte de statut qui sert

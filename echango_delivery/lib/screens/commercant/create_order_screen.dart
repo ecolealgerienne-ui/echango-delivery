@@ -309,6 +309,18 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     }
   }
 
+  /// Y a-t-il quelque chose à dire sur le colis ?
+  ///
+  /// Chacun des quatre champs est facultatif **et suffisant** : une case
+  /// « fragile » cochée seule est une information que le transporteur doit
+  /// avoir. Ne tester que la description faisait disparaître les trois autres
+  /// sans un mot.
+  bool get _hasParcelDetails =>
+      _itemDescription.text.trim().isNotEmpty ||
+      int.tryParse(_itemQuantity.text.trim()) != null ||
+      double.tryParse(_itemWeight.text.trim()) != null ||
+      _fragile;
+
   Future<void> _submit(MerchantOrderState orderState) async {
     final missing = <String>[
       if (_pickupName.text.trim().isEmpty) _t('order.form.missing.pickup_name'),
@@ -383,10 +395,21 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       // déjà, le formulaire n'envoyait qu'une description et `quantity: 1` en
       // dur. Or c'est précisément ce qui permet au transporteur de juger si sa
       // moto suffit — donc ce qui fonde son refus pour `colis_inadapte`.
-      if (_itemDescription.text.trim().isNotEmpty)
+      // ⚠️ La garde porte sur **tout le colis**, pas sur sa seule description.
+      //
+      // Elle testait `_itemDescription.isNotEmpty`, et la description est
+      // facultative (elle n'est pas dans la liste `missing` de `_submit`). Un
+      // commerçant qui cochait « Contenu fragile », saisissait 3 colis et 12 kg
+      // mais ne décrivait pas le contenu envoyait une commande **sans aucun
+      // item** : ni fragilité, ni quantité, ni poids. Rien ne le signalait, et
+      // la case restait cochée à l'écran. Le transporteur découvrait trois
+      // cartons lourds devant la porte — le scénario exact que le commentaire
+      // ci-dessus dit avoir corrigé (revue du 01/08/2026, D3).
+      if (_hasParcelDetails)
         'items': [
           {
-            'description': _itemDescription.text.trim(),
+            if (_itemDescription.text.trim().isNotEmpty)
+              'description': _itemDescription.text.trim(),
             // ⚠️ Le champ était **envoyé en dur** : le DTO l'exige et le
             // formulaire ne l'exposait pas, donc deux cartons partaient
             // annoncés comme un seul. Le transporteur le découvrait devant
@@ -396,7 +419,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             // Aucune borne côté app, délibérément : le serveur porte
             // `@IsInt() @Min(1)`, et une copie ici serait une règle de plus à
             // tenir accordée. L'absence ne ment pas (règle 7).
-            'quantity': int.tryParse(_itemQuantity.text.trim()) ?? 1,
+            // ⚠️ **Plus de repli sur 1.** `int.tryParse(...) ?? 1` fabriquait
+            // une valeur là où il n'y avait pas de saisie exploitable : champ
+            // vidé pour retaper, « 3 colis », « 2,5 », ou le séparateur décimal
+            // qu'`TextInputType.number` laisse passer sur Android — tout cela
+            // partait en **1**, et le serveur ne pouvait rien refuser puisqu'il
+            // recevait une valeur valide.
+            //
+            // Le commentaire disait « aucune borne, délibérément : l'absence ne
+            // ment pas (règle 7) » — mais le code ne laissait pas d'absence, il
+            // FABRIQUAIT une valeur. La clé est omise quand la saisie n'est pas
+            // lisible, et c'est le serveur qui décide (`@IsInt() @Min(1)`).
+            if (int.tryParse(_itemQuantity.text.trim()) != null)
+              'quantity': int.parse(_itemQuantity.text.trim()),
             if (double.tryParse(_itemWeight.text.trim()) != null)
               'weight': double.parse(_itemWeight.text.trim()),
             if (_fragile) 'fragile': true,

@@ -664,19 +664,7 @@ String _opportunityFacts(
   _Translate t,
   Locale locale,
 ) {
-  final money = <String>[];
-  final price = meta['price'];
-  final cod = meta['cod_amount'];
-  final currency = meta['currency'] ?? meta['cod_currency'] ?? '';
-  if (price is num && price > 0) {
-    money.add('${t('fleet.orders.price')} : ${price.toStringAsFixed(0)} $currency'.trim());
-  }
-  // ⚠️ Servi même quand il vaut zéro ? Non : une course sans encaissement ne
-  // doit pas afficher « à encaisser : 0 », qui se lit comme une anomalie. Son
-  // absence dit déjà qu'il n'y a rien à percevoir.
-  if (cod is num && cod > 0) {
-    money.add('${t('fleet.orders.cod')} : ${cod.toStringAsFixed(0)} $currency'.trim());
-  }
+  final money = _moneyParts(meta, t);
 
   final facts = <String>[];
   final distance = _distanceLabel(order['distance'], t);
@@ -761,13 +749,45 @@ String _stateLabel(Map<String, dynamic> order, _Translate t) {
 /// non du `meta` brut de Fleetbase : c'est le défaut D6, corrigé au Lot 2. Sans
 /// cette recomposition, une entreprise décidait de prendre une course sans voir
 /// ni ce qu'elle rapporte ni ce qu'il faudra encaisser.
+/// Les montants d'une course, **écrits comme dans l'onglet d'à côté**.
+///
+/// ── Ce qui divergeait, et pourquoi ça se voyait ─────────────────────────
+///
+/// Cette fonction et `_opportunityFacts` répondent à la même question et ne
+/// s'accordaient sur rien : « Prix : 650 — À encaisser : 1950 » d'un côté,
+/// « Prix : 650 DZD · À encaisser : 1950 DZD » de l'autre. Une entreprise qui
+/// prenait une course la voyait **perdre sa devise** en passant d'un onglet à
+/// l'autre (revue du 01/08/2026, D9).
+///
+/// Elles divergeaient aussi sur le test de nullité : `!= null` ici, `> 0` là —
+/// avec, en face, le commentaire qui explique pourquoi zéro ne doit pas
+/// s'afficher. La règle était écrite d'un seul côté et appliquée d'un seul côté.
+///
+/// Le formatage est donc délégué à [_moneyParts], qui les sert toutes les deux :
+/// si la façon d'écrire un montant change, elle change aux deux endroits
+/// (règle 5).
 String _amount(Map<String, dynamic> meta, _Translate t) {
+  final parts = _moneyParts(meta, t);
+  return parts.isEmpty ? '' : '\n${parts.join('  ·  ')}';
+}
+
+/// Prix et montant à encaisser, formatés une seule fois pour tout l'écran.
+List<String> _moneyParts(Map<String, dynamic> meta, _Translate t) {
   final price = meta['price'];
   final cod = meta['cod_amount'];
+  final currency = meta['currency'] ?? meta['cod_currency'] ?? '';
   final parts = <String>[];
-  if (price != null) parts.add('${t('fleet.orders.price')} : $price');
-  if (cod != null) parts.add('${t('fleet.orders.cod')} : $cod');
-  return parts.isEmpty ? '' : '\n${parts.join(' — ')}';
+
+  if (price is num && price > 0) {
+    parts.add('${t('fleet.orders.price')} : ${price.toStringAsFixed(0)} $currency'.trim());
+  }
+  // ⚠️ Servi même quand il vaut zéro ? Non : une course sans encaissement ne
+  // doit pas afficher « à encaisser : 0 », qui se lit comme une anomalie. Son
+  // absence dit déjà qu'il n'y a rien à percevoir.
+  if (cod is num && cod > 0) {
+    parts.add('${t('fleet.orders.cod')} : ${cod.toStringAsFixed(0)} $currency'.trim());
+  }
+  return parts;
 }
 
 Future<void> _claim(BuildContext context, String uuid, _Translate t) async {

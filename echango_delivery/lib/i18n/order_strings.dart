@@ -459,6 +459,26 @@ const Map<String, String> _fr = {
   // de `messageForError()`, comme partout ailleurs.
   'order.fav.search.failed': 'Recherche impossible.',
   'order.fav.add.failed': 'Ajout impossible',
+  // ── Journal d'évènements ────────────────────────────────────────────────
+  //
+  // ⚠️ Traduits **depuis le `type`**, jamais depuis le texte serveur. Le
+  // réconciliateur écrit `title` et `body` en français dans son propre code :
+  // les afficher tels quels faisait lire à un commerçant arabophone son unique
+  // canal d'évènements entièrement en français, sous un titre arabe (règle 4,
+  // revue du 01/08/2026 D1). Ils restent comme repli d'un type inconnu — c'est
+  // le seul cas où un texte serveur a le droit d'atteindre l'écran.
+  'order.notif.assigned.title': 'Livraison prise en charge',
+  'order.notif.assigned.body': '{driver} a pris votre livraison {tracking}',
+  // Sans nom de transporteur : le serveur n'a pas toujours la relation chargée,
+  // et « a pris votre livraison » sans sujet ne se dit pas.
+  'order.notif.assigned.body.anon': 'Un transporteur a pris votre livraison',
+  'order.notif.released.title': 'Transporteur désisté',
+  'order.notif.released.body':
+      'Votre livraison a été proposée à nouveau aux transporteurs du réseau.',
+  'order.notif.completed.title': 'Livraison effectuée',
+  'order.notif.completed.body': 'Votre livraison est arrivée à destination.',
+  'order.notif.canceled.title': 'Livraison annulée',
+  'order.notif.canceled.body': 'Votre demande de livraison a été annulée.',
   'order.fav.load.failed': 'Chargement impossible.',
   'order.fav.unavailable': 'Impossible de charger vos favoris.',
   'order.fav.unavailable.hint':
@@ -856,6 +876,15 @@ const Map<String, String> _ar = {
   'order.fav.title': 'ناقليّ',
   'order.fav.search.failed': 'تعذّر البحث.',
   'order.fav.add.failed': 'تعذّرت الإضافة',
+  'order.notif.assigned.title': 'تم استلام التوصيلة',
+  'order.notif.assigned.body': 'أخذ {driver} توصيلتك {tracking}',
+  'order.notif.assigned.body.anon': 'أخذ أحد الناقلين توصيلتك',
+  'order.notif.released.title': 'انسحب الناقل',
+  'order.notif.released.body': 'أُعيد عرض توصيلتك على ناقلي الشبكة.',
+  'order.notif.completed.title': 'تمت التوصيلة',
+  'order.notif.completed.body': 'وصلت توصيلتك إلى وجهتها.',
+  'order.notif.canceled.title': 'أُلغيت التوصيلة',
+  'order.notif.canceled.body': 'أُلغي طلب التوصيل الخاص بك.',
   'order.fav.load.failed': 'تعذّر التحميل.',
   'order.fav.unavailable': 'تعذّر تحميل مفضّليك.',
   'order.fav.unavailable.hint': 'مفضّلوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',

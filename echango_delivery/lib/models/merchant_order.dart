@@ -616,6 +616,14 @@ class MerchantNotification extends Equatable {
   final bool read;
   final DateTime createdAt;
 
+  /// Les variables du message — nom du transporteur, numéro de suivi.
+  ///
+  /// ⚠️ `title` et `body` sont écrits **en français dans le code serveur** :
+  /// l'écran ne les affiche qu'en repli d'un `type` inconnu. C'est `data` qui
+  /// permet de reconstruire la phrase dans la langue de l'utilisateur, l'ordre
+  /// des mots n'étant pas le même en arabe.
+  final Map<String, String> data;
+
   const MerchantNotification({
     required this.id,
     required this.type,
@@ -624,6 +632,7 @@ class MerchantNotification extends Equatable {
     required this.read,
     required this.createdAt,
     this.orderId,
+    this.data = const {},
   });
 
   factory MerchantNotification.fromJson(Map<String, dynamic> json) =>
@@ -633,6 +642,10 @@ class MerchantNotification extends Equatable {
         title: (json['title'] ?? '') as String,
         body: (json['body'] ?? '') as String,
         orderId: json['order_id'] as String?,
+        data: {
+          for (final e in ((json['data'] as Map?) ?? const {}).entries)
+            if (e.value != null) '${e.key}': '${e.value}',
+        },
         read: json['read'] == true,
         createdAt: readDate(json, 'created_at'),
       );

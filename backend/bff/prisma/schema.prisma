@@ -1013,8 +1013,22 @@ model MerchantNotification {
   /// Voir NOTIFICATION_TYPES dans notifications.service.ts.
   type               String
 
+  /// ⚠️ Écrits **en français**, dans le code serveur. Ils restent parce qu'ils
+  /// sont le repli d'un `type` que le client ne connaîtrait pas — mais
+  /// l'application ne les affiche plus quand elle sait traduire le type
+  /// (règle 4 : le serveur envoie un code, l'app traduit). Avant le
+  /// 01/08/2026 elle les affichait tels quels, donc un commerçant arabophone
+  /// lisait son unique canal d'évènements entièrement en français, sous un
+  /// titre et une consigne arabes.
   title              String
   body               String
+
+  /// Les variables du message — nom du transporteur, numéro de suivi.
+  ///
+  /// Servies **à part** parce que l'ordre des mots change d'une langue à
+  /// l'autre : les cuire dans `body` rend la phrase intraduisible sans la
+  /// redécouper.
+  data               Json?
 
   readAt             DateTime?
   createdAt          DateTime @default(now())

@@ -67,6 +67,26 @@ const Map<String, String> _fr = {
           'remise.',
   'driver.empty.default': 'Aucune commande',
   'driver.order.card.number': 'Commande #{id}',
+  // ── L'état d'une course, dit au transporteur ────────────────────────────
+  //
+  // ⚠️ Les CLÉS viennent d'`orderStateKey`, partagé avec le profil entreprise :
+  // la décision « dans quel état est cette course » est un invariant, et elle
+  // est écrite une seule fois (règle 5). Les LIBELLÉS, eux, restent séparés, et
+  // le critère de la règle 5 répond non : l'entreprise parle d'un tiers
+  // (« Conducteur désigné »), le transporteur parle de lui-même (« À
+  // démarrer »). Si l'un change, l'autre n'a aucune raison de changer.
+  //
+  // Avant le 01/08/2026, cet écran affichait le statut Fleetbase NU —
+  // « Statut : dispatched », « Statut : enroute » —, donc en arabe une phrase
+  // arabe terminée par un mot anglais. Le transporteur était le seul des trois
+  // profils dans ce cas.
+  'driver.state.draft': 'Brouillon',
+  'driver.state.broadcast': 'Proposée au réseau',
+  'driver.state.taken': 'Retirée du réseau',
+  'driver.state.awaiting_start': 'À démarrer',
+  'driver.state.enroute': 'En cours de livraison',
+  'driver.state.completed': 'Livrée',
+  'driver.state.canceled': 'Annulée',
   'driver.order.card.status': 'Statut : {status}',
 
   // ── Carte (pas encore construite, et l'écran le dit) ────────────────────
@@ -132,6 +152,13 @@ const Map<String, String> _ar = {
       'ستُرتَّب هنا مهماتك المسلَّمة أو الملغاة، مع إثبات التسليم.',
   'driver.empty.default': 'لا توجد طلبات',
   'driver.order.card.number': 'الطلب #{id}',
+  'driver.state.draft': 'مسودة',
+  'driver.state.broadcast': 'معروضة على الشبكة',
+  'driver.state.taken': 'سُحبت من الشبكة',
+  'driver.state.awaiting_start': 'في انتظار الانطلاق',
+  'driver.state.enroute': 'جارية التوصيل',
+  'driver.state.completed': 'سُلّمت',
+  'driver.state.canceled': 'أُلغيت',
   'driver.order.card.status': 'الحالة: {status}',
 
   // ── Carte ───────────────────────────────────────────────────────────────

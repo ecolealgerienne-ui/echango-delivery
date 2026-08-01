@@ -167,7 +167,12 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    const notify = (type: any, title: string, body: string) =>
+    const notify = (
+      type: any,
+      title: string,
+      body: string,
+      data?: Record<string, string | null>,
+    ) =>
       this.notifications.notify({
         merchantId: row.merchantId,
         orderId: row.id,
@@ -175,6 +180,7 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
         type,
         title,
         body,
+        data,
       });
 
     if (driverChanged) {
@@ -185,6 +191,9 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
           driverName
             ? `${driverName} a pris votre livraison ${trackingNumber ?? ''}`.trim()
             : 'Un transporteur a pris votre livraison',
+          // Les variables partent à part : c'est ce qui rend la phrase
+          // traduisible côté app sans avoir à la redécouper.
+          { driver: driverName ?? null, tracking: trackingNumber ?? null },
         );
       } else if (!TERMINAL.includes(status)) {
         // Désassignation hors annulation : le transporteur s'est désisté. Le

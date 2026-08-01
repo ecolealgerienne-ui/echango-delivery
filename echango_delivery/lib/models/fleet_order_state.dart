@@ -51,10 +51,35 @@ library;
 /// s'afficher **brut** plutôt que sous un libellé rassurant et faux. Afficher
 /// « en cours » sur un statut qu'on ne connaît pas, c'est affirmer un fait qu'on
 /// ignore, le défaut le plus répété de ce projet.
-String? fleetOrderStateKey(Map<String, dynamic> order) {
-  final status = order['status']?.toString();
-  final hasDriver =
-      order['driver_assigned_uuid'] != null || order['driver_assigned'] != null;
+String? fleetOrderStateKey(Map<String, dynamic> order) => orderStateKey(
+      status: order['status']?.toString(),
+      hasDriver: order['driver_assigned_uuid'] != null ||
+          order['driver_assigned'] != null,
+      adhoc: order['adhoc'] == true,
+      dispatched: order['dispatched'] == true,
+    );
+
+/// La même décision, à partir des faits plutôt que d'une map Fleetbase brute.
+///
+/// ── Pourquoi cette signature existe (revue du 01/08/2026, D2) ────────────
+///
+/// Le **transporteur** était le seul des trois profils à lire le statut
+/// Fleetbase nu : « Statut : dispatched », « Statut : enroute » — et en arabe,
+/// une phrase arabe terminée par un mot anglais. Or c'est exactement ce défaut
+/// que l'en-tête de ce fichier se félicite d'avoir supprimé côté entreprise.
+/// La correction s'était arrêtée à un profil sur trois.
+///
+/// Il pose la **même question** que l'entreprise — « qu'est-ce que je dois
+/// faire de cette course » — et non celle du commerçant (« où en est ma
+/// livraison »), donc le critère de la règle 5 répond oui : un seul endroit.
+/// Ce qui l'empêchait, c'était la signature, pas la logique : son modèle
+/// `Order` porte des champs typés, pas la map brute de Fleetbase.
+String? orderStateKey({
+  required String? status,
+  required bool hasDriver,
+  required bool adhoc,
+  required bool dispatched,
+}) {
 
   // L'ordre des tests est la logique du fichier, pas une commodité : on va du
   // plus terminal au plus incertain, parce qu'un fait terminal rend tous les
@@ -82,12 +107,12 @@ String? fleetOrderStateKey(Map<String, dynamic> order) {
   // le premier « l'est encore ». C'est `adhoc` qui décide si quelqu'un d'autre
   // peut la prendre — et c'est aussi lui que le dispatch natif de Fleetbase
   // consulte pour relancer ses pings toutes les ~4 minutes.
-  if (order['adhoc'] == true) return 'fleet.state.broadcast';
+  if (adhoc) return 'fleet.state.broadcast';
 
   // Plus diffusée, sans conducteur : quelqu'un l'a retirée du pool sans encore
   // désigner personne. Côté entreprise, c'est l'état qui suit une prise de
   // course, et il appelle une action.
-  if (order['dispatched'] == true) return 'fleet.state.taken';
+  if (dispatched) return 'fleet.state.taken';
 
   // Ni diffusée, ni jamais dispatchée : le commerçant ne l'a pas publiée.
   if (status == 'created') return 'fleet.state.draft';

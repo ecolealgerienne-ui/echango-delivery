@@ -103,7 +103,7 @@ class OrderDetailScreen extends StatelessWidget {
                                 final c =
                                     driverStatusColors(context, order.status);
                                 return Chip(
-                                  label: Text(order.status),
+                                  label: Text(orderStateLabelForDriver(order, (k) => _t(context, k))),
                                   backgroundColor: c.background,
                                   labelStyle: TextStyle(
                                     color: c.foreground,
