@@ -90,7 +90,7 @@ class _ProofImageState extends State<ProofImage> {
         }
 
         return ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           child: Image.memory(
             snapshot.data!,
             height: 180,

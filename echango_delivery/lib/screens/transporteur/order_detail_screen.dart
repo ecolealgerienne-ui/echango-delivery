@@ -142,7 +142,7 @@ class OrderDetailScreen extends StatelessWidget {
                               padding: const EdgeInsets.all(AppSpacing.md),
                               decoration: BoxDecoration(
                                 color: context.semantic.warningContainer,
-                                borderRadius: BorderRadius.circular(AppRadius.md),
+                                borderRadius: BorderRadius.circular(AppRadius.control),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,

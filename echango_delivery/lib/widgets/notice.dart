@@ -178,7 +178,7 @@ class AppNotice extends StatelessWidget {
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(AppRadius.control),
       ),
       // ⚠️ `center` et non `start`, alors qu'un message à deux lignes
       // demanderait plutôt `start` : le bouton « Réessayer » a une hauteur

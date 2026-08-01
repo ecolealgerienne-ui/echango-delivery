@@ -356,3 +356,118 @@ Trois questions, et la première est la seule qui bloque.
 jamais vu ces écrans.** Tout ce qui précède est mesuré sur le code — valeurs, ratios,
 comptages — et rien n'est jugé sur le rendu. Le document décrit un système, pas une
 apparence.
+
+---
+
+# Appliqué — Echango Delivery, 02/08/2026
+
+Décision retenue : **une teinte propre à Delivery, tout le reste hérité** (option 1 du
+§10). Ce qui suit est ce qui a réellement changé, et ce qui a été délibérément laissé.
+
+## La teinte, choisie par contrainte
+
+**`#4338CA`** en thème clair — un indigo. Le choix n'est pas un goût, il tient à trois
+contraintes énoncées avant de chercher une couleur :
+
+1. **distincte des deux autres à l'œil** : terracotta ≈ 15°, teal ≈ 175°, indigo ≈ 245° —
+   à peu près équidistante des deux, donc reconnaissable dans un tiroir d'applications ;
+2. **lisible en aplat sous du texte blanc**, l'`AppBar` étant pleine couleur : **7,9 : 1**,
+   au-dessus du seuil AAA (7) et pas seulement du seuil AA (4,5) ;
+3. **complémentaire du safran**, qui reste l'accent commun à la famille.
+
+Le safran `#F2A93B` est en effet **conservé tel quel** : chaque produit porte sa propre
+teinte primaire, tous partagent le même accent chaud. La famille se reconnaît, les produits
+se distinguent — ce qui est exactement l'intention que le commentaire de Promo énonce.
+
+### ⚠️ Une seconde valeur en sombre, et c'est un test qui l'a imposée
+
+Posé sur les deux thèmes, `#4338CA` produisait une `AppBar` **illisible** en sombre :
+Material calcule alors `onPrimary = #2C2960`, un indigo foncé, soit **1,67 : 1**. La cause
+est une convention qu'on enfreignait sans la voir — en thème sombre, `primary` est censé
+être une teinte *claire* et `onPrimary` une teinte foncée ; forcer un primaire sombre
+laisse `onPrimary` foncé lui aussi.
+
+Rien ne compilait différemment, rien n'était `null` : la couleur était simplement fausse.
+**C'est `test/theme_test.dart` qui l'a trouvé, à son tout premier lancement**, et c'est la
+meilleure justification de son existence.
+
+Le remède tient les deux contraintes, chacune vérifiée par un test qui tire dans un sens
+différent :
+
+| | clair | sombre |
+|---|---|---|
+| teinte | `#4338CA` | `#5B52E8` |
+| texte blanc sur la marque (≥ 4,5) | 7,9 | **5,50** |
+| marque détachée du fond (≥ 3) | 5,2 | **3,41** |
+
+Les deux teintes ont la **même** teinte HSL à moins de 5° près — deux valeurs, une seule
+couleur —, et un test le refuse si elles divergent.
+
+⚠️ **Promo court le même risque** : il pose sa teinte unique sur les deux thèmes sans
+redéclarer `onPrimary`. Son terracotta est simplement assez clair pour que ça passe. Le
+signaler vaut mieux que de le taire — c'est le genre de défaut qui ne se voit qu'en
+basculant le téléphone en sombre.
+
+## Ce qui a été repris
+
+| | |
+|---|---|
+| **Typographie** | Cairo (titres) + IBM Plex Sans Arabic (corps), échelle complète avec interlignes |
+| **Rayons** | `chip` 8 · `control` 16 · `card` 24 — **transposés par affectation** |
+| **Surfaces** | teintées, jamais neutres : `#F3F2FC` / `#111021` |
+| **Cartes** | élévation 0, bordure `outlineVariant`, `margin: zero` |
+| **`AppBar`** | pleine couleur de marque, **sur les deux thèmes** |
+| **Puces** | rayon discret, bordure au repos |
+| **Erreurs** | `#D6303D` / `#F87171`, hérités sans modification |
+
+**Les polices sont embarquées, pas téléchargées** — la seule correction apportée au système
+d'origine. Cairo n'existant en amont qu'en police variable, les trois graisses ont été
+instanciées (`fontTools.varLib.instancer`, `wght=400|600|700`), et la couverture arabe,
+latine et chiffres arabes-indiens a été relue sur les quatre fichiers. ~970 ko dans l'APK,
+licences OFL comprises, contre une dépendance de plus et un repli invisible hors ligne.
+
+## Ce qui n'a **pas** été repris, et pourquoi
+
+- **Le jeton `pill` (999).** Promo l'emploie pour son badge « -X% » ; nous n'avons aucune
+  pastille, donc il n'aurait **aucun appelant**. Un jeton sans appelant est exactement le
+  défaut de la règle 9 — il s'ajoutera avec le premier badge.
+- **La constante de mouvement (180 ms, easeOut).** Même raison, et je l'avais d'abord
+  écrite avant de me raviser : l'application **n'anime rien** — aucune `Duration` courte,
+  aucun `AnimatedSwitcher`, aucun `Tween`. La décision est consignée **ici**, où une
+  décision peut attendre son usage ; en constante, elle aurait fait croire qu'elle
+  s'applique. La règle, quand la première animation arrivera : **180 ms, `easeOut`, aucune
+  animation à ressort.**
+- **Leur absence de jetons d'espacement**, leurs couleurs sémantiques réduites, et leur
+  organisation par *features* — les trois raisons sont au §9.
+- **Leur `InputDecorationTheme`**, qui ne pose qu'un `border` et un `fillColor`. Le nôtre
+  pose ses **cinq états** ; le reprendre tel quel rouvrirait le défaut du 01/08 où un champ
+  n'avait de contour ni au repos ni au focus.
+
+## Le contrôle qui manquait
+
+`test/theme_test.dart` — **17 cas qui comparent les deux thèmes**, ce que personne ne fait
+en relisant. Chacun des cas du groupe « les deux thèmes ne divergent pas » correspond à une
+divergence **réellement constatée** : boutons absents du sombre, onglets absents du sombre,
+`AppBar` grise en sombre, champs sans contour de focus.
+
+Éprouvé par **trois mutations du vrai fichier**, et il refuse les trois : retirer
+`onPrimary`, retirer la bordure des cartes, faire passer le corps en police de titre.
+
+⚠️ **Deux tests ont dû être réécrits pendant le lot**, et c'est instructif : ils
+affirmaient « la marque est la même sur les deux thèmes » et « les onglets ont la même
+couleur des deux côtés » — deux énoncés que le correctif de contraste a rendus **faux**. Un
+test écrit contre l'état d'avant fige cet état : il devient rouge quand on corrige. La
+règle qu'ils portent maintenant est la bonne — *chaque thème suit **son** primaire*, et *les
+deux teintes restent le même indigo*.
+
+## Ce qui reste, et qui demande un écran
+
+1. **Rien n'a été regardé.** `flutter analyze` est à 0, les 76 tests passent, mais **aucun
+   de ces écrans n'a été ouvert**. Tout ce lot est vérifié par mesure, pas par le rendu — et
+   un système de design se juge à l'écran.
+2. **Les surfaces teintées, en particulier.** Le crème de Promo porte le « lien de
+   quartier » ; un fond légèrement violacé sur une application qui affiche des dettes est le
+   point le plus discutable du lot. Une constante à changer si le rendu ne convainc pas.
+3. **Un `check_theme.dart`** qui refuserait un `Color(0x…)` hors de `lib/theme/`. À écrire
+   une fois le rendu validé, pas avant : un contrôle écrit sur une cible mouvante ne prouve
+   rien.
