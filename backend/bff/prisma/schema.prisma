@@ -275,12 +275,22 @@ model DriverInvitation {
 
 // Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
 //
-// Stored here rather than in Fleetbase because whether a per-waypoint "failed"
-// status exists natively is still unverified (§4.3 flags it as to-confirm, and
-// nothing in the routes or the Activity model contradicts that). Until it is,
-// the BFF is the source of truth for the failure itself; what we do push to
-// Fleetbase is the operator-visible trace (photo proof + remarks), so a
-// dispatcher looking at the order sees something rather than silence.
+// Stocké ici et pas chez Fleetbase parce que **son flux n'a aucun état
+// d'échec** — ce que ce commentaire donnait pour « à confirmer » jusqu'au
+// 02/08/2026, et qui est désormais mesuré : le `flow` de l'`OrderConfig` est
+// une chaîne linéaire stricte,
+//
+//     created → dispatched → started → enroute → completed
+//
+// où chaque étape ne déclare qu'un seul suivant et où rien ne contient
+// `fail`/`attempt`/`unsuccess`. Une tentative de livraison ratée — client
+// absent, adresse fausse — n'a donc littéralement pas où s'écrire : ce n'est
+// pas une annulation, et le flux ne bifurque pas.
+//
+// C'est le cas nommé par la règle 1 : ce que Fleetbase ne peut
+// **structurellement** pas porter. Ce qu'on y pousse quand même est la trace
+// visible par l'opérateur (preuve photo + remarques), pour qu'un dispatcher
+// qui ouvre la commande voie quelque chose plutôt que du silence.
 model DeliveryFailure {
   id                String   @id @default(cuid())
   driverId          String
