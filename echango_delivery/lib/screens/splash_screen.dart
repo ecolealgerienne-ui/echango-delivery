@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../i18n/common_strings.dart';
+import '../state/locale_state.dart';
 import '../theme/app_spacing.dart';
 
 class SplashScreen extends StatelessWidget {
@@ -23,7 +27,8 @@ class SplashScreen extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'Commandez, livrez, suivez',
+              commonLabel('common.splash.tagline',
+                  context.read<LocaleState>().locale),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: AppSpacing.xxl),

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/merchant_order.dart';
 import '../../state/auth_state.dart';
 import '../../state/locale_state.dart';
+import '../../i18n/order_strings.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -21,6 +22,9 @@ class OrdersScreen extends StatefulWidget {
 }
 
 class _OrdersScreenState extends State<OrdersScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   @override
   void initState() {
     super.initState();
@@ -39,14 +43,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(authState.displayName ?? 'Mes livraisons'),
+        title: Text(authState.displayName ?? _t('order.list.title')),
         actions: [
           const LanguageSelector(),
           // La pastille est le seul signal d'un évènement, l'envoi push
           // n'étant pas branché : elle doit donc être visible depuis l'écran
           // d'accueil, et non enfouie dans un menu.
           IconButton(
-            tooltip: 'Notifications',
+            tooltip: _t('order.list.notifications'),
             icon: Badge(
               isLabelVisible: orderState.unreadNotifications > 0,
               label: Text('${orderState.unreadNotifications}'),
@@ -55,22 +59,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
             onPressed: () => context.push('/commercant/notifications'),
           ),
           IconButton(
-            tooltip: 'Encaissements',
+            tooltip: _t('order.list.cash'),
             icon: const Icon(Icons.account_balance_wallet_outlined),
             onPressed: () => context.push('/commercant/encaissements'),
           ),
           IconButton(
-            tooltip: 'Carnet d\'adresses',
+            tooltip: _t('order.list.addresses'),
             icon: const Icon(Icons.bookmark_border),
             onPressed: () => context.push('/commercant/adresses'),
           ),
           IconButton(
-            tooltip: 'Mes transporteurs',
+            tooltip: _t('order.list.favourites'),
             icon: const Icon(Icons.star_border),
             onPressed: () => context.push('/commercant/transporteurs'),
           ),
           IconButton(
-            tooltip: 'Déconnexion',
+            tooltip: _t('order.list.logout'),
             icon: const Icon(Icons.logout),
             onPressed: () async {
               final router = GoRouter.of(context);
@@ -83,7 +87,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.push('/commercant/nouvelle'),
         icon: const Icon(Icons.add),
-        label: const Text('Nouvelle livraison'),
+        label: Text(_t('order.form.title.new')),
       ),
       body: DefaultTabController(
         length: 2,
@@ -104,7 +108,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               child: TextField(
                 onChanged: orderState.setSearch,
                 decoration: InputDecoration(
-                  hintText: 'Rechercher un destinataire, une adresse…',
+                  hintText: _t('order.list.search'),
                   prefixIcon: const Icon(Icons.search),
                   isDense: true,
                   suffixIcon: orderState.search.isEmpty
@@ -116,10 +120,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 ),
               ),
             ),
-            const TabBar(
+            TabBar(
               tabs: [
-                Tab(text: 'En cours'),
-                Tab(text: 'Terminées'),
+                Tab(text: _t('order.list.tab.active')),
+                Tab(text: _t('order.list.tab.done')),
               ],
             ),
             Expanded(
@@ -127,19 +131,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 children: [
                   _OrderList(
                     orders: orderState.activeOrders,
-                    emptyLabel: 'Aucune livraison en cours',
-                    emptyHint: 'Appuyez sur « Nouvelle livraison » pour '
-                        'demander un transporteur.',
+                    emptyLabel: _t('order.list.empty.active'),
+                    emptyHint: _t('order.list.empty.active.hint'),
                   ),
                   _OrderList(
                     orders: orderState.pastOrders,
-                    emptyLabel: 'Aucune livraison terminée',
+                    emptyLabel: _t('order.list.empty.done'),
                     // Consigne écrite parce que le composant l'exige — cet
                     // onglet n'en avait aucune, et « Aucune livraison
                     // terminée » sur un compte neuf se lit comme une panne
                     // plutôt que comme un début.
-                    emptyHint: 'Vos livraisons achevées ou annulées se '
-                        'rangeront ici, avec leur preuve de remise.',
+                    emptyHint: _t('order.list.empty.done.hint'),
                   ),
                 ],
               ),
@@ -152,6 +154,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
 }
 
 class _OrderList extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final List<MerchantOrder> orders;
   final String emptyLabel;
 
@@ -207,7 +212,7 @@ class _OrderList extends StatelessWidget {
           if (index == orders.length) {
             return AppLoadMore(
               isLoading: state.isLoadingMore,
-              label: 'Charger les livraisons précédentes',
+              label: _t('order.list.more'),
               onPressed: state.loadMoreOrders,
             );
           }
@@ -220,7 +225,7 @@ class _OrderList extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      order.dropoff?.name ?? 'Livraison',
+                      order.dropoff?.name ?? _t('order.list.fallback'),
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
@@ -239,7 +244,7 @@ class _OrderList extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                   if (order.driverName != null)
-                    Text('Transporteur : ${order.driverName}',
+                    Text(_t('order.list.driver', {'name': order.driverName!}),
                         style: const TextStyle(fontSize: 12)),
                 ],
               ),
@@ -257,6 +262,9 @@ class _OrderList extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final MerchantOrder order;
 
   const _StatusChip({required this.order});
@@ -277,7 +285,7 @@ class _StatusChip extends StatelessWidget {
 
     if (order.degraded) {
       return Chip(
-        label: Text('État indisponible',
+        label: Text(_t('order.list.status.unavailable'),
             style: TextStyle(fontSize: 11, color: neutral.$2)),
         backgroundColor: neutral.$1,
         padding: EdgeInsets.zero,

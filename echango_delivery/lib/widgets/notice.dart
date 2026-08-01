@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../i18n/common_strings.dart';
+import '../state/locale_state.dart';
 
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_spacing.dart';
@@ -191,7 +195,10 @@ class AppNotice extends StatelessWidget {
             const SizedBox(width: AppSpacing.sm),
             TextButton(
               onPressed: onRetry,
-              child: Text(retryLabel ?? 'Réessayer',
+              child: Text(
+                  retryLabel ??
+                      commonLabel('common.retry',
+                          context.read<LocaleState>().locale),
                   style: TextStyle(color: foreground)),
             ),
           ],

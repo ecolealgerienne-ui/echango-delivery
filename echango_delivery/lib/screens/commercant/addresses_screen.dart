@@ -3,7 +3,10 @@ import 'package:provider/provider.dart';
 
 import 'package:latlong2/latlong.dart';
 
+import '../../i18n/common_strings.dart';
+import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
+import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
 import 'map_picker_screen.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -31,6 +34,12 @@ class AddressesScreen extends StatefulWidget {
 }
 
 class _AddressesScreenState extends State<AddressesScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  String _c(String key) =>
+      commonLabel(key, context.read<LocaleState>().locale);
+
   /// ⚠️ Le carnet part vide, et l'écran s'ouvre **avant** la lecture. Sans ce
   /// drapeau il affirmait « aucune adresse enregistrée » pendant tout
   /// l'aller-retour, à un commerçant qui en a dix — une phrase fausse au
@@ -63,7 +72,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
     if (result != true || !mounted) return;
     showAppSnackBar(
       context,
-      existing == null ? 'Adresse enregistrée' : 'Adresse modifiée',
+      existing == null ? _t('order.book.saved') : _t('order.book.updated'),
     );
   }
 
@@ -76,11 +85,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
   Future<void> _delete(MerchantOrderState orderState, SavedAddress a) async {
     final confirmed = await AppConfirmDialog.destructive(
       context,
-      title: 'Supprimer « ${a.name} » ?',
-      message: 'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
-          'affectées.',
-      cancelLabel: 'Retour',
-      confirmLabel: 'Supprimer',
+      title: _t('order.book.delete.title', {'name': a.name}),
+      message: _t('order.book.delete.body'),
+      cancelLabel: _c('common.back'),
+      confirmLabel: _t('order.book.delete'),
     );
 
     if (!confirmed || !mounted) return;
@@ -90,8 +98,8 @@ class _AddressesScreenState extends State<AddressesScreen> {
 
     showAppOutcome(
       context,
-      ok ? null : orderState.errorMessage ?? 'Suppression impossible',
-      'Adresse supprimée',
+      ok ? null : orderState.errorMessage ?? _t('order.book.delete.failed'),
+      _t('order.book.deleted'),
     );
   }
 
@@ -100,7 +108,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
     final orderState = context.watch<MerchantOrderState>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Carnet d\'adresses')),
+      appBar: AppBar(title: Text(_t('order.book.title'))),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
@@ -121,19 +129,17 @@ class _AddressesScreenState extends State<AddressesScreen> {
 
     if (orderState.addressesUnavailable) {
       return AppEmptyState.unavailable(
-        title: 'Carnet d\'adresses indisponible',
-        hint: 'Vos adresses n\'ont pas pu être lues. Vérifiez votre connexion, '
-            'puis réessayez.',
+        title: _t('order.book.unavailable'),
+        hint: _t('order.book.unavailable.hint'),
         scrollable: false,
         onRetry: () => orderState.loadAddresses(),
       );
     }
 
     if (orderState.addresses.isEmpty) {
-      return const AppEmptyState(
-        title: 'Aucune adresse enregistrée',
-        hint: 'Enregistrez vos points de retrait et destinataires '
-            'fréquents pour remplir une demande en un tap.',
+      return AppEmptyState(
+        title: _t('order.book.empty'),
+        hint: _t('order.book.empty.hint'),
         icon: Icons.bookmark_border,
         scrollable: false,
       );
@@ -157,7 +163,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                 if (a.isDefault) ...[
                   const SizedBox(width: 6),
                   Text(
-                    '· Principale',
+                    _t('order.book.default_badge'),
                     style: Theme.of(context)
                         .textTheme
                         .bodySmall
@@ -181,7 +187,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
                 // évite de le découvrir au moment de commander.
                 if (!a.hasPosition)
                   Text(
-                    'Position manquante — à compléter',
+                    _t('order.book.no_position'),
                     style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(context).colorScheme.error,
@@ -194,7 +200,7 @@ class _AddressesScreenState extends State<AddressesScreen> {
             onTap: () => _openForm(a),
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline),
-              tooltip: 'Supprimer',
+              tooltip: _t('order.book.delete'),
               onPressed: () => _delete(orderState, a),
             ),
           ),
@@ -221,6 +227,9 @@ class _AddressFormScreen extends StatefulWidget {
 }
 
 class _AddressFormScreenState extends State<_AddressFormScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final _name = TextEditingController();
   final _address = TextEditingController();
   final _contact = TextEditingController();
@@ -295,7 +304,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     final result = await Navigator.of(context).push<PickedLocation>(
       MaterialPageRoute(
         builder: (_) => MapPickerScreen(
-          title: 'Position de l\'adresse',
+          title: _t('order.book.position.title'),
           initial: _point,
         ),
       ),
@@ -334,19 +343,16 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     final replace = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Remplacer l\'adresse ?'),
-        content: Text(
-          'Préremplir le champ Adresse avec « $label », la position que vous '
-          'venez de sélectionner sur la carte ?',
-        ),
+        title: Text(_t('order.book.replace.title')),
+        content: Text(_t('order.book.replace.body', {'label': label})),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Garder mon texte'),
+            child: Text(_t('order.book.replace.keep')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remplacer'),
+            child: Text(_t('order.book.replace.confirm')),
           ),
         ],
       ),
@@ -371,8 +377,8 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
       showAppError(
         context,
         _name.text.trim().isEmpty
-            ? 'Le nom est obligatoire'
-            : 'Le téléphone est obligatoire',
+            ? _t('order.book.name.required')
+            : _t('order.book.phone.required'),
       );
       return;
     }
@@ -420,7 +426,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
     } else {
       showAppError(
         context,
-        orderState.errorMessage ?? 'Enregistrement impossible',
+        orderState.errorMessage ?? _t('order.book.save.failed'),
       );
     }
   }
@@ -429,7 +435,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEdit ? 'Modifier l\'adresse' : 'Nouvelle adresse'),
+        title: Text(_isEdit ? _t('order.book.form.edit') : _t('order.book.form.new')),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -437,18 +443,18 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _field(_name, 'Nom *', Icons.label_outline),
-              _field(_address, 'Adresse', Icons.place_outlined),
-              _field(_contact, 'Contact', Icons.person_outline),
-              _field(_phone, 'Téléphone *', Icons.phone_outlined,
+              _field(_name, _t('order.book.field.name'), Icons.label_outline),
+              _field(_address, _t('order.form.address'), Icons.place_outlined),
+              _field(_contact, _t('order.book.field.contact'), Icons.person_outline),
+              _field(_phone, _t('order.form.phone'), Icons.phone_outlined,
                   keyboard: TextInputType.phone),
               const SizedBox(height: AppSpacing.sm),
               FilledButton.tonalIcon(
                 onPressed: _pickOnMap,
                 icon: const Icon(Icons.map_outlined),
                 label: Text(_point == null
-                    ? 'Placer sur la carte'
-                    : 'Modifier la position'),
+                    ? _t('order.form.location.pick')
+                    : _t('order.book.position.edit')),
               ),
               const SizedBox(height: AppSpacing.sm),
               // Optionnelle, mais son absence a une conséquence concrète à
@@ -467,9 +473,8 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                   Expanded(
                     child: Text(
                       _point == null
-                          ? 'Position non définie (facultatif) — à compléter '
-                              'avant de commander avec cette adresse'
-                          : 'Position définie',
+                          ? _t('order.book.position.unset')
+                          : _t('order.book.position.set'),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ),
@@ -480,10 +485,9 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                 contentPadding: EdgeInsets.zero,
                 value: _isDefault,
                 onChanged: (v) => setState(() => _isDefault = v),
-                title: const Text('Adresse principale'),
+                title: Text(_t('order.book.default')),
                 subtitle: Text(
-                  'Préremplit le retrait à chaque nouvelle livraison. '
-                  'Une seule adresse principale à la fois.',
+                  _t('order.book.default.hint'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -497,7 +501,7 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_outlined),
-                label: const Text('Enregistrer'),
+                label: Text(_t('order.book.save')),
               ),
             ],
           ),

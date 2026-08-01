@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../config/dev_accounts.dart';
+import '../../i18n/auth_strings.dart';
+import '../../state/locale_state.dart';
 import '../../state/auth_state.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/error_banner.dart';
@@ -22,6 +24,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      authLabel(key, context.read<LocaleState>().locale, vars);
+
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -60,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = account?.password ?? _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      showAppError(context, 'Renseigner l\'email et le mot de passe');
+      showAppError(context, _t('auth.login.missing'));
       return;
     }
 
@@ -109,9 +114,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      prefixIcon: Icon(Icons.email_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.login.email'),
+                      prefixIcon: const Icon(Icons.email_outlined),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
@@ -119,9 +124,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _passwordController,
                     obscureText: true,
                     onSubmitted: (_) => _submit(authState),
-                    decoration: const InputDecoration(
-                      labelText: 'Mot de passe',
-                      prefixIcon: Icon(Icons.lock_outlined),
+                    decoration: InputDecoration(
+                      labelText: _t('auth.login.password'),
+                      prefixIcon: const Icon(Icons.lock_outlined),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xl),
@@ -134,7 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             width: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Se connecter'),
+                        : Text(_t('auth.login.submit')),
                   ),
 
                   const SizedBox(height: AppSpacing.sm),
@@ -145,10 +150,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   // l'ambiguïté.
                   TextButton(
                     onPressed: () => context.push('/register'),
-                    child: const Text('Créer un compte commerçant'),
+                    child: Text(_t('auth.login.register')),
                   ),
                   Text(
-                    'Les accès transporteur sont créés par Echango.',
+                    _t('auth.login.driver_note'),
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
@@ -157,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Le serveur refuse de trancher à la place de l'utilisateur.
                   if (authState.ambiguousRoles.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    Text('Ouvrir en tant que',
+                    Text(_t('auth.login.open_as'),
                         style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: AppSpacing.sm),
                     Wrap(
@@ -199,7 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
       children: [
         const SizedBox(height: AppSpacing.xl),
         Text(
-          'Comptes de test (debug)',
+          _t('auth.login.dev_accounts'),
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),

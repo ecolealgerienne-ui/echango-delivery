@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../i18n/common_strings.dart';
+import '../state/locale_state.dart';
 
 import '../theme/app_spacing.dart';
 
@@ -68,7 +72,9 @@ class AppErrorBanner extends StatelessWidget {
             TextButton(
               onPressed: onRetry,
               child: Text(
-                retryLabel ?? 'Réessayer',
+                retryLabel ??
+                    commonLabel('common.retry',
+                        context.read<LocaleState>().locale),
                 style: TextStyle(color: scheme.onErrorContainer),
               ),
             ),

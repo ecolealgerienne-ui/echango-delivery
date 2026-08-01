@@ -277,6 +277,213 @@ const Map<String, String> _fr = {
   'order.failure.acces_impossible':
       'Accès impossible (site fermé, zone inaccessible)',
   'order.failure.autre': 'Autre motif',
+
+  // ── Fiche de course (transporteur) ──────────────────────────────────────
+  //
+  // Vocabulaire distinct de celui du commerçant, et délibérément : le
+  // transporteur prend une « course », le commerçant suit une « livraison ».
+  'driver.order.title': 'Détail de la commande',
+  'driver.order.not_found': 'Commande introuvable',
+  'driver.order.number': 'Commande {id}',
+  'driver.order.created': 'Créée le :',
+  'driver.order.updated': 'Mise à jour :',
+  'driver.order.cod.label': 'À encaisser : {amount}',
+  'driver.order.cod.hint':
+      'Somme due par le destinataire au commerçant. Vous la conservez et la '
+          'lui remettez au prochain enlèvement.',
+  'driver.order.redacted.title': 'Course non réclamée',
+  'driver.order.redacted.body':
+      'Le nom et le téléphone du destinataire apparaissent dès que vous '
+          'acceptez. Tout le reste est affiché.',
+  'driver.order.accept': 'Accepter cette course',
+  'driver.order.accept.done': 'Course acceptée',
+  'driver.order.activity.pod': '{label} (preuve requise)',
+  'driver.order.activity.done': 'Étape appliquée : {label}',
+  'driver.order.activity.failed': 'Échec de la mise à jour',
+  'driver.order.decline': 'Refuser cette course',
+  'driver.order.decline.body':
+      'Elle ne vous sera plus proposée. Les autres transporteurs la voient '
+          'toujours.',
+  'driver.order.decline.done': 'Course écartée. Elle ne vous sera plus proposée.',
+  'driver.order.decline.failed': 'Refus impossible',
+  'driver.order.release': 'Rendre cette course',
+  'driver.order.release.body':
+      'Elle sera proposée aux autres transporteurs du réseau, et le commerçant '
+          'en sera informé.',
+  'driver.order.release.confirm': 'Rendre la course',
+  'driver.order.release.done':
+      'Course rendue au réseau. Le commerçant en a été informé.',
+  'driver.order.note': 'Précision (facultatif)',
+  'driver.order.report_failure': 'Signaler un échec de livraison',
+  'driver.order.proof.hint':
+      'Cette étape exige une photo : colis remis, signature, ou dépôt convenu.',
+  'driver.order.proof.submit': 'Envoyer la preuve et valider l’étape',
+  'driver.order.proof.failed': 'Envoi de la preuve impossible',
+  'driver.order.place.no_address': 'Adresse non renseignée',
+  'driver.order.place.address_in_notes': 'Adresse dans les précisions',
+  'driver.order.place.contact': 'Contact : {name}',
+  'driver.order.route': 'Itinéraire',
+  'driver.order.nav.none':
+      'Aucune application de navigation trouvée sur cet appareil.',
+  'driver.order.call.failed': 'Impossible de lancer l’appel.',
+  'driver.order.failures.many': '{count} échecs de livraison signalés',
+  'driver.order.failures.one': 'Échec de livraison signalé',
+  'driver.order.failures.attempt': 'Tentative {n} — {date}',
+  'driver.order.failures.note':
+      'La commande conserve son statut : le signalement est transmis à '
+          'l’opérateur, qui décide de la suite.',
+  'driver.order.failures.reason': 'Motif :',
+  'driver.order.failures.notes': 'Notes :',
+  'driver.order.cash.expected': 'Montant attendu : {amount}',
+  'driver.order.cash.collected': 'Montant réellement perçu',
+  'driver.order.cash.why': 'Pourquoi l’écart ?',
+  'driver.order.cash.hint':
+      'Cette somme sera ajoutée à ce que vous devez remettre au commerçant. '
+          'Vous la retrouverez dans « Ma caisse ».',
+  'driver.order.cash.submit': 'Valider et clôturer la livraison',
+
+  // ── Motifs de refus — liste fermée du BFF, comme les motifs d'échec ─────
+  'driver.reason.prix_insuffisant': 'Le prix ne couvre pas le trajet',
+  'driver.reason.trop_loin': 'Trop loin de ma position',
+  'driver.reason.vehicule_inadapte': 'Mon véhicule n’est pas adapté',
+  'driver.reason.creneau_impossible': 'Je ne suis pas libre à cet horaire',
+  'driver.reason.colis_inadapte': 'Le colis ne me convient pas',
+  'driver.reason.indisponible': 'Je ne suis pas disponible',
+  'driver.reason.autre': 'Autre raison',
+
+  // ── Liste des livraisons (commerçant) ───────────────────────────────────
+  'order.list.title': 'Mes livraisons',
+  'order.list.notifications': 'Notifications',
+  'order.list.cash': 'Encaissements',
+  'order.list.addresses': 'Carnet d’adresses',
+  'order.list.favourites': 'Mes transporteurs',
+  'order.list.logout': 'Déconnexion',
+  'order.list.search': 'Rechercher un destinataire, une adresse…',
+  'order.list.tab.active': 'En cours',
+  'order.list.tab.done': 'Terminées',
+  'order.list.empty.active': 'Aucune livraison en cours',
+  'order.list.empty.active.hint':
+      'Appuyez sur « Nouvelle livraison » pour demander un transporteur.',
+  'order.list.empty.done': 'Aucune livraison terminée',
+  'order.list.empty.done.hint':
+      'Vos livraisons achevées ou annulées se rangeront ici, avec leur preuve '
+          'de remise.',
+  'order.list.more': 'Charger les livraisons précédentes',
+  // Repli quand le destinataire n'a pas de nom : distinct de la section
+  // « Livraison » du formulaire, qui ne changerait pas avec lui.
+  'order.list.fallback': 'Livraison',
+  'order.list.driver': 'Transporteur : {name}',
+  'order.list.status.unavailable': 'État indisponible',
+
+  // ── Notifications ───────────────────────────────────────────────────────
+  'order.notifications.title': 'Notifications',
+  'order.notifications.mark_all': 'Tout marquer lu',
+  'order.notifications.empty': 'Aucune notification',
+  'order.notifications.empty.hint':
+      'Vous serez prévenu ici quand un transporteur prend une de vos '
+          'livraisons, et quand elle arrive à destination.',
+
+  // ── Carnet d'adresses ───────────────────────────────────────────────────
+  'order.book.title': 'Carnet d’adresses',
+  'order.book.saved': 'Adresse enregistrée',
+  'order.book.updated': 'Adresse modifiée',
+  'order.book.deleted': 'Adresse supprimée',
+  'order.book.delete': 'Supprimer',
+  'order.book.delete.title': 'Supprimer « {name} » ?',
+  'order.book.delete.body':
+      'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
+          'affectées.',
+  'order.book.delete.failed': 'Suppression impossible',
+  'order.book.unavailable': 'Carnet d’adresses indisponible',
+  'order.book.unavailable.hint':
+      'Vos adresses n’ont pas pu être lues. Vérifiez votre connexion, puis '
+          'réessayez.',
+  'order.book.empty': 'Aucune adresse enregistrée',
+  'order.book.empty.hint':
+      'Enregistrez vos points de retrait et destinataires fréquents pour '
+          'remplir une demande en un tap.',
+  'order.book.default_badge': '· Principale',
+  'order.book.no_position': 'Position manquante — à compléter',
+  'order.book.position.title': 'Position de l’adresse',
+  'order.book.replace.title': 'Remplacer l’adresse ?',
+  'order.book.replace.body':
+      'Préremplir le champ Adresse avec « {label} », la position que vous venez '
+          'de sélectionner sur la carte ?',
+  'order.book.replace.keep': 'Garder mon texte',
+  'order.book.replace.confirm': 'Remplacer',
+  'order.book.name.required': 'Le nom est obligatoire',
+  'order.book.phone.required': 'Le téléphone est obligatoire',
+  'order.book.save.failed': 'Enregistrement impossible',
+  'order.book.form.edit': 'Modifier l’adresse',
+  'order.book.form.new': 'Nouvelle adresse',
+  'order.book.field.name': 'Nom *',
+  'order.book.field.contact': 'Contact',
+  'order.book.position.edit': 'Modifier la position',
+  'order.book.position.unset':
+      'Position non définie (facultatif) — à compléter avant de commander avec '
+          'cette adresse',
+  'order.book.position.set': 'Position définie',
+  'order.book.default': 'Adresse principale',
+  'order.book.default.hint':
+      'Préremplit le retrait à chaque nouvelle livraison. Une seule adresse '
+          'principale à la fois.',
+  'order.book.save': 'Enregistrer',
+
+  // ── Transporteurs favoris ───────────────────────────────────────────────
+  'order.fav.title': 'Mes transporteurs',
+  'order.fav.search.failed': 'Recherche impossible : {error}',
+  'order.fav.add.failed': 'Ajout impossible',
+  'order.fav.load.failed': 'Chargement impossible : {error}',
+  'order.fav.add.section': 'Ajouter un transporteur',
+  'order.fav.search': 'Nom ou téléphone du transporteur',
+  'order.fav.search.hint':
+      'Cherchez par le nom ou le téléphone communiqué par Echango. {min} '
+          'caractères minimum.',
+  'order.fav.search.too_many':
+      'Trop de correspondances. Précisez le nom ou saisissez le numéro de '
+          'téléphone.',
+  'order.fav.search.none':
+      'Aucun transporteur ne correspond. Vérifiez le nom, ou demandez-lui le '
+          'numéro qu’il a donné à Echango.',
+  'order.fav.no_account':
+      'N’a pas encore installé l’application — aucune course ne lui sera '
+          'proposée pour l’instant.',
+  'order.fav.add': 'Ajouter aux favoris',
+  'order.fav.section': 'Favoris',
+  'order.fav.empty':
+      'Aucun favori. Vos livraisons sont proposées à l’ensemble du réseau.',
+  'order.fav.remove': 'Retirer des favoris',
+  'order.fav.known': 'Déjà intervenus pour vous',
+  'order.fav.known.empty':
+      'Aucun autre transporteur pour l’instant. La liste se remplit au fil de '
+          'vos livraisons.',
+
+  // ── Sélecteur de point sur la carte ─────────────────────────────────────
+  'order.map.search': 'Rechercher une adresse…',
+  'order.map.searching': 'Recherche de l’adresse…',
+  'order.map.no_address':
+      'Point sans adresse connue — la position est tout de même utilisable',
+  'order.map.confirm': 'Valider ce point',
+
+  // ── Signalement d'échec (transporteur) ──────────────────────────────────
+  'driver.failure.title': 'Signaler un échec de livraison',
+  'driver.failure.intro': 'Indiquez pourquoi la livraison n’a pas pu se faire.',
+  'driver.failure.reason': 'Motif',
+  'driver.failure.notes': 'Notes complémentaires (facultatif)',
+  'driver.failure.notes.hint': 'Précisions éventuelles…',
+  'driver.failure.photo': 'Photo (facultative)',
+  'driver.failure.photo.hint':
+      'Utile quand l’échec se constate : porte close, adresse introuvable, '
+          'colis refusé.',
+  'driver.failure.submit': 'Signaler l’échec',
+  'driver.failure.done': 'Échec de livraison signalé',
+  'driver.failure.done.no_photo':
+      'Signalement enregistré, mais la photo n’a pas pu être jointe.',
+  'driver.failure.failed': 'Signalement impossible',
+
+  // ── Fiche de course : compléments ───────────────────────────────────────
+  'driver.order.decline.confirm': 'Refuser',
+  'driver.order.cash.title': 'Encaissement',
 };
 
 const Map<String, String> _ar = {
@@ -468,4 +675,185 @@ const Map<String, String> _ar = {
   'order.failure.colis_endommage': 'طرد متضرر أو ناقص',
   'order.failure.acces_impossible': 'تعذّر الوصول (موقع مغلق، منطقة غير قابلة للولوج)',
   'order.failure.autre': 'سبب آخر',
+
+  // ── Fiche de course (transporteur) ──────────────────────────────────────
+  'driver.order.title': 'تفاصيل الطلب',
+  'driver.order.not_found': 'الطلب غير موجود',
+  'driver.order.number': 'الطلب {id}',
+  'driver.order.created': 'أُنشئ في:',
+  'driver.order.updated': 'آخر تحديث:',
+  'driver.order.cod.label': 'للتحصيل: {amount}',
+  'driver.order.cod.hint':
+      'مبلغ يدين به المرسل إليه للتاجر. تحتفظ به وتسلّمه له عند الاستلام '
+          'القادم.',
+  'driver.order.redacted.title': 'مهمة غير محجوزة',
+  'driver.order.redacted.body':
+      'يظهر اسم المرسل إليه وهاتفه بمجرد قبولك. وكل ما عدا ذلك معروض.',
+  'driver.order.accept': 'قبول هذه المهمة',
+  'driver.order.accept.done': 'قُبلت المهمة',
+  'driver.order.activity.pod': '{label} (إثبات مطلوب)',
+  'driver.order.activity.done': 'طُبّقت المرحلة: {label}',
+  'driver.order.activity.failed': 'فشل التحديث',
+  'driver.order.decline': 'رفض هذه المهمة',
+  'driver.order.decline.body':
+      'لن تُعرض عليك بعد الآن. ويبقى الناقلون الآخرون يرونها.',
+  'driver.order.decline.done': 'استُبعدت المهمة. لن تُعرض عليك بعد الآن.',
+  'driver.order.decline.failed': 'تعذّر الرفض',
+  'driver.order.release': 'إرجاع هذه المهمة',
+  'driver.order.release.body':
+      'ستُعرض على ناقلي الشبكة الآخرين، وسيُعلَم التاجر بذلك.',
+  'driver.order.release.confirm': 'إرجاع المهمة',
+  'driver.order.release.done': 'أُرجعت المهمة إلى الشبكة. وأُعلم التاجر بذلك.',
+  'driver.order.note': 'توضيح (اختياري)',
+  'driver.order.report_failure': 'الإبلاغ عن فشل التسليم',
+  'driver.order.proof.hint':
+      'تتطلب هذه المرحلة صورة: الطرد مسلَّم، توقيع، أو إيداع متفق عليه.',
+  'driver.order.proof.submit': 'إرسال الإثبات وإتمام المرحلة',
+  'driver.order.proof.failed': 'تعذّر إرسال الإثبات',
+  'driver.order.place.no_address': 'العنوان غير مذكور',
+  'driver.order.place.address_in_notes': 'العنوان في التوضيحات',
+  'driver.order.place.contact': 'جهة الاتصال: {name}',
+  'driver.order.route': 'المسار',
+  'driver.order.nav.none': 'لا يوجد تطبيق ملاحة على هذا الجهاز.',
+  'driver.order.call.failed': 'تعذّر إجراء المكالمة.',
+  'driver.order.failures.many': '{count} حالات فشل تسليم مُبلَّغ عنها',
+  'driver.order.failures.one': 'أُبلغ عن فشل التسليم',
+  'driver.order.failures.attempt': 'المحاولة {n} — {date}',
+  'driver.order.failures.note':
+      'يحتفظ الطلب بحالته: يُرسَل البلاغ إلى المشغّل، وهو من يقرر ما يليه.',
+  'driver.order.failures.reason': 'السبب:',
+  'driver.order.failures.notes': 'ملاحظات:',
+  'driver.order.cash.expected': 'المبلغ المتوقع: {amount}',
+  'driver.order.cash.collected': 'المبلغ المحصَّل فعليًا',
+  'driver.order.cash.why': 'ما سبب الفارق؟',
+  'driver.order.cash.hint':
+      'يُضاف هذا المبلغ إلى ما عليك تسليمه للتاجر. ستجده في «صندوقي».',
+  'driver.order.cash.submit': 'التأكيد وإغلاق التوصيل',
+
+  // ── Motifs de refus ─────────────────────────────────────────────────────
+  'driver.reason.prix_insuffisant': 'السعر لا يغطي المسافة',
+  'driver.reason.trop_loin': 'بعيد جدًا عن موقعي',
+  'driver.reason.vehicule_inadapte': 'مركبتي غير مناسبة',
+  'driver.reason.creneau_impossible': 'لست متفرغًا في هذا الموعد',
+  'driver.reason.colis_inadapte': 'الطرد لا يناسبني',
+  'driver.reason.indisponible': 'لست متاحًا',
+  'driver.reason.autre': 'سبب آخر',
+
+  // ── Liste des livraisons (commerçant) ───────────────────────────────────
+  'order.list.title': 'توصيلاتي',
+  'order.list.notifications': 'الإشعارات',
+  'order.list.cash': 'التحصيلات',
+  'order.list.addresses': 'دفتر العناوين',
+  'order.list.favourites': 'ناقليّ',
+  'order.list.logout': 'تسجيل الخروج',
+  'order.list.search': 'ابحث عن مرسل إليه أو عنوان…',
+  'order.list.tab.active': 'الجارية',
+  'order.list.tab.done': 'المنتهية',
+  'order.list.empty.active': 'لا يوجد توصيل جارٍ',
+  'order.list.empty.active.hint':
+      'اضغط «توصيل جديد» لطلب ناقل.',
+  'order.list.empty.done': 'لا يوجد توصيل منتهٍ',
+  'order.list.empty.done.hint':
+      'ستُرتَّب هنا توصيلاتك المنتهية أو الملغاة، مع إثبات التسليم.',
+  'order.list.more': 'تحميل التوصيلات السابقة',
+  'order.list.fallback': 'توصيل',
+  'order.list.driver': 'الناقل: {name}',
+  'order.list.status.unavailable': 'الحالة غير متاحة',
+
+  // ── Notifications ───────────────────────────────────────────────────────
+  'order.notifications.title': 'الإشعارات',
+  'order.notifications.mark_all': 'تعليم الكل كمقروء',
+  'order.notifications.empty': 'لا توجد إشعارات',
+  'order.notifications.empty.hint':
+      'ستُعلَم هنا عندما يأخذ ناقل أحد توصيلاتك، وعندما يصل إلى وجهته.',
+
+  // ── Carnet d'adresses ───────────────────────────────────────────────────
+  'order.book.title': 'دفتر العناوين',
+  'order.book.saved': 'حُفظ العنوان',
+  'order.book.updated': 'عُدّل العنوان',
+  'order.book.deleted': 'حُذف العنوان',
+  'order.book.delete': 'حذف',
+  'order.book.delete.title': 'حذف «{name}»؟',
+  'order.book.delete.body':
+      'سيختفي من الدفتر. ولن تتأثر توصيلاتك السابقة.',
+  'order.book.delete.failed': 'تعذّر الحذف',
+  'order.book.unavailable': 'دفتر العناوين غير متاح',
+  'order.book.unavailable.hint':
+      'تعذّرت قراءة عناوينك. تحقّق من اتصالك ثم أعد المحاولة.',
+  'order.book.empty': 'لا يوجد عنوان مسجَّل',
+  'order.book.empty.hint':
+      'سجّل نقاط الاستلام والمرسل إليهم المتكررين لملء الطلب بضغطة واحدة.',
+  'order.book.default_badge': '· رئيسي',
+  'order.book.no_position': 'الموقع ناقص — يجب استكماله',
+  'order.book.position.title': 'موقع العنوان',
+  'order.book.replace.title': 'استبدال العنوان؟',
+  'order.book.replace.body':
+      'هل تريد ملء حقل العنوان بـ«{label}»، الموقع الذي حدّدته على الخريطة؟',
+  'order.book.replace.keep': 'الإبقاء على نصي',
+  'order.book.replace.confirm': 'استبدال',
+  'order.book.name.required': 'الاسم إلزامي',
+  'order.book.phone.required': 'الهاتف إلزامي',
+  'order.book.save.failed': 'تعذّر الحفظ',
+  'order.book.form.edit': 'تعديل العنوان',
+  'order.book.form.new': 'عنوان جديد',
+  'order.book.field.name': 'الاسم *',
+  'order.book.field.contact': 'جهة الاتصال',
+  'order.book.position.edit': 'تعديل الموقع',
+  'order.book.position.unset':
+      'الموقع غير محدد (اختياري) — يجب استكماله قبل الطلب بهذا العنوان',
+  'order.book.position.set': 'الموقع محدد',
+  'order.book.default': 'العنوان الرئيسي',
+  'order.book.default.hint':
+      'يملأ الاستلام مسبقًا في كل توصيل جديد. عنوان رئيسي واحد فقط.',
+  'order.book.save': 'حفظ',
+
+  // ── Transporteurs favoris ───────────────────────────────────────────────
+  'order.fav.title': 'ناقليّ',
+  'order.fav.search.failed': 'تعذّر البحث: {error}',
+  'order.fav.add.failed': 'تعذّرت الإضافة',
+  'order.fav.load.failed': 'تعذّر التحميل: {error}',
+  'order.fav.add.section': 'إضافة ناقل',
+  'order.fav.search': 'اسم الناقل أو هاتفه',
+  'order.fav.search.hint':
+      'ابحث بالاسم أو بالهاتف الذي أعطته Echango. {min} أحرف على الأقل.',
+  'order.fav.search.too_many':
+      'نتائج كثيرة. حدّد الاسم أكثر أو أدخل رقم الهاتف.',
+  'order.fav.search.none':
+      'لا يوجد ناقل مطابق. تحقّق من الاسم، أو اطلب منه الرقم الذي أعطاه '
+          'لـEchango.',
+  'order.fav.no_account':
+      'لم يثبّت التطبيق بعد — لن تُعرض عليه أي مهمة حاليًا.',
+  'order.fav.add': 'إضافة إلى المفضلة',
+  'order.fav.section': 'المفضّلون',
+  'order.fav.empty': 'لا يوجد مفضّل. تُعرض توصيلاتك على كامل الشبكة.',
+  'order.fav.remove': 'إزالة من المفضلة',
+  'order.fav.known': 'سبق أن عملوا معك',
+  'order.fav.known.empty':
+      'لا يوجد ناقل آخر حاليًا. تمتلئ القائمة مع توالي توصيلاتك.',
+
+  // ── Sélecteur de point sur la carte ─────────────────────────────────────
+  'order.map.search': 'ابحث عن عنوان…',
+  'order.map.searching': 'جارٍ البحث عن العنوان…',
+  'order.map.no_address':
+      'نقطة بدون عنوان معروف — الموقع صالح للاستعمال مع ذلك',
+  'order.map.confirm': 'تأكيد هذه النقطة',
+
+  // ── Signalement d'échec (transporteur) ──────────────────────────────────
+  'driver.failure.title': 'الإبلاغ عن فشل التسليم',
+  'driver.failure.intro': 'بيّن سبب تعذّر التسليم.',
+  'driver.failure.reason': 'السبب',
+  'driver.failure.notes': 'ملاحظات إضافية (اختياري)',
+  'driver.failure.notes.hint': 'توضيحات عند الاقتضاء…',
+  'driver.failure.photo': 'صورة (اختيارية)',
+  'driver.failure.photo.hint':
+      'مفيدة عندما يكون الفشل ظاهرًا: باب مغلق، عنوان غير موجود، طرد مرفوض.',
+  'driver.failure.submit': 'الإبلاغ عن الفشل',
+  'driver.failure.done': 'أُبلغ عن فشل التسليم',
+  'driver.failure.done.no_photo':
+      'سُجّل البلاغ، لكن تعذّر إرفاق الصورة.',
+  'driver.failure.failed': 'تعذّر الإبلاغ',
+
+  // ── Fiche de course : compléments ───────────────────────────────────────
+  'driver.order.decline.confirm': 'رفض',
+  'driver.order.cash.title': 'التحصيل',
 };

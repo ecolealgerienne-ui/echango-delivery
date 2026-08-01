@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
 import '../../models/order.dart'
     show deliveryFailureLabel, deliveryFailureReasons;
 import '../../services/photo_service.dart';
@@ -24,6 +25,9 @@ class DeliveryFailureScreen extends StatefulWidget {
 }
 
 class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   late String _selectedReason;
   late TextEditingController _notesController;
   CapturedPhoto? _photo;
@@ -53,7 +57,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Report Delivery Failure'),
+        title: Text(_t('driver.failure.title')),
         elevation: 0,
       ),
       body: SingleChildScrollView(
@@ -70,12 +74,12 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                       // interpolait l'objet `widget` puis affichait « .orderId »
                       // en littéral — l'écran montrait le nom de la classe
                       // suivi d'un fragment de code.
-                      'Commande ${widget.orderId}',
+                      _t('driver.order.number', {'id': widget.orderId}),
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     Text(
-                      'Report the reason for delivery failure',
+                      _t('driver.failure.intro'),
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
@@ -86,7 +90,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             const SizedBox(height: AppSpacing.xl),
             // Reason Selection
             Text(
-              'Failure Reason',
+              _t('driver.failure.reason'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -115,14 +119,14 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             const SizedBox(height: AppSpacing.xl),
             // Notes
             Text(
-              'Additional Notes (Optional)',
+              _t('driver.failure.notes'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _notesController,
-              decoration: const InputDecoration(
-                hintText: 'Précisions éventuelles…',
+              decoration: InputDecoration(
+                hintText: _t('driver.failure.notes.hint'),
               ),
               maxLines: 4,
             ),
@@ -132,9 +136,8 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             // (destinataire absent). L'imposer pousserait à photographier
             // n'importe quoi pour débloquer l'écran.
             PhotoField(
-              label: 'Photo (facultative)',
-              helperText: 'Utile quand l\'échec se constate : porte close, '
-                  'adresse introuvable, colis refusé.',
+              label: _t('driver.failure.photo'),
+              helperText: _t('driver.failure.photo.hint'),
               onChanged: (photo) => setState(() => _photo = photo),
             ),
             const SizedBox(height: AppSpacing.xxl),
@@ -154,9 +157,9 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                           // La couleur suit le `foregroundColor` du bouton.
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text(
-                          'Signaler l\'échec',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      : Text(
+                          _t('driver.failure.submit'),
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 );
               },
@@ -196,8 +199,8 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
       showAppSnackBar(
         context,
         photoLost
-            ? 'Signalement enregistré, mais la photo n\'a pas pu être jointe.'
-            : 'Échec de livraison signalé',
+            ? _t('driver.failure.done.no_photo')
+            : _t('driver.failure.done'),
         tone: photoLost ? SnackTone.warning : SnackTone.success,
       );
       // Un seul pop : revenir au détail, qui recharge et affiche désormais le
@@ -207,7 +210,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
     } else {
       // Sans ça, un échec du signalement ne produisait STRICTEMENT rien à
       // l'écran : ni message, ni navigation. Indiscernable d'un bouton mort.
-      showAppError(context, orderState.errorMessage ?? 'Signalement impossible');
+      showAppError(context, orderState.errorMessage ?? _t('driver.failure.failed'));
     }
   }
 }

@@ -219,7 +219,10 @@ void main(List<String> args) {
   const tables = {
     'lib/i18n/fleet_strings.dart': 'Libellés flotte',
     'lib/i18n/cash_strings.dart': 'Libellés caisse',
-    'lib/i18n/order_strings.dart': 'Libellés des livraisons (commerçant)',
+    'lib/i18n/order_strings.dart': 'Libellés des livraisons',
+    'lib/i18n/driver_strings.dart': 'Libellés espace transporteur',
+    'lib/i18n/auth_strings.dart': 'Libellés connexion',
+    'lib/i18n/common_strings.dart': 'Libellés partagés',
   };
 
   for (final entry in tables.entries) {

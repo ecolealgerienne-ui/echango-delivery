@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
 import '../../models/cash.dart';
 import '../../state/locale_state.dart';
 import '../../models/order.dart';
@@ -20,6 +21,9 @@ import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
 
 class OrderDetailScreen extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final String orderId;
 
   const OrderDetailScreen({super.key, required this.orderId});
@@ -35,7 +39,7 @@ class OrderDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Détail de la commande'),
+          title: Text(_t('driver.order.title')),
           elevation: 0,
         ),
         body: Consumer<OrderState>(
@@ -57,7 +61,7 @@ class OrderDetailScreen extends StatelessWidget {
             }
 
             if (order == null) {
-              return const Center(child: Text('Commande introuvable'));
+              return Center(child: Text(_t('driver.order.not_found')));
             }
 
             return SingleChildScrollView(
@@ -80,7 +84,8 @@ class OrderDetailScreen extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                  'Commande ${order.publicId}',
+                                  _t('driver.order.number',
+                                      {'id': order.publicId}),
                                   style: Theme.of(context).textTheme.titleLarge,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -139,9 +144,12 @@ class OrderDetailScreen extends StatelessWidget {
                                       const Icon(Icons.account_balance_wallet_outlined),
                                       const SizedBox(width: AppSpacing.sm),
                                       Text(
-                                        'À encaisser : '
-                                        '${order.codAmount!.toStringAsFixed(0)} '
-                                        '${order.codCurrency ?? ''}'.trim(),
+                                        _t('driver.order.cod.label', {
+                                          'amount':
+                                              '${order.codAmount!.toStringAsFixed(0)} '
+                                                      '${order.codCurrency ?? ''}'
+                                                  .trim(),
+                                        }),
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleMedium
@@ -150,11 +158,9 @@ class OrderDetailScreen extends StatelessWidget {
                                     ],
                                   ),
                                   const SizedBox(height: AppSpacing.xs),
-                                  const Text(
-                                    'Somme due par le destinataire au commerçant. '
-                                    'Vous la conservez et la lui remettez au '
-                                    'prochain enlèvement.',
-                                    style: TextStyle(fontSize: 12),
+                                  Text(
+                                    _t('driver.order.cod.hint'),
+                                    style: const TextStyle(fontSize: 12),
                                   ),
                                 ],
                               ),
@@ -165,8 +171,8 @@ class OrderDetailScreen extends StatelessWidget {
                           // « Créée le » était une heure trop tôt, juste
                           // au-dessus d'une date d'échec que le même écran
                           // localisait. `formatFull` porte le `toLocal()`.
-                          _buildInfoRow('Créée le :', formatFull(order.createdAt)),
-                          _buildInfoRow('Mise à jour :', formatFull(order.updatedAt)),
+                          _buildInfoRow(_t('driver.order.created'), formatFull(order.createdAt)),
+                          _buildInfoRow(_t('driver.order.updated'), formatFull(order.updatedAt)),
                         ],
                       ),
                   ),
@@ -179,12 +185,12 @@ class OrderDetailScreen extends StatelessWidget {
                           // L'enlèvement est un commerce : rien n'y est
                           // masqué, hors son téléphone.
                           _PlaceBlock(
-                            label: 'Enlèvement',
+                            label: _t('order.schedule.title'),
                             place: order.pickupPlace,
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           _PlaceBlock(
-                            label: 'Livraison',
+                            label: _t('order.section.dropoff'),
                             place: order.dropoffPlace,
                             obscured: order.redacted,
                           ),
@@ -197,18 +203,16 @@ class OrderDetailScreen extends StatelessWidget {
                   // acceptation.
                   if (order.redacted) ...[
                     const SizedBox(height: AppSpacing.lg),
-                    const AppNotice.info(
+                    AppNotice.info(
                       icon: Icons.lock_outline,
-                      title: 'Course non réclamée',
+                      title: _t('driver.order.redacted.title'),
                       // ⚠️ Réécrit le 31/07/2026 avec la règle qu'il décrit.
                       // Il annonçait une adresse réduite à la commune, alors
                       // que l'adresse complète est servie : le transporteur
                       // cherchait une information déjà sous ses yeux. Un
                       // libellé qui décrit l'ancienne règle est pire que pas
                       // de libellé du tout.
-                      message:
-                          'Le nom et le téléphone du destinataire apparaissent '
-                          'dès que vous acceptez. Tout le reste est affiché.',
+                      message: _t('driver.order.redacted.body'),
                     ),
                   ],
                   const SizedBox(height: AppSpacing.lg),
@@ -254,7 +258,7 @@ class OrderDetailScreen extends StatelessWidget {
       buttons.add(
         FilledButton(
           onPressed: busy ? null : () => _acceptOrder(context, order.id, orderState),
-          child: const Text('Accepter cette course'),
+          child: Text(_t('driver.order.accept')),
         ),
       );
     }
@@ -281,7 +285,9 @@ class OrderDetailScreen extends StatelessWidget {
                 ? context.semantic.success
                 : context.semantic.warning,
           ),
-          child: Text(requiresPod ? '$label (preuve requise)' : label),
+          child: Text(requiresPod
+              ? _t('driver.order.activity.pod', {'label': label})
+              : label),
         ),
       );
     }
@@ -307,7 +313,7 @@ class OrderDetailScreen extends StatelessWidget {
               : () => _declineOrder(context, order.id, orderState,
                   assigned: returnable),
           icon: const Icon(Icons.do_not_disturb_on_outlined),
-          label: Text(claimable ? 'Refuser cette course' : 'Rendre cette course'),
+          label: Text(claimable ? _t('driver.order.decline') : _t('driver.order.release')),
           style: AppButtonStyles.destructiveOutlined(context),
         ),
       );
@@ -322,7 +328,7 @@ class OrderDetailScreen extends StatelessWidget {
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/echec'),
           style: AppButtonStyles.destructiveFilled(context),
-          child: const Text('Signaler un échec de livraison'),
+          child: Text(_t('driver.order.report_failure')),
         ),
       );
     }
@@ -382,7 +388,7 @@ class OrderDetailScreen extends StatelessWidget {
     if (!sent) {
       showAppError(
         context,
-        orderState.errorMessage ?? 'Envoi de la preuve impossible',
+        orderState.errorMessage ?? _t('driver.order.proof.failed'),
       );
       return;
     }
@@ -439,9 +445,10 @@ class OrderDetailScreen extends StatelessWidget {
 
     if (success) {
       final label = (activity['_resolved_status'] ?? activity['code'] ?? '') as String;
-      showAppSnackBar(context, 'Étape appliquée : $label');
+      showAppSnackBar(
+          context, _t('driver.order.activity.done', {'label': label}));
     } else {
-      showAppError(context, orderState.errorMessage ?? 'Échec de la mise à jour');
+      showAppError(context, orderState.errorMessage ?? _t('driver.order.activity.failed'));
     }
   }
 
@@ -475,15 +482,15 @@ class OrderDetailScreen extends StatelessWidget {
     if (!context.mounted) return;
 
     if (!success) {
-      showAppError(context, orderState.errorMessage ?? 'Refus impossible');
+      showAppError(context, orderState.errorMessage ?? _t('driver.order.decline.failed'));
       return;
     }
 
     showAppSnackBar(
       context,
       orderState.lastDeclineReleasedToPool == true
-          ? 'Course rendue au réseau. Le commerçant en a été informé.'
-          : 'Course écartée. Elle ne vous sera plus proposée.',
+          ? _t('driver.order.release.done')
+          : _t('driver.order.decline.done'),
     );
 
     // Retour à la liste : la fiche d'une course qu'on vient d'écarter n'a plus
@@ -500,7 +507,7 @@ class OrderDetailScreen extends StatelessWidget {
     final success = await orderState.acceptOrder(orderId);
     if (success) {
       if (!context.mounted) return;
-      showAppSnackBar(context, 'Course acceptée');
+      showAppSnackBar(context, _t('driver.order.accept.done'));
     }
   }
 
@@ -525,14 +532,20 @@ class _DeclineSheet extends StatefulWidget {
 }
 
 class _DeclineSheetState extends State<_DeclineSheet> {
-  static const _reasons = <(String, String, IconData)>[
-    ('prix_insuffisant', 'Le prix ne couvre pas le trajet', Icons.payments_outlined),
-    ('trop_loin', 'Trop loin de ma position', Icons.route_outlined),
-    ('vehicule_inadapte', 'Mon véhicule n\'est pas adapté', Icons.two_wheeler_outlined),
-    ('creneau_impossible', 'Je ne suis pas libre à cet horaire', Icons.schedule_outlined),
-    ('colis_inadapte', 'Le colis ne me convient pas', Icons.inventory_2_outlined),
-    ('indisponible', 'Je ne suis pas disponible', Icons.do_not_disturb_on_outlined),
-    ('autre', 'Autre raison', Icons.more_horiz),
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  // Le code part au serveur et sera compté, l'icône est de l'écran, le libellé
+  // est de la langue — d'où trois choses et non une map de deux. Même
+  // séparation que `deliveryFailureReasons` / `deliveryFailureLabel`.
+  static const _reasons = <(String, IconData)>[
+    ('prix_insuffisant', Icons.payments_outlined),
+    ('trop_loin', Icons.route_outlined),
+    ('vehicule_inadapte', Icons.two_wheeler_outlined),
+    ('creneau_impossible', Icons.schedule_outlined),
+    ('colis_inadapte', Icons.inventory_2_outlined),
+    ('indisponible', Icons.do_not_disturb_on_outlined),
+    ('autre', Icons.more_horiz),
   ];
 
   String? _reason;
@@ -559,16 +572,14 @@ class _DeclineSheetState extends State<_DeclineSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              widget.assigned ? 'Rendre cette course' : 'Refuser cette course',
+              widget.assigned ? _t('driver.order.release') : _t('driver.order.decline'),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
               widget.assigned
-                  ? 'Elle sera proposée aux autres transporteurs du réseau, et '
-                      'le commerçant en sera informé.'
-                  : 'Elle ne vous sera plus proposée. Les autres transporteurs '
-                      'la voient toujours.',
+                  ? _t('driver.order.release.body')
+                  : _t('driver.order.decline.body'),
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -596,8 +607,8 @@ class _DeclineSheetState extends State<_DeclineSheet> {
               controller: _notes,
               maxLines: 2,
               maxLength: 200,
-              decoration: const InputDecoration(
-                labelText: 'Précision (facultatif)',
+              decoration: InputDecoration(
+                labelText: _t('driver.order.note'),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -618,11 +629,11 @@ class _DeclineSheetState extends State<_DeclineSheet> {
                 context,
                 padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
               ),
-              child: Text(widget.assigned ? 'Rendre la course' : 'Refuser'),
+              child: Text(widget.assigned ? _t('driver.order.release.confirm') : _t('driver.order.decline.confirm')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Annuler'),
+              child: Text(_t('common.cancel')),
             ),
           ],
         ),
@@ -643,6 +654,9 @@ class _ProofSheet extends StatefulWidget {
 }
 
 class _ProofSheetState extends State<_ProofSheet> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   CapturedPhoto? _photo;
 
   @override
@@ -661,10 +675,9 @@ class _ProofSheetState extends State<_ProofSheet> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           PhotoField(
-            label: 'Preuve de livraison',
+            label: _t('order.pod.label'),
             required: true,
-            helperText: 'Cette étape exige une photo : colis remis, '
-                'signature, ou dépôt convenu.',
+            helperText: _t('driver.order.proof.hint'),
             onChanged: (photo) => setState(() => _photo = photo),
           ),
           const SizedBox(height: AppSpacing.xl),
@@ -675,11 +688,11 @@ class _ProofSheetState extends State<_ProofSheet> {
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),
-            child: const Text('Envoyer la preuve et valider l\'étape'),
+            child: Text(_t('driver.order.proof.submit')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
+            child: Text(_t('common.cancel')),
           ),
         ],
       ),
@@ -694,6 +707,9 @@ class _ProofSheetState extends State<_ProofSheet> {
 /// pouvoir la suivre et appeler sur place — sans ça il ressaisit tout à la
 /// main dans une autre application, au volant.
 class _PlaceBlock extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final String label;
   final Place? place;
 
@@ -717,7 +733,7 @@ class _PlaceBlock extends StatelessWidget {
         children: [
           Text(label, style: theme.textTheme.titleMedium),
           const SizedBox(height: AppSpacing.xs),
-          Text('Adresse non renseignée', style: theme.textTheme.bodySmall),
+          Text(_t('driver.order.place.no_address'), style: theme.textTheme.bodySmall),
         ],
       );
     }
@@ -743,8 +759,8 @@ class _PlaceBlock extends StatelessWidget {
           // ce qui est le cas courant des commandes saisies sans passer par la
           // carte. L'adresse réelle est dans les précisions ci-dessous, et la
           // porte dans l'itinéraire.
-          Text('Adresse dans les précisions', style: theme.textTheme.bodySmall),
-        if (p.contactName != null) Text('Contact : ${p.contactName}'),
+          Text(_t('driver.order.place.address_in_notes'), style: theme.textTheme.bodySmall),
+        if (p.contactName != null) Text(_t('driver.order.place.contact', {'name': p.contactName!})),
         const SizedBox(height: AppSpacing.sm),
         Wrap(
           spacing: 8,
@@ -762,7 +778,7 @@ class _PlaceBlock extends StatelessWidget {
               TextButton.icon(
                 onPressed: () => _navigate(context, p),
                 icon: const Icon(Icons.directions_outlined),
-                label: const Text('Itinéraire'),
+                label: Text(_t('driver.order.route')),
               ),
             if (p.contactPhone != null)
               TextButton.icon(
@@ -782,14 +798,14 @@ class _PlaceBlock extends StatelessWidget {
     // Un bouton qui ne fait rien est indiscernable d'une application figée.
     showAppError(
       context,
-      'Aucune application de navigation trouvée sur cet appareil.',
+      _t('driver.order.nav.none'),
     );
   }
 
   Future<void> _call(BuildContext context, String phone) async {
     final ok = await NavigationLauncher.call(phone);
     if (!context.mounted || ok) return;
-    showAppError(context, 'Impossible de lancer l\'appel.');
+    showAppError(context, _t('driver.order.call.failed'));
   }
 }
 
@@ -828,6 +844,9 @@ Widget _buildInfoRow(String label, String value) {
 /// décision de l'opérateur, et elle se perdrait dans une liste qu'il faut
 /// dénombrer soi-même.
 class _FailureHistory extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final List<DeliveryFailure> failures;
 
   const _FailureHistory({required this.failures});
@@ -850,8 +869,9 @@ class _FailureHistory extends StatelessWidget {
                 Expanded(
                   child: Text(
                     multiple
-                        ? '${failures.length} échecs de livraison signalés'
-                        : 'Échec de livraison signalé',
+                        ? _t('driver.order.failures.many',
+                            {'count': '${failures.length}'})
+                        : _t('driver.order.failures.one'),
                     style: theme.textTheme.titleMedium
                         ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
@@ -867,7 +887,10 @@ class _FailureHistory extends StatelessWidget {
                   // Numérotation à rebours : le plus récent porte le numéro le
                   // plus élevé, ce qui rend l'ordre chronologique lisible sans
                   // avoir à comparer les dates.
-                  'Tentative ${failures.length - i} — ${formatDayTime(failures[i].createdAt)}',
+                  _t('driver.order.failures.attempt', {
+                    'n': '${failures.length - i}',
+                    'date': formatDayTime(failures[i].createdAt),
+                  }),
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
@@ -880,8 +903,7 @@ class _FailureHistory extends StatelessWidget {
             // le dire, sinon l'écart entre « échec signalé » et « statut
             // enroute » passe pour une incohérence.
             Text(
-              'La commande conserve son statut : le signalement est transmis '
-              'à l\'opérateur, qui décide de la suite.',
+              _t('driver.order.failures.note'),
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
@@ -893,6 +915,9 @@ class _FailureHistory extends StatelessWidget {
 }
 
 class _FailureEntry extends StatelessWidget {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   final DeliveryFailure failure;
 
   const _FailureEntry({required this.failure});
@@ -902,8 +927,8 @@ class _FailureEntry extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildInfoRow('Motif :', failure.reason),
-        if (failure.notes != null) _buildInfoRow('Notes :', failure.notes!),
+        _buildInfoRow(_t('driver.order.failures.reason'), failure.reason),
+        if (failure.notes != null) _buildInfoRow(_t('driver.order.failures.notes'), failure.notes!),
         if (failure.photoUrl != null) ...[
           const SizedBox(height: AppSpacing.sm),
           ProofImage(url: failure.photoUrl!),
@@ -946,6 +971,9 @@ class _CashSheet extends StatefulWidget {
 }
 
 class _CashSheetState extends State<_CashSheet> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   late final TextEditingController _amount =
       TextEditingController(text: widget.expected.toStringAsFixed(0));
   final _notes = TextEditingController();
@@ -983,11 +1011,13 @@ class _CashSheetState extends State<_CashSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Encaissement', style: theme.textTheme.titleMedium),
+            Text(_t('driver.order.cash.title'), style: theme.textTheme.titleMedium),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'Montant attendu : ${widget.expected.toStringAsFixed(0)} '
-              '${widget.currency}',
+              _t('driver.order.cash.expected', {
+                'amount':
+                    '${widget.expected.toStringAsFixed(0)} ${widget.currency}',
+              }),
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.lg),
@@ -996,14 +1026,14 @@ class _CashSheetState extends State<_CashSheet> {
               keyboardType: TextInputType.number,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Montant réellement perçu',
+                labelText: _t('driver.order.cash.collected'),
                 prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
                 suffixText: widget.currency,
               ),
             ),
             if (_differs) ...[
               const SizedBox(height: AppSpacing.lg),
-              Text('Pourquoi l\'écart ?', style: theme.textTheme.titleSmall),
+              Text(_t('driver.order.cash.why'), style: theme.textTheme.titleSmall),
               const SizedBox(height: AppSpacing.xs),
               // Le code part au serveur, le libellé suit la langue : la table
               // mêlée figeait les deux dans le même objet.
@@ -1025,8 +1055,8 @@ class _CashSheetState extends State<_CashSheet> {
                 controller: _notes,
                 maxLines: 2,
                 maxLength: 200,
-                decoration: const InputDecoration(
-                  labelText: 'Précision (facultatif)',
+                decoration: InputDecoration(
+                  labelText: _t('driver.order.note'),
                 ),
               ),
             ],
@@ -1035,8 +1065,7 @@ class _CashSheetState extends State<_CashSheet> {
               // Rappeler ce qu'implique la validation : la somme devient une
               // dette du transporteur envers le commerçant, et elle le suit
               // jusqu'à la remise.
-              'Cette somme sera ajoutée à ce que vous devez remettre au '
-              'commerçant. Vous la retrouverez dans « Ma caisse ».',
+              _t('driver.order.cash.hint'),
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -1056,11 +1085,11 @@ class _CashSheetState extends State<_CashSheet> {
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
-              child: const Text('Valider et clôturer la livraison'),
+              child: Text(_t('driver.order.cash.submit')),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Retour'),
+              child: Text(_t('common.back')),
             ),
           ],
         ),

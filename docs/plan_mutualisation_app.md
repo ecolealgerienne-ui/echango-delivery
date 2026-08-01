@@ -437,6 +437,71 @@ resubstitution — chaque chaîne retirée doit se retrouver dans la table.
 **Ce qui débloque chaque écran** : parité FR/AR par `check_error_codes`, zéro
 littéral français visible restant, et toutes les clés employées déclarées.
 
+### Les trois écrans restants, en une passe (01/08/2026)
+
+**Fini : zéro chaîne d'interface en dur dans `lib/screens/` et `lib/widgets/`.**
+Le relevé final signale 24 littéraux, **tous vérifiés faux positifs** : formats
+monétaires sans mot, clés JSON, URL de tuiles OSM, un `debugPrint`, et vingt
+artefacts d'extraction (une quote imbriquée dans `${t('clé')}` coupe le
+littéral en deux).
+
+**Six tables, 569 clés, parité stricte partout** — trois existaient, trois sont
+nées ici, et **le découpage suit le critère de la règle 5 et non la
+commodité** :
+
+| table | clés | domaine |
+|---|---|---|
+| `order_strings` | 269 | **une livraison** — formulaire, les deux fiches, les deux listes, carnet, favoris, carte, notifications, échec |
+| `fleet_strings` | 120 | l'espace entreprise |
+| `cash_strings` | 115 | le registre de caisse |
+| `driver_strings` | 34 | **l'espace transporteur** — onglets, présence, profil, véhicule |
+| `auth_strings` | 18 | connexion et inscription |
+| `common_strings` | 13 | l'ossature — « Réessayer », « Annuler », « Retour », photo, langue |
+
+`driver_strings` est séparée d'`order_strings` pour la raison qui a fait
+fusionner les deux premières : si un onglet du conducteur change, aucune fiche
+de livraison ne bouge. Le critère répond non, donc deux tables.
+
+⚠️ **Une troisième duplication règle 5, dans les composants partagés
+eux-mêmes** : **« Réessayer » était écrit trois fois**, en repli de `retryLabel`
+dans `AppEmptyState`, `AppErrorBanner` et `AppNotice` — trois copies du même mot
+dans les trois widgets dont le rôle est justement d'empêcher ça.
+
+⚠️ **Et l'extracteur lui-même était faux.** Il exigeait une espace, un accent ou
+une ponctuation, donc il **ne voyait pas `'Refuser'`, `'Annuler'`,
+`'Publier'`** — des mots seuls, sans accent, parfaitement visibles à l'écran.
+Réécrit **par exclusion** (on rejette ce qui est reconnaissablement un
+identifiant, on accepte le reste), et les deux écrans déjà convertis ont été
+**re-mesurés** avec la version corrigée. C'est la règle 8 dans son cas le plus
+gênant : le contrôle qui a servi à déclarer deux lots terminés ne voyait pas
+tout.
+
+**Trouvé au passage, non traité** : `delivery_failure_screen` était encore **en
+anglais** sur quatre libellés (« Report Delivery Failure », « Failure Reason »,
+« Additional Notes (Optional) », « Report the reason for delivery failure ») —
+reliquat du scaffolding du 27/07, jamais francisé. Ils sont traduits ici, ce qui
+explique quatre des sept chaînes « absentes » du contrôle de resubstitution.
+
+**Preuve par resubstitution, dernier lot** : 220 chaînes retirées, **182
+retrouvées à l'identique**, **23 à l'apostrophe près** (`'` → `’`), 7 absentes
+et toutes expliquées — les 4 anglaises ci-dessus, 2 formats monétaires dont la
+devise entre désormais dans la variable `{amount}`, et 1 artefact d'extraction.
+
+⚠️ **50 défauts de `const` et une garde de portée, tous trouvés par les
+contrôles.** Cinquante contextes `const` contenant un appel de traduction —
+`Text`, `InputDecoration`, `AppEmptyState`, `TabBar`, une liste `const [`, une
+map `const _options = {` — dénoués mécaniquement, en **re-constifiant les
+enfants littéraux** (`Icon`, `EdgeInsets`, `TextStyle`) pour ne pas remplacer
+cinquante erreurs par cinquante `prefer_const_constructors`. Et la garde de
+portée par classe, écrite pour l'écran 2, a servi ici sur 26 fichiers ; elle a
+d'abord produit **quatorze faux positifs** sur les écrans du profil entreprise,
+qui reçoivent leur `t` en champ, en paramètre ou par liaison locale — corrigée,
+puis **éprouvée sur une mutation** qui retire un helper d'une classe qui
+l'emploie.
+
+⚠️ **L'arabe des trois nouvelles tables est de ma main, non relu par un
+locuteur.**
+
 ### Écran 2 — `commercant/order_detail_screen` (01/08/2026)
 
 **La table a d'abord été fusionnée.** Sept libellés de la fiche existaient déjà
@@ -558,4 +623,4 @@ capacité à se taire.
 | 4 — champ de saisie | **fait** (01/08) | 21 des 25 surcharges de bordure retirées, thème corrigé d'abord ; `check_inputs.dart` — 16 cas dont 8 refus, plus mutation des 11 vrais fichiers |
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
-| 7 — 335 chaînes | **2 écrans sur 5** (01/08) | `order_strings.dart` : 132 clés, parité 132 = 132, 0 orpheline dans les deux sens, 0 littéral français visible restant sur les deux écrans, conversions prouvées par resubstitution |
+| 7 — 335 chaînes | **fait** (01/08) | **569 clés** sur six tables, parité stricte partout ; **zéro chaîne d'interface en dur** dans `screens/` et `widgets/` ; 220 chaînes du dernier lot prouvées par resubstitution |

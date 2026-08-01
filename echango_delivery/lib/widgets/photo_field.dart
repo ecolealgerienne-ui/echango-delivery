@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../errors/app_error.dart';
+import '../i18n/common_strings.dart';
 import '../errors/error_translator.dart';
 import '../services/photo_service.dart';
 import '../state/locale_state.dart';
@@ -19,7 +20,10 @@ class PhotoField extends StatefulWidget {
   /// Remonte la photo encodée, ou `null` quand elle est retirée.
   final ValueChanged<CapturedPhoto?> onChanged;
 
-  final String label;
+  /// Titre du bloc. `null` ⇒ « Photo », traduit — un défaut de paramètre doit
+  /// être constant, donc il ne peut pas appeler la table ; il est résolu au
+  /// `build`, où le contexte existe.
+  final String? label;
   final String helperText;
 
   /// Une preuve de livraison est exigée par le serveur sur certaines étapes
@@ -29,7 +33,7 @@ class PhotoField extends StatefulWidget {
   const PhotoField({
     super.key,
     required this.onChanged,
-    this.label = 'Photo',
+    this.label,
     this.helperText = '',
     this.required = false,
   });
@@ -39,6 +43,10 @@ class PhotoField extends StatefulWidget {
 }
 
 class _PhotoFieldState extends State<PhotoField> {
+  /// Libellés d'ossature (« Photographier », « Retirer »…).
+  String _c(String key, [Map<String, String>? vars]) =>
+      commonLabel(key, context.read<LocaleState>().locale, vars);
+
   CapturedPhoto? _photo;
   String? _error;
   bool _busy = false;
@@ -90,7 +98,8 @@ class _PhotoFieldState extends State<PhotoField> {
       children: [
         Row(
           children: [
-            Text(widget.label, style: theme.textTheme.titleMedium),
+            Text(widget.label ?? _c('common.photo'),
+                style: theme.textTheme.titleMedium),
             if (widget.required)
               Text(' *', style: TextStyle(color: theme.colorScheme.error)),
           ],
@@ -131,7 +140,7 @@ class _PhotoFieldState extends State<PhotoField> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              '${photo.approximateSizeKb} ko',
+              _c('common.photo.size', {'size': '${photo.approximateSizeKb}'}),
               style: theme.textTheme.bodySmall,
             ),
             Row(
@@ -139,12 +148,12 @@ class _PhotoFieldState extends State<PhotoField> {
                 TextButton.icon(
                   onPressed: _busy ? null : () => _pick(fromGallery: false),
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Reprendre'),
+                  label: Text(_c('common.photo.retake')),
                 ),
                 TextButton.icon(
                   onPressed: _busy ? null : _remove,
                   icon: const Icon(Icons.delete_outline),
-                  label: const Text('Retirer'),
+                  label: Text(_c('common.photo.remove')),
                 ),
               ],
             ),
@@ -168,7 +177,7 @@ class _PhotoFieldState extends State<PhotoField> {
           child: OutlinedButton.icon(
             onPressed: () => _pick(fromGallery: false),
             icon: const Icon(Icons.camera_alt_outlined),
-            label: const Text('Photographier'),
+            label: Text(_c('common.photo.take')),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
             ),

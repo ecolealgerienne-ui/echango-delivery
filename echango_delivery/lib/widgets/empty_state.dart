@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../i18n/common_strings.dart';
+import '../state/locale_state.dart';
 
 import '../theme/app_spacing.dart';
 
@@ -112,7 +116,8 @@ class AppEmptyState extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh),
-            label: const Text('Réessayer'),
+            label: Text(commonLabel(
+                'common.retry', context.read<LocaleState>().locale)),
           ),
         ],
       ],

@@ -5,6 +5,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
+import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
 import '../../config/app_rules.dart';
@@ -71,6 +73,9 @@ class PickedLocation {
 }
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   /// Centre d'Alger — point de départ de la carte quand rien n'est connu.
   /// Contrairement à l'ancien comportement, ce n'est plus la valeur *envoyée* :
   /// le commerçant doit déplacer le repère, et c'est sa position qui compte.
@@ -229,9 +234,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
         child: TextField(
           controller: _searchController,
           onChanged: _onSearchChanged,
-          decoration: const InputDecoration(
-            hintText: 'Rechercher une adresse…',
-            prefixIcon: Icon(Icons.search),
+          decoration: InputDecoration(
+            hintText: _t('order.map.search'),
+            prefixIcon: const Icon(Icons.search),
             isDense: true,
           ),
         ),
@@ -276,12 +281,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: _resolving
-                        ? Text('Recherche de l\'adresse…',
+                        ? Text(_t('order.map.searching'),
                             style: theme.textTheme.bodySmall)
                         : Text(
                             _label.isEmpty
-                                ? 'Point sans adresse connue — la position est '
-                                    'tout de même utilisable'
+                                ? _t('order.map.no_address')
                                 : _label,
                             style: theme.textTheme.bodySmall,
                             maxLines: 2,
@@ -306,7 +310,7 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                   ),
                 ),
                 icon: const Icon(Icons.check),
-                label: const Text('Valider ce point'),
+                label: Text(_t('order.map.confirm')),
               ),
             ],
           ),

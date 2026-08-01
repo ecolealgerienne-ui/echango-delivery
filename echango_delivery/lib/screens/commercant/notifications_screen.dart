@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../state/locale_state.dart';
 import '../../state/merchant_order_state.dart';
@@ -32,6 +33,9 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   @override
   void initState() {
     super.initState();
@@ -47,22 +51,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notifications'),
+        title: Text(_t('order.notifications.title')),
         actions: [
           if (state.unreadNotifications > 0)
             TextButton(
               onPressed: () => state.markAllNotificationsRead(),
-              child: const Text('Tout marquer lu'),
+              child: Text(_t('order.notifications.mark_all')),
             ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: () => state.loadNotifications(),
         child: items.isEmpty
-            ? const AppEmptyState(
-                title: 'Aucune notification',
-                hint: 'Vous serez prévenu ici quand un transporteur prend une '
-                    'de vos livraisons, et quand elle arrive à destination.',
+            ? AppEmptyState(
+                title: _t('order.notifications.empty'),
+                hint: _t('order.notifications.empty.hint'),
                 icon: Icons.notifications_none,
               )
             : ListView.separated(

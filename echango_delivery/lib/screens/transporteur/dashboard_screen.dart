@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/common_strings.dart';
+import '../../i18n/driver_strings.dart';
 import '../../models/order.dart';
 import '../../models/vehicle_type.dart';
 import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
+import '../../state/locale_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_buttons.dart';
@@ -25,6 +28,9 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   int _selectedIndex = 0;
 
   @override
@@ -50,7 +56,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           // chercher, notamment au moment d'un enlèvement chez le commerçant
           // concerné — c'est là que la remise se fait.
           IconButton(
-            tooltip: 'Ma caisse',
+            tooltip: _d('driver.home.cash'),
             icon: const Icon(Icons.account_balance_wallet_outlined),
             onPressed: () => context.push('/transporteur/caisse'),
           ),
@@ -60,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           // qu'en cherchant un écran dont il ignore l'existence, et l'entreprise
           // conclurait à un refus.
           IconButton(
-            tooltip: 'Mes entreprises',
+            tooltip: _d('driver.home.fleets'),
             icon: const Icon(Icons.business_outlined),
             onPressed: () => context.push('/transporteur/entreprises'),
           ),
@@ -79,18 +85,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         onTap: (index) {
           setState(() => _selectedIndex = index);
         },
-        items: const [
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.list),
-            label: 'Commandes',
+            icon: const Icon(Icons.list),
+            label: _d('driver.home.orders'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map),
-            label: 'Carte',
+            icon: const Icon(Icons.map),
+            label: _d('driver.home.map'),
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Profil',
+            icon: const Icon(Icons.person),
+            label: _d('driver.home.profile'),
           ),
         ],
       ),
@@ -117,6 +123,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 /// ligne, Fleetbase ne diffuse aucune course à ce driver. Elle est donc à
 /// portée permanente dans la barre, et pas enterrée dans le profil.
 class _AvailabilitySwitch extends StatelessWidget {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   const _AvailabilitySwitch();
 
   @override
@@ -131,8 +140,8 @@ class _AvailabilitySwitch extends StatelessWidget {
               online == null
                   ? '—'
                   : online
-                      ? 'En ligne'
-                      : 'Hors ligne',
+                      ? _d('driver.presence.online')
+                      : _d('driver.presence.offline'),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             if (presence.isBusy)
@@ -166,6 +175,9 @@ class _AvailabilitySwitch extends StatelessWidget {
 /// écran vide indiscernable d'une absence réelle de course — le mode d'échec
 /// le plus coûteux à diagnostiquer sur le terrain.
 class _PresenceBanner extends StatelessWidget {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   const _PresenceBanner();
 
   @override
@@ -185,7 +197,7 @@ class _PresenceBanner extends StatelessWidget {
 
         if (presence.online == false) {
           return _banner(
-            'Vous êtes hors ligne : aucune course ne vous sera proposée.',
+            _d('driver.presence.offline.warning'),
             theme.colorScheme.secondaryContainer,
             theme.colorScheme.onSecondaryContainer,
           );
@@ -193,8 +205,7 @@ class _PresenceBanner extends StatelessWidget {
 
         if (presence.online == true && !presence.pushAvailable) {
           return _banner(
-            'Notifications indisponibles sur cet appareil — la liste se '
-            'rafraîchit automatiquement, avec un léger délai.',
+            _d('driver.presence.push.unavailable'),
             theme.colorScheme.surfaceContainerHighest,
             theme.colorScheme.onSurfaceVariant,
           );
@@ -225,6 +236,9 @@ class OrdersListScreen extends StatefulWidget {
 
 class _OrdersListScreenState extends State<OrdersListScreen>
     with SingleTickerProviderStateMixin {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   late TabController _tabController;
 
   @override
@@ -255,10 +269,10 @@ class _OrdersListScreenState extends State<OrdersListScreen>
           // « Pending » : ce sont les commandes adhoc diffusées à proximité,
           // que le driver peut réclamer — elles ne lui sont pas encore
           // assignées, donc invisibles dans une vue « mes commandes ».
-          tabs: const [
-            Tab(text: 'Opportunités'),
-            Tab(text: 'En cours'),
-            Tab(text: 'Historique'),
+          tabs: [
+            Tab(text: _d('driver.tab.opportunities')),
+            Tab(text: _d('driver.tab.active')),
+            Tab(text: _d('driver.tab.history')),
           ],
         ),
         Expanded(
@@ -267,24 +281,21 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             children: [
               _buildOrdersList(
                 context.watch<OrderState>().adhocOrders,
-                emptyLabel: 'Aucune opportunité à proximité',
-                emptyHint: 'Vérifier que vous êtes en ligne : le dispatch '
-                    'est géographique.',
+                emptyLabel: _d('driver.empty.opportunities'),
+                emptyHint: _d('driver.empty.opportunities.hint'),
               ),
               _buildOrdersList(
                 context.watch<OrderState>().activeOrders,
-                emptyLabel: 'Aucune commande en cours',
+                emptyLabel: _d('driver.empty.active'),
                 // Consignes écrites parce que le composant les exige : ces
                 // deux onglets n'en avaient aucune, et un écran vide sans un
                 // mot se lit comme une panne plutôt que comme un début.
-                emptyHint: 'Acceptez une course depuis l\'onglet '
-                    '« Opportunités » pour la voir apparaître ici.',
+                emptyHint: _d('driver.empty.active.hint'),
               ),
               _buildOrdersList(
                 context.watch<OrderState>().historyOrders,
-                emptyLabel: 'Aucune commande terminée',
-                emptyHint: 'Vos courses livrées ou annulées se rangeront ici, '
-                    'avec leur preuve de remise.',
+                emptyLabel: _d('driver.empty.history'),
+                emptyHint: _d('driver.empty.history.hint'),
               ),
             ],
           ),
@@ -295,7 +306,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
   Widget _buildOrdersList(
     List<dynamic> orders, {
-    String emptyLabel = 'Aucune commande',
+    String emptyLabel = _d('driver.empty.default'),
     // Non nullable : `AppEmptyState` exige sa consigne, et une liste vide sans
     // explication se lit comme une panne.
     required String emptyHint,
@@ -345,7 +356,9 @@ class _OrdersListScreenState extends State<OrdersListScreen>
           child: ListTile(
             title: Row(
               children: [
-                Expanded(child: Text('Commande #${order.publicId}')),
+                Expanded(
+                    child:
+                        Text(_d('driver.order.card.number', {'id': order.publicId}))),
                 // Le prix en tête de carte : c'est sur lui que le transporteur
                 // décide de prendre la course ou non. L'enterrer dans le détail
                 // obligerait à ouvrir chaque opportunité pour le savoir.
@@ -373,7 +386,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  'Statut : ${order.status}',
+                  _d('driver.order.card.status', {'status': order.status}),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: driverStatusColor(context, order.status),
                       ),
@@ -395,6 +408,9 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
 /// Écran de la carte.
 class MapScreen extends StatelessWidget {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   const MapScreen({super.key});
 
   @override
@@ -410,12 +426,12 @@ class MapScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            'Carte non disponible',
+            _d('driver.map.unavailable'),
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            'La carte des courses n\'est pas encore implémentée.',
+            _d('driver.map.unavailable.hint'),
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -429,6 +445,12 @@ class MapScreen extends StatelessWidget {
 
 /// Écran de profil avec logout.
 class ProfileScreen extends StatelessWidget {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
+  String _c(String key) =>
+      commonLabel(key, context.read<LocaleState>().locale);
+
   const ProfileScreen({super.key});
 
   @override
@@ -455,12 +477,13 @@ class ProfileScreen extends StatelessWidget {
                       return Column(
                         children: [
                           Text(
-                            authState.email ?? 'Transporteur',
+                            authState.email ?? _d('driver.profile.fallback'),
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           Text(
-                            'Profil : ${authState.role?.label ?? '—'}',
+                            _d('driver.profile.role',
+                                {'role': authState.role?.label ?? '—'}),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
@@ -498,9 +521,9 @@ class ProfileScreen extends StatelessWidget {
                         // la poser en dur la désaccordait du thème.
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text(
-                        'Se déconnecter',
-                        style: TextStyle(
+                    : Text(
+                        _d('driver.logout'),
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
@@ -519,10 +542,10 @@ class ProfileScreen extends StatelessWidget {
   ) async {
     final confirmed = await AppConfirmDialog.destructive(
       context,
-      title: 'Se déconnecter',
-      message: 'Vous serez basculé hors ligne et ne recevrez plus de courses.',
-      cancelLabel: 'Annuler',
-      confirmLabel: 'Se déconnecter',
+      title: _d('driver.logout'),
+      message: _d('driver.logout.body'),
+      cancelLabel: _c('common.cancel'),
+      confirmLabel: _d('driver.logout'),
     );
 
     if (confirmed) {
@@ -541,6 +564,9 @@ class ProfileScreen extends StatelessWidget {
 /// toutes les courses. Le dire explicitement à l'écran évite qu'il croie devoir
 /// remplir le champ pour recevoir du travail — l'inverse serait vrai.
 class _VehicleTypeCard extends StatelessWidget {
+  String _d(String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
+
   const _VehicleTypeCard();
 
   /// Libellés courts, tenus dans la largeur du menu.
@@ -549,11 +575,11 @@ class _VehicleTypeCard extends StatelessWidget {
   /// téléphone ordinaire. L'information qu'il portait n'est pas perdue : elle
   /// passe dans le texte d'aide ci-dessous, qui a la place de la dire en entier
   /// et peut l'adapter au choix courant.
-  static const _options = {
-    null: 'Non déclaré',
-    'moto': 'Moto',
-    'voiture': 'Voiture',
-    'utilitaire': 'Utilitaire',
+  static final _options = {
+    null: _d('driver.vehicle.none'),
+    'moto': _d('driver.vehicle.moto'),
+    'voiture': _d('driver.vehicle.voiture'),
+    'utilitaire': _d('driver.vehicle.utilitaire'),
   };
 
   @override
@@ -563,7 +589,7 @@ class _VehicleTypeCard extends StatelessWidget {
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Mon véhicule', style: Theme.of(context).textTheme.titleMedium),
+              Text(_d('driver.vehicle.title'), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String?>(
                 initialValue: presence.vehicleType,
@@ -593,9 +619,8 @@ class _VehicleTypeCard extends StatelessWidget {
               // une règle inactive est pire qu'une absence d'aide.
               Text(
                 presence.vehicleType == null
-                    ? 'Sans véhicule déclaré, toutes les courses vous sont proposées.'
-                    : 'Une course exigeant un véhicule plus grand ne vous sera pas '
-                        'proposée.',
+                    ? _d('driver.vehicle.hint.none')
+                    : _d('driver.vehicle.hint.set'),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/locale_state.dart';
+import '../i18n/common_strings.dart';
 
 /// Sélecteur de langue (français / arabe), posé sur les écrans d'entrée de
 /// chaque profil (connexion, et l'accueil des trois personas) plutôt que
@@ -21,7 +22,11 @@ class LanguageSelector extends StatelessWidget {
     final isArabic = localeState.locale.languageCode == 'ar';
     final target = isArabic ? const Locale('fr') : const Locale('ar');
     final label = isArabic ? 'FR' : 'AR';
-    final tooltip = isArabic ? 'Passer en français' : 'التبديل إلى العربية';
+    // Chaque libellé est dans la langue VERS laquelle il bascule — c'est ce qui
+    // le rend lisible par quelqu'un qui ne comprend pas l'écran où il se
+    // trouve. On lit donc la clé de la langue cible, pas de la courante.
+    final tooltip = commonLabel(
+        isArabic ? 'common.language.to_fr' : 'common.language.to_ar', target);
 
     return Tooltip(
       message: tooltip,

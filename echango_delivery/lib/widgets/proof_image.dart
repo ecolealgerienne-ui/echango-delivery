@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bff_api_client.dart';
+import '../i18n/common_strings.dart';
+import '../state/locale_state.dart';
 import '../theme/app_spacing.dart';
 
 /// Image servie par le BFF, chargée avec le jeton de session.
@@ -77,7 +79,8 @@ class _ProofImageState extends State<ProofImage> {
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Text(
-                    'Photo enregistrée, mais son chargement a échoué.',
+                    commonLabel('common.photo.load_failed',
+                        context.read<LocaleState>().locale),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
