@@ -201,6 +201,53 @@ void main(List<String> args) {
   final arSet = _keysOf(_mapBody(translator, arStart)).toSet();
 
 
+  // ── Le registre SERVEUR, seule source des codes qui circulent ─────────────
+  //
+  // ⚠️ Ce contrôle n'existait pas, et c'est le trou le plus coûteux du
+  // vérificateur (revue du 01/08/2026, A6) : il ne comparait que les **trois
+  // tables Dart entre elles**. Elles pouvaient donc s'accorder parfaitement en
+  // ayant toutes les trois oublié le même code — exactement la situation
+  // d'`isClaimable`/`isClaimableAdhoc`, où deux copies d'accord ne prouvaient
+  // rien.
+  //
+  // L'en-tête d'`error-codes.ts` l'admettait d'ailleurs : « la correspondance
+  // se vérifie **par lecture**, comme le reste des contrats de ce projet ».
+  // Une lecture ne peut pas échouer. Le prochain `badRequest('cash.xxx', …)`
+  // ajouté au serveur passait la compilation, passait ce contrôle, et
+  // l'utilisateur recevait un message générique dans la situation précise où le
+  // code avait été inventé pour lui dire quoi faire.
+  //
+  // La capacité existait ailleurs : `check_server_rules.dart` lit un fichier
+  // TypeScript et un fichier Dart et les compare, avec 22 cas de refus. Elle
+  // n'était simplement pas appliquée ici.
+  //
+  // ⚠️ Le chemin est **explicite et son absence est une erreur**, comme pour les
+  // tables de libellés : un fichier déplacé doit faire échouer le contrôle,
+  // jamais le faire passer au vert en ne trouvant rien.
+  final serverFile = File('../backend/bff/src/common/errors/error-codes.ts');
+  if (!serverFile.existsSync()) {
+    stderr.writeln('${serverFile.path} introuvable — contrôle impossible.');
+    exit(2);
+  }
+  final serverCodes = RegExp(r"^\s{2}[A-Z0-9_]+:\s*'([^']+)',", multiLine: true)
+      .allMatches(serverFile.readAsStringSync())
+      .map((m) => m.group(1)!)
+      .toSet();
+
+  // Un motif qui ne matche plus rien passerait au vert sans rien vérifier :
+  // c'est la forme la plus discrète du contrôle qui ne sait que dire oui.
+  if (serverCodes.isEmpty) {
+    stderr.writeln('Aucun code lu dans ${serverFile.path} — le motif ne '
+        'correspond plus au fichier.');
+    exit(2);
+  }
+
+  report('Codes du BFF absents d\'AppError', serverCodes.difference(declared));
+  // L'inverse n'est PAS une erreur : `app_error.dart` porte en plus des codes
+  // client-only documentés (réseau, permissions, capture photo), que le serveur
+  // n'a aucune raison de connaître.
+  stdout.writeln('✅ ${serverCodes.length} codes du BFF — tous connus du client.');
+
   report('Codes d\'AppError sans traduction FR', declared.difference(frSet));
   report('Codes d\'AppError sans traduction AR', declared.difference(arSet));
   report('Traductions FR sans code dans AppError', frSet.difference(declared));

@@ -102,6 +102,9 @@ const Map<String, String> _fr = {
   'cash.counterparty_not_found': 'Contrepartie introuvable.',
   'cash.driver_no_account':
       'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
+  'cash.driver_unknown_to_merchant':
+      'Ce transporteur n’a jamais livré pour vous et n’est pas dans vos favoris : '
+          'ajoutez-le d’abord à vos transporteurs.',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   'order.not_found': 'Commande introuvable.',
@@ -286,6 +289,8 @@ const Map<String, String> _ar = {
   'cash.counterparty_not_found': 'الطرف المقابل غير موجود.',
   'cash.driver_no_account':
       'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
+  'cash.driver_unknown_to_merchant':
+      'لم يقم هذا الناقل بأي توصيل لك وليس ضمن مفضّليك: أضفه أولاً إلى ناقليك.',
 
   // ── الطلبيات ──────────────────────────────────────────────────────────────
   'order.not_found': 'الطلبية غير موجودة.',

@@ -110,6 +110,7 @@ export const ErrorCode = {
   /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
   /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
   CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
+  CASH_DRIVER_UNKNOWN_TO_MERCHANT: 'cash.driver_unknown_to_merchant',
   /**
    * L'identifiant de contrepartie d'une remise ne correspond à aucun compte.
    *

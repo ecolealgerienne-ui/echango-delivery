@@ -2260,6 +2260,7 @@ export class CommerçantService {
     }
 
     const driverAccount = await this.resolveDriverForRegularisation(
+      merchantId,
       live,
       input.fleetbaseDriverUuid,
     );
@@ -2307,6 +2308,7 @@ export class CommerçantService {
    * autre désignation permettrait d'imputer un encaissement à un tiers.
    */
   private async resolveDriverForRegularisation(
+    merchantId: string,
     live: any,
     suppliedUuid?: string,
   ): Promise<{ id: string; name: string }> {
@@ -2317,6 +2319,30 @@ export class CommerçantService {
     // désigne un transporteur, accepter une autre désignation permettrait
     // d'imputer un encaissement à un tiers.
     const uuid = assignedUuid ?? suppliedUuid;
+
+    // ── Et la saisie libre est bornée aux transporteurs QU'IL CONNAÎT ────────
+    //
+    // ⚠️ La branche `?? suppliedUuid` n'était gardée par rien, alors que
+    // `GET /commercant/transporteurs/recherche` rend l'uuid de n'importe qui
+    // dans le réseau (revue du 01/08/2026, M2). Un commerçant pouvait donc, sur
+    // une de ses propres livraisons close en console, poster
+    // `{collectedAmount: 40000, fleetbaseDriverUuid: <un inconnu>}` :
+    //
+    //   · la ligne apparaissait chez la victime comme une réclamation
+    //     légitime, et s'il confirmait, la dette devenait réelle sur une course
+    //     qu'il n'a jamais faite ;
+    //   · sans confirmation, `fleetbaseOrderUuid` étant `@unique`, l'entrée de
+    //     registre de cette course était **empoisonnée** — les deux chemins de
+    //     redéclaration la refusaient.
+    //
+    // La borne est celle que l'écran propose déjà : ceux qui ont livré pour lui,
+    // et ses favoris. Elle n'empêche pas la fraude entre gens qui se
+    // connaissent — rien ne le peut, et ce n'est pas ce qu'on protège ici —,
+    // mais elle interdit de désigner un inconnu, qui est le seul cas où la
+    // victime n'a aucun moyen de comprendre ce qui lui arrive.
+    if (!assignedUuid && suppliedUuid) {
+      await this.assertKnownToMerchant(merchantId, suppliedUuid);
+    }
 
     if (!uuid) {
       badRequest(
@@ -2357,6 +2383,48 @@ export class CommerçantService {
       'cash.driver_no_account',
       `${assignedName ?? 'Ce transporteur'} n'a pas encore de compte dans l'application : `
         + 'il ne peut donc rien confirmer. Demandez à Echango de lui créer un accès.',
+    );
+  }
+
+  /**
+   * Ce transporteur a-t-il un lien avec ce commerçant ?
+   *
+   * Deux sources, exactement celles que l'écran propose : ceux qui ont **déjà
+   * livré** pour lui, et ses **favoris**. Un transporteur qu'il n'a jamais vu
+   * n'a rien à faire dans une écriture qui l'engage.
+   *
+   * ⚠️ Le refus est **fail-closed** : si l'historique est illisible
+   * (`listKnownDrivers` rend une liste vide quand Fleetbase est injoignable),
+   * seuls les favoris passent. C'est le bon défaut ici — une régularisation
+   * peut attendre, une imputation à un inconnu ne se défait pas.
+   */
+  private async assertKnownToMerchant(
+    merchantId: string,
+    driverUuid: string,
+  ): Promise<void> {
+    const favourite = await this.prisma.driverFavourite.findFirst({
+      where: { merchantId, partyType: 'driver', fleetbasePartyUuid: driverUuid },
+      select: { id: true },
+    });
+    if (favourite) return;
+
+    const known = await this.listKnownDrivers(merchantId);
+    if (known.data.some((d: any) => d.driver_uuid === driverUuid)) return;
+
+    this.audit.denied({
+      actorType: 'merchant',
+      actorId: merchantId,
+      action: 'cash.collection.declare',
+      resourceType: 'DriverAccount',
+      resourceId: driverUuid,
+      reason: 'Désignation d’un transporteur sans lien avec ce commerçant',
+    });
+
+    badRequest(
+      'cash.driver_unknown_to_merchant',
+      'Ce transporteur n’a jamais effectué de livraison pour vous et ne fait pas '
+        + 'partie de vos favoris : vous ne pouvez pas lui imputer un encaissement. '
+        + 'Si c’est bien lui qui a livré, ajoutez-le d’abord à vos transporteurs.',
     );
   }
 

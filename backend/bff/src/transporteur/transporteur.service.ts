@@ -1371,11 +1371,37 @@ export class TransporteurService {
   /**
    * Cette transition clôt-elle la livraison ?
    *
-   * `completed` est le code terminal des configurations de commande Fleetbase —
-   * le même que celui sur lequel l'application colore déjà son bouton. Reconnu
-   * ici pour savoir quand exiger la déclaration d'encaissement.
+   * ── Pourquoi ce n'est plus un littéral (revue du 01/08/2026, S4) ──────────
+   *
+   * La garde « pas de clôture sans déclaration d'encaissement » était accrochée
+   * à la chaîne `'completed'`, alors que la source de vérité est le `flow` de
+   * l'`OrderConfig` — **modifiable depuis la console**, et choisie par
+   * `configs.find(key === 'transport') || configs[0]`. Le jour où l'activité
+   * terminale d'une configuration porte un autre code, une livraison encaissée
+   * se clôturait sans que `settleCashIfDue()` ne s'exécute : livraison close,
+   * argent dans la poche du conducteur, aucune `CashCollection`, aucune dette,
+   * et rien pour le dire. C'est le mode d'échec exact du §16, où la même garde
+   * était décorative pour une autre raison.
+   *
+   * Chaque entrée du `flow` porte un drapeau `complete` — vérifié le 01/08/2026
+   * sur la configuration réelle : `created/enroute/started/dispatched` à
+   * `false`, `completed` à `true`. Et `next-activity`, d'où l'application tire
+   * l'objet qu'elle nous renvoie, sert ces entrées telles quelles ; le DTO les
+   * laisse passer intactes (`Record<string, any>`).
+   *
+   * Le drapeau **fait donc autorité dans les deux sens** : `false` veut dire que
+   * la configuration ne clôt pas ici, quel que soit le code. Le littéral ne
+   * subsiste qu'en repli, pour un client qui enverrait une activité amputée — et
+   * il le dit, plutôt que de décider en silence.
    */
   private isTerminalActivity(activity: any): boolean {
+    if (typeof activity?.complete === 'boolean') return activity.complete;
+
+    this.logger.warn(
+      `Activité « ${activity?.code ?? '?'} » reçue sans son drapeau « complete » — ` +
+        'la clôture est déduite du code, ce qui est faux dès que la configuration ' +
+        'de commande emploie un autre vocabulaire',
+    );
     return activity?.code === 'completed' || activity?.status === 'completed';
   }
 

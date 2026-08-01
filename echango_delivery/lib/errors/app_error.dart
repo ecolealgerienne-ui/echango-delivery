@@ -82,6 +82,7 @@ class AppError {
   static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
   static const String cashCounterpartyNotFound = 'cash.counterparty_not_found';
   static const String cashDriverNoAccount = 'cash.driver_no_account';
+  static const String cashDriverUnknownToMerchant = 'cash.driver_unknown_to_merchant';
 
   // ── Commandes ────────────────────────────────────────────────────────────
   static const String orderNotFound = 'order.not_found';
