@@ -199,6 +199,64 @@ d'ergonomie, à valider à l'écran avant d'être appliquée aux dix.
 **Ce qui débloque le lot** : les dix sites relevés avec leur ordre actuel, la
 règle tranchée avec vous, puis `flutter analyze` et un passage à l'écran.
 
+### Le relevé a démenti la fiche — l'ordre s'accordait, le ton non
+
+**Les dix `AlertDialog` étaient dans le même ordre** : `[retrait à gauche,
+action à droite]`, sans exception. La phrase « des ordres de boutons et des tons
+qui ne s'accordent pas » était fausse pour moitié, et c'est la moitié sur
+laquelle le lot promettait de changer quelque chose.
+
+**Ce qui divergeait, c'est le ton — et dans le mauvais sens :**
+
+| dialogue | action | bouton avant |
+|---|---|---|
+| `addresses:78` | supprimer une adresse | `TextButton` — **identique** au « Retour » |
+| `order_detail:46` | annuler une livraison (« cette action est définitive ») | `TextButton` — identique au « Retour » |
+| `dashboard:521` | se déconnecter | `TextButton` — identique à « Annuler » |
+| `cash:536` / `570` | contester un encaissement / une remise | `TextButton` ×2 |
+| `my_fleets:84` | **quitter une entreprise** | `FilledButton` — l'affordance de l'action *recommandée* |
+
+Autrement dit **l'insistance visuelle suivait l'écran où l'on se trouvait, pas
+l'enjeu** — même motif que les dix refus affichés comme des confirmations,
+corrigés le 31/07 par `showAppOutcome`. Et `AppButtonStyles.destructive*`
+existait depuis le 31/07 : employé à **sept endroits dans les pages, zéro dans
+les dix dialogues**. La convention s'arrêtait à la frontière du dialogue.
+
+**Décision retenue (vous, 01/08)** : *marquer le ton, garder l'ordre*. Éloigner
+l'action destructive du pouce protégerait d'un appui sans regarder, mais
+créerait **deux dispositions selon le dialogue** — une nouvelle incohérence, à
+l'inverse de la convention Material. Le lot redevient donc à **disposition
+constante** : seule la couleur change.
+
+**`AppConfirmDialog` porte trois règles** :
+
+1. **Deux constructeurs nommés, aucun défaut** (`destructive` / `neutral`). Les
+   six confirmations du dépôt sont *toutes* destructives — un
+   `destructive: false` par défaut ne serait exercé nulle part, et le premier
+   dialogue ordinaire ajouté hériterait du rouge. Même raisonnement
+   qu'`AppEmptyState.unavailable`.
+2. **`false` sur un rejet.** `showDialog` rend `null` quand on tape à côté ; les
+   six sites écrivaient ce garde à la main, en **deux orthographes**
+   (`confirmed != true`, `confirmed ?? false`). Un `bool` non nullable le retire
+   des six.
+3. **L'action se nomme** (« Supprimer », « Annuler la livraison »), jamais
+   « OK » : sur un dialogue dont le titre est une question, « Oui » oblige à
+   relire la question pour savoir ce qu'on approuve.
+
+**Converti — 6 sites.** **Non converti — 4, avec la raison** : `cash:888`
+(`_AmountDialog`), `cash:1336` (`_DriverPicker`) et `flotte:537`
+(`_NewDriverDialog`) sont des **formulaires**, qui rendent une valeur et non un
+booléen ; `addresses:341` (« Remplacer l'adresse ? ») est un **choix entre deux
+égaux** — « Garder mon texte » n'est pas un retrait, et peindre « Remplacer » en
+rouge dramatiserait un champ réécrit, pas perdu.
+
+⚠️ **Pas de `check_dialogs.dart`, et c'est le critère de la règle 6** : le motif
+**porte une règle**, donc un composant qui la porte suffit — et ici c'est le
+**compilateur** qui la tient (constructeurs nommés, `bool` non nullable). Les
+boutons avaient besoin d'un contrôle parce que le motif n'était qu'un *choix*.
+Aucun des autres composants partagés (`AppNotice`, `AppEmptyState`,
+`AppErrorBanner`) n'a de contrôle non plus, pour la même raison.
+
 ---
 
 ## Lot 4 — Le champ de saisie (22 sites)
@@ -409,7 +467,7 @@ littéral français visible restant, et toutes les clés employées déclarées.
 |---|---|---|
 | 1 — enveloppes HTTP | **fait** (01/08) | inventaire verbe/chemin/query/corps identique HEAD↔courant, 86 appels ; 1620 → 1371 lignes |
 | 2 — `Card(` bruts | **fait** (01/08) | 12 sites vers `AppNotice`, 1 vers `AppErrorBanner`, **0** vers `AppSectionCard`, 15 laissés avec leur raison (ci-dessus) ; délimiteurs équilibrés, 0 chaîne visible perdue vs HEAD, 12 sites d'appel vérifiés paramètre par paramètre contre les six constructeurs |
-| 3 — dialogue de confirmation | à faire, **décision attendue** | |
+| 3 — dialogue de confirmation | **fait** (01/08) | décision « marquer le ton, garder l'ordre » ; 6 sites convertis, 4 laissés avec leur raison ; l'ordre s'accordait déjà, contrairement à ce que la fiche annonçait |
 | 4 — champ de saisie | **fait** (01/08) | 21 des 25 surcharges de bordure retirées, thème corrigé d'abord ; `check_inputs.dart` — 16 cas dont 8 refus, plus mutation des 11 vrais fichiers |
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |

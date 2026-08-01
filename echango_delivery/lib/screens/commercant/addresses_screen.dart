@@ -9,6 +9,7 @@ import 'map_picker_screen.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/empty_state.dart';
 
 /// Carnet d'adresses du commerçant.
@@ -73,28 +74,16 @@ class _AddressesScreenState extends State<AddressesScreen> {
   /// la commande, distinct de l'entrée du carnet — les livraisons passées
   /// gardent donc leur adresse.
   Future<void> _delete(MerchantOrderState orderState, SavedAddress a) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Supprimer « ${a.name} » ?'),
-        content: const Text(
-          'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: 'Supprimer « ${a.name} » ?',
+      message: 'Elle disparaîtra du carnet. Vos livraisons passées ne sont pas '
           'affectées.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Retour'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Supprimer'),
-          ),
-        ],
-      ),
+      cancelLabel: 'Retour',
+      confirmLabel: 'Supprimer',
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     final ok = await orderState.deleteAddress(a.id);
     if (!mounted) return;
@@ -336,6 +325,12 @@ class _AddressFormScreenState extends State<_AddressFormScreen> {
       return;
     }
 
+    // ⚠️ **Pas un `AppConfirmDialog`, et ce n'est pas un oubli.** Les deux
+    // boutons sont deux choix légitimes — « Garder mon texte » n'est pas un
+    // retrait, c'est une décision aussi valable que « Remplacer ». Le passer en
+    // confirmation baptiserait l'un des deux « annuler », et peindrait l'autre
+    // en rouge alors que rien ici n'est destructeur : le champ est réécrit, il
+    // n'est pas perdu.
     final replace = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(

@@ -17,6 +17,7 @@ import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/section_card.dart';
 
 /// Registre de caisse, vu du transporteur ou du commerçant.
@@ -531,28 +532,18 @@ class _CashScreenState extends State<CashScreen> {
   }
 
   Future<void> _disputeCollection(CashState state, CashCollectionEntry c) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_t('cash.collection.dispute.title')),
-        content: Text(_t('cash.collection.dispute.body', {
-          'amount': c.collectedAmount.toStringAsFixed(0),
-          'currency': c.currency,
-        })),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_t('cash.action.back')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_t('cash.action.dispute')),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: _t('cash.collection.dispute.title'),
+      message: _t('cash.collection.dispute.body', {
+        'amount': c.collectedAmount.toStringAsFixed(0),
+        'currency': c.currency,
+      }),
+      cancelLabel: _t('cash.action.back'),
+      confirmLabel: _t('cash.action.dispute'),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     final ok = await state.disputeCollection(c.id);
     if (!mounted) return;
@@ -565,27 +556,17 @@ class _CashScreenState extends State<CashScreen> {
   }
 
   Future<void> _dispute(CashState state, CashRemittance r) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_t('cash.remittance.dispute.title')),
-        content: Text(_t('cash.remittance.dispute.body', {
-          'amount': r.formattedAmount,
-        })),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(_t('cash.action.back')),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(_t('cash.action.dispute')),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: _t('cash.remittance.dispute.title'),
+      message: _t('cash.remittance.dispute.body', {
+        'amount': r.formattedAmount,
+      }),
+      cancelLabel: _t('cash.action.back'),
+      confirmLabel: _t('cash.action.dispute'),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     final ok = await state.disputeRemittance(r.id);
     if (!mounted) return;

@@ -8,6 +8,7 @@ import '../../widgets/language_selector.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/notice.dart';
 import '../../errors/error_message.dart';
 
@@ -79,24 +80,17 @@ class _MyFleetsScreenState extends State<MyFleetsScreen> {
   /// quitterait une entreprise en croyant solder ce qu'il lui doit.
   Future<void> _leave(String membershipId) async {
     final locale = context.read<LocaleState>().locale;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        content: Text(fleetLabel('driver.fleets.leave.confirm', locale)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(fleetLabel('fleet.cancel', locale)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(fleetLabel('driver.fleets.leave', locale)),
-          ),
-        ],
-      ),
+    // ⚠️ Passe de `FilledButton` à l'action destructive : quitter une entreprise
+    // coupe les courses à venir sans éteindre la dette. Le bouton plein primaire
+    // est l'affordance de ce qu'on **recommande** de faire.
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      message: fleetLabel('driver.fleets.leave.confirm', locale),
+      cancelLabel: fleetLabel('fleet.cancel', locale),
+      confirmLabel: fleetLabel('driver.fleets.leave', locale),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     try {
       await context.read<BffApiClient>().leaveFleet(membershipId);

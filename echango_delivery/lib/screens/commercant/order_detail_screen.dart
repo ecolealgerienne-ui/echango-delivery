@@ -18,6 +18,7 @@ import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/consultation_map.dart';
 import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
@@ -41,27 +42,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _cancel(MerchantOrderState orderState) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Annuler cette livraison ?'),
-        content: const Text(
-          'La demande sera retirée. Cette action est définitive.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Retour'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Annuler la livraison'),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: 'Annuler cette livraison ?',
+      message: 'La demande sera retirée. Cette action est définitive.',
+      cancelLabel: 'Retour',
+      confirmLabel: 'Annuler la livraison',
     );
 
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     final success = await orderState.cancelOrder(widget.orderId);
     if (!mounted) return;

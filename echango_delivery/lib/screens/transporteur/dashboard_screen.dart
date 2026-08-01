@@ -12,6 +12,7 @@ import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/error_banner.dart';
 import 'status_colors.dart';
 import '../../widgets/section_card.dart';
@@ -516,27 +517,15 @@ class ProfileScreen extends StatelessWidget {
     BuildContext context,
     AuthState authState,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Se déconnecter'),
-        content: const Text(
-          'Vous serez basculé hors ligne et ne recevrez plus de courses.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Annuler'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Se déconnecter'),
-          ),
-        ],
-      ),
+    final confirmed = await AppConfirmDialog.destructive(
+      context,
+      title: 'Se déconnecter',
+      message: 'Vous serez basculé hors ligne et ne recevrez plus de courses.',
+      cancelLabel: 'Annuler',
+      confirmLabel: 'Se déconnecter',
     );
 
-    if (confirmed ?? false) {
+    if (confirmed) {
       await authState.logout();
       if (context.mounted) {
         context.go('/login');
