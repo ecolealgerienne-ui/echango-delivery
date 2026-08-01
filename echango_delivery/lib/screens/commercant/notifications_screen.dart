@@ -126,8 +126,10 @@ class _NotificationTile extends StatelessWidget {
     return ListTile(
       onTap: onTap,
       // Icône nue plutôt que pastille teintée : `Color.withValues` n'existe
-      // qu'à partir de Flutter 3.27 alors que le pubspec déclare 3.20, et la
-      // couleur de l'icône porte déjà la distinction à elle seule.
+      // qu'à partir de Flutter 3.27 alors que le pubspec déclare `>=3.24.0`, et
+      // la couleur de l'icône porte déjà la distinction à elle seule.
+      // (Le chiffre lu ici était `3.20` jusqu'au 01/08/2026 ; la borne était
+      // fausse, mais ce refus-ci ne bouge pas — 3.27 reste au-dessus de 3.24.)
       leading: Icon(icon, color: color),
       title: Text(
         notification.title,
