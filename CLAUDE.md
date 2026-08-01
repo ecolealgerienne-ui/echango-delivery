@@ -235,6 +235,21 @@ python -m graphify update .                      # après un gros lot (11 s)
 
 ⚠️ **La faute qui a retardé l'adoption, et elle vaut d'être nommée** : j'avais mesuré le Dart, conclu « l'outil ne sert à rien », et je ne l'ai pas ouvert de la journée — alors qu'il était juste sur tout le TypeScript, c'est-à-dire sur la moitié du dépôt où se trouve l'argent. **Mesure exacte, portée de conclusion fausse.** C'est le même défaut que la borne du `pubspec` et que le commentaire de `dates.dart` : ce n'est pas la mesure qui trompe, c'est ce qu'on lui fait dire.
 
+⚠️ **Et cette règle a d'abord eu la faiblesse que ce dépôt dénonce partout : elle ne pouvait pas échouer.** Les dix autres sont tenues par des vérificateurs qui *refusent* ; celle-ci ne s'adressait qu'au jugement — et le jugement a dérapé **le jour même où elle a été écrite**, un `grep -A 12` répondant à une question de structure quelques minutes plus tard. Une règle non contrôlée ajoutée à une liste de règles contrôlées les dilue.
+
+**Elle est donc tenue par un hook** : `scripts/hooks/graphify-first.py`, branché en `PreToolUse` sur `Grep`. Il **refuse** un motif qui ressemble à un identifiant nu dans `backend/bff/`, avec le message qui dit quoi faire.
+
+```json
+"hooks": { "PreToolUse": [ { "matcher": "Grep", "hooks": [
+  { "type": "command", "command": "python <repo>/scripts/hooks/graphify-first.py" } ] } ] }
+```
+
+Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun l'active chez lui ; le script, lui, est versionné.
+
+**Ce qu'il laisse passer, et c'est le plus important** : un hook trop large devient une gêne quotidienne, et une gêne quotidienne se désactive. Passent sans un mot les motifs à métacaractères (recherche textuelle), `echango_delivery/` (le graphe y répond faux), l'absence de chemin, les identifiants de moins de quatre caractères, et **le même motif relancé une seconde fois** — un refus définitif rendrait le travail impossible le jour où le graphe ne sait pas répondre. Il installe une habitude, il ne prend pas le contrôle.
+
+⚠️ **Écrit en Python et non en `jq`** : `jq` n'existe que dans WSL sur ce poste, et les hooks tournent côté Windows. Un hook qui échoue à lire son entrée **laisse passer**, délibérément — bloquer parce qu'on n'a pas compris casserait l'outil qu'on voulait améliorer, et le défaut serait mis sur le compte du `Grep`. Éprouvé sur **neuf cas au tuyau, dont deux refus**, puis en session : refus → requête au graphe → second `Grep` identique accepté.
+
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
 Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un logiciel tiers, pas notre code. Le vendoriser dans `echangoorder` mélangerait les licences (AGPL vs le code propriétaire d'Echango Order) et une stack complètement différente (Node.js/MySQL/Redis/SocketCluster vs Odoo/Postgres). Ce repo contient **nos** scripts de déploiement, notre config, et nos notes de décision — **pas le code source de Fleetbase lui-même**, cloné à part en local (voir § Installation locale). On ne fork pas Fleetbase pour l'instant : pas nécessaire tant qu'on ne modifie pas son code (voir § Licence).
