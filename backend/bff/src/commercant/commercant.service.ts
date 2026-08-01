@@ -844,7 +844,13 @@ export class CommerçantService {
           // Une entreprise n'a pas de catégorie de véhicule : c'est son
           // conducteur qui en aura une, et il n'est pas encore désigné. `null`
           // plutôt qu'une valeur inventée (règle 10).
-          vehicle_type: null,
+          //
+          // ⚠️ Le type est écrit, et il le faut : un `null` nu dans un littéral
+          // d'objet n'a pas de type inférable, et `nest build` le refuse
+          // (`TS7018`) là où `tsc --noEmit` l'accepte — les deux ne lisent pas
+          // la même configuration. Sans lui, le champ perdrait aussi sa forme
+          // pour l'appelant, qui lit `string | null` sur l'autre branche.
+          vehicle_type: null as string | null,
           // Vrai par construction : la requête ne rend que des `FleetAccount`
           // actifs. Le champ garde son sens — « peut recevoir une course ».
           has_account: true,
