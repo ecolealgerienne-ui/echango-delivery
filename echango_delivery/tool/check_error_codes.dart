@@ -219,7 +219,7 @@ void main(List<String> args) {
   const tables = {
     'lib/i18n/fleet_strings.dart': 'Libellés flotte',
     'lib/i18n/cash_strings.dart': 'Libellés caisse',
-    'lib/i18n/order_form_strings.dart': 'Libellés formulaire de livraison',
+    'lib/i18n/order_strings.dart': 'Libellés des livraisons (commerçant)',
   };
 
   for (final entry in tables.entries) {

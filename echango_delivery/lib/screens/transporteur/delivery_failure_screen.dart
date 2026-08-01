@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/order.dart'
+    show deliveryFailureLabel, deliveryFailureReasons;
 import '../../services/photo_service.dart';
+import '../../state/locale_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/photo_field.dart';
 import '../../theme/app_buttons.dart';
@@ -25,31 +28,18 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
   late TextEditingController _notesController;
   CapturedPhoto? _photo;
 
-  /// Codes attendus par le BFF (DELIVERY_FAILURE_REASONS, liste fermée
-  /// validée côté serveur) associés à leur libellé affiché.
-  ///
-  /// ⚠️ La valeur envoyée doit être le CODE, pas le libellé : l'écran
-  /// envoyait auparavant des libellés anglais ('Recipient not available'),
-  /// que la validation serveur rejetait systématiquement en 400.
-  ///
-  /// La liste suit specs_app_transporteur.md §4.3 — délibérément courte et
-  /// spécifique à la livraison, et non les 9 catégories génériques de
-  /// Navigator. Deux entrées du scaffolding ont disparu ('Traffic/delay',
-  /// 'Vehicle issue') : ce sont des retards, pas des échecs de livraison.
-  /// Marquée « à valider avec l'équipe métier » dans la spec.
-  static const Map<String, String> _failureReasons = {
-    'client_absent': 'Client absent',
-    'adresse_introuvable': 'Adresse introuvable',
-    'colis_refuse': 'Client a refusé le colis',
-    'colis_endommage': 'Colis endommagé ou manquant',
-    'acces_impossible': 'Accès impossible (site fermé, zone inaccessible)',
-    'autre': 'Autre',
-  };
+  // ⚠️ **Les motifs vivaient ici ET dans `order_detail_screen`, et ils avaient
+  // divergé** (01/08/2026) : trois libellés sur six ne s'accordaient plus. Le
+  // conducteur déclarait « Client a refusé le colis » quand le commerçant
+  // lisait « Colis refusé par le client », pour le même code. La liste et ses
+  // libellés vivent désormais dans `models/order.dart`
+  // (`deliveryFailureReasons` / `deliveryFailureLabel`), avec le motif complet
+  // et le rappel que la valeur envoyée est le CODE, jamais le libellé.
 
   @override
   void initState() {
     super.initState();
-    _selectedReason = _failureReasons.keys.first;
+    _selectedReason = deliveryFailureReasons.first;
     _notesController = TextEditingController();
   }
 
@@ -107,10 +97,11 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
                   value: _selectedReason,
                   isExpanded: true,
                   underline: const SizedBox.shrink(),
-                  items: _failureReasons.entries.map((entry) {
+                  items: deliveryFailureReasons.map((code) {
                     return DropdownMenuItem(
-                      value: entry.key,
-                      child: Text(entry.value),
+                      value: code,
+                      child: Text(deliveryFailureLabel(
+                          code, context.read<LocaleState>().locale)),
                     );
                   }).toList(),
                   onChanged: (value) {

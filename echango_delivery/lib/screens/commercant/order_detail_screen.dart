@@ -8,7 +8,9 @@ import '../../models/cash.dart';
 import '../../i18n/cash_strings.dart';
 import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
-import '../../models/order.dart' show DeliveryFailure, Place;
+import '../../i18n/order_strings.dart';
+import '../../models/order.dart'
+    show DeliveryFailure, Place, deliveryFailureLabel;
 import '../../models/vehicle_type.dart';
 import '../../services/navigation_launcher.dart';
 import '../../state/merchant_order_state.dart';
@@ -33,6 +35,14 @@ class OrderDetailScreen extends StatefulWidget {
 }
 
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  /// ⚠️ `read` et jamais `watch` : la moitié de ces libellés est lue depuis
+  /// `_cancel`, `_publish` ou `_duplicate`, et `watch` hors phase de build lève
+  /// chez Provider — défaut d'exécution que `flutter analyze` ne voit pas.
+  /// Ne pas observer ne perd rien : `main.dart` reconstruit toute
+  /// l'application au changement de langue.
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   @override
   void initState() {
     super.initState();
@@ -44,10 +54,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Future<void> _cancel(MerchantOrderState orderState) async {
     final confirmed = await AppConfirmDialog.destructive(
       context,
-      title: 'Annuler cette livraison ?',
-      message: 'La demande sera retirée. Cette action est définitive.',
-      cancelLabel: 'Retour',
-      confirmLabel: 'Annuler la livraison',
+      title: _t('order.detail.cancel.title'),
+      message: _t('order.detail.cancel.body'),
+      cancelLabel: _t('order.detail.cancel.back'),
+      confirmLabel: _t('order.detail.cancel.confirm'),
     );
 
     if (!confirmed || !mounted) return;
@@ -57,8 +67,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     showAppOutcome(
       context,
-      success ? null : orderState.errorMessage ?? 'Annulation impossible',
-      'Livraison annulée',
+      success ? null : orderState.errorMessage ?? _t('order.detail.cancel.failed'),
+      _t('order.detail.cancel.done'),
     );
   }
 
@@ -73,8 +83,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     showAppOutcome(
       context,
-      success ? null : orderState.errorMessage ?? 'Publication impossible',
-      'Livraison publiée : Echango recherche un transporteur.',
+      success ? null : orderState.errorMessage ?? _t('order.detail.publish.failed'),
+      _t('order.detail.publish.done'),
     );
   }
 
@@ -96,7 +106,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       showAppError(
         context,
         orderState.errorMessage ??
-            'Reprise impossible — le formulaire s\'ouvre vide.',
+            _t('order.detail.duplicate.failed'),
       );
     }
 
@@ -111,7 +121,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         if (didPop) context.read<MerchantOrderState>().clearSelection();
       },
       child: Scaffold(
-        appBar: AppBar(title: const Text('Suivi de la livraison')),
+        appBar: AppBar(title: Text(_t('order.detail.title'))),
         body: Consumer<MerchantOrderState>(
           builder: (context, orderState, _) {
             if (orderState.isLoading && orderState.selected == null) {
@@ -121,7 +131,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             final order = orderState.selected;
             if (order == null) {
               return Center(
-                child: Text(orderState.errorMessage ?? 'Livraison introuvable'),
+                child: Text(orderState.errorMessage ?? _t('order.detail.not_found')),
               );
             }
 
@@ -156,11 +166,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ),
                             if (order.trackingNumber != null) ...[
                               const SizedBox(height: AppSpacing.sm),
-                              Text('Numéro de suivi : ${order.trackingNumber}'),
+                              Text(_t('order.detail.tracking',
+                                  {'number': order.trackingNumber!})),
                             ],
                             const SizedBox(height: AppSpacing.sm),
                             Text(
-                              'Créée le ${formatFull(order.createdAt)}',
+                              _t('order.detail.created',
+                                  {'date': formatFull(order.createdAt)}),
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
@@ -175,11 +187,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // contraire ferait croire à une recherche en cours là où
                     // rien n'a démarré.
                     if (order.isDraft)
-                      const AppNotice.info(
+                      AppNotice.info(
                         icon: Icons.edit_note,
-                        message:
-                            'Brouillon : aucun transporteur n\'est sollicité '
-                            'tant que vous ne publiez pas cette livraison.',
+                        message: _t('order.detail.state.draft'),
                       )
                     // ⚠️ `isWaitingDispatch` ne suffit pas. Le statut Fleetbase
                     // reste `dispatched` **après** l'affectation d'un
@@ -192,32 +202,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // Rien n'est dérivé ni mémorisé ici : deux champs servis
                     // par Fleetbase, lus ensemble pour choisir une phrase.
                     else if (order.isWaitingDispatch && order.driverName == null)
-                      const AppNotice.warning(
+                      AppNotice.warning(
                         icon: Icons.hourglass_empty,
-                        message: 'En attente d\'attribution. Echango recherche '
-                            'un transporteur disponible.',
+                        message: _t('order.detail.state.waiting'),
                       )
                     else if (order.isWaitingDispatch)
-                      const AppNotice.progress(
+                      AppNotice.progress(
                         icon: Icons.assignment_turned_in_outlined,
-                        message: 'Transporteur affecté. La course démarrera à '
-                            'l\'enlèvement.',
+                        message: _t('order.detail.state.assigned'),
                       ),
                     if (order.driverName != null) _driverCard(order),
                     if (order.isCompleted)
-                      const AppNotice.success(
+                      AppNotice.success(
                         icon: Icons.check_circle_outline,
-                        message: 'Livraison effectuée.',
+                        message: _t('order.detail.state.completed'),
                       ),
                     if (order.isCancelled)
-                      const AppNotice.muted(
+                      AppNotice.muted(
                         icon: Icons.cancel_outlined,
-                        message: 'Livraison annulée.',
+                        message: _t('order.detail.state.cancelled'),
                       ),
                     const SizedBox(height: AppSpacing.md),
-                    _placeCard('Retrait', order.pickup, order.pickupNotes),
+                    _placeCard(_t('order.section.pickup'), order.pickup, order.pickupNotes),
                     const SizedBox(height: AppSpacing.md),
-                    _placeCard('Livraison', order.dropoff, order.dropoffNotes),
+                    _placeCard(_t('order.section.dropoff'), order.dropoff, order.dropoffNotes),
                     // Signalements d'échec : le commerçant devra répondre à son
                     // client, et le justificatif n'allait jusqu'ici qu'à celui
                     // qui l'avait produit.
@@ -248,7 +256,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         onPressed:
                             orderState.isLoading ? null : () => _publish(orderState),
                         icon: const Icon(Icons.publish_outlined),
-                        label: const Text('Publier'),
+                        label: Text(_t('order.detail.publish')),
                       ),
                       const SizedBox(height: AppSpacing.md),
                     ],
@@ -261,7 +269,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       onPressed:
                           orderState.isLoading ? null : () => _duplicate(orderState),
                       icon: const Icon(Icons.copy_all_outlined),
-                      label: const Text('Refaire cette livraison'),
+                      label: Text(_t('order.detail.duplicate')),
                     ),
                     const SizedBox(height: AppSpacing.md),
                     if (order.canCancel)
@@ -269,7 +277,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         onPressed:
                             orderState.isLoading ? null : () => _cancel(orderState),
                         icon: const Icon(Icons.close),
-                        label: const Text('Annuler la livraison'),
+                        label: Text(_t('order.detail.cancel.confirm')),
                         style: AppButtonStyles.destructiveOutlined(context),
                       ),
                     const SizedBox(height: AppSpacing.xxl),
@@ -297,7 +305,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.local_shipping_outlined),
-              title: Text('Pris en charge par ${order.driverName}'),
+              title: Text(_t('order.detail.driver.assigned',
+                  {'name': order.driverName!})),
               subtitle: order.driverPhone == null
                   ? null
                   : Text(order.driverPhone!),
@@ -305,7 +314,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ? null
                   : IconButton(
                       icon: const Icon(Icons.phone),
-                      tooltip: 'Appeler le transporteur',
+                      tooltip: _t('order.detail.driver.call'),
                       onPressed: () => NavigationLauncher.call(order.driverPhone!),
                     ),
             ),
@@ -327,7 +336,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Preuve de livraison',
+              Text(_t('order.pod.label'),
                   style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: AppSpacing.sm),
               ProofImage(url: '/commercant/commandes/${widget.orderId}/preuve'),
@@ -375,24 +384,26 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       // Le futur tant que rien n'est encaissé : c'est une projection, pas un
       // solde. Les annoncer du même ton ferait compter sur une somme
       // qu'aucun transporteur n'a encore perçue.
-      final tense = collection == null ? 'Vous reviendra' : 'Vous revient';
+      final tense = collection == null
+          ? _t('order.detail.cash.will_return')
+          : _t('order.detail.cash.returns');
 
       settlement.addAll([
         const Divider(height: 20),
         Text(
           net >= 0
-              ? '$tense : ${money(net)}'
+              ? _t('order.detail.cash.net',
+                  {'tense': tense, 'amount': money(net)})
               // Cas réel et non théorique : la retenue du transporteur est
               // plafonnée à ce qu'il a perçu, donc une course chère payée en
               // partie laisse le commerçant débiteur. Le taire afficherait 0
               // là où il doit de l'argent.
-              : 'Vous devrez au transporteur : ${money(-net)}',
+              : _t('order.detail.cash.owed', {'amount': money(-net)}),
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: AppSpacing.xs),
         Text(
-          'Le transporteur retient sa rémunération (${money(price)}) sur ce '
-          'qu\'il encaisse et vous remet la différence.',
+          _t('order.detail.cash.settlement', {'fee': money(price)}),
           style: theme.textTheme.bodySmall,
         ),
       ]);
@@ -409,25 +420,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               children: [
                 const Icon(Icons.account_balance_wallet_outlined, size: 20),
                 const SizedBox(width: AppSpacing.sm),
-                Text('Paiement à la livraison', style: theme.textTheme.titleSmall),
+                Text(_t('order.detail.cash.title'), style: theme.textTheme.titleSmall),
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            Text('Montant demandé : '
-                '${order.codAmount!.toStringAsFixed(0)} $currency'.trim()),
+            Text(_t('order.detail.cash.requested', {
+              'amount':
+                  '${order.codAmount!.toStringAsFixed(0)} $currency'.trim(),
+            })),
             if (collection == null)
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Text(
-                  'Pas encore encaissé.',
+                  _t('order.detail.cash.pending'),
                   style: theme.textTheme.bodySmall,
                 ),
               )
             else ...[
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Perçu : ${collection.collectedAmount.toStringAsFixed(0)} $currency'
-                    .trim(),
+                _t('order.detail.cash.collected', {
+                  'amount':
+                      '${collection.collectedAmount.toStringAsFixed(0)} $currency'
+                          .trim(),
+                }),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               if (collection.hasDiscrepancy) ...[
@@ -445,8 +461,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ],
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Cette somme est détenue par le transporteur jusqu\'à sa remise. '
-                'Suivez-la dans « Encaissements ».',
+                _t('order.detail.cash.held'),
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -467,30 +482,31 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       if (order.price != null)
         (
           Icons.payments_outlined,
-          'Rémunération',
+          _t('order.detail.row.price'),
           '${order.price!.toStringAsFixed(0)} ${order.currency ?? ''}'.trim(),
         ),
       if (order.scheduledAt != null)
         (
           Icons.schedule_outlined,
-          'Enlèvement',
+          _t('order.schedule.title'),
           formatDayTime(order.scheduledAt!),
         )
       else
-        (Icons.schedule_outlined, 'Enlèvement', 'Dès que possible'),
+        (Icons.schedule_outlined, _t('order.schedule.title'), _t('order.schedule.asap')),
       if (order.vehicleType != null)
         (
           vehicleIcon(order.vehicleType),
-          'Véhicule',
-          '${vehicleLabel(order.vehicleType)} minimum',
+          _t('order.detail.row.vehicle'),
+          _t('order.detail.row.vehicle.value',
+              {'vehicle': vehicleLabel(order.vehicleType)}),
         ),
       if (order.podMethod != null)
         (
           Icons.verified_outlined,
-          'Preuve',
+          _t('order.detail.row.proof'),
           switch (order.podMethod!) {
-            'photo' => 'Photo à la livraison',
-            'aucune' => 'Aucune preuve demandée',
+            'photo' => _t('order.pod.photo'),
+            'aucune' => _t('order.detail.pod.none_requested'),
             final other => other,
           },
         ),
@@ -506,37 +522,37 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       if (order.codAmount != null)
         (
           Icons.account_balance_wallet_outlined,
-          'À encaisser',
+          _t('order.detail.row.cod'),
           '${order.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'.trim() +
               (order.codIncludesDelivery
-                  ? ' (livraison à votre charge)'
-                  : ' (livraison payée par le client)'),
+                  ? _t('order.detail.cod.merchant_pays')
+                  : _t('order.detail.cod.client_pays')),
         ),
       // Une ligne par article : le poids et la mention fragile étaient saisis
       // puis invisibles, alors que ce sont eux qui fondent un refus pour
       // « colis inadapté ».
       for (final item in order.items)
-        (Icons.inventory_2_outlined, 'Colis', item.label),
+        (Icons.inventory_2_outlined, _t('order.section.parcel'), item.label),
       // Repli pour les commandes d'avant la projection détaillée des articles.
       if (order.items.isEmpty && order.packageContents != null)
-        (Icons.inventory_2_outlined, 'Colis', order.packageContents!),
+        (Icons.inventory_2_outlined, _t('order.section.parcel'), order.packageContents!),
       if (order.preferFavourites != null)
         (
           order.preferFavourites! ? Icons.star_outline : Icons.public,
-          'Diffusion',
+          _t('order.detail.row.dispatch'),
           order.preferFavourites!
-              ? 'Mes transporteurs habituels en priorité'
-              : 'Tout le réseau',
+              ? _t('order.detail.dispatch.favourites')
+              : _t('order.detail.dispatch.network'),
         ),
       if (order.instructions != null)
-        (Icons.notes_outlined, 'Instructions', order.instructions!),
+        (Icons.notes_outlined, _t('order.detail.row.instructions'), order.instructions!),
     ];
 
     return AppSectionCard(
       child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Votre demande',
+            Text(_t('order.detail.request'),
                 style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: AppSpacing.md),
             for (final (icon, label, value) in rows)
@@ -569,9 +585,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Widget _favouriteCard(MerchantOrder order) => Card(
         child: ListTile(
           leading: const Icon(Icons.star_outline),
-          title: Text('Ajouter ${order.driverName} à mes transporteurs'),
-          subtitle: const Text(
-            'Vos prochaines livraisons lui seront proposées en premier.',
+          title: Text(_t('order.detail.favourite.add',
+              {'name': order.driverName ?? ''})),
+          subtitle: Text(
+            _t('order.detail.favourite.hint'),
           ),
           onTap: () => context.push('/commercant/transporteurs'),
         ),
@@ -629,7 +646,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   // livraison pose question, et le numéro était déjà là.
                   IconButton(
                     icon: const Icon(Icons.call, size: 18),
-                    tooltip: 'Appeler',
+                    tooltip: _t('order.detail.driver.call.short'),
                     visualDensity: VisualDensity.compact,
                     onPressed: () => NavigationLauncher.call(phone),
                   ),
@@ -667,6 +684,10 @@ class _DriverMap extends StatefulWidget {
 }
 
 class _DriverMapState extends State<_DriverMap> {
+  /// Sa propre traduction : c'est une autre classe, donc un autre `context`.
+  String _t(String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
   DriverPosition? _position;
   bool _loading = false;
 
@@ -701,7 +722,7 @@ class _DriverMapState extends State<_DriverMap> {
         child: OutlinedButton.icon(
           onPressed: _load,
           icon: const Icon(Icons.map_outlined),
-          label: const Text('Voir la position du transporteur'),
+          label: Text(_t('order.detail.driver.position')),
         ),
       );
     }
@@ -715,11 +736,12 @@ class _DriverMapState extends State<_DriverMap> {
 
     final position = _position;
     if (position == null) {
-      return const Padding(
-        padding: EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
         child: Text(
-          'Position du transporteur non disponible pour le moment.',
-          style: TextStyle(fontSize: 12),
+          _t('order.detail.driver.position.none'),
+          style: const TextStyle(fontSize: 12),
         ),
       );
     }
@@ -776,14 +798,15 @@ class _DriverMapState extends State<_DriverMap> {
               Expanded(
                 child: Text(
                   position.freshness == null
-                      ? 'Dernière position connue, date inconnue'
-                      : 'Position relevée ${position.freshness}',
+                      ? _t('order.detail.driver.position.unknown')
+                      : _t('order.detail.driver.position.seen',
+                          {'when': position.freshness!}),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
               TextButton(
                 onPressed: _load,
-                child: const Text('Actualiser'),
+                child: Text(_t('order.detail.refresh')),
               ),
             ],
           ),
@@ -816,20 +839,12 @@ class _FailureHistory extends StatelessWidget {
 
   const _FailureHistory({required this.failures});
 
-  /// Libellés lisibles. Les codes du serveur (`client_absent`) ne se lisent
-  /// pas : ils sont faits pour être comptés, pas affichés.
-  static const _labels = {
-    'client_absent': 'Client absent',
-    'adresse_introuvable': 'Adresse introuvable',
-    'colis_refuse': 'Colis refusé par le client',
-    'colis_endommage': 'Colis endommagé ou manquant',
-    'acces_impossible': 'Accès impossible',
-    'autre': 'Autre motif',
-  };
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
+    String t(String key, [Map<String, String>? vars]) =>
+        orderLabel(key, locale, vars);
     final multiple = failures.length > 1;
 
     return AppSectionCard(
@@ -845,8 +860,9 @@ class _FailureHistory extends StatelessWidget {
                 Expanded(
                   child: Text(
                     multiple
-                        ? '${failures.length} tentatives de livraison ont échoué'
-                        : 'La livraison n\'a pas pu être effectuée',
+                        ? t('order.detail.failure.many',
+                            {'count': '${failures.length}'})
+                        : t('order.detail.failure.one'),
                     style: theme.textTheme.titleSmall
                         ?.copyWith(color: theme.colorScheme.onErrorContainer),
                   ),
@@ -857,11 +873,12 @@ class _FailureHistory extends StatelessWidget {
               const SizedBox(height: AppSpacing.md),
               if (multiple)
                 Text(
-                  'Tentative ${failures.length - i}',
+                  t('order.detail.failure.attempt',
+                      {'n': '${failures.length - i}'}),
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: theme.colorScheme.onErrorContainer),
                 ),
-              Text(_labels[failures[i].reason] ?? failures[i].reason,
+              Text(deliveryFailureLabel(failures[i].reason, locale),
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               if (failures[i].notes != null) Text(failures[i].notes!),
               if (failures[i].photoUrl != null) ...[
@@ -871,7 +888,7 @@ class _FailureHistory extends StatelessWidget {
             ],
             const SizedBox(height: AppSpacing.md),
             Text(
-              'Contactez Echango pour convenir d\'une nouvelle tentative.',
+              t('order.detail.failure.contact'),
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onErrorContainer),
             ),

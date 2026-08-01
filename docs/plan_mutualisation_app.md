@@ -437,6 +437,58 @@ resubstitution — chaque chaîne retirée doit se retrouver dans la table.
 **Ce qui débloque chaque écran** : parité FR/AR par `check_error_codes`, zéro
 littéral français visible restant, et toutes les clés employées déclarées.
 
+### Écran 2 — `commercant/order_detail_screen` (01/08/2026)
+
+**La table a d'abord été fusionnée.** Sept libellés de la fiche existaient déjà
+dans celle du formulaire (`Retrait`, `Livraison`, `Colis`, `Enlèvement`, `Dès que
+possible`, `Preuve de livraison`, `Photo à la livraison`). Deux tables les
+auraient recopiés — c'est le défaut nommé dans `fleet_strings` (« deux tables
+recopiées ont affiché deux textes différents pour la même commande »), et le
+critère de la règle 5 tranche : si l'un change, l'autre doit changer.
+`order_form_strings.dart` devient donc **`order_strings.dart`**, le vocabulaire
+d'une livraison, et les sept clés partagées passent de `order.form.*` à
+`order.*` — un nom qui aurait menti sinon. **132 clés**, parité 132 = 132.
+
+⚠️ **Et une duplication règle 5 trouvée en chemin, déjà divergente** : les six
+motifs d'échec de livraison existaient **en deux copies**, et **trois libellés
+sur six ne s'accordaient plus** —
+
+| code | conducteur déclarait | commerçant lisait |
+|---|---|---|
+| `colis_refuse` | « Client a refusé le colis » | « Colis refusé par le client » |
+| `acces_impossible` | « Accès impossible (site fermé, zone inaccessible) » | « Accès impossible » |
+| `autre` | « Autre » | « Autre motif » |
+
+Un seul endroit désormais : `deliveryFailureReasons` (la liste de codes) et
+`deliveryFailureLabel()` dans `models/order.dart`, sur le modèle de
+`cashDiscrepancyReasons` / `cashDiscrepancyLabel` — **le code part au serveur et
+sera compté, le libellé est de la langue** ; les mêler dans une map fait itérer
+sur du français pour bâtir un sélecteur. Arbitrage des trois : la formulation du
+commerçant l'emporte sur deux (ce sont des constats de ce qui s'est passé), la
+parenthèse du conducteur est conservée sur le troisième parce qu'elle informe
+dans les deux contextes.
+
+**Conversion prouvée par resubstitution** : 73 chaînes retirées, **59
+retrouvées à l'identique**, **8 à l'apostrophe près**, 3 non retrouvées et
+toutes expliquées — deux sont un artefact de normalisation (`'Montant demandé : '`
+suivi d'un littéral interpolé, dont la devise entre désormais dans la variable
+`{amount}`), la troisième est l'un des trois libellés d'échec délibérément
+changés.
+
+⚠️ **Dix défauts de `const` et un helper manquant, tous trouvés par les
+contrôles et aucun à la lecture.** Sept `const Text(_t(…))`, deux
+`const AppNotice.*`, un `const Padding(` — et surtout **`_DriverMapState`
+appelait `_t` cinq fois sans le déclarer** : c'est une troisième classe dans le
+même fichier, avec son propre `context`. Un contrôle de portée par classe a été
+ajouté ; sans lui, la conversion aurait été livrée non compilable.
+
+⚠️ **Trouvé en marge, non traité** : `transporteur/delivery_failure_screen`
+contient encore **quatre chaînes en anglais** (« Report Delivery Failure »,
+« Failure Reason », « Additional Notes (Optional) », « Report the reason for
+delivery failure ») — reliquat du scaffolding du 27/07. Seuls ses motifs
+d'échec ont été traités ici, parce qu'ils sont partagés ; le reste de l'écran
+relève du lot « le reste ».
+
 ### Écran 1 — `commercant/create_order_screen` (01/08/2026)
 
 **69 clés**, `lib/i18n/order_form_strings.dart`, enregistré dans
@@ -506,4 +558,4 @@ capacité à se taire.
 | 4 — champ de saisie | **fait** (01/08) | 21 des 25 surcharges de bordure retirées, thème corrigé d'abord ; `check_inputs.dart` — 16 cas dont 8 refus, plus mutation des 11 vrais fichiers |
 | 5 — indicateurs d'attente | **fait** (01/08) | 21 sites relevés par contexte, **rien à extraire** ; 3 défauts de garde trouvés et corrigés (ci-dessus) |
 | 6 — enveloppes Fleetbase | **fait** (01/08) | 18 `try/catch` retirés ; `tsc`, `jest` (85) et `build` verts |
-| 7 — 335 chaînes | **1 écran sur 5** (01/08) | `create_order_screen` : 69 clés, parité 69 = 69, 69 employées / 69 déclarées, 0 littéral français visible restant, conversion prouvée par resubstitution |
+| 7 — 335 chaînes | **2 écrans sur 5** (01/08) | `order_strings.dart` : 132 clés, parité 132 = 132, 0 orpheline dans les deux sens, 0 littéral français visible restant sur les deux écrans, conversions prouvées par resubstitution |

@@ -3,7 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../../i18n/order_form_strings.dart';
+import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../models/vehicle_type.dart';
 import '../../services/bff_api_client.dart';
@@ -59,7 +59,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// Ne pas observer ici ne perd rien — un changement de langue reconstruit
   /// toute l'application (`Consumer<LocaleState>` dans `main.dart`).
   String _t(String key, [Map<String, String>? vars]) =>
-      orderFormLabel(key, context.read<LocaleState>().locale, vars);
+      orderLabel(key, context.read<LocaleState>().locale, vars);
 
   final _pickupName = TextEditingController();
   final _pickupAddress = TextEditingController();
@@ -440,7 +440,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _section(_t('order.form.section.pickup')),
+                _section(_t('order.section.pickup')),
                 _locationRow(orderState, toPickup: true),
                 _field(_pickupName, _t('order.form.pickup.name'), Icons.storefront_outlined),
                 _field(_pickupAddress, _t('order.form.address'), Icons.place_outlined),
@@ -448,7 +448,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_pickupPhone, _t('order.form.phone'), Icons.phone_outlined,
                     keyboard: TextInputType.phone),
                 const SizedBox(height: AppSpacing.xl),
-                _section(_t('order.form.section.dropoff')),
+                _section(_t('order.section.dropoff')),
                 _locationRow(orderState, toPickup: false),
                 _field(_dropoffName, _t('order.form.dropoff.name'), Icons.person_outline),
                 _field(_dropoffAddress, _t('order.form.address'), Icons.place_outlined),
@@ -456,7 +456,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
                     keyboard: TextInputType.phone),
                 const SizedBox(height: AppSpacing.xl),
-                _section(_t('order.form.section.parcel')),
+                _section(_t('order.section.parcel')),
                 _field(_itemDescription, _t('order.form.item.description'),
                     Icons.inventory_2_outlined),
                 _field(_itemQuantity, _t('order.form.item.quantity'),
@@ -845,7 +845,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   Widget _scheduleTile() {
     final label = _scheduledAt == null
-        ? _t('order.form.schedule.asap')
+        ? _t('order.schedule.asap')
         // Le jour et le mois étaient écrits SANS rembourrage : « 5/8 à 09h30 »
         // là où le reste de l'application écrit « 05/08 à 09h30 ».
         : formatDayTime(_scheduledAt!);
@@ -853,7 +853,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.schedule_outlined),
-      title: Text(_t('order.form.schedule.title')),
+      title: Text(_t('order.schedule.title')),
       subtitle: Text(label),
       trailing: _scheduledAt == null
           ? const Icon(Icons.chevron_right)
@@ -899,7 +899,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// n'existerait pas — pire qu'une option absente.
   Widget _podSelector() {
     final options = {
-      'photo': _t('order.form.pod.photo'),
+      'photo': _t('order.pod.photo'),
       'aucune': _t('order.form.pod.none'),
     };
 
@@ -908,7 +908,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       child: DropdownButtonFormField<String>(
         initialValue: _podMethod,
         decoration: InputDecoration(
-          labelText: _t('order.form.pod.label'),
+          labelText: _t('order.pod.label'),
           prefixIcon: const Icon(Icons.verified_outlined),
           isDense: true,
         ),
@@ -1028,7 +1028,7 @@ class _AddressBookSheet extends StatefulWidget {
 class _AddressBookSheetState extends State<_AddressBookSheet> {
   /// La feuille a son propre contexte, donc son propre accès à la table.
   String _t(String key) =>
-      orderFormLabel(key, context.read<LocaleState>().locale);
+      orderLabel(key, context.read<LocaleState>().locale);
 
   String _filter = '';
 
