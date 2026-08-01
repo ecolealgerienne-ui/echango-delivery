@@ -750,6 +750,32 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **État de la suite** : les sept passent, vérifiés un par un. La suite complète d'un seul trait consomme sept inscriptions et se heurte au plafond horaire dès qu'on a déjà travaillé dans l'heure — ce n'est pas un échec du code, et le lanceur le dit.
 
+- [x] **✅ Le pool a enfin son facilitateur, et la chaîne à trois maillons y tourne (01/08/2026)** — l'écart constaté le matin même (entrée ci-dessous) est refermé.
+
+  **Le chantier était minuscule, et c'est graphify qui l'a montré.** `resolveFacilitator` n'a que **3 arêtes**, et tout converge vers `driverCounterparty(facilitatorId, merchantId)` : poser le repli à ce seul endroit change la contrepartie du conducteur, celle du commerçant, les deux plafonds et les deux chaînes de remise. Le reproduire chez les appelants aurait créé des chemins qui divergent.
+
+  ⚠️ **Le « persona opérateur » existait déjà**, et je l'avais annoncé absent. C'est un `FleetAccount` avec `isPlatform` : il se connecte comme `fleet`, c'est une partie `fleet` du registre, il confirme par les routes existantes — et le schéma portait **déjà l'index sur `isPlatform`**. Ce que je prenais pour un quatrième persona à construire était un drapeau à lire.
+
+  **Deux garde-fous, tous deux nés d'un raisonnement sur ce qui casse** : `null` quand aucun prestataire plateforme n'existe — une installation non provisionnée doit continuer **exactement** comme avant, et lever ferait échouer la clôture de chaque livraison encaissée pour installer une amélioration ; et **refus** quand il y en a deux (`cash.platform_ambiguous`) — `findFirst` en prendrait un au hasard, donc l'argent d'une course irait à l'un ou à l'autre selon l'ordre d'insertion, défaut qui ne se verrait qu'au règlement. `scripts/provision-platform.sh` tient le geste d'admin : `isPlatform` n'a **aucune route**, délibérément.
+
+  **✅ Joué en réel** : 1950 à la porte, le conducteur retient 650 et doit 1300 **à Echango**, l'opérateur confirme, Echango remet 1300 au commerçant. `test-parcours-argent.sh` teste désormais la forme **réellement provisionnée** et la nomme — écrire l'une des deux en dur le ferait échouer sur l'autre pour une raison qui n'est pas un défaut.
+
+  ⚠️ **Le piège que ce script documente lui-même est revenu, au même chiffre.** Il note « *un conducteur réutilisé porte les dettes des runs précédents — constaté en réel, 2600 au lieu de 1300, sur un code parfaitement juste* ». La parade d'origine était de lire côté commerçant, neuf à chaque exécution. **Le compte plateforme est unique et partagé** : le piège rouvre, et j'ai relu **2600**. On mesure le delta, et la dette après remise revient à son état d'entrée — pas à zéro.
+
+  **Aussi trouvé** : `/flotte/caisse/remises` attend `counterpartyId` là où la route transporteur attend `merchantId`. Deviner par analogie donne un `validation.failed` qui accuse la donnée alors que c'est la clé.
+
+- [x] **Favoris polymorphes — incrément 1 (01/08/2026)** : une entreprise se met en favori comme un conducteur. Dernière pièce de la décision du 30/07 (`specs_flux_argent_quatre_acteurs.md` §6.1) — le commerçant choisit **au même endroit**, sans quoi deux tables auraient produit deux écrans, deux recherches et deux chemins pour une seule question.
+
+  **Aucune migration de données** : `partyType` a pour défaut `driver`, ce que valent exactement les lignes déjà en base ; le DTO l'a aussi, parce que l'exiger casserait l'écran des favoris **au premier déploiement du serveur**, avant que l'app soit mise à jour. Le modèle et sa colonne gardent leur nom en base (`@map`) — les renommer imposerait une migration sur des préférences réelles pour un gain cosmétique ; le champ Prisma, lui, est renommé, parce qu'un nom qui ment coûte plus cher dans le code que dans une colonne.
+
+  **L'unicité porte sur le couple `type + uuid`** : un `Driver` et un `Vendor` peuvent porter le même uuid — deux espaces d'identifiants distincts chez Fleetbase —, et sans le type dans la clé, mettre une entreprise en favori serait refusé au motif qu'un conducteur homonyme y figure. Une entreprise se vérifie **chez nous** (`FleetAccount` actif) et non dans l'annuaire Fleetbase : un `Vendor` peut exister sans être inscrit, et ne pourrait alors recevoir aucune course.
+
+  ⚠️ **Incrément 1 : `pickAvailableFavourite` ne sollicite QUE les conducteurs.** Solliciter une entreprise ne veut pas dire la même chose — on pose `facilitator_uuid`, pas `driver_assigned_uuid`. Les mélanger écrirait un uuid de `Vendor` dans la colonne du conducteur, c'est-à-dire une course confiée à personne, et le défaut ne se verrait **qu'au moment où elle n'arrive pas**. Les favoris entreprise se stockent et s'affichent sans être sollicités : rien ne se route de travers.
+
+  **Reste (incrément 2)** : la sollicitation d'un favori entreprise, la recherche qui rend les deux types, et l'écran Flutter.
+
+  ⚠️ **Piège d'outillage rencontré, jumeau de celui du `tsc`** : la copie WSL n'a pas de `node_modules`, donc `npx prisma` y prend **7.9.1** au lieu du **5.22** épinglé — et rend une erreur qui parle du *schéma* (`datasource url no longer supported`) alors que c'est l'outil qui n'est pas le bon. Lancer depuis le conteneur (`docker exec echango_bff_app npx prisma …`), où vit la version du projet. `prisma migrate dev` y est interactif et `prisma/migrations/` est gitignoré : la synchronisation se fait par `db push`.
+
 - [ ] ⚠️ **« Echango est toujours le facilitateur » est une DÉCISION, pas du code (constaté le 01/08/2026)** — et c'est la plus grosse pièce non écrite du projet, celle qui a le plus l'air faite.
 
   `docs/specs_facilitateur.md` §2.2 et §2.3 sont titrées « ✅ **Décisions prises** le 31/07/2026 ». Elles se lisent comme un état livré. **Le code dit autre chose**, et la vérification tient en deux lignes :
