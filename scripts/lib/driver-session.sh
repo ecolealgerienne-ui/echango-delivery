@@ -72,6 +72,18 @@ EOF
     }
 }
 
+# Les conducteurs qui ont déjà un compte Echango, un uuid par ligne.
+#
+# Sert au diagnostic d'invitation : un conducteur déjà inscrit n'a pas besoin
+# d'invitation, quel que soit son rattachement. Silencieuse en cas d'échec du
+# conteneur — le diagnostic vaut mieux amputé qu'absent, et la liste du pool
+# reste servie.
+_accounted_driver_uuids() { # -> uuids, un par ligne
+  docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
+    "SELECT \"fleetbaseDriverUuid\" FROM \"DriverAccount\";" \
+    2>/dev/null | tr -d '[:blank:]\r' || true
+}
+
 _existing_driver_email() { # driver_uuid -> email sur stdout, vide si aucun
   docker exec echango_bff_postgres psql -U bff_user -d echango_bff -tAc \
     "SELECT email FROM \"DriverAccount\" WHERE \"fleetbaseDriverUuid\"='$1';" \
@@ -194,6 +206,90 @@ _operator_token() { # -> token sur stdout
     | jq -r '.token // empty'
 }
 
+# Pourquoi cette invitation a été refusée, dit en termes d'OPÉRATEUR.
+#
+# ⚠️ Le message du serveur — « Ce transporteur n'appartient pas à votre
+# entreprise » — est juste, et inexploitable ici. Il s'adresse à une entreprise
+# qui se trompe de conducteur ; nous sommes l'opérateur, et notre question est
+# « lequel prendre alors ». La règle est dans `assertDriverBelongsToFleet` :
+# l'entreprise d'un conducteur peut lui créer un compte, et Echango uniquement
+# ceux que personne n'a rattachés (`vendor_uuid` nul, le pool, §2.2 de
+# `specs_facilitateur.md`). Nous pouvons donc **nommer ceux qui conviennent**.
+#
+# Même correction que celle des courses bloquantes du 31/07 : le serveur a
+# raison de se taire — le rattachement d'un conducteur ne regarde pas une
+# entreprise tierce — mais le script tient le rôle d'admin, et lui peut le dire.
+#
+# ⚠️ N'imprime QUE le message et ne décide de rien : appelée dans une
+# substitution de commande, elle ne pourrait pas arrêter le script de toute
+# façon — c'est le piège payé le 31/07, où un `fail()` déclenché dans un
+# sous-shell partait dans une variable au lieu de l'écran.
+_invitation_refusal_reason() { # driver_uuid réponse -> message sur stdout
+  local uuid="$1" response="$2" code vendor free drivers
+
+  code="$(echo "$response" | jq -r '.code // empty' 2>/dev/null || true)"
+  if [ "$code" != "auth.driver_not_in_fleet" ]; then
+    echo "émission d'invitation échouée : $response"
+    return 0
+  fi
+
+  if ! declare -F fb_drivers >/dev/null 2>&1; then
+    # shellcheck source=fleetbase.sh
+    . "$(dirname "${BASH_SOURCE[0]}")/fleetbase.sh"
+  fi
+
+  drivers="$(fb_drivers)" || {
+    echo "invitation refusée (auth.driver_not_in_fleet), et la liste des conducteurs
+   est illisible : ${FLEETBASE_ERROR:-cause inconnue}"
+    return 0
+  }
+
+  vendor="$(echo "$drivers" | jq -r --arg u "$uuid" \
+    'first(.[] | select(.uuid == $u)) | .vendor_uuid // empty')"
+
+  # ── Deux façons d'être utilisable, et la seconde n'est pas devinable ──────
+  #
+  # Un conducteur du **pool** est invitable par l'opérateur : son compte est à
+  # créer. Mais un conducteur **rattaché** qui a DÉJÀ un compte Echango convient
+  # tout autant — l'invitation ne le concerne pas, `obtain_driver_token` se
+  # connecte directement. Ne lister que le pool ferait donc écarter des
+  # conducteurs parfaitement utilisables, et probablement les seuls disponibles
+  # sur une base où les scripts précédents ont déjà tourné.
+  local accounted
+  accounted="$(_accounted_driver_uuids)"
+  free="$(echo "$drivers" | jq -r --arg acc "$accounted" '
+    ($acc | split("\n") | map(select(length > 0))) as $with |
+    .[]
+    | (.vendor_uuid // null) as $v
+    | select($v == null or (.uuid as $u | $with | index($u) != null))
+    | "     \(.public_id // "?")  \(.name // "sans nom")  \(.email // .phone // "")"
+      + (if $v == null then "  [pool — compte à créer]" else "  [compte existant]" end)')"
+
+  # Sans rattachement, le refus ne peut venir que de l'autre moitié du garde :
+  # c'est le compte opérateur qui n'est pas le prestataire plateforme. Le dire,
+  # plutôt que de laisser chercher du côté du conducteur, qui est en règle.
+  if [ -z "$vendor" ]; then
+    echo "ce conducteur est du pool, et l'invitation est quand même refusée : le compte
+   opérateur n'est donc pas le prestataire plateforme. Vérifier « isPlatform » côté
+   BFF, ou fournir les identifiants du vrai prestataire :
+     ECHANGO_PLATFORM_EMAIL='…' ECHANGO_PLATFORM_PASSWORD='…' \$0 …"
+    return 0
+  fi
+
+  if [ -z "$free" ]; then
+    echo "ce conducteur est rattaché au fournisseur $vendor : seule SON entreprise peut
+   lui créer un compte, et l'opérateur de test n'invite que les conducteurs du pool.
+   Aucun autre conducteur n'est utilisable — ni du pool, ni déjà inscrit. En créer un
+   dans la console SANS fournisseur, ou provisionner son compte à la main."
+    return 0
+  fi
+
+  echo "ce conducteur est rattaché au fournisseur $vendor : seule SON entreprise peut
+   lui créer un compte, et l'opérateur de test n'invite que les conducteurs du pool.
+   Rejouer avec l'un de ceux-ci :
+$free"
+}
+
 # Renvoie 0 et renseigne DRIVER_TOKEN, ou renvoie 1 et renseigne
 # DRIVER_SESSION_ERROR.
 obtain_driver_token() { # driver_uuid
@@ -242,7 +338,7 @@ EOF
   invite_token=$(echo "$invite" | jq -r '.invitationToken // empty')
 
   if [ -z "$invite_token" ]; then
-    DRIVER_SESSION_ERROR="émission d'invitation échouée : $invite"
+    DRIVER_SESSION_ERROR="$(_invitation_refusal_reason "$driver_uuid" "$invite")"
     return 1
   fi
 

@@ -64,10 +64,39 @@ fb_api() { # méthode chemin [corps-json]
   fi
 
   FLEETBASE_ERROR="Fleetbase : $method $path a échoué (base $_fb_base)"
+  # ⚠️ Dit AUSSI sur stderr, et pas seulement dans la variable.
+  #
+  # `FLEETBASE_ERROR` est posé dans le shell où la fonction s'exécute — donc
+  # **perdu** dès qu'on écrit `x="$(fb_api …)"`, qui est la forme la plus
+  # courante dans ces scripts. Le défaut ne se voit pas : l'appelant affiche un
+  # « ${FLEETBASE_ERROR:-} » vide, ou pire, retombe sur un message par défaut
+  # qui accuse autre chose — « Conducteur introuvable » pour une panne réseau,
+  # constaté sur `resolve_driver`. Une sortie d'erreur, elle, traverse.
+  echo "   ⚠️  $FLEETBASE_ERROR" >&2
   return 1
 }
 
 fb_get() { fb_api GET "$1"; }
+
+# Les conducteurs de l'organisation, en un seul endroit.
+#
+# ⚠️ Cette lecture vivait dans `resolve-driver.sh`, et le diagnostic d'invitation
+# de `driver-session.sh` en a eu besoin à son tour. Deux copies, c'est une borne
+# qui diverge sans bruit : celle qui plafonne à 100 déclare « introuvable » un
+# conducteur que l'autre voit, et le message d'erreur envoie alors chercher au
+# mauvais endroit. Le critère de la règle 5 répond oui — si la borne ou la route
+# change, les deux doivent changer.
+#
+# ⚠️ `.drivers // .data` et **aucun repli sur `[]`** : une réponse d'une forme
+# inattendue doit remonter comme un échec, pas comme « aucun conducteur ».
+fb_drivers() { # -> tableau JSON des conducteurs
+  local response
+  response="$(fb_get '/int/v1/drivers?limit=200')" || return 1
+  echo "$response" | jq -e '.drivers // .data' 2>/dev/null || {
+    FLEETBASE_ERROR="réponse inattendue de /int/v1/drivers (ni « drivers » ni « data »)"
+    return 1
+  }
+}
 
 # Active un fournisseur, en tenant le rôle de l'admin qui le ferait en console.
 #

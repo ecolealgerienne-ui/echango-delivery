@@ -32,18 +32,19 @@
 
 . "$(dirname "${BASH_SOURCE[0]}")/fleetbase.sh"
 
-_rd_drivers() { # -> tableau JSON des conducteurs
-  local response
-  response="$(fb_get '/int/v1/drivers?limit=200')" \
-    || { RESOLVE_DRIVER_ERROR="$FLEETBASE_ERROR"; return 1; }
-  echo "$response" | jq '.drivers // .data // []'
-}
-
+# Affiche les conducteurs, en disant lesquels sont **du pool**.
+#
+# Le rattachement n'est pas un détail décoratif : seule l'entreprise d'un
+# conducteur peut lui créer un compte, et Echango seulement pour ceux que
+# personne n'a rattachés (`assertDriverBelongsToFleet`). Une liste qui ne le
+# dit pas fait choisir au hasard, puis échouer trois lignes plus loin sur un
+# 403 dont la cause n'est lisible que dans le code du serveur.
 _rd_list() { # affiche les conducteurs disponibles
   local drivers="$1"
   echo "   Conducteurs de l'organisation :" >&2
   echo "$drivers" | jq -r '.[] |
-    "     \(.public_id // "?")  \(.name // "sans nom")  \(.email // .phone // "")"' >&2
+    "     \(.public_id // "?")  \(.name // "sans nom")  \(.email // .phone // "")"
+    + (if (.vendor_uuid // null) == null then "  [pool]" else "  [rattaché]" end)' >&2
 }
 
 # Renseigne DRIVER_UUID / DRIVER_LABEL, ou renvoie 1 avec RESOLVE_DRIVER_ERROR.
@@ -51,8 +52,18 @@ resolve_driver() { # [identifiant]
   local needle="${1:-}"
   DRIVER_UUID=""; DRIVER_LABEL=""; RESOLVE_DRIVER_ERROR=""
 
+  # ⚠️ **Le message est posé ICI, dans le parent, et jamais dans la fonction
+  # appelée.** La version précédente faisait `RESOLVE_DRIVER_ERROR="$FLEETBASE_ERROR"`
+  # à l'intérieur de la lecture — c'est-à-dire dans le sous-shell de la
+  # substitution de commande, où la variable meurt. Le symptôme n'était pas une
+  # erreur mais un message **vide**, que l'appelant remplaçait par son repli
+  # « Conducteur introuvable » : une panne réseau envoyait donc chercher un
+  # conducteur qui existe. Le détail Fleetbase, lui, passe par stderr.
   local drivers
-  drivers="$(_rd_drivers)" || return 1
+  drivers="$(fb_drivers)" || {
+    RESOLVE_DRIVER_ERROR="lecture des conducteurs impossible — détail Fleetbase ci-dessus"
+    return 1
+  }
 
   local total
   total="$(echo "$drivers" | jq 'length')"
