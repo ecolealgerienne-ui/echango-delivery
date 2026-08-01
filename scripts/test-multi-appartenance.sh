@@ -224,28 +224,66 @@ step "2. Recréer une personne déjà dans le réseau est refusé"
 # Le téléphone est normalisé aux neuf chiffres de l'abonné : `0555123456` et
 # `+213555123456` sont la même personne, et un `endsWith` naïf sur les chiffres
 # bruts échouait sur ce cas — le plus courant du pays.
-DRIVER_EMAIL="$(fb_get "int/v1/drivers/$DRIVER_UUID" | jq -r '.email // .user.email // empty')"
-DRIVER_PHONE="$(fb_get "int/v1/drivers/$DRIVER_UUID" | jq -r '.phone // .user.phone // empty')"
+# ⚠️ Par `fb_drivers`, la lecture déjà éprouvée de la bibliothèque, et non par un
+# second appel unitaire : deux chemins de lecture pour la même donnée, c'est une
+# borne de pagination ou une forme de réponse qui diverge sans bruit (règle 5,
+# et c'est exactement le motif qui a fait remonter cette fonction dans
+# `fleetbase.sh`). Un seul appel, aussi : la même donnée demandée deux fois,
+# c'est deux occasions d'échouer.
+DRIVER_RECORD="$(fb_drivers | jq -c --arg u "$DRIVER_UUID" 'map(select(.uuid == $u)) | first // {}')" \
+  || fail "Lecture des conducteurs impossible" "${FLEETBASE_ERROR:-}"
+DRIVER_EMAIL="$(echo "$DRIVER_RECORD" | jq -r '.email // .user.email // empty')"
+DRIVER_PHONE="$(echo "$DRIVER_RECORD" | jq -r '.phone // .user.phone // empty')"
 
 if [ -n "$DRIVER_EMAIL" ]; then
+  # ⚠️ `name`, `email`, `phone` et RIEN d'autre : `AddDriverDto` ne déclare que
+  # ces trois champs et le `ValidationPipe` refuse le reste. Un `vehicleType`
+  # ajouté « au cas où » faisait répondre `validation.failed` — un refus, donc
+  # un script naïf serait passé au vert sans avoir jamais atteint la garde
+  # anti-doublon. C'est `expect_refusal`, qui exige le code EXACT, qui l'a vu.
   dup="$(gapi POST /flotte/drivers "$(jq -n --arg e "$DRIVER_EMAIL" '{
-    name:"Doublon Email", email:$e, vehicleType:"moto"}')")"
+    name:"Doublon Email", email:$e}')")"
   expect_refusal "Recréation par email" "driver.already_in_network" "$dup"
 else
   echo "ℹ️  Conducteur sans email : garde anti-doublon par email non exerçable."
 fi
 
 if [ -n "$DRIVER_PHONE" ]; then
-  # Volontairement en forme LOCALE si le stocké est international, et
-  # l'inverse : c'est la normalisation qu'on teste, pas l'égalité de chaînes.
-  digits="$(printf '%s' "$DRIVER_PHONE" | tr -cd '0-9')"
-  sub="$(printf '%s' "$digits" | tail -c 9)"
-  variant="0$sub"
-  [ "$DRIVER_PHONE" = "$variant" ] && variant="+213$sub"
-  dup="$(gapi POST /flotte/drivers "$(jq -n --arg p "$variant" '{
-    name:"Doublon Tel", phone:$p, vehicleType:"moto"}')")"
-  expect_refusal "Recréation par téléphone ($DRIVER_PHONE ≡ $variant)" \
+  # (a) À l'identique — `sameIdentifier` compare d'abord littéralement, donc ce
+  #     cas vaut quel que soit le format du numéro stocké.
+  dup="$(gapi POST /flotte/drivers "$(jq -n --arg p "$DRIVER_PHONE" '{
+    name:"Doublon Tel", phone:$p}')")"
+  expect_refusal "Recréation par téléphone identique ($DRIVER_PHONE)" \
     "driver.already_in_network" "$dup"
+
+  # (b) En format CROISÉ — c'est la normalisation qu'on éprouve, et c'est le
+  #     couple le plus fréquent du pays : enregistré en `+213…`, ressaisi en
+  #     `0…`.
+  #
+  # ⚠️ **Exerçable seulement sur un numéro algérien**, et le dire vaut mieux que
+  # de faire semblant. `subscriberDigits` retire `213` puis le zéro de tête et
+  # exige NEUF chiffres ; un `+33622222222` en donne onze, donc
+  # `subscriberNumber` rend `null` et refuse — délibérément — de fonder un refus
+  # sur un numéro qu'il ne sait pas interpréter. Un conducteur au numéro
+  # étranger échappe donc au rapprochement inter-format : c'est cohérent avec un
+  # produit algérien, mais ce n'est pas rien, et un script qui bricolerait un
+  # « variant » jusqu'à obtenir un refus le masquerait au lieu de le montrer.
+  digits="$(printf '%s' "$DRIVER_PHONE" | tr -cd '0-9')"
+  digits="${digits#00}"; digits="${digits#213}"; digits="${digits#0}"
+  if [ ${#digits} -eq 9 ]; then
+    case "$DRIVER_PHONE" in
+      +213*|00213*) variant="0$digits" ;;
+      *)            variant="+213$digits" ;;
+    esac
+    dup="$(gapi POST /flotte/drivers "$(jq -n --arg p "$variant" '{
+      name:"Doublon Tel Croise", phone:$p}')")"
+    expect_refusal "Recréation en format croisé ($DRIVER_PHONE ≡ $variant)" \
+      "driver.already_in_network" "$dup"
+  else
+    echo "ℹ️  $DRIVER_PHONE n'est pas un numéro algérien (${#digits} chiffres d'abonné,"
+    echo "    9 attendus) : le rapprochement inter-format n'est pas exerçable sur"
+    echo "    ce conducteur. L'égalité littérale ci-dessus, elle, a bien refusé."
+  fi
 else
   echo "ℹ️  Conducteur sans téléphone : garde anti-doublon par téléphone non exerçable."
 fi
