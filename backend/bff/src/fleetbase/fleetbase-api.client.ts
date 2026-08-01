@@ -80,6 +80,21 @@ export class FleetbaseApiClient {
       timeout: 30000,
     });
 
+    // ── LE point où une erreur Fleetbase est journalisée ────────────────────
+    //
+    // ⚠️ **Ne rajoutez pas de `try/catch` pour journaliser dans les méthodes.**
+    // Dix-huit d'entre elles le faisaient, et c'était une pure duplication :
+    // l'erreur passait déjà ici, donc chaque échec produisait **deux lignes** —
+    // celle-ci, qui porte le statut, la méthode, l'URL et la charge utile
+    // renvoyée, et une seconde écrite à la main qui ne portait que
+    // `error.message`. La moins informative des deux masquait l'autre dans le
+    // journal, et les six lignes de plomberie par méthode donnaient à croire
+    // que les vingt-cinq méthodes SANS `try/catch` ne journalisaient rien —
+    // alors qu'elles passent par ici comme les autres.
+    //
+    // Un `catch` dans une méthode ne se justifie donc que s'il fait autre chose
+    // que journaliser : rendre `null` sur un 404, réessayer, replier. Les cinq
+    // qui subsistent sont exactement dans ce cas.
     this.apiClient.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -180,16 +195,11 @@ export class FleetbaseApiClient {
    * Login to customer-portal for merchant
    */
   async merchantLogin(email: string, password: string) {
-    try {
-      const response = await this.callCustomerPortal('POST', '/auth/login', {
-        email,
-        password,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Merchant login failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callCustomerPortal('POST', '/auth/login', {
+      email,
+      password,
+    });
+    return response.data;
   }
 
   /**
@@ -214,18 +224,13 @@ export class FleetbaseApiClient {
     phone?: string,
     status?: 'active' | 'inactive' | 'suspended',
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/vendors', {
-        name,
-        email,
-        phone,
-        ...(status ? { status } : {}),
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Vendor creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/vendors', {
+      name,
+      email,
+      phone,
+      ...(status ? { status } : {}),
+    });
+    return response.data;
   }
 
   /**
@@ -247,7 +252,6 @@ export class FleetbaseApiClient {
       data = (await this.callFleetOps('GET', `/vendors/${encodeURIComponent(vendorUuid)}`)).data;
     } catch (error: any) {
       if (error.response?.status === 404) return null;
-      this.logger.error(`Lecture du vendor ${vendorUuid} échouée : ${error.message}`);
       throw error;
     }
 
@@ -374,17 +378,12 @@ export class FleetbaseApiClient {
    * qui fonctionne. À traiter avec un test d'inscription sous la main.
    */
   async createCustomer(vendorUuid: string, email: string, firstName: string, lastName: string) {
-    try {
-      const response = await this.callFleetOps('POST', `/vendors/${this.seg(vendorUuid)}/personnels`, {
-        email,
-        name: `${firstName} ${lastName}`.trim(),
-        type: 'customer',
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Customer creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', `/vendors/${this.seg(vendorUuid)}/personnels`, {
+      email,
+      name: `${firstName} ${lastName}`.trim(),
+      type: 'customer',
+    });
+    return response.data;
   }
 
   /**
@@ -426,24 +425,19 @@ export class FleetbaseApiClient {
       neighborhood?: string;
     },
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/places', {
-        name,
-        location: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-        ...(contact?.address ? { street1: contact.address } : {}),
-        ...(contact?.city ? { city: contact.city } : {}),
-        ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
-        ...(contact?.phone ? { phone: contact.phone } : {}),
-        ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Place creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/places', {
+      name,
+      location: {
+        type: 'Point',
+        coordinates: [longitude, latitude],
+      },
+      ...(contact?.address ? { street1: contact.address } : {}),
+      ...(contact?.city ? { city: contact.city } : {}),
+      ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
+      ...(contact?.phone ? { phone: contact.phone } : {}),
+      ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
+    });
+    return response.data;
   }
 
   /**
@@ -471,30 +465,25 @@ export class FleetbaseApiClient {
       meta?: Record<string, any>;
     },
   ) {
-    try {
-      const response = await this.callFleetOps('POST', '/places', {
-        name: data.name,
-        location: {
-          type: 'Point',
-          coordinates: [data.longitude, data.latitude],
-        },
-        street1: data.street1,
-        neighborhood: data.neighborhood,
-        city: data.city,
-        district: data.district,
-        province: data.province,
-        postal_code: data.postal_code,
-        country: data.country,
-        phone: data.phone,
-        owner_uuid: ownerUuid,
-        owner_type: 'fleet-ops:vendor',
-        meta: data.meta,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Owned place creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/places', {
+      name: data.name,
+      location: {
+        type: 'Point',
+        coordinates: [data.longitude, data.latitude],
+      },
+      street1: data.street1,
+      neighborhood: data.neighborhood,
+      city: data.city,
+      district: data.district,
+      province: data.province,
+      postal_code: data.postal_code,
+      country: data.country,
+      phone: data.phone,
+      owner_uuid: ownerUuid,
+      owner_type: 'fleet-ops:vendor',
+      meta: data.meta,
+    });
+    return response.data;
   }
 
   /**
@@ -571,13 +560,8 @@ export class FleetbaseApiClient {
    * List Places owned by a given Vendor (a merchant's saved addresses).
    */
   async getOwnedPlaces(ownerUuid: string) {
-    try {
-      const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get owned places failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
+    return response.data;
   }
 
   /**
@@ -652,18 +636,13 @@ export class FleetbaseApiClient {
    * Resolve the default 'transport' OrderConfig UUID, required by order creation.
    */
   async getDefaultOrderConfigUuid(): Promise<string> {
-    try {
-      const response = await this.callFleetOps('GET', '/order-configs');
-      const configs = response.data?.order_configs || [];
-      const transportConfig = configs.find((c: any) => c.key === 'transport') || configs[0];
-      if (!transportConfig) {
-        throw new Error('No OrderConfig found in Fleetbase');
-      }
-      return transportConfig.uuid;
-    } catch (error) {
-      this.logger.error(`Get order configs failed: ${error.message}`);
-      throw error;
+    const response = await this.callFleetOps('GET', '/order-configs');
+    const configs = response.data?.order_configs || [];
+    const transportConfig = configs.find((c: any) => c.key === 'transport') || configs[0];
+    if (!transportConfig) {
+      throw new Error('No OrderConfig found in Fleetbase');
     }
+    return transportConfig.uuid;
   }
 
   /**
@@ -721,29 +700,19 @@ export class FleetbaseApiClient {
      */
     custom_field_values?: { custom_field_uuid: string; value: any; value_type: string }[];
   }) {
-    try {
-      const response = await this.callFleetOps('POST', '/orders', { order });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Order creation failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/orders', { order });
+    return response.data;
   }
 
   /**
    * Get merchant's orders via customer-portal-api
    */
   async getMerchantOrders(token: string, page = 1, limit = 25) {
-    try {
-      const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
-        page,
-        limit,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get merchant orders failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
+      page,
+      limit,
+    });
+    return response.data;
   }
 
   /**
@@ -757,24 +726,19 @@ export class FleetbaseApiClient {
    * (`docs/architecture_bff_fleetbase.md` §4.3).
    */
   async getAllOrders(page = 1, limit = 100, filters: OrderFilters = {}) {
-    try {
-      const response = await this.callFleetOps('GET', '/orders', undefined, {
-        page,
-        limit,
-        // Charge les valeurs de champs personnalisés avec leur définition.
-        //
-        // Sans ça elles arrivent quand même — `withCustomFields()` fait un
-        // `loadMissing()` sur chaque ressource — mais **une requête par
-        // commande** : cent commandes, deux cents requêtes côté Fleetbase.
-        // Le demander ici les charge en une fois.
-        with: ['customFieldValues.customField'],
-        ...filters,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all orders failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/orders', undefined, {
+      page,
+      limit,
+      // Charge les valeurs de champs personnalisés avec leur définition.
+      //
+      // Sans ça elles arrivent quand même — `withCustomFields()` fait un
+      // `loadMissing()` sur chaque ressource — mais **une requête par
+      // commande** : cent commandes, deux cents requêtes côté Fleetbase.
+      // Le demander ici les charge en une fois.
+      with: ['customFieldValues.customField'],
+      ...filters,
+    });
+    return response.data;
   }
 
   /**
@@ -845,13 +809,8 @@ export class FleetbaseApiClient {
    * commercant.service.ts getOrderTracking).
    */
   async getOrder(orderUuid: string) {
-    try {
-      const response = await this.callFleetOps('GET', `/orders/${this.seg(orderUuid)}`);
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get order failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', `/orders/${this.seg(orderUuid)}`);
+    return response.data;
   }
 
   /**
@@ -918,13 +877,8 @@ export class FleetbaseApiClient {
    * the request body as 'order', per OrderController::cancel().
    */
   async cancelOrder(orderUuid: string) {
-    try {
-      const response = await this.callFleetOps('PATCH', '/orders/cancel', { order: orderUuid });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Cancel order failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('PATCH', '/orders/cancel', { order: orderUuid });
+    return response.data;
   }
 
   /**
@@ -933,19 +887,14 @@ export class FleetbaseApiClient {
    * body key is `order` (not `order_id`/`orderId`).
    */
   async assignOrderToDriver(driverUuid: string, orderUuid: string) {
-    try {
-      // `seg()` comme partout ailleurs : l'uuid vient ici de notre propre base
-      // (favori enregistré, conducteur d'une flotte vérifiée), mais la
-      // discipline vaut mieux uniforme que jugée site par site — c'est
-      // exactement ce que la revue P0 avait relevé sur les autres chemins.
-      const response = await this.callFleetOps('POST', `/drivers/${this.seg(driverUuid)}/assign-order`, {
-        order: orderUuid,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Assign order to driver failed: ${error.message}`);
-      throw error;
-    }
+    // `seg()` comme partout ailleurs : l'uuid vient ici de notre propre base
+    // (favori enregistré, conducteur d'une flotte vérifiée), mais la
+    // discipline vaut mieux uniforme que jugée site par site — c'est
+    // exactement ce que la revue P0 avait relevé sur les autres chemins.
+    const response = await this.callFleetOps('POST', `/drivers/${this.seg(driverUuid)}/assign-order`, {
+      order: orderUuid,
+    });
+    return response.data;
   }
 
   /**
@@ -1171,7 +1120,6 @@ export class FleetbaseApiClient {
       if (error.response?.status === 404) return null;
       // Toute autre erreur remonte : la confondre avec une absence ferait dire
       // « ce transporteur n'existe pas » à une panne réseau.
-      this.logger.error(`Lecture du conducteur ${driverUuid} échouée : ${error.message}`);
       throw error;
     }
 
@@ -1240,13 +1188,8 @@ export class FleetbaseApiClient {
   }
 
   async getAllDrivers(filters: DriverFilters = {}) {
-    try {
-      const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all drivers failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/drivers', undefined, filters);
+    return response.data;
   }
 
   /**
@@ -1261,13 +1204,8 @@ export class FleetbaseApiClient {
    * and, if it still 400s, check `DriverController.php` line 67 directly.
    */
   async createDriver(data: { name: string; email?: string; phone?: string }) {
-    try {
-      const response = await this.callFleetOps('POST', '/drivers', { driver: data });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Create driver failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/drivers', { driver: data });
+    return response.data;
   }
 
   /**
@@ -1276,15 +1214,10 @@ export class FleetbaseApiClient {
    * body key is `driver`; this sets the Driver's `vendor_uuid`.
    */
   async assignDriverToVendor(vendorUuid: string, driverUuid: string) {
-    try {
-      const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/assign-driver`, {
-        driver: driverUuid,
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Assign driver to vendor failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', `/vendors/${vendorUuid}/assign-driver`, {
+      driver: driverUuid,
+    });
+    return response.data;
   }
 
   /**
@@ -1319,18 +1252,13 @@ export class FleetbaseApiClient {
    * repeatedly, and duplicate rows would mean duplicate pushes.
    */
   async upsertDriverDeviceToken(userUuid: string, token: string, platform: string) {
-    try {
-      const response = await this.callFleetOps('POST', '/user-devices', {
-        user_uuid: userUuid,
-        token,
-        platform,
-        status: 'active',
-      });
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Upsert driver device token failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('POST', '/user-devices', {
+      user_uuid: userUuid,
+      token,
+      platform,
+      status: 'active',
+    });
+    return response.data;
   }
 
   // ── Opérations driver (API publique v1) ────────────────────────────────
@@ -1595,12 +1523,7 @@ export class FleetbaseApiClient {
    * un besoin d'historique — ne pas la rebrancher sur la carte.
    */
   async getAllPositions() {
-    try {
-      const response = await this.callFleetOps('GET', '/positions');
-      return response.data;
-    } catch (error) {
-      this.logger.error(`Get all positions failed: ${error.message}`);
-      throw error;
-    }
+    const response = await this.callFleetOps('GET', '/positions');
+    return response.data;
   }
 }
