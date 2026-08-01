@@ -428,6 +428,116 @@ step "8. Beta ne touche pas à l'adhésion d'Alpha"
 cross="$(gapi POST "/flotte/adhesions/$MA_ID/suspendre")"
 expect_refusal "Beta suspend l'adhésion d'Alpha" "membership.not_found" "$cross"
 
+# ══════════════════════════════════════════════════════════════════════════
+# 9 — LE COMMERÇANT MET UNE ENTREPRISE EN FAVORI
+# ══════════════════════════════════════════════════════════════════════════
+#
+# ── Pourquoi ici, dans le scénario des adhésions ──────────────────────────
+#
+# Parce qu'il est le seul à disposer de **deux entreprises réellement
+# inscrites et validées**. Un favori entreprise ne se teste pas contre un uuid
+# fabriqué : la garde côté serveur exige un `FleetAccount` **actif**, et
+# vérifier qu'elle refuse un inconnu ne dit rien de ce qu'elle accepte.
+#
+# ── Ce que ça exerce, et qui n'avait jamais tourné ───────────────────────
+#
+# La décision du 30/07 (`specs_flux_argent_quatre_acteurs.md` §6.1) : le
+# commerçant choisit **au même endroit** un transporteur du pool ou une
+# entreprise. Toute la chaîne — recherche, ajout, relecture, retrait — n'avait
+# jamais été jouée pour la seconde famille.
+step "9. Une entreprise mise en favori par un commerçant"
+
+MERCHANT_EMAIL="ma-c-$SUFFIX@test.dz"
+reg="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/merchant/register" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg e "$MERCHANT_EMAIL" --arg p "$PASSWORD" '{
+    email:$e, password:$p, businessName:"Commerce Favori", firstName:"Test",
+    lastName:"Favori", phone:"+213555444444", businessPhone:"+213555444444"}')")"
+status="$(tail -n1 <<<"$reg")"
+[ "$status" = "403" ] || fail "L'inscription commerçant doit être mise en attente (HTTP $status)" "$reg"
+fb_activate_vendor_by_email "$MERCHANT_EMAIL" \
+  || fail "Activation du commerçant impossible : ${FLEETBASE_ERROR:-}"
+mlogin="$(curl -sS -X POST "$BFF_URL/auth/login" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg e "$MERCHANT_EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p}')")"
+MERCHANT_TOKEN="$(echo "$mlogin" | jq -r '.token // empty')"
+[ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant refusée" "$mlogin"
+pass "Commerçant : $MERCHANT_EMAIL"
+
+capi() { # method path [body] — commerçant
+  local m="$1" p="$2" b="${3:-}"
+  if [ -n "$b" ]; then
+    curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $MERCHANT_TOKEN" -d "$b"
+  else
+    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $MERCHANT_TOKEN"
+  fi
+}
+
+# ── La recherche rend les DEUX familles ──────────────────────────────────
+#
+# « Transports Alpha » est le nom donné plus haut ; la recherche porte sur le
+# nom commercial du `FleetAccount`.
+found="$(capi GET "/commercant/transporteurs/recherche?q=$(printf 'Transports Alpha' | jq -sRr @uri)")"
+echo "$found" | is_error && fail "Recherche refusée" "$(echo "$found" | jq -c '.')"
+
+ALPHA_VENDOR="$(echo "$found" | jq -r '[.data[]? | select(.party_type == "fleet")] | first.driver_uuid // empty')"
+[ -n "$ALPHA_VENDOR" ] \
+  || fail "La recherche ne rend aucune entreprise pour « Transports Alpha »" \
+          "$(echo "$found" | jq -c '.data')"
+pass "La recherche rend l'entreprise, typée « fleet »"
+
+# ⚠️ **Le prestataire plateforme ne doit JAMAIS apparaître.** Echango est déjà
+# le facilitateur par défaut de toute course du pool : le proposer parmi des
+# prestataires « qu'on choisit » ferait croire à un choix qui n'en est pas un.
+# Le contrôle porte sur une recherche large, celle qui a le plus de chances de
+# le ramener.
+wide="$(capi GET "/commercant/transporteurs/recherche?q=$(printf 'test' | jq -sRr @uri)")"
+fb_resolve_platform || true
+if [ -n "${PLATFORM_VENDOR_UUID:-}" ]; then
+  echo "$wide" | jq -e --arg v "$PLATFORM_VENDOR_UUID" \
+    '[.data[]? | select(.driver_uuid == $v)] | length == 0' >/dev/null \
+    || fail "Le prestataire plateforme apparaît dans la recherche" "$(echo "$wide" | jq -c '.data')"
+  pass "Le prestataire plateforme est exclu de la recherche"
+fi
+
+# ── L'ajout, et son refus quand l'entreprise n'existe pas ────────────────
+ghost="$(capi POST /commercant/transporteurs/favoris \
+  "$(jq -n '{partyType:"fleet", fleetbaseDriverUuid:"00000000-0000-0000-0000-000000000000"}')")"
+expect_refusal "Mettre en favori une entreprise inconnue" "merchant.fleet_not_in_network" "$ghost"
+
+added="$(capi POST /commercant/transporteurs/favoris \
+  "$(jq -n --arg v "$ALPHA_VENDOR" '{partyType:"fleet", fleetbaseDriverUuid:$v}')")"
+echo "$added" | is_error && fail "Ajout du favori entreprise refusé" "$(echo "$added" | jq -c '.')"
+pass "Entreprise ajoutée aux favoris"
+
+# ── La relecture porte le type, et le nom vient du SERVEUR ──────────────
+favs="$(capi GET /commercant/transporteurs/favoris)"
+row="$(echo "$favs" | jq -c --arg v "$ALPHA_VENDOR" '.data[]? | select(.driver_uuid == $v)')"
+[ -n "$row" ] || fail "Le favori n'est pas relu" "$(echo "$favs" | jq -c '.data')"
+[ "$(echo "$row" | jq -r '.party_type')" = "fleet" ] \
+  || fail "Le favori devrait être typé « fleet »" "$row"
+[ "$(echo "$row" | jq -r '.name')" = "Transports Alpha" ] \
+  || fail "Le nom doit venir du serveur, pas de la requête" "$row"
+pass "Relu : typé « fleet », nommé par le serveur"
+
+# ⚠️ Un second ajout ne doit pas créer de doublon : l'unicité porte sur le
+# couple (type, uuid), et l'écriture est un `upsert`.
+capi POST /commercant/transporteurs/favoris \
+  "$(jq -n --arg v "$ALPHA_VENDOR" '{partyType:"fleet", fleetbaseDriverUuid:$v}')" >/dev/null
+count="$(capi GET /commercant/transporteurs/favoris \
+  | jq --arg v "$ALPHA_VENDOR" '[.data[]? | select(.driver_uuid == $v)] | length')"
+[ "$count" = "1" ] || fail "Un second ajout a créé un doublon ($count lignes)"
+pass "Deux ajouts, une seule ligne — l'unicité tient"
+
+# ── Le retrait ───────────────────────────────────────────────────────────
+FAV_ID="$(echo "$row" | jq -r '.id')"
+removed="$(capi DELETE "/commercant/transporteurs/favoris/$FAV_ID")"
+echo "$removed" | is_error && fail "Retrait refusé" "$(echo "$removed" | jq -c '.')"
+gone="$(capi GET /commercant/transporteurs/favoris \
+  | jq --arg v "$ALPHA_VENDOR" '[.data[]? | select(.driver_uuid == $v)] | length')"
+[ "$gone" = "0" ] || fail "Le favori subsiste après retrait"
+pass "Retiré"
+
 echo
 echo "════════════════════════════════════════════════════════════════"
 pass "Multi-appartenance vérifiée de bout en bout."
@@ -435,3 +545,5 @@ echo "   Alpha : active (suspendue puis réactivée)"
 echo "   Beta  : declined (quittée, redemandée, refusée)"
 echo "   Deux rattachements simultanés, deux attaques repoussées,"
 echo "   un refus non contournable, et le lien conservé après départ."
+echo "   Et une entreprise mise en favori : recherche typée, ajout,"
+echo "   unicité sur le couple (type, uuid), retrait."

@@ -146,13 +146,18 @@ fb_drivers() { # -> tableau JSON des conducteurs
 # produit avant cette extraction (règle 5).
 #
 # Renseigne `PLATFORM_ID` et `PLATFORM_EMAIL`, vides s'il n'y en a pas.
-PLATFORM_ID=""; PLATFORM_EMAIL=""
+# ⚠️ Rend AUSSI `PLATFORM_VENDOR_UUID` — l'uuid Fleetbase, distinct de l'`id` du
+# compte Echango. Les deux servent, et les confondre est silencieux : la
+# recherche de favoris, par exemple, rend l'uuid du fournisseur, donc comparer à
+# l'`id` du compte ne matcherait jamais et un contrôle « le prestataire
+# plateforme est exclu » passerait au vert sans rien vérifier.
+PLATFORM_ID=""; PLATFORM_EMAIL=""; PLATFORM_VENDOR_UUID=""
 fb_resolve_platform() {
   local row
-  PLATFORM_ID=""; PLATFORM_EMAIL=""
+  PLATFORM_ID=""; PLATFORM_EMAIL=""; PLATFORM_VENDOR_UUID=""
   row="$(docker exec "${PGC:-echango_bff_postgres}" psql -U "${PGUSER:-bff_user}" \
     -d "${PGDB:-echango_bff}" -tAc \
-    'SELECT id || E'"'"'\t'"'"' || email FROM "FleetAccount" WHERE "isPlatform" = true AND active = true;' \
+    'SELECT id || E'"'"'\t'"'"' || email || E'"'"'\t'"'"' || coalesce("fleetbaseVendorUuid", '"'"''"'"') FROM "FleetAccount" WHERE "isPlatform" = true AND active = true;' \
     2>/dev/null)" || return 0
   [ -n "$row" ] || return 0
 
@@ -163,7 +168,10 @@ fb_resolve_platform() {
     return 1
   fi
 
-  PLATFORM_ID="${row%%	*}"; PLATFORM_EMAIL="${row#*	}"
+  PLATFORM_ID="${row%%	*}"
+  local rest="${row#*	}"
+  PLATFORM_EMAIL="${rest%%	*}"
+  PLATFORM_VENDOR_UUID="${rest#*	}"
 }
 
 # La contrepartie d'un conducteur pour un commerçant donné, sur une course du
