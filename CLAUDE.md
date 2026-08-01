@@ -10,7 +10,7 @@ Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse central
 
 ## Règles de développement — à respecter sans exception
 
-Dix règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle.
+Onze règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle. Les dix premières portent sur ce qu'on écrit ; la onzième sur **comment on lit le dépôt avant d'écrire**.
 
 ⚠️ **Ce qu'un `tsc` vert vaut dans le sandbox Claude Code — et ce qu'il ne vaut pas (30/07/2026).** Le client Prisma n'y est **jamais généré** (le proxy sortant refuse `binaries.prisma.sh` par politique, y compris avec `--no-engine`), donc `@prisma/client` s'y résout sur un fichier de 4 ko où tout est `any`. Conséquence : **rien de ce qui traverse un type Prisma n'est vérifié ici**, et un `npx tsc --noEmit` vert ne dit rien de ces chemins-là. Constaté : `liveOrderDetailed(merchant.fleetbaseVendorUuid, order)` — arguments inversés — passait ici parce que `merchant` était `any`, et échouait à la compilation chez l'utilisateur, où le client est généré. La vérification a fonctionné, simplement pas de mon côté. À l'écriture : relire à la main toute signature dont un argument vient d'une ligne Prisma, et annoncer un `tsc` vert pour ce qu'il est — une vérification **partielle**.
 
@@ -209,6 +209,31 @@ La règle est née d'un vrai défaut : `CameraFit` et `Color.withValues` ont ét
 **Ce qui rend le cas instructif n'est pas l'erreur, c'est sa propagation.** Une borne fausse ne dort pas dans un coin du `pubspec` : **elle se cite**. Cinq passages du dépôt s'en servaient pour écarter une API — **deux commentaires de code et trois de documentation** —, dont un qui se donnait explicitement en leçon de méthode (« la contrainte est dans le dépôt, pas dans ma mémoire »). Et le même chiffre a fait consigner comme « contradiction du code » le fait que `surfaceContainerHighest` soit employé à deux endroits et refusé à un troisième — la contradiction était réelle, le coupable désigné ne l'était pas. **Une borne fausse est pire qu'une borne absente : l'absence fait vérifier, la fausseté fait conclure.**
 
 **En pratique** : toute API employée se vérifie contre la version épinglée — et quand c'est la version épinglée qui sert d'argument pour **refuser** quelque chose, elle se vérifie à son tour. Deux contrôles qui coûtent une minute : la contrainte citée est-elle celle que l'outil applique réellement (ici `sdk:` domine `flutter:`), et la version nommée a-t-elle seulement existé ?
+
+### 11. Une question de structure se pose au graphe, pas au `grep`
+
+**Avant de chercher « qui appelle ceci », « qu'est-ce que ceci appelle », « qu'est-ce qui casse si je touche à ceci » dans `backend/bff/`, interroger Graphify.** C'est obligatoire, et ce n'est pas une préférence d'outillage : les deux ont été comparés sur la même question, et le graphe gagne.
+
+**La mesure qui fonde la règle (01/08/2026).** Question : *qui appelle `canTakeCashOrder` ?*
+
+| | ce qu'on obtient |
+|---|---|
+| `grep` | quatre `fichier:ligne` |
+| `graphify explain` | les **mêmes quatre**, avec la **fonction englobante** de chacun (`assertDriverCashCeiling`, `assertCashCeiling`, `pickAvailableFavourite`, `assertFleetCeiling`), **le sens** de chaque arête, et ce que la fonction appelle **en aval** |
+
+Le `grep` dit *où le nom apparaît*. Le graphe dit *ce qui dépend de quoi*. Sur une modification qui touche à de l'argent, c'est la seconde question qui compte — et c'est elle qui a permis de voir, en un appel, que le facilitateur de pool se branchait en **un seul point** parce que tout converge vers `driverCounterparty()`.
+
+**En pratique :**
+
+```
+python -m graphify explain "nomDeLaFonction"     # voisinage, dans les deux sens
+python -m graphify path "A" "B"                  # comment A atteint B
+python -m graphify update .                      # après un gros lot (11 s)
+```
+
+⚠️ **Et la limite, qui est mesurée elle aussi : ne pas croire le graphe sur `echango_delivery/` (Dart).** L'extraction y est faite par expressions régulières, pas par tree-sitter. `formatRelative` y a un **degré de 1** — ses trois appelants réels sont absents —, les imports relatifs créent **64 nœuds fantômes** (2 %) au `source_file` vide, et une requête de chemin passe par eux pour rendre un détour de six sauts **qui a l'air d'une réponse**. Densité : **3,83 arêtes par nœud en TypeScript contre 1,61 en Dart**. Sur du Dart, le `grep` reste l'outil.
+
+⚠️ **La faute qui a retardé l'adoption, et elle vaut d'être nommée** : j'avais mesuré le Dart, conclu « l'outil ne sert à rien », et je ne l'ai pas ouvert de la journée — alors qu'il était juste sur tout le TypeScript, c'est-à-dire sur la moitié du dépôt où se trouve l'argent. **Mesure exacte, portée de conclusion fausse.** C'est le même défaut que la borne du `pubspec` et que le commentaire de `dates.dart` : ce n'est pas la mesure qui trompe, c'est ce qu'on lui fait dire.
 
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
@@ -661,7 +686,9 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **Deux autres réserves** : (1) le dépôt fait 256 fichiers suivis là où les sources donnent le bénéfice réel à 500+ et « peu d'intérêt » sous 30 ; (2) **`GRAPH_REPORT.md` fait 60 Ko**, soit ~15 000 jetons injectés par session — un gain seulement s'il évite d'en lire davantage. Les « 70× » qui circulent sont du contenu SEO sans mesure reproductible.
 
-  **À signaler en amont** (`Graphify-Labs/graphify`) : un import relatif Dart non résolu crée un nœud fantôme au `source_file` vide au lieu de pointer sur le fichier existant, ce qui fabrique des chemins plausibles et faux.
+  **À signaler en amont** (`Graphify-Labs/graphify`) : un import relatif Dart non résolu crée un nœud fantôme au `source_file` vide au lieu de pointer sur le fichier existant, ce qui fabrique des chemins plausibles et faux. Rédigé, prêt à publier : `docs/signalements_amont.md`.
+
+  ⚠️ **Son usage est devenu une règle (01/08/2026, § Règles §11) après une comparaison directe avec `grep`** — même question, `qui appelle canTakeCashOrder` : le graphe rend les mêmes quatre appelants **plus** leur fonction englobante, le sens des arêtes et les appels en aval. Obligatoire sur `backend/bff/`, à ne pas croire sur `echango_delivery/`. J'avais jugé l'outil inutile sur la foi de la mesure Dart et ne l'ai pas ouvert de la journée : mesure exacte, portée de conclusion fausse.
 
   **Retiré à l'installation** : le `.gitattributes` que `hook install` crée, avec une règle de fusion pour `graphify-out/graph.json` — un fichier justement gitignoré, donc une règle qui ne peut jamais s'appliquer (règle 9 : ce qui n'a pas d'appelant se supprime).
 
