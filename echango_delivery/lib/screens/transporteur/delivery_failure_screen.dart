@@ -130,7 +130,7 @@ class _DeliveryFailureScreenState extends State<DeliveryFailureScreen> {
             const SizedBox(height: AppSpacing.md),
             TextField(
               controller: _notesController,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Précisions éventuelles…',
               ),
               maxLines: 4,
