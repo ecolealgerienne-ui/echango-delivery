@@ -280,32 +280,16 @@ pass "Brouillon annulé"
 #
 # Première version : seule la course 3 était annulée, et le contrôle final
 # affichait « Reste : … started » — la course 1, acceptée puis seulement refusée
-# (le refus étant repoussé sur une course démarrée), n'était jamais close. Le
-# script laissait donc le conducteur bloqué, exactement le défaut qui a fait
-# extraire `require_free_driver` en bibliothèque quelques heures plus tôt.
+# (le refus étant repoussé sur une course démarrée), n'était jamais close.
 #
-# On ne nomme donc pas les courses à annuler — on **relit celles qui bloquent**
-# et on les annule toutes. Une liste écrite à la main vieillit à chaque partie
-# ajoutée ; la relecture, non.
+# ⚠️ **Ce bloc vivait ici, en clair, et c'est ce qui l'a rendu inutile ailleurs
+# (02/08/2026).** Le corriger *chez soi* laissait `test-plafonds-dette` — qui
+# tourne juste avant dans la suite — se terminer sur une course acceptée et
+# jamais close : la suite ne passait donc 7/7 qu'une fois, le septième trouvant
+# au passage suivant un conducteur occupé par le sixième. Le ménage est
+# désormais dans `lib/free-driver.sh`, à côté du garde qu'il rend satisfiable.
 step "Ménage"
-read_blocking_orders
-if [ -n "$BLOCKING" ]; then
-  while read -r uuid _; do
-    [ -n "$uuid" ] || continue
-    fb_api PATCH /int/v1/orders/cancel "$(jq -n --arg o "$uuid" '{order:$o}')" >/dev/null \
-      && echo "   annulée : $uuid" \
-      || echo "   ⚠️  $uuid non annulée — la libérer avec UNBLOCK=1 au prochain passage"
-  done <<<"$BLOCKING"
-fi
-
-# Relu, jamais déduit des annulations : c'est le même principe que partout
-# ailleurs dans ces scripts, et c'est ce qui a révélé le trou ci-dessus.
-read_blocking_orders
-if [ -z "$BLOCKING" ]; then
-  pass "Conducteur laissé libre — la suite peut se rejouer"
-else
-  fail "Le conducteur reste bloqué après le ménage" "$(echo "$BLOCKING" | tr '\n' ' ')"
-fi
+release_driver
 
 echo
 echo "════════════════════════════════════════════════════════════════"

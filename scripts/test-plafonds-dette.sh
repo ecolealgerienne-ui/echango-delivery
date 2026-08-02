@@ -289,6 +289,19 @@ echo "$got" | is_error \
           "$(echo "$got" | jq -c '.')"
 pass "Acceptée — les deux refus précédents venaient bien des plafonds"
 
+# ── Ménage ─────────────────────────────────────────────────────────────────
+#
+# ⚠️ **La dernière étape LAISSE une course acceptée, et c'est structurel** : la
+# preuve recherchée est justement qu'elle passe, donc le scénario ne peut pas se
+# terminer sans elle. Il faut donc la clore après coup.
+#
+# Sans ce bloc (constaté le 02/08/2026), `run-all-scenarios.sh` ne rendait 7/7
+# qu'**une fois** : ce scénario tourne juste avant `test-sorties-de-course`, qui
+# exige un conducteur libre, et celui-ci refusait de commencer au passage
+# suivant. Le refus était juste — l'état fautif venait de la suite elle-même.
+step "Ménage"
+release_driver
+
 echo
 echo "════════════════════════════════════════════════════════════════"
 pass "Les deux plafonds de dette sont vérifiés."

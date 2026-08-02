@@ -104,3 +104,51 @@ require_free_driver() {
     || fail "Le conducteur reste occupé après annulation" "$(echo "$BLOCKING" | tr '\n' ' ')"
   pass "Conducteur libéré — $count course(s) annulée(s)"
 }
+
+# Rend le conducteur libre en fin de scénario — le pendant de
+# `require_free_driver`, qui l'exige au début.
+#
+# ── Pourquoi ceci est en bibliothèque, et pas recopié (02/08/2026) ───────────
+#
+# `test-sorties-de-course` portait ce bloc en clair, et son commentaire disait
+# déjà que le défaut avait été rencontré une fois. Il l'avait donc corrigé **chez
+# lui seul** — pendant que `test-plafonds-dette`, qui tourne juste avant lui dans
+# `run-all-scenarios.sh`, se terminait sur une course **acceptée et jamais
+# close**.
+#
+# Conséquence mesurée : la suite ne passait 7/7 qu'**une fois**. Au passage
+# suivant, le septième trouvait le conducteur occupé par le sixième et refusait
+# de commencer — un refus parfaitement correct, sur un état que la suite s'était
+# fabriqué à elle-même. Un scénario qui se dégrade avec son propre usage n'est
+# pas un scénario ; c'est le même défaut que les quatorze « Transports Alpha »
+# accumulés, corrigé le 01/08.
+#
+# ⚠️ **On ne nomme pas les courses à annuler, on relit celles qui bloquent.**
+# Une liste écrite à la main vieillit à chaque partie ajoutée au scénario ; la
+# relecture, non. C'est déjà ce qui avait rattrapé un trou dans le ménage de
+# `test-sorties-de-course`.
+release_driver() {
+  local uuid n
+
+  read_blocking_orders
+  if [ -z "$BLOCKING" ]; then
+    pass "Conducteur laissé libre — la suite peut se rejouer"
+    return 0
+  fi
+  n="$(echo "$BLOCKING" | wc -l | tr -d ' ')"
+
+  while read -r uuid _; do
+    [ -n "$uuid" ] || continue
+    fb_api PATCH /int/v1/orders/cancel "$(jq -n --arg o "$uuid" '{order:$o}')" >/dev/null \
+      && echo "   annulée : $uuid" \
+      || echo "   ⚠️  $uuid non annulée — la libérer avec UNBLOCK=1 au prochain passage"
+  done <<<"$BLOCKING"
+
+  # Relu, jamais déduit des annulations : un `PATCH` qui ne change rien répond
+  # 200, et le scénario suivant mettrait le refus sur le compte de son propre
+  # garde. C'est ce contrôle qui a révélé le trou précédent.
+  read_blocking_orders
+  [ -z "$BLOCKING" ] \
+    || fail "Le conducteur reste bloqué après le ménage" "$(echo "$BLOCKING" | tr '\n' ' ')"
+  pass "Conducteur laissé libre — $n course(s) close(s), la suite peut se rejouer"
+}
