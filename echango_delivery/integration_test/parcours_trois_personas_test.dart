@@ -175,6 +175,14 @@ void main() {
   // libre pour la suite. L'inverse laissait le conducteur occupé et faisait
   // échouer l'argent en accusant le décor de n'avoir rien publié.
   parcoursArgentDeuxMaillons();
+  parcoursEcartALaPorte();
+
+  // ── Les sorties d'une course ─────────────────────────────────────────────
+  //
+  // Placées avant le parcours transporteur, pour la même raison d'ordre : le
+  // signalement d'échec **clôt** la course qu'il prend, il rend donc le
+  // conducteur libre. Le parcours transporteur, lui, garde la sienne.
+  parcoursSortiesDeCourse();
 
   // ── Transporteur ─────────────────────────────────────────────────────────
 
@@ -365,7 +373,7 @@ void parcoursArgentDeuxMaillons() {
     // « Bad state: No element » — deux fois de suite, à deux endroits
     // différents, pour la même raison. Le même piège que plus haut : entre deux
     // écritures, la colonne d'actions est vide, et ce n'est pas un défaut.
-    for (var step = 0; step < 4 && sheetAmount.evaluate().isEmpty; step++) {
+    for (var step = 0; step < 5 && sheetAmount.evaluate().isEmpty; step++) {
       final ready = await _actionsReady(tester);
       if (!ready) break;
       await tapVisible(tester, find.byType(FilledButton).first);
@@ -406,15 +414,18 @@ void parcoursArgentDeuxMaillons() {
     await pumpUntil(tester, find.byType(Tab),
         reason: 'retour au tableau de bord');
 
-    await tapVisible(
-        tester, find.byIcon(Icons.account_balance_wallet_outlined).first);
-    await pumpUntilTrue(tester, () => screenHas(expected),
-        reason: 'la caisse du transporteur affiche $expected',
-        onTimeout: 'l’encaissement a été déclaré mais n’apparaît pas dans sa '
-            'caisse. Écran : ${visibleTexts(40)}');
+    // ⚠️ **Le NET, pas la somme encaissée** : la caisse déduit la rémunération
+    // du transporteur, et l'écran le dit — « Votre rémunération est déjà
+    // déduite ». Ce qu'il veut savoir, c'est ce qu'il doit **remettre**.
+    // Vérifié côté serveur : /transporteur/caisse rend 1950 pour 2727 perçus
+    // sur une course à 777.
+    final net = (int.parse(expected) - int.parse(codFee)).toString();
+    await expectCaisseShows(tester, net);
 
-    // La somme détenue est reprise par le test suivant, côté commerçant.
-    _montantEncaisse = expected;
+    // Le NET est repris par le test commerçant : c'est le même nombre qui doit
+    // apparaître des deux côtés, et le recalculer là-bas masquerait une
+    // divergence au lieu de la révéler.
+    _montantEncaisse = net;
   });
 
   // ⚠️ **Un test à part, et surtout PAS un second `app.main()` dans le
@@ -441,12 +452,225 @@ void parcoursArgentDeuxMaillons() {
 
     // C'est la moitié qui compte vraiment : une dette que seul le débiteur voit
     // n'est pas une dette, c'est une note personnelle.
-    await tapVisible(
-        tester, find.byIcon(Icons.account_balance_wallet_outlined).first);
-    await pumpUntilTrue(tester, () => screenHas(_montantEncaisse!),
-        reason: 'la caisse du commerçant affiche $_montantEncaisse',
-        onTimeout: 'le commerçant ne voit pas ce que le transporteur détient. '
-            'Écran : ${visibleTexts(40)}');
+    await expectCaisseShows(tester, _montantEncaisse!);
+  });
+}
+
+/// ── L'écart à la porte ─────────────────────────────────────────────────────
+///
+/// Le destinataire ne paie pas la somme annoncée. Ce n'est pas un cas limite :
+/// c'est le quotidien d'une livraison contre espèces, et c'est **précisément**
+/// ce que l'application doit rendre déclarable à la porte plutôt que découvert
+/// cinq jours plus tard au dépôt.
+///
+/// Ce que ce parcours vérifie, et qu'aucun `curl` ne peut vérifier : que le
+/// tiroir **refuse** une déclaration incomplète. Un motif obligatoire dont on
+/// n'a jamais vu le refus n'est pas obligatoire, c'est une intention.
+void parcoursEcartALaPorte() {
+  testWidgets('argent — un écart à la porte exige un motif, et le tiroir refuse sans',
+      (tester) async {
+    requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
+
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+    await openTab(tester, 0);
+
+    final gapRow = rowContaining(codGapFee);
+    await pumpUntil(tester, find.byType(ListTile),
+        reason: 'la liste des opportunités');
+    await scrollUntilFound(tester, gapRow);
+    await pumpUntil(tester, gapRow,
+        reason: 'la course d’écart (prix $codGapFee)',
+        onTimeout: 'introuvable même après défilement — relancer '
+            'scripts/provision-app-parcours.sh');
+    await tapVisible(tester, gapRow.first);
+
+    final accept = find.byType(FilledButton);
+    await pumpUntil(tester, accept, reason: 'fiche de la course d’écart');
+    expect(accept, findsOneWidget);
+    await tapAndCatchOutcome(tester, accept);
+    await pumpUntilGone(tester, find.byIcon(Icons.do_not_disturb_on_outlined),
+        reason: 'la course est prise', onTimeout: 'fiche : ${visibleTexts()}');
+
+    final sheetFields = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(TextField));
+    for (var step = 0; step < 5 && sheetFields.evaluate().isEmpty; step++) {
+      if (!await _actionsReady(tester)) break;
+      await tapVisible(tester, find.byType(FilledButton).first);
+      await _reachedSheet(tester, sheetFields);
+    }
+    await pumpUntil(tester, sheetFields,
+        reason: 'tiroir de déclaration',
+        onTimeout: 'écran : ${visibleTexts()}');
+
+    // ── Un montant INFÉRIEUR à celui annoncé ───────────────────────────────
+    final expected = amountShownInSheet();
+    expect(expected, isNotNull, reason: 'le tiroir n’annonce aucun montant');
+    final short = (int.parse(expected!) - 200).toString();
+
+    await tester.enterText(sheetFields.first, short);
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // ⚠️ **L'assertion centrale : le tiroir REFUSE.** Un écart ouvre une liste
+    // de motifs, et la confirmation reste inerte tant qu'aucun n'est choisi.
+    // C'est la seule façon de savoir que l'obligation existe : un contrôle
+    // qu'on n'a jamais vu dire non n'a montré que sa capacité à dire oui.
+    final confirm = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(FilledButton));
+    await pumpUntil(tester, confirm, reason: 'bouton de confirmation');
+    expect(tester.widget<FilledButton>(confirm.first).onPressed, isNull,
+        reason: 'un écart sans motif doit rester non confirmable — '
+            'écran : ${visibleTexts(40)}');
+
+    // ── Un motif choisi, et elle passe ─────────────────────────────────────
+    //
+    // Les motifs sont une liste fermée servie par le serveur ; on prend le
+    // premier, sans présumer de son libellé — il est traduit.
+    final reasons = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(ListTile));
+    await pumpUntil(tester, reasons,
+        reason: 'la liste des motifs d’écart',
+        onTimeout: 'aucun motif proposé alors que le montant diffère — '
+            'écran : ${visibleTexts(40)}');
+    await tapVisible(tester, reasons.first);
+
+    await pumpUntilTrue(
+        tester,
+        () => tester.widget<FilledButton>(confirm.first).onPressed != null,
+        reason: 'la confirmation s’active une fois le motif choisi',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+
+    await tapVisible(tester, confirm.first);
+    await pumpUntilGone(tester, find.byType(BottomSheet),
+        reason: 'le tiroir se referme — l’écart est déclaré',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+
+    // La somme réellement perçue, pas celle annoncée : c'est tout l'objet.
+    await goBack(tester);
+    await pumpUntil(tester, find.byType(Tab), reason: 'retour au tableau de bord');
+    // Le net de la somme RÉELLEMENT perçue — c'est tout l'objet d'un écart :
+    // la caisse suit ce qui a été encaissé, pas ce qui était annoncé.
+    final netShort = (int.parse(short) - int.parse(codGapFee)).toString();
+    await expectCaisseShows(tester, netShort);
+  });
+}
+
+/// ── Deux des trois sorties d'une course, côté transporteur ────────────────
+///
+/// Une course ne se termine pas toujours par une livraison. `test-sorties-de-
+/// course.sh` le vérifie côté serveur ; ce qui manque, et qui décide de tout,
+/// c'est que le transporteur **puisse le dire** — un refus qu'on ne sait pas
+/// exprimer se transforme en course abandonnée, et une course abandonnée n'a
+/// pas de trace.
+void parcoursSortiesDeCourse() {
+  testWidgets('sortie — écarter une opportunité exige un motif', (tester) async {
+    requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
+
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+    await openTab(tester, 0);
+
+    final rows = find.byType(ListTile);
+    await pumpUntil(tester, rows,
+        reason: 'au moins une opportunité à écarter',
+        onTimeout: 'relancer scripts/provision-app-parcours.sh');
+    await tapVisible(tester, rows.first);
+
+    // Le bouton de refus est le seul `OutlinedButton` d'une fiche réclamable,
+    // et son icône ne dépend d'aucune langue.
+    final decline = find.byIcon(Icons.do_not_disturb_on_outlined);
+    await pumpUntil(tester, decline,
+        reason: 'le bouton d’écartement',
+        onTimeout: 'fiche : ${visibleTexts()}');
+    await tapVisible(tester, decline);
+
+    // ⚠️ **Le motif est obligatoire, et le tiroir doit le prouver en refusant.**
+    // Un refus sans motif serait une course qui disparaît sans que personne
+    // sache pourquoi — exactement ce que la trace existe pour empêcher.
+    final confirm = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(FilledButton));
+    await pumpUntil(tester, confirm,
+        reason: 'tiroir d’écartement',
+        onTimeout: 'écran : ${visibleTexts()}');
+    expect(tester.widget<FilledButton>(confirm.first).onPressed, isNull,
+        reason: 'écarter sans motif doit rester impossible');
+
+    final reasons = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(ListTile));
+    await pumpUntil(tester, reasons, reason: 'la liste des motifs');
+    await tapVisible(tester, reasons.first);
+
+    await pumpUntilTrue(
+        tester,
+        () => tester.widget<FilledButton>(confirm.first).onPressed != null,
+        reason: 'la confirmation s’active une fois le motif choisi',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+    await tapVisible(tester, confirm.first);
+
+    // La fiche d'une course écartée n'a plus de contenu : l'application revient
+    // d'elle-même à la liste, et c'est ce retour qui prouve que l'écartement a
+    // été enregistré plutôt qu'affiché.
+    await pumpUntil(tester, find.byType(Tab),
+        reason: 'retour au tableau de bord après l’écartement',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+  });
+
+  testWidgets('sortie — signaler un échec de livraison', (tester) async {
+    requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
+
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+    await openTab(tester, 0);
+
+    final rows = find.byType(ListTile);
+    await pumpUntil(tester, rows,
+        reason: 'une opportunité à prendre',
+        onTimeout: 'relancer scripts/provision-app-parcours.sh');
+    await tapVisible(tester, rows.first);
+
+    final accept = find.byType(FilledButton);
+    await pumpUntil(tester, accept, reason: 'fiche de la course');
+    expect(accept, findsOneWidget);
+    await tapAndCatchOutcome(tester, accept);
+    await pumpUntilGone(tester, find.byIcon(Icons.do_not_disturb_on_outlined),
+        reason: 'la course est prise', onTimeout: 'fiche : ${visibleTexts()}');
+
+    // ⚠️ **Le signalement est le DERNIER bouton plein**, à l'inverse des
+    // transitions qui viennent en tête. C'est la contrepartie de la règle
+    // employée plus haut : `.first` est l'action normale, `.last` l'action de
+    // sortie. Les confondre ferait terminer la course qu'on veut signaler.
+    await pumpUntilTrue(
+        tester, () => find.byType(FilledButton).evaluate().length >= 2,
+        reason: 'les actions de la course prise',
+        onTimeout: 'fiche : ${visibleTexts()}');
+    await tapVisible(tester, find.byType(FilledButton).last);
+
+    // L'écran d'échec : un motif pré-sélectionné, des notes, une photo
+    // **facultative** — un destinataire absent n'a rien à montrer, et l'exiger
+    // pousserait à photographier n'importe quoi pour débloquer l'écran.
+    final notes = find.byType(TextField);
+    await pumpUntil(tester, notes,
+        reason: 'l’écran de signalement d’échec',
+        onTimeout: 'écran : ${visibleTexts()}');
+    await tester.enterText(notes.first, 'Destinataire absent (parcours de test)');
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final submit = find.byType(FilledButton).last;
+    final said = await tapAndCatchOutcome(tester, submit);
+
+    // ⚠️ **Le retour se fait sur la FICHE, pas sur la liste — et c'est une
+    // décision produit, écrite dans le code : « un seul pop […] deux pops
+    // renvoyaient à la liste, où rien ne change ; le driver ne voyait aucune
+    // trace de ce qu'il venait de déclarer ».**
+    //
+    // Attendre les onglets du tableau de bord était donc viser le mauvais
+    // écran : le test échouait sur un signalement que le serveur avait accepté
+    // en 3 secondes. La bonne assertion est que la fiche **porte** désormais le
+    // signalement — c'est exactement ce que le pop unique existe pour montrer.
+    await pumpUntil(tester, find.byIcon(Icons.error_outline),
+        reason: 'la fiche affiche le signalement d’échec',
+        onTimeout: 'l’application a dit : « ${said ?? 'rien'} »'
+            '\n  Écran : ${visibleTexts(40)}');
   });
 }
 
@@ -462,8 +686,16 @@ String? _montantEncaisse;
 /// Deux boutons au minimum : la transition suivante **et** le signalement
 /// d'échec. Un seul signifie que les activités ne sont pas revenues — taper
 /// alors `.first` viserait l'action destructrice.
+///
+/// ⚠️ **Les délais sont calés sur la latence MESURÉE, pas sur une intuition.**
+/// Relevé le 02/08/2026 dans les journaux du BFF : chaque écriture prend 3 à
+/// 4,5 secondes, et une transition en enchaîne **deux** — l'application puis la
+/// relecture des activités suivantes. Des attentes de six et douze secondes
+/// laissaient donc la boucle repartir avant la fin du rechargement, sur des
+/// boutons périmés : une seule transition partait, la course n'atteignait jamais
+/// sa clôture, et l'échec se présentait comme « la caisse n'affiche rien ».
 Future<bool> _actionsReady(WidgetTester tester) async {
-  final until = DateTime.now().add(const Duration(seconds: 12));
+  final until = DateTime.now().add(const Duration(seconds: 25));
   while (DateTime.now().isBefore(until)) {
     await tester.pump(const Duration(milliseconds: 150));
     if (find.byType(FilledButton).evaluate().length >= 2) return true;
@@ -474,7 +706,7 @@ Future<bool> _actionsReady(WidgetTester tester) async {
 /// Laisse au tiroir le temps d'apparaître, sans échouer s'il ne vient pas —
 /// l'appelant enchaîne alors la transition suivante.
 Future<void> _reachedSheet(WidgetTester tester, Finder sheet) async {
-  final until = DateTime.now().add(const Duration(seconds: 6));
+  final until = DateTime.now().add(const Duration(seconds: 15));
   while (DateTime.now().isBefore(until)) {
     await tester.pump(const Duration(milliseconds: 150));
     if (sheet.evaluate().isNotEmpty) return;

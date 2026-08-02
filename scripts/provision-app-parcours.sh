@@ -3,6 +3,13 @@
 # personas, puis rend les identifiants à passer à `flutter drive`.
 #
 #   ./scripts/provision-app-parcours.sh [conducteur]
+#   RESET_LEDGER=1 ./scripts/provision-app-parcours.sh [conducteur]
+#
+# ⚠️ `RESET_LEDGER=1` **solde le registre du conducteur de parcours** — les
+# parcours d'argent déclarent un encaissement à chaque exécution, et sans
+# soldage le plafond de dette finit par refuser la course. Développement
+# uniquement : sur une base réelle, une dette constatée se solde par une remise
+# confirmée, elle ne s'efface pas.
 #
 # ── Pourquoi un script à part, et pourquoi en shell ─────────────────────────
 #
@@ -59,7 +66,10 @@ DROPOFF_NAME="${DROPOFF_NAME:-Client Hydra}"
 # Combien de courses libres laisser en attente. Une pour le transporteur, une
 # pour l'entreprise, plus une de marge — un parcours qui échoue en consomme
 # parfois une sans la rendre.
-SPARE_ORDERS="${SPARE_ORDERS:-3}"
+#
+# Quatre : les parcours en consomment une chacun — argent, écart, échec,
+# transporteur — et l'écartement en masque une cinquième pour ce conducteur.
+SPARE_ORDERS="${SPARE_ORDERS:-6}"
 
 command -v jq >/dev/null 2>&1 || { echo "❌ jq requis." >&2; exit 1; }
 
@@ -376,6 +386,28 @@ dapi() { # méthode chemin [corps]
 # `UNBLOCK=1` libère, comme pour les scénarios.
 require_free_driver
 
+# ── Le registre du conducteur de parcours ───────────────────────────────────
+#
+# ⚠️ **Les parcours d'argent déclarent un encaissement à CHAQUE exécution, et
+# rien ne le solde.** L'encours du conducteur monte donc d'environ 2800 par
+# passage ; au septième, `COD_DEBT_CEILING_PER_PERSON` (20000) est atteint et
+# l'acceptation d'une course encaissée est refusée — mesuré à 18900 le
+# 02/08/2026, sur un refus parfaitement juste.
+#
+# ⚠️ **Le réflexe serait de desserrer le plafond pour « faire passer les
+# tests »** : ce serait désactiver la seule chose qui borne notre exposition,
+# pour une raison qui n'a rien à voir avec le produit. Ce qui se nettoie, c'est
+# la donnée de test — même parti pris que `reset-test-ledger.sh`, et même
+# garde-fou explicite.
+#
+# Un test qui se dégrade avec son propre usage n'est pas un test : sans ce
+# soldage, la suite ne passe qu'un nombre fini de fois.
+if [ "${RESET_LEDGER:-0}" = "1" ]; then
+  step "Registre du conducteur"
+  I_KNOW_THIS_IS_DEV=1 "$(dirname "${BASH_SOURCE[0]}")/reset-test-ledger.sh" \
+    "$DRIVER_EMAIL" 2>&1 | sed 's/^/   /'
+fi
+
 # ── 5. Des courses libres à prendre ─────────────────────────────────────────
 #
 # Publiées ici, et non laissées à la charge du parcours commerçant : deux tests
@@ -385,20 +417,22 @@ step "Courses libres"
 
 published=0
 
-# Une course libre = **diffusée et sans conducteur**.
+# ⚠️ **Compté du point de vue du CONDUCTEUR, pas du commerçant (02/08/2026).**
 #
-# ⚠️ Le nom du champ conducteur n'est pas supposé : trois orthographes existent
-# selon la ressource Fleetbase servie (`driver_assigned_uuid`, `driver_uuid`,
-# `driver`). Les trois sont testées, et l'absence de toutes vaut « libre » —
-# tester une seule aurait compté comme libres des courses déjà prises, donc
-# n'aurait rien publié et fait échouer les parcours transporteur et entreprise
-# en accusant l'application.
+# Les deux vues diffèrent, et la différence est structurelle : **écarter une
+# opportunité la masque définitivement pour ce transporteur**. Le commerçant
+# continue donc de voir une course libre que le conducteur ne verra plus jamais.
+#
+# Compter côté commerçant faisait croire le décor pourvu alors que la liste du
+# conducteur se vidait à chaque exécution — le parcours d'écartement en retire
+# une, les parcours d'argent et d'échec en consomment trois autres. La suite se
+# dégradait avec son propre usage, exactement comme les quatorze « Transports
+# Alpha » du 01/08.
+#
+# On interroge donc la liste que le conducteur reçoit vraiment.
 free_now() {
-  mapi GET '/commercant/commandes?page=1&limit=50' \
-    | jq '[(.orders // [])[]
-           | select(.status == "dispatched")
-           | select((.driver_assigned_uuid // .driver_uuid // .driver) == null)]
-          | length'
+  dapi GET '/transporteur/commandes?type=adhoc' \
+    | jq '[(.orders // [])[]?] | length' 2>/dev/null || echo 0
 }
 already="$(free_now)"
 info "déjà disponibles : $already"
@@ -452,6 +486,11 @@ COD_AMOUNT="${COD_AMOUNT:-1950}"
 # confondre avec les 650 des courses ordinaires.
 COD_FEE="${COD_FEE:-777}"
 
+# La seconde course encaissée, celle de l'écart à la porte. Un prix distinct de
+# la première, faute de quoi les deux parcours se disputeraient la même course
+# et le second échouerait selon l'ordre d'exécution.
+COD_GAP_FEE="${COD_GAP_FEE:-888}"
+
 cod_free() {
   mapi GET '/commercant/commandes?page=1&limit=50' \
     | jq --arg n "$COD_DROPOFF" '[(.orders // [])[]
@@ -461,10 +500,23 @@ cod_free() {
                   | contains($n | ascii_downcase))] | length'
 }
 
-if [ "$(cod_free)" -gt 0 ] 2>/dev/null; then
-  info "une course encaissée est déjà disponible"
-else
-  body="$(jq -n --arg d "$COD_DROPOFF" --argjson cod "$COD_AMOUNT" --argjson fee "$COD_FEE" '{
+# Publie une course encaissée reconnaissable à son prix, si elle manque.
+ensure_cod_order() { # prix libellé
+  local fee="$1" what="$2"
+  # ⚠️ Compté dans la liste du **conducteur**, comme les courses ordinaires :
+  # une course prise par l'entreprise reste « sans conducteur » vue du
+  # commerçant, et serait donc comptée comme libre à tort.
+  local n
+  n="$(dapi GET '/transporteur/commandes?type=adhoc' \
+    | jq --argjson f "$fee" '[(.orders // [])[]?
+         | select((.meta.price // .price) == $f)] | length' 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -gt 0 ]; then
+    info "course « $what » (prix $fee) déjà disponible"
+    return 0
+  fi
+
+  local body out oid pub
+  body="$(jq -n --arg d "$COD_DROPOFF" --argjson cod "$COD_AMOUNT" --argjson fee "$fee" '{
     draft: true,
     pickupLocationName: "Dépôt du Parcours", pickupLatitude: 36.7719, pickupLongitude: 3.0589,
     pickupContactName: "Commerce", pickupContactPhone: "0551020304",
@@ -473,13 +525,19 @@ else
     price: $fee, codAmount: $cod, codIncludesDelivery: false,
     podMethod: "aucune", preferFavourites: false }')"
   out="$(mapi POST /commercant/commandes "$body")"
-  is_error <<<"$out" && fail "Création de la course encaissée refusée" "$out"
+  is_error <<<"$out" && fail "Création de la course « $what » refusée" "$out"
   oid="$(jq -r '.id // empty' <<<"$out")"
-  [ -n "$oid" ] || fail "Course encaissée créée sans identifiant" "$out"
+  [ -n "$oid" ] || fail "Course « $what » créée sans identifiant" "$out"
   pub="$(mapi POST "/commercant/commandes/$oid/publier")"
-  is_error <<<"$pub" && fail "Publication de la course encaissée refusée" "$pub"
-  pass "Course encaissée publiée — « $COD_DROPOFF », $COD_AMOUNT à encaisser"
-fi
+  is_error <<<"$pub" && fail "Publication de la course « $what » refusée" "$pub"
+  pass "Course « $what » publiée — prix $fee, $COD_AMOUNT à encaisser"
+}
+
+# Deux courses encaissées, distinguées par leur prix : l'une sera encaissée au
+# montant exact, l'autre servira à l'écart à la porte. Les mélanger ferait
+# dépendre chaque parcours de l'ordre d'exécution de l'autre.
+ensure_cod_order "$COD_FEE" "encaissement exact"
+ensure_cod_order "$COD_GAP_FEE" "écart à la porte"
 
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
@@ -499,7 +557,8 @@ cat <<CMD
     --dart-define=TEST_PICKUP_NAME="$PICKUP_NAME" \\
     --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME" \\
     --dart-define=TEST_COD_AMOUNT=$COD_AMOUNT \\
-    --dart-define=TEST_COD_FEE=$COD_FEE
+    --dart-define=TEST_COD_FEE=$COD_FEE \\
+    --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"

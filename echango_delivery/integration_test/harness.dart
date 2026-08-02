@@ -49,6 +49,8 @@ const String codAmount =
     String.fromEnvironment('TEST_COD_AMOUNT', defaultValue: '1950');
 const String codFee =
     String.fromEnvironment('TEST_COD_FEE', defaultValue: '777');
+const String codGapFee =
+    String.fromEnvironment('TEST_COD_GAP_FEE', defaultValue: '888');
 
 /// Trouve la ligne d'une liste dont un texte contient [needle], casse ignorée.
 ///
@@ -106,6 +108,61 @@ Future<void> goBack(WidgetTester tester) async {
     fail('Aucun retour trouvé — écran : ${whatIsOnScreen()}');
   }
   await tester.pump(const Duration(milliseconds: 600));
+}
+
+/// Ouvre la caisse depuis un accueil, et **attend d'y être**.
+///
+/// ⚠️ Taper l'icône ne suffit pas : un bandeau peut la recouvrir, ou l'écran
+/// n'a pas fini de se reconstruire après le retour d'une fiche. Le tap partait
+/// alors dans le vide et l'assertion suivante lisait le tableau de bord pendant
+/// quarante secondes avant de conclure que la caisse ne montrait rien — un
+/// diagnostic qui accuse l'écran d'argent d'un défaut de navigation.
+///
+/// La caisse ne porte **aucun onglet** : leur disparition dit qu'on a quitté
+/// l'accueil, et c'est le seul repère qui ne dépende ni de la langue ni du
+/// contenu.
+Future<void> openCaisse(WidgetTester tester) async {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    final wallet = find.byIcon(Icons.account_balance_wallet_outlined);
+    if (wallet.evaluate().isEmpty) {
+      await tester.pump(const Duration(milliseconds: 400));
+      continue;
+    }
+    await tapVisible(tester, wallet.first);
+    final until = DateTime.now().add(const Duration(seconds: 8));
+    while (DateTime.now().isBefore(until)) {
+      await tester.pump(const Duration(milliseconds: 150));
+      if (find.byType(Tab).evaluate().isEmpty) return;
+    }
+  }
+  fail('La caisse ne s’est pas ouverte — écran : ${whatIsOnScreen()}');
+}
+
+/// Ouvre la caisse et vérifie qu'elle porte [amount], en la rouvrant au besoin.
+///
+/// ⚠️ **C'est le NET qui s'affiche, pas la somme encaissée** — l'écran le dit
+/// lui-même : « Votre rémunération est déjà déduite ». Chercher le montant
+/// perçu revenait à exiger un nombre que la caisse n'a aucune raison de
+/// montrer ; le transporteur, lui, veut savoir ce qu'il **doit remettre**.
+///
+/// ⚠️ Et la caisse charge **à l'ouverture**. Ouverte dans la seconde qui suit
+/// une déclaration, elle peut encore rendre l'état d'avant : elle affichait
+/// « Vous ne détenez aucune somme » quarante secondes durant, sur un
+/// encaissement que le serveur avait bien enregistré. On la referme et on la
+/// rouvre — une relecture, pas une attente passive.
+Future<void> expectCaisseShows(WidgetTester tester, String amount) async {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    await openCaisse(tester);
+    await scrollUntilFound(
+        tester,
+        find.byWidgetPredicate(
+            (w) => w is Text && (w.data?.contains(amount) ?? false),
+            description: 'le montant $amount'));
+    if (screenHas(amount)) return;
+    await goBack(tester);
+    await tester.pump(const Duration(milliseconds: 800));
+  }
+  fail('La caisse ne porte pas $amount — écran : ${visibleTexts(40)}');
 }
 
 /// Un texte de l'écran contient-il [needle] ?

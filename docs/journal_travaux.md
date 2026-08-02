@@ -1,3 +1,25 @@
+- [x] **L'écart à la porte et deux sorties de course, à l'écran (02/08/2026)** : neuf parcours, `+10 All tests passed`. S'ajoutent au parcours d'argent : déclarer un montant **différent** de celui annoncé, écarter une opportunité, signaler un échec de livraison.
+
+  **Deux de ces parcours portent une assertion de REFUS, et c'est leur objet.** Un écart sans motif, un écartement sans motif : le tiroir doit rester **non confirmable**. Un motif obligatoire dont on n'a jamais vu le refus n'est pas une obligation, c'est une intention — la règle 8 appliquée à un écran.
+
+  **Six pièges de pilotage, tous mesurés, aucun deviné.**
+
+  ⚠️ **(a) Les délais d'attente se calent sur la latence RELEVÉE.** Journaux du BFF : chaque écriture prend 3 à 4,5 secondes, et une transition en enchaîne **deux** — l'application puis la relecture des activités suivantes. Des attentes de six et douze secondes laissaient la boucle repartir sur des boutons périmés : une seule transition partait, la course n'atteignait jamais sa clôture, et l'échec se présentait comme « la caisse n'affiche rien ».
+
+  ⚠️ **(b) La caisse affiche le NET, pas la somme encaissée** — elle le dit elle-même : « Votre rémunération est déjà déduite ». 2727 perçus sur une course à 777 donnent **1950** à remettre. Deuxième fois dans la même journée que j'impose mon arithmétique à un écran qui a raison ; la première portait sur le montant attendu (1950 + 777 = 2727).
+
+  ⚠️ **(c) La caisse charge à l'ouverture.** Ouverte dans la seconde qui suit une déclaration, elle affichait « Vous ne détenez aucune somme » **quarante secondes durant**, sur un encaissement que le serveur avait enregistré. La refermer et la rouvrir est une relecture ; attendre n'en est pas une.
+
+  ⚠️ **(d) Le retour après un signalement d'échec se fait sur la FICHE, pas sur la liste** — décision produit écrite dans le code : « un seul pop […] deux pops renvoyaient à la liste, où rien ne change ; le driver ne voyait aucune trace de ce qu'il venait de déclarer ». Le test visait le mauvais écran et déclarait échoué un signalement que le serveur avait accepté en trois secondes.
+
+  ⚠️ **(e) `.first` est l'action normale, `.last` la sortie.** La fiche empile les transitions, puis le refus, puis le signalement d'échec. Les confondre terminerait la course qu'on veut signaler.
+
+  **(f) `tester.pageBack()` exige un bouton Cupertino** et échoue sur « One back button expected » alors que la flèche Material est là.
+
+  ⚠️ **Et le défaut de fond, le troisième du même genre en une journée : le décor se dégradait avec son propre usage.** **Écarter une opportunité la masque définitivement pour ce transporteur** — le commerçant, lui, continue de la voir comme libre. Le décor comptait donc côté commerçant, se croyait pourvu, et la liste du conducteur se vidait à chaque rejeu jusqu'à zéro. Il interroge désormais **la liste que le conducteur reçoit vraiment**. Même remède pour le registre : les parcours d'argent déclarent un encaissement à chaque exécution et rien ne le solde, donc l'encours atteignait le plafond en sept passages — `RESET_LEDGER=1` solde, derrière le même garde-fou explicite que `reset-test-ledger.sh`, parce que desserrer le plafond reviendrait à désactiver la seule chose qui borne notre exposition.
+
+  **Restent à porter à l'écran** : l'argent à trois maillons, la multi-appartenance, la régularisation par le commerçant, l'annulation d'une course par le commerçant. Les **deux plafonds** resteront en shell — ils modifient le `.env` et redémarrent le BFF **en cours de scénario**, ce qui couperait l'application en plein parcours.
+
 - [x] **Le parcours d'argent joué à l'écran (02/08/2026)** : le transporteur prend une course encaissée, la mène à son terme, **déclare la somme dans le tiroir**, et ce montant apparaît dans sa caisse **et** dans celle du commerçant. Six parcours au total, `+7 All tests passed`.
 
   **C'est la moitié que `test-parcours-argent.sh` ne peut pas vérifier.** Le scénario en `curl` prouve que le registre est juste ; il ne prouve pas que quelqu'un sache le lire ni l'alimenter. Or « une dette que seul le débiteur voit n'est pas une dette, c'est une note personnelle » — la question centrale de ce produit se tranche à l'écran ou nulle part.
