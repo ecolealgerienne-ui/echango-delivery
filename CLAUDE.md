@@ -10,7 +10,7 @@ Positionnement produit (macro doc §1.3) : l'effet réseau est la thèse central
 
 ## Règles de développement — à respecter sans exception
 
-Onze règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle. Les dix premières portent sur ce qu'on écrit ; la onzième sur **comment on lit le dépôt avant d'écrire**.
+Treize règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un défaut réel, constaté en test, pas d'une préférence de style : la justification est donnée parce que c'est elle qui permet de reconnaître un cas nouveau relevant de la même règle. Les dix premières portent sur ce qu'on écrit ; la onzième sur **comment on lit le dépôt avant d'écrire** ; les deux dernières sur **la frontière HTTP** — ce qui entre dans le BFF et qui a le droit d'y entrer.
 
 ⚠️ **Ce qu'un `tsc` vert vaut dans le sandbox Claude Code — et ce qu'il ne vaut pas (30/07/2026).** Le client Prisma n'y est **jamais généré** (le proxy sortant refuse `binaries.prisma.sh` par politique, y compris avec `--no-engine`), donc `@prisma/client` s'y résout sur un fichier de 4 ko où tout est `any`. Conséquence : **rien de ce qui traverse un type Prisma n'est vérifié ici**, et un `npx tsc --noEmit` vert ne dit rien de ces chemins-là. Constaté : `liveOrderDetailed(merchant.fleetbaseVendorUuid, order)` — arguments inversés — passait ici parce que `merchant` était `any`, et échouait à la compilation chez l'utilisateur, où le client est généré. La vérification a fonctionné, simplement pas de mon côté. À l'écriture : relire à la main toute signature dont un argument vient d'une ligne Prisma, et annoncer un `tsc` vert pour ce qu'il est — une vérification **partielle**.
 
@@ -258,6 +258,56 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 ⚠️ **Écrit en Python et non en `jq`** : `jq` n'existe que dans WSL sur ce poste, et les hooks tournent côté Windows. Un hook qui échoue à lire son entrée **laisse passer**, délibérément — bloquer parce qu'on n'a pas compris casserait l'outil qu'on voulait améliorer, et le défaut serait mis sur le compte du `Grep`. Éprouvé sur **neuf cas au tuyau, dont deux refus**, puis en session : refus → requête au graphe → second `Grep` identique accepté.
 
+### 12. Une frontière d'accès se ferme par défaut, et son refus se prouve
+
+**Un contrôle d'accès qu'on n'a jamais vu refuser n'est pas un contrôle, c'est une intention.** C'est la règle 8 appliquée à la sécurité, et elle mérite son propre numéro parce que l'enjeu n'y est pas un affichage faux mais une donnée servie à quelqu'un qui n'y a pas droit.
+
+**L'état mesuré le 02/08/2026**, parce qu'il fonde ce qui suit — la mécanique est saine, c'est sa preuve qui manque :
+
+| | |
+|---|---|
+| `@UseGuards` dans le dépôt | **aucun** — l'authentification est un `APP_GUARD` **global** |
+| routes | 95, dont **8 publiques** (7 `auth` + `health`), chacune sous un `@Throttle` plus serré |
+| rôle | `@Persona` posé **au niveau de la classe** sur les trois contrôleurs personas |
+| révocation | `tokenVersion` comparé au claim `tv`, plus `active`, à **chaque** requête |
+| secret | `JWT_SECRET` exigé au démarrage, 32 caractères minimum, **aucun repli** |
+
+**En pratique :**
+
+- **La fermeture est par défaut, l'ouverture est explicite.** Un garde global plus `@Public` pour se retirer, jamais l'inverse : avec un `@UseGuards` par route, la route qu'on oublie est **ouverte**. Ici la route qu'on oublie est fermée, et l'oubli se voit à l'écran au lieu de se taire sur le réseau. Même polarité que la liste d'autorisation des projections (règle M10) — et c'est la même raison.
+- **`@Public` est une décision, pas une commodité.** Chaque ajout à ces huit routes se justifie par écrit et porte son `@Throttle` : une route publique est la seule surface qu'un inconnu peut marteler.
+- **Un identifiant venu de l'URL passe par un pipe.** Les 41 `@Param('id')` traversent `FleetbaseIdPipe`, parce qu'ils partent **interpolés dans une URL Fleetbase appelée avec le jeton de service**, qui a tous les droits sur l'organisation. Sans lui, un `../../` détourne la requête vers une ressource que le contrôle d'appartenance n'a jamais examinée.
+
+⚠️ **Authentifier n'est pas autoriser, et c'est la confusion qui coûte le plus cher.** Le garde prouve **qui** vous êtes ; il ne prouve pas que la commande, le conducteur ou l'adresse que vous nommez sont à vous. Cette seconde vérification vit **dans chaque service** (`getMerchantWithValidation`, `resolveOrder`, `getDriverOrFail`, `getFleetWithValidation`) — donc dans quatre-vingt-dix endroits, chacun reposant sur le fait que son auteur y a pensé. **Toute route qui accepte un identifiant doit vérifier l'appartenance avant de s'en servir**, et le pire cas doit être « introuvable », jamais « la ressource de quelqu'un d'autre ».
+
+⚠️ **Ce qui manque au 02/08/2026, et qui est le vrai trou** : **rien n'éprouve un refus**. Aucun test, aucun scénario n'appelle une route sans jeton, avec le jeton d'un **autre persona**, ou avec un jeton **révoqué**. Les 87 routes protégées le sont par un mécanisme que personne n'a vu dire non — et un `@Public` posé par erreur ne ferait échouer aucun contrôle. Idem pour l'appartenance : aucune des 41 routes à identifiant n'est éprouvée avec l'identifiant d'autrui. Voir Prochaines étapes.
+
+⚠️ **Et un refus doit sortir avec son code.** `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError` ou une erreur Prisma **ne passe pas par lui**, sort par le gestionnaire par défaut de Nest, donc **sans `code`** — et l'application retombe sur son message générique au moment précis où l'on comprend le moins ce qui s'est passé. C'est la règle 3 percée sur son chemin le plus obscur.
+
+### 13. Toute entrée traverse un DTO décoré — et la règle se nomme une fois
+
+**Le `ValidationPipe` ne valide que les classes décorées.** Un `@Body() dto: { reason?: string }` typé en ligne n'est pas validé du tout : le pipe n'a aucune métadonnée à lire et laisse passer le corps tel quel. Ce n'est pas une hypothèse — une entreprise de transport a pu contester une remise avec un motif de **longueur illimitée** là où les deux autres personas sont bornés à 500 caractères. Le plafond n'était pas contourné : **il n'existait pas sur ce chemin**.
+
+**L'état mesuré le 02/08/2026** : `whitelist` **et** `forbidNonWhitelisted` — un champ inconnu est *refusé*, pas silencieusement retiré ; **134 champs de DTO sur 14 fichiers, zéro sans décorateur** ; tous les `@Query` typés sauf trois chaînes brutes ; corps limité à 10 Mo ; appels Fleetbase bornés à 30 s.
+
+**En pratique :**
+
+- **Un `@Body`, un `@Query` : une classe décorée.** Jamais un type en ligne, jamais `any`, jamais un primitif.
+- **Un champ sans décorateur est un champ non validé**, même si son type TypeScript paraît le contraindre : le type disparaît à la compilation, la validation est à l'exécution.
+- **Une borne métier se nomme une fois** (`FLEETBASE_ID_PATTERN`, `VEHICLE_TYPES`, `MAX_PHOTO_BASE64_LENGTH`, `COLLECTION_DISCREPANCY_REASONS`). ⚠️ **Une copie a déjà échappé** : `auth/dto/register.dto.ts:128` réécrit `/^[A-Za-z0-9_-]{1,64}$/` en clair au lieu d'importer le motif partagé, employé six fois ailleurs. Identique aujourd'hui, libre de diverger demain — et c'est le motif qui protège les identifiants interpolés dans une URL Fleetbase.
+- **Trente et une règles sont recopiées d'un fichier à l'autre** (même champ, même contrainte) : `amount`, `collectedAmount`, `page`/`limit`, `q`, `notes`, les coordonnées. Le critère de la règle 5 tranche : *si l'une change, l'autre doit-elle changer ?*
+
+⚠️ **Centraliser oui, écrire un validateur non.** La tentation est une fonction maison qui « vérifie les types et les regex » — ce serait réimplémenter `class-validator` et perdre l'intégration au pipe, exactement la faute évitée pour `AppButton` (règle 6). La forme juste est un **décorateur composé** (`applyDecorators`), qui *nomme* la règle sans refaire le moteur :
+
+```ts
+export const IsFleetbaseId = (label: string) =>
+  applyDecorators(IsString(), Matches(FLEETBASE_ID_PATTERN, { message: `${label} invalide` }));
+```
+
+⚠️ **Ce qu'il ne faut PAS fusionner** : `Max(5000000)` sur une remise et `Max(500000)` sur un encaissement sont deux nombres pour deux raisons. Les rapprocher « parce que ce sont deux montants » ferait bouger l'un en corrigeant l'autre.
+
+⚠️ **Et le piège qui rend ce chantier dangereux, à connaître avant d'y toucher** : `echango_delivery/tool/check_server_rules.dart` lit les DTO serveur **textuellement** (`RegExp(r'@MinLength\(\s*(\d+)')`). C'est le seul mécanisme qui empêche l'application et le serveur de diverger sur ces bornes. Remplacer `@MinLength(8)` par un `@IsPassword()` composé le rendrait **aveugle** — et son mode de panne documenté est de **conclure à l'accord** quand il ne reconnaît pas une déclaration. On refermerait une duplication en cassant le garde qui en surveille une autre, **sans que rien ne passe au rouge**. Si l'on compose, le vérificateur se met à jour dans le même lot et s'éprouve sur une mutation.
+
 ## Pourquoi un repo séparé (décision produit, 2026-07-26)
 
 Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un logiciel tiers, pas notre code. Le vendoriser dans `echangoorder` mélangerait les licences (AGPL vs le code propriétaire d'Echango Order) et une stack complètement différente (Node.js/MySQL/Redis/SocketCluster vs Odoo/Postgres). Ce repo contient **nos** scripts de déploiement, notre config, et nos notes de décision — **pas le code source de Fleetbase lui-même**, cloné à part en local (voir § Installation locale). On ne fork pas Fleetbase pour l'instant : pas nécessaire tant qu'on ne modifie pas son code (voir § Licence).
@@ -459,7 +509,17 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **`DEFAULT_ZONE_RADIUS_KM = 15` est une valeur d'écran, jamais un filtre implicite.** Elle pré-remplit le champ ; `zoneAllows` ne filtre que sur ce qui est **déclaré**. Les confondre ferait disparaître du travail pour tous ceux qui n'ont jamais ouvert le réglage — et « le choix revient au transporteur » cesserait d'être vrai pour eux.
 
-  **Reste à faire** : **les notifications**. ⚠️ Elles ne s'obtiennent pas gratuitement — le dispatch géospatial de Fleetbase applique le rayon posé sur **la course** (`adhoc_distance`), pas la préférence du conducteur. L'honorer demande de filtrer sur **notre** chemin de notification, avant l'envoi. Sans effet visible aujourd'hui (aucun push réel n'existe, Firebase est un gabarit), mais à faire **avant** le premier envoi, sinon la préférence mentira sur un canal et pas sur l'autre.
+  ✅ **La sollicitation d'un favori honore la zone — fait le 02/08/2026.** C'est **le seul chemin à nous** qui décide à qui va une course : `pickAvailableFavourite` pose `driver_assigned_uuid`, donc **sort la course du pool**.
+
+  ⚠️ **C'est là que ça compte le plus, et l'argument est celui que le code faisait déjà pour `online`** : confier une course à quelqu'un qui a filtré cette wilaya, c'est la confier à quelqu'un qui ne la regardera pas — et **rien ne la reprend** (le second repli, différé, n'existe pas). Le repli, lui, est sans danger : la course part au pool.
+
+  La règle vit dans `zoneAllowsPickup` et **nulle part ailleurs** : `OrderPickup` existe parce que les deux chemins n'ont pas la même chose en main — la liste tient une commande Fleetbase, la sollicitation se décide **avant que la commande existe**. Un test vérifie que les deux rendent la même réponse, sans quoi un transporteur serait écarté d'une liste **et** assigné d'office à la même course.
+
+  ⚠️ **Prouvé à deux branches en réel**, le même favori, la même course : zone = Tamanrasset (départ à Alger) → **non assignée** ; zone effacée → **assignée**. Un filtre qui n'écarte jamais est indiscernable d'un filtre absent.
+
+  ⚠️ **Et le banc a failli conclure trois fois à tort** : création refusée sur des champs de contact manquants (les deux branches disaient « non assignée »), route de mise en ligne inexistante (un favori hors ligne n'est jamais sollicité, donc même faux vert), et lecture des clés Fleetbase alors que la réponse est la ligne **locale** (`driverAssignedUuid`). Il refuse désormais de conclure quand la course n'a pas été créée.
+
+  **Reste à faire** : **les notifications push**. ⚠️ Rien n'est branché aujourd'hui — le dispatch géospatial est **entièrement celui de Fleetbase** (`adhoc_distance` posé sur la course), et le BFF n'a **aucun chemin de notification vers les conducteurs**. Y ajouter un filtre de zone maintenant créerait du code sans appelant, c'est-à-dire le défaut le plus répété du dépôt (règle 9). À faire **en même temps** que le premier envoi réel, avec `zoneAllowsPickup` déjà prêt — sinon la préférence mentira sur un canal et pas sur l'autre.
 
   **Un point resté à trancher** : une course qui traverse deux wilayas doit-elle apparaître dans les deux ? Aujourd'hui non — seul l'enlèvement décide.
 
@@ -492,6 +552,34 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   ⚠️ **Aucune conversion, et aucune devise sans montant** : « DZD » seul décrirait une somme qui n'existe pas (règle 10). Vérifié en réel — **50 courses servies en USD avant, 0 après** (26 en DZD, 24 sans prix donc sans devise). Éprouvé par mutation : sans la garde et sans la normalisation, 4 des 9 cas échouent.
 
   **Reste ouvert** : l'Organization Fleetbase a-t-elle un champ devise ? Si oui, c'est de la configuration, et la constante deviendrait un repli au lieu d'une décision.
+
+- [ ] **Robustesse des API — audité le 02/08/2026, rien n'est corrigé** (règles 12 et 13). La mécanique est meilleure que ne le suppose la question qui a lancé l'audit ; ce qui manque, ce sont les **preuves** et six correctifs courts.
+
+  **(1) Le banc de refus — le plus important, et de loin.** Un script qui parcourt **toutes** les routes avec quatre jetons — aucun, valide, **mauvais persona**, **révoqué** — et attend un refus dans trois cas sur quatre. Sans lui, 87 protections sont supposées et zéro constatée, et un `@Public` posé par erreur ne fait échouer aucun contrôle. Il se range à côté des huit scénarios.
+
+  **(2) Le banc d'appartenance — le plus grave en conséquence.** Les 41 routes à identifiant, éprouvées avec l'identifiant **d'un autre compte** : la réponse attendue est « introuvable », jamais la ressource. Authentifier n'est pas autoriser (règle 12), et cette seconde vérification vit dans quatre-vingt-dix endroits qui reposent chacun sur la vigilance de leur auteur.
+
+  **(3) `tool/check_dto_hygiene`, avec son `--self-test`** (règle 8) : refuser une regex en clair là où un motif nommé existe, un champ de DTO sans décorateur, un `@Body` non typé par une classe décorée, un `@Param('id')` sans pipe. ⚠️ **Il protège le code à venir, ce qu'aucun rangement du code présent ne fait** — c'est pourquoi il passe avant le refactor des décorateurs composés.
+
+  **(4) La copie échappée** de `register.dto.ts:128` → importer `FLEETBASE_ID_PATTERN`. Deux lignes.
+
+  **(5) Les six correctifs courts, chacun mesuré :**
+
+  - **`@Catch(HttpException)` ne couvre pas les erreurs non HTTP** — une `TypeError` ou une erreur Prisma sort **sans `code`** (règle 3 percée sur son chemin le plus obscur).
+  - **Aucun `helmet`** : pas un en-tête de sécurité.
+  - **CORS : `FLEET_APP_URL` retombe sur `http://localhost:3001`**, qui est **le port du BFF lui-même**. Un copier-coller qui se lit comme une erreur.
+  - **Trois `@Query` bruts** : `nonLues`, `waypoint`, et surtout **`driverIds`** — une liste **sans borne**, éclatée vers Fleetbase. Faire faire beaucoup de travail au BFF avec une requête courte.
+  - **Le débit est par IP et en mémoire** : derrière un proxy sans `TRUST_PROXY` correct, tout le monde partage un compteur ; à deux instances, les compteurs ne s'additionnent pas.
+  - **Aucun identifiant de corrélation** dans les journaux : un incident ne se suit pas entre l'app, le BFF et Fleetbase.
+
+  **(6) Deux décisions à prendre, pas des correctifs :**
+
+  - **Chaque requête coûte une lecture en base** (`active` + `tokenVersion`). C'est le prix de la révocation immédiate, et il est peut-être juste — mais il fait dépendre l'**authentification** de Postgres : sous lenteur, tout tombe ou traîne. À assumer explicitement ou à mitiger (cache court, révocation différée).
+  - **L'idempotence de l'argent est décidée route par route** — `declareCollection` est permissive, `declareRemittance` volontairement pas. Un double appui sur un réseau instable est un cas réel ; la question mérite une réponse d'ensemble plutôt qu'un choix par auteur.
+
+  ⚠️ **Ce que l'audit ne dit pas** : que la validation est faible. Elle ne l'est pas — `whitelist` + `forbidNonWhitelisted`, 134 champs tous décorés, 41 identifiants tous filtrés. Ranger davantage les DTO **ne comble aucune des deux vraies brèches**, qui sont (1) et (2).
+
+  ⚠️ **Et une leçon de méthode, parce qu'elle s'est produite trois fois dans la même journée** : mon scanner de DTO a annoncé **six champs non validés qui l'étaient tous** — il s'arrêtait sur le `})` d'un décorateur multi-ligne. Deux versions ont échoué avant la bonne. **Un outil d'audit se vérifie comme un vérificateur** : sur des cas dont on sait qu'il doit les refuser, et sur des cas dont on sait qu'il doit les accepter.
 
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.
