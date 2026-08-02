@@ -280,7 +280,11 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 ⚠️ **Authentifier n'est pas autoriser, et c'est la confusion qui coûte le plus cher.** Le garde prouve **qui** vous êtes ; il ne prouve pas que la commande, le conducteur ou l'adresse que vous nommez sont à vous. Cette seconde vérification vit **dans chaque service** (`getMerchantWithValidation`, `resolveOrder`, `getDriverOrFail`, `getFleetWithValidation`) — donc dans quatre-vingt-dix endroits, chacun reposant sur le fait que son auteur y a pensé. **Toute route qui accepte un identifiant doit vérifier l'appartenance avant de s'en servir**, et le pire cas doit être « introuvable », jamais « la ressource de quelqu'un d'autre ».
 
-⚠️ **Ce qui manque au 02/08/2026, et qui est le vrai trou** : **rien n'éprouve un refus**. Aucun test, aucun scénario n'appelle une route sans jeton, avec le jeton d'un **autre persona**, ou avec un jeton **révoqué**. Les 87 routes protégées le sont par un mécanisme que personne n'a vu dire non — et un `@Public` posé par erreur ne ferait échouer aucun contrôle. Idem pour l'appartenance : aucune des 41 routes à identifiant n'est éprouvée avec l'identifiant d'autrui. Voir Prochaines étapes.
+✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **10** routes. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
+
+⚠️ **La leçon, et elle vaut plus que les bancs** : la première version du banc de refus a **passé la mutation**. Ouvrir une route la faisait quitter l'ensemble testé, et le total tombait de 87 à 86 sans un mot. **Un contrôle qui prend sa cible dans la donnée qu'il examine ne contrôle rien** — d'où l'épinglage des routes ouvertes, chacune étant une décision qui doit s'écrire.
+
+⚠️ **Reste à couvrir** : 31 des 41 routes à identifiant, dont tout le persona transporteur. Détail en Prochaines étapes — une couverture partielle nommée vaut mieux qu'une couverture supposée.
 
 ⚠️ **Et un refus doit sortir avec son code.** `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError` ou une erreur Prisma **ne passe pas par lui**, sort par le gestionnaire par défaut de Nest, donc **sans `code`** — et l'application retombe sur son message générique au moment précis où l'on comprend le moins ce qui s'est passé. C'est la règle 3 percée sur son chemin le plus obscur.
 
@@ -331,7 +335,9 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # les 8 scénarios métier — le BFF en curl
+./scripts/run-all-scenarios.sh [conducteur]     # 10 scénarios — le BFF en curl
+./scripts/test-frontiere-http.sh                # 87 routes × 3 refus (jeton, rôle, révocation)
+./scripts/test-appartenance.sh                  # la ressource de A refusée à B
 flutter analyze && flutter test                 # 0 problème · 78 tests
 dart tool/check_*.dart [--self-test]            # 5 contrôles · 76 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
@@ -342,7 +348,7 @@ flutter drive --driver=test_driver/integration_test.dart \
   --target=integration_test/parcours_trois_personas_test.dart -d <émulateur> --dart-define=…
 ```
 
-Les huit scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, les trois sorties d'une course, et **le voyage de la wilaya** (`test-wilaya.sh`, 02/08/2026).
+Les dix scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, les trois sorties d'une course, **le voyage de la wilaya**, et depuis le 02/08/2026 les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12.
 
 ⚠️ **`test-wilaya.sh` porte ses propres témoins, et c'est ce qui le rend utile.** La wilaya décide de ce qu'un transporteur voit ; une course qui ne la transporte pas est **invisible au filtre**, sans erreur ni journal — une liste simplement plus courte. Trois contrôles, chacun avec son cas négatif dans le même passage :
 
@@ -555,9 +561,21 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
 - [ ] **Robustesse des API — audité le 02/08/2026, rien n'est corrigé** (règles 12 et 13). La mécanique est meilleure que ne le suppose la question qui a lancé l'audit ; ce qui manque, ce sont les **preuves** et six correctifs courts.
 
-  **(1) Le banc de refus — le plus important, et de loin.** Un script qui parcourt **toutes** les routes avec quatre jetons — aucun, valide, **mauvais persona**, **révoqué** — et attend un refus dans trois cas sur quatre. Sans lui, 87 protections sont supposées et zéro constatée, et un `@Public` posé par erreur ne fait échouer aucun contrôle. Il se range à côté des huit scénarios.
+  ✅ **(1) Le banc de refus — fait le 02/08/2026** (`scripts/test-frontiere-http.sh`, 9ᵉ scénario). **259 appels, 87 routes protégées, trois refus chacune** : sans jeton (401 `auth.missing_token`), avec un jeton révoqué (401 `auth.session_revoked`), avec le jeton d'un autre rôle (403 `server.persona_forbidden`). Le **code** est vérifié, pas seulement le statut — un 401 sans code est une protection que l'application ne sait pas traduire.
 
-  **(2) Le banc d'appartenance — le plus grave en conséquence.** Les 41 routes à identifiant, éprouvées avec l'identifiant **d'un autre compte** : la réponse attendue est « introuvable », jamais la ressource. Authentifier n'est pas autoriser (règle 12), et cette seconde vérification vit dans quatre-vingt-dix endroits qui reposent chacun sur la vigilance de leur auteur.
+  **Il énumère les routes depuis la source** : une route ajoutée demain est couverte sans que personne y pense. Les identifiants d'URL sont volontairement inexistants, pour qu'un garde tombé ne se traduise pas par une vraie ressource modifiée.
+
+  ⚠️ **Et il a fallu deux versions, parce que la première a passé la mutation.** `@Public` posé sur `GET /commercant/commandes` : le banc est passé **au vert**, de 87 routes à 86 — la route ouverte avait simplement **quitté l'ensemble testé**, en silence. C'était le défaut exact qu'il existe pour attraper, et il l'a laissé passer parce qu'il **prenait sa cible dans la donnée qu'il examinait**. Les huit routes ouvertes sont désormais **épinglées** (`PUBLIC_ROUTES`) : en ouvrir une neuvième fait échouer le banc tant que la décision n'est pas écrite là. Prouvé ensuite dans les deux sens — brèche → refus (sortie 1), correction → 259/259 (sortie 0).
+
+  ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **10 routes éprouvées, 10 refus** : la commande de A demandée avec le jeton de B rend 403, jamais la ressource.
+
+  ⚠️ **Chaque épreuve porte son témoin, et c'est ce qui la rend non tautologique** : A doit d'abord obtenir SA ressource (2xx). Un identifiant du **mauvais type** rend 404 partout — un banc naïf y lirait « l'appartenance est vérifiée » et serait vert sans rien prouver. Sans témoin, le persona est déclaré **non couvert**, jamais réussi. Les identifiants sont découverts en listant les ressources de A, jamais écrits en dur.
+
+  Prouvé par mutation du vrai service : `getOrderDetail` privé de son filtre par commerçant → « **SERVIE À B (200)** », sortie 1 ; restauré → 10/10, sortie 0.
+
+  ⚠️ **Ce que ce banc ne couvre pas encore**, et le dire vaut mieux que le laisser supposer : **10 routes sur 41**. Manquent le persona transporteur (17 routes — il faut un second conducteur, et l'inscription passe par une invitation), les adresses, les favoris, les notifications et les remises — chacun demande une ressource **du bon type** appartenant à A, donc du décor. Les routes où l'appartenance n'est **pas** la question (accepter une course libre, prendre une opportunité) sont exclues délibérément.
+
+  ⚠️ **Trois fois le banc a accusé le mauvais coupable avant d'être juste** : un champ hors DTO refusé par `forbidNonWhitelisted` (ma propre inscription, rejetée par la validation stricte), des comptes créés mais **en attente de validation** (`merchant_pending`), et le **plafond de connexion que le banc épuisait lui-même** (5/min) — il rapportait alors « persona NON COUVERT », un verdict qui accuse l'appartenance pour un problème de débit. Les trois disaient la même chose : *« je n'ai pas pu savoir »* n'est pas *« rien à signaler »*.
 
   **(3) `tool/check_dto_hygiene`, avec son `--self-test`** (règle 8) : refuser une regex en clair là où un motif nommé existe, un champ de DTO sans décorateur, un `@Body` non typé par une classe décorée, un `@Param('id')` sans pipe. ⚠️ **Il protège le code à venir, ce qu'aucun rangement du code présent ne fait** — c'est pourquoi il passe avant le refactor des décorateurs composés.
 

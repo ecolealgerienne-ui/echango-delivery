@@ -48,6 +48,19 @@ mkdir -p "$LOGDIR"
 # qu'ils sont les contrôles de non-régression du registre — si le socle est
 # cassé, tout le reste échouera pour la même raison et le tableau serait illisible.
 SCENARIOS=(
+  # Tout en tête : il n'écrit rien. Il n'appelle que des routes qui doivent
+  # **refuser**, avec des identifiants inexistants — donc il ne peut pas salir
+  # le décor des suivants, et un échec ici se lit sans avoir à démêler ce que
+  # les autres ont laissé.
+  #
+  # ⚠️ Il consomme du débit : ~260 appels cadencés, deux à trois minutes. C'est
+  # le prix de 87 protections constatées plutôt que supposées.
+  test-frontiere-http
+  # Juste après : il pose la question suivante — « ce jeton est valide, mais
+  # cette commande est-elle à lui ? ». Il n'écrit rien non plus : ses sondes
+  # portent sur les ressources d'un AUTRE compte, donc elles doivent toutes
+  # échouer. Le second compte de chaque persona est provisionné une seule fois.
+  test-appartenance
   # Placé en tête : il ne touche ni au conducteur ni au registre, donc il ne
   # dépend d'aucun des autres et n'en dérange aucun. Son email est stable, il
   # ne consomme donc une inscription qu'à sa toute première exécution.
