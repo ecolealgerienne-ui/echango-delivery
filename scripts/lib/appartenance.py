@@ -63,6 +63,7 @@ d'arriver, et le banc accuserait le mauvais coupable.
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -71,6 +72,11 @@ import urllib.request
 BASE = os.environ.get('BFF_URL', 'http://localhost:3001')
 PASSWORD = os.environ.get('PASSWORD', 'motdepasse123')
 PACE = float(os.environ.get('PACE_SECONDS', '0.55'))
+
+# Conducteur réel employé pour poser les décors (favori, invitation). Réglable
+# pour un autre environnement ; un identifiant inventé serait refusé.
+SONDE_DRIVER = os.environ.get('SONDE_DRIVER_UUID',
+                              'eec8c72d-fd1e-4416-b516-69b584a1a65b')
 
 
 # ── Les trois personas, chacun avec ses deux comptes et ses routes ───────────
@@ -119,6 +125,16 @@ PERSONAS = [
                 ],
             },
             {
+                'quoi': 'notification',
+                'list': '/commercant/notifications',
+                # Pas de `GET /commercant/notifications/:id` : témoin faible,
+                # l'identifiant vient de la liste de A.
+                'witness': None,
+                'probes': [
+                    ('POST', '/commercant/notifications/{id}/lu'),
+                ],
+            },
+            {
                 'quoi': 'favori',
                 'list': '/commercant/transporteurs/favoris',
                 'witness': None,
@@ -130,9 +146,7 @@ PERSONAS = [
                 # que le conducteur existe. Il faut donc un vrai — celui du
                 # conducteur de test, réglable pour un autre environnement.
                 'provision': ('POST', '/commercant/transporteurs/favoris',
-                              {'fleetbaseDriverUuid': os.environ.get(
-                                   'SONDE_DRIVER_UUID',
-                                   'eec8c72d-fd1e-4416-b516-69b584a1a65b'),
+                              {'fleetbaseDriverUuid': SONDE_DRIVER,
                                'driverName': 'Sonde appartenance',
                                'partyType': 'driver'}),
                 'cleanup': ('DELETE', '/commercant/transporteurs/favoris/{id}'),
@@ -155,6 +169,20 @@ PERSONAS = [
                     ('GET', '/flotte/commandes/{id}'),
                     ('POST', '/flotte/commandes/{id}/assigner',
                      {'driverId': 'zzz-inexistant-0000'}),
+                ],
+            },
+            {
+                'quoi': 'adhésion',
+                'list': '/flotte/adhesions',
+                'witness': None,
+                # ⚠️ Décor léger et **inerte** : une invitation en attente ne
+                # rattache personne tant que le conducteur ne l'accepte pas.
+                # Elle est conservée d'un passage à l'autre (la liste est lue
+                # d'abord), donc le banc n'en accumule pas.
+                'provision': ('POST', '/flotte/conducteurs/{driver}/adhesion', {}),
+                'probes': [
+                    ('POST', '/flotte/adhesions/{id}/suspendre'),
+                    ('POST', '/flotte/adhesions/{id}/reactiver'),
                 ],
             },
         ],
@@ -187,6 +215,40 @@ PERSONAS = [
                      {'activity': {'code': 'dispatched'}}),
                     ('POST', '/transporteur/commandes/{id}/echec',
                      {'reason': 'client_absent'}),
+                ],
+            },
+            {
+                'quoi': 'rattachement à une entreprise',
+                'list': '/transporteur/entreprises',
+                'witness': None,
+                'probes': [
+                    ('POST', '/transporteur/entreprises/{id}/accepter'),
+                    ('POST', '/transporteur/entreprises/{id}/refuser'),
+                    ('POST', '/transporteur/entreprises/{id}/quitter'),
+                ],
+            },
+            {
+                'quoi': 'encaissement',
+                'list': '/transporteur/caisse/encaissements',
+                'witness': None,
+                # ⚠️ **Absence NOTÉE, pas fatale — et c'est un arbitrage.**
+                #
+                # Un encaissement n'existe qu'après une livraison payée à la
+                # porte. En poser un demanderait d'écrire dans le **registre de
+                # caisse**, et un banc de sécurité n'a pas à créer des écritures
+                # comptables pour prouver un refus — la remise à zéro d'un
+                # registre est déjà réservée au développement, avec un aveu
+                # explicite.
+                #
+                # Faire échouer le banc quand la base n'en porte pas le rendrait
+                # **durablement rouge**, donc ignoré — et un banc ignoré ne
+                # protège rien. Il le dit à chaque passage, dans le récapitulatif,
+                # plutôt que de se taire ou de crier.
+                'si_absent': 'noter',
+                'probes': [
+                    ('POST', '/transporteur/caisse/encaissements/{id}/confirmer'),
+                    ('POST', '/transporteur/caisse/encaissements/{id}/contester',
+                     {'reason': 'sonde d’appartenance'}),
                 ],
             },
         ],
@@ -266,14 +328,32 @@ def ensure(email, route, extra):
     return token, True
 
 
+# ⚠️ Un identifiant que `FleetbaseIdPipe` refuse ne peut pas être sondé : la
+# route répond 400 (`validation.invalid_id`) **avant** d'examiner
+# l'appartenance, et la sonde ressort « non concluante ». Constaté : la liste
+# des encaissements du transporteur mêle des lignes `earning:<uuid>`, dont le
+# deux-points est hors du motif accepté. On ne retient donc que ce qui peut
+# franchir le pipe — c'est le même motif, recopié nulle part ailleurs ici.
+ID_ACCEPTABLE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
 def first_id(body):
-    """Le premier identifiant d'une liste, quelle que soit son enveloppe."""
+    """
+    Le premier identifiant **sondable** d'une liste, quelle que soit son
+    enveloppe. Rend `None` si aucun ne l'est — le persona sera alors déclaré
+    non éprouvé, ce qui est la bonne réponse.
+    """
     rows = body if isinstance(body, list) else (
         body.get('data') or body.get('orders') or [])
+    if not isinstance(rows, list):
+        return None
     for row in rows:
+        if not isinstance(row, dict):
+            continue
         for key in ('uuid', 'public_id', 'id'):
-            if row.get(key):
-                return row[key]
+            valeur = row.get(key)
+            if valeur and ID_ACCEPTABLE.match(str(valeur)):
+                return valeur
     return None
 
 
@@ -298,7 +378,7 @@ def verdict(status):
 def run():
     print('banc d’appartenance — la ressource de A doit être refusée à B\n')
     refus = 0
-    breches, flous, non_couverts = [], [], []
+    breches, flous, non_couverts, notes = [], [], [], []
 
     for p in PERSONAS:
         print('══ %s ══' % p['nom'])
@@ -328,6 +408,10 @@ def run():
             pose = False
             if not rid and r.get('provision'):
                 pverb, ppath, pbody = r['provision']
+                # Certains décors désignent un conducteur dans leur chemin. Il
+                # doit être RÉEL : un identifiant inventé est refusé en 400, et
+                # la sonde ne prouverait rien.
+                ppath = ppath.replace('{driver}', SONDE_DRIVER)
                 pstatus, pbody_out = call(pverb, ppath, token_a, pbody)
                 time.sleep(PACE)
                 if 200 <= pstatus < 300:
@@ -336,9 +420,15 @@ def run():
                 if not pose:
                     print('   ⚠️ %s : décor impossible à poser (%s)' % (r['quoi'], pstatus))
             if not rid:
-                print('   ⚠️ %s : aucune ressource chez A (liste %s) — NON ÉPROUVÉE'
-                      % (r['quoi'], status))
-                non_couverts.append('%s/%s' % (p['nom'], r['quoi']))
+                if r.get('si_absent') == 'noter':
+                    print('   ○ %s : absent de cet environnement — routes NON ÉPROUVÉES'
+                          % r['quoi'])
+                    notes.append('%s/%s (%d routes)'
+                                 % (p['nom'], r['quoi'], len(r['probes'])))
+                else:
+                    print('   ⚠️ %s : aucune ressource chez A (liste %s) — NON ÉPROUVÉE'
+                          % (r['quoi'], status))
+                    non_couverts.append('%s/%s' % (p['nom'], r['quoi']))
                 continue
 
             if r['witness']:
@@ -392,6 +482,11 @@ def run():
     if non_couverts:
         print('  ⚠️ non couverts : %s' % ', '.join(non_couverts))
         print('     Leur silence n’est PAS un succès.')
+    if notes:
+        # Imprimé à chaque passage, exprès : ce qui n'apparaît pas finit oublié.
+        print('  ○ absents de cet environnement, donc NON ÉPROUVÉS : %s'
+              % ', '.join(notes))
+        print('     Les poser demanderait d’écrire dans le registre de caisse.')
     print('=' * 70)
 
     if breches:
@@ -427,6 +522,14 @@ def self_test():
     check('500 non concluant', verdict(500), 'non concluant')
 
     print('— la découverte d’identifiant —')
+    # ⚠️ Le cas réel : la liste des encaissements mêle des lignes `earning:<uuid>`
+    # que `FleetbaseIdPipe` refuse. Les sonder donnait 400 avant toute question
+    # d'appartenance — deux routes restaient non éprouvées sous couvert de refus.
+    check('identifiant hors motif ignoré',
+          first_id({'data': [{'id': 'earning:3c32-abc'}]}), None)
+    check('la ligne suivante, sondable, est prise',
+          first_id({'data': [{'id': 'earning:x'}, {'id': 'cmsc9nkde0018'}]}),
+          'cmsc9nkde0018')
     check('uuid préféré', first_id({'data': [{'uuid': 'u1', 'id': 3}]}), 'u1')
     check('enveloppe orders', first_id({'orders': [{'public_id': 'o1'}]}), 'o1')
     check('liste nue', first_id([{'id': 'x'}]), 'x')
