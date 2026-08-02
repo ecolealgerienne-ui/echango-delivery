@@ -395,6 +395,59 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables sont justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. Le registre COD est l'exception nommée, `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
 
+- [ ] **Le transporteur choisit ce qu'il voit : wilaya d'abord, rayon autour (décidé le 02/08/2026, NON implémenté)**
+
+  ⚠️ **Décisions prises, à ne plus reposer.** Elles répondent à l'arbitrage laissé ouvert par la revue du 28/07 (« la diffusion est à 15 km mais la liste est à l'échelle de l'organisation »). Ce n'était pas une divergence à corriger : **c'est le transporteur qui choisit sa course**, pas le rayon qui choisit pour lui.
+
+  | question | décision |
+  |---|---|
+  | qui décide de la course ? | **le transporteur** — la liste ne doit pas trancher à sa place |
+  | filtre principal | **la wilaya**, et elle est **obligatoire** |
+  | filtre secondaire | un **rayon autour de son point**, pour « chercher autour » |
+  | valeur par défaut du rayon | **15 km** — sans quoi il voit les courses de toutes les wilayas |
+  | distance mesurée depuis | **sa position**, pas une base déclarée |
+  | wilaya d'enlèvement ou de livraison ? | **enlèvement** — c'est là qu'il doit se rendre |
+  | le rayon gouverne-t-il les notifications ? | **oui**, pas seulement l'affichage |
+  | où vit la préférence ? | **champs personnalisés Fleetbase si `Driver` les supporte** (règle 1), colonne BFF sinon |
+
+  ⚠️ **Ce qui est décidé n'est pas ce qui est branché, et l'écart est mesuré** — c'est la leçon du 01/08 sur `specs_facilitateur.md`, où des décisions consignées se lisaient comme un état livré.
+
+  **Ce qui existe déjà** : le géocodage inverse **extrait la wilaya** (`state`/`region` → `province`, `common/geocoding/geocoding.service.ts`), et le carnet d'adresses la conserve — `SaveAddressDto.province`, `SavedAddress.province`, l'écran d'adresses la saisit.
+
+  ⚠️ **Ce qui manque, et qui bloque tout le reste : `CreateOrderDto` ne porte NI `pickupProvince` NI `dropoffProvince`.** Il n'a que `city` et `neighborhood`. **La wilaya se perd donc entre le carnet et la course**, et un filtre par wilaya n'aurait aujourd'hui rien sur quoi filtrer. C'est la première chose à faire, avant l'écran de préférences.
+
+  **Deux points restés à trancher** :
+  - `Driver` supporte-t-il `HasCustomFields` ? Vérifié pour `Order`, jamais pour `Driver`. ⚠️ Et **jamais `meta` sur `Driver` non plus** — même piège d'écrasement que celui qui a coûté les données de commande.
+  - Une course qui traverse deux wilayas doit-elle apparaître dans les deux ?
+
+  ⚠️ **Les notifications ne s'obtiennent pas gratuitement** : le dispatch géospatial de Fleetbase applique le rayon posé sur **la course** (`adhoc_distance`), pas la préférence du conducteur. L'honorer demande de filtrer sur **notre** chemin de notification, avant l'envoi — ça vit chez nous, et il faut le savoir avant de promettre le comportement.
+
+- [ ] **Responsabilité des espèces — tranché le 02/08/2026 (décision produit, contrat à écrire)**
+
+  | cas | qui répond des espèces |
+  |---|---|
+  | conducteur rattaché à une **entreprise** | **l'entreprise** |
+  | conducteur **indépendant** (pool) | **Echango** |
+
+  **Le code fait déjà cela** : sur une course du pool, Echango est le facilitateur (`isPlatform`), et le registre route la dette de l'indépendant vers Echango. Décision et implémentation s'accordent — pour une fois, il n'y a rien à brancher.
+
+  ⚠️ **Deux conséquences qui changent des points ouverts ailleurs dans ce fichier** :
+
+  - **La commission redevient recouvrable.** `docs/specs_flux_argent_quatre_acteurs.md` la donnait comme perdue, « aucun flux conducteur → Echango sur lequel compenser ». Si Echango est la contrepartie de l'indépendant, **ce flux existe** : la retenue est possible.
+  - **Le plafond de dette cesse de protéger le commerçant pour devenir l'exposition d'Echango.** Son montant n'est donc plus un réglage de confort, c'est un appétit au risque — à fixer comme tel.
+
+  **Ce que ça ne règle pas** : la question juridique demeure, mais elle se déplace. Elle n'est plus « qui est responsable » — c'est tranché — mais « le contrat Echango–transporteur suffit-il à couvrir la détention d'espèces pour compte de tiers ». À voir avec les transporteurs et les commerçants.
+
+- [ ] **Devise — l'affichage dit DZD, Fleetbase stocke en USD (décidé le 02/08/2026, NON implémenté)**
+
+  Fleetbase n'offre pas le DZD. **Aucune conversion n'est visée** : la plateforme est locale à l'Algérie, mono-devise, et le libellé est décoratif.
+
+  ⚠️ **Le défaut n'est pas que « USD existe » — c'est que deux sources se contredisent sur le même écran.** Le registre de caisse stocke littéralement `DZD` (colonne `currency` de `CashCollection`), et la ligne « À encaisser » l'affiche ; seul le **prix** relaie le champ de Fleetbase. Constaté à l'écran : « 777 USD » à côté de « À encaisser : 2727 DZD ».
+
+  **Où normaliser** : côté **BFF**, dans la projection qui choisit déjà les champs servis, avec une constante nommée (`PLATFORM_CURRENCY`, DZD par défaut) — et non par une substitution côté application, qui créerait une **troisième** règle dans un fichier où personne n'ira la chercher (règle 5).
+
+  **À vérifier avant d'écrire une ligne** : l'Organization Fleetbase a-t-elle un champ devise ? Si oui, c'est de la configuration et la question disparaît.
+
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [ ] ~~**Migrer les données métier de `meta` vers les champs personnalisés Fleetbase**~~ (30/07/2026, motif complet en § Règles §1) : `meta` est remplacé en entier par toute mise à jour qui le mentionne, et la console le fait en affectant un transporteur. `custom_field_values` est la mécanique prévue — table séparée, synchronisée seulement si la requête la porte, `delete_missing` désactivé par défaut. **Ce que ça demande** : déclarer les définitions `CustomField` sur l'`OrderConfig` (une par donnée : prix, montant à encaisser, marchandise, véhicule, préférence de favoris…), les envoyer sous `order.custom_field_values` à la création, et les relire via `with[]=customFieldValues`. **Ce que ça apporte en plus de la sûreté** : un admin peut corriger un prix depuis la console et cette correction est visible — ce que `meta` ne permettait pas de façon fiable. **À vérifier en réel avant de basculer** : le format exact accepté par `syncCustomFieldValues`, le comportement quand une définition manque, et si la console affiche bien ces champs sur la fiche commande. `Order.specMeta` reste jusque-là, et sera retiré ensuite.
 - [ ] **Signaler le bug à l'amont** (`fleetbase/fleetops`) : `addon/services/order-actions.js` → `assignDriver()` sauvegarde une commande issue de la ressource d'index sans la recharger, ce qui écrase `meta` avec le drapeau `_index_resource`. Le correctif tient en trois lignes et existe déjà partout ailleurs dans le même dépôt (`place-actions.js`, `driver-actions.js`, `vehicle-actions.js`, route de détail des commandes) : `if (order?.meta?._index_resource) await order.reload();`. `unassignDriver()` fait le même `order.save()` et mérite la même vérification.
@@ -473,7 +526,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   - ~~**prix et délai affichés**~~ — **faux depuis longtemps** : `price`, `currency`, `price_source` et `cod_amount` sont dans `META_FIELDS` de `projectOrderForDriver`, chacun sous un commentaire disant explicitement que le transporteur doit les avoir pour décider ; `scheduled_at` est dans `ORDER_FIELDS`.
   - ~~**coordonnées par défaut d'Alger**~~ — **faux depuis le lot carte du 30/07** : `CreateOrderDto` **exige** les quatre coordonnées, le formulaire refuse de soumettre sans les deux points, et une adresse du carnet sans position rend `null` plutôt que `(0,0)`. `_algiers` ne subsiste que comme **position initiale de la caméra** du sélecteur, avec le libellé de l'adresse résolu et affiché avant toute confirmation.
-  - **rayon de diffusion** — l'affirmation « la diffusion reste organisation-wide » est **fausse pour les pings** : `adhoc_distance` est posé à la création et à la publication (15 km par défaut, `ADHOC_RADIUS_METRES`), et c'est le dispatch géospatial de Fleetbase qui l'applique. Elle reste **vraie pour la liste** : `listOrders` sert les courses libres à l'échelle de l'organisation, filtrées sur le véhicule et non sur la distance. **Les deux ne s'accordent donc pas** — un transporteur voit dans « courses libres » des courses pour lesquelles il ne sera jamais pingué. C'est le seul point encore ouvert du lot, et il demande un arbitrage : aligner la liste sur le rayon (le moins surprenant) ou l'assumer comme une vitrine plus large que la diffusion.
+  - ~~**rayon de diffusion**~~ — **arbitré le 02/08/2026, voir la ligne « Le transporteur choisit ce qu'il voit » ci-dessus.** Le constat technique reste juste : `adhoc_distance` (15 km, `ADHOC_RADIUS_METRES`) gouverne les **pings**, tandis que `listOrders` sert les courses libres à l'échelle de l'organisation. Ce que j'appelais un désaccord n'en était pas un : **c'est le transporteur qui choisit sa course**, et la liste n'a pas à trancher à sa place. La suite n'est donc pas d'aligner la liste sur le rayon, mais de donner au transporteur **sa** wilaya et **son** rayon.
   - **mode de dispatch** — toujours ouvert, mais **partiellement tranché** par le mode brouillon/publier du 30/07 : c'est le commerçant qui décide du moment. Reste la question de l'opérateur outillé.
 
 - [ ] Revenir documenter les réponses **avant** de concevoir le connecteur Odoo → Fleetbase (qui vivra dans `echangoorder/backend/addons/echango_order/`, pas dans ce repo).
