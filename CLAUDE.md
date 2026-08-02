@@ -275,13 +275,22 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # les 7 scénarios métier
-flutter analyze && flutter test                 # 0 problème · 59 tests
+./scripts/run-all-scenarios.sh [conducteur]     # les 7 scénarios métier — le BFF en curl
+flutter analyze && flutter test                 # 0 problème · 78 tests
 dart tool/check_*.dart [--self-test]            # 5 contrôles · 76 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
+
+# le parcours joué DANS l'application, sur émulateur (02/08/2026)
+./scripts/provision-app-parcours.sh             # pose le décor, imprime la commande
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/parcours_commercant_test.dart -d <émulateur> --dart-define=…
 ```
 
 Les sept scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, et les trois sorties d'une course.
+
+⚠️ **Les scénarios ne touchent jamais l'application, et c'est leur angle mort.** Ils composent leur corps de requête en `curl` : un écran peut être absent, muet ou fautif sans qu'aucun ne passe au rouge. Le premier parcours joué **dans** l'app a trouvé **trois défauts** qu'aucun des 85 tests Jest ni des 78 tests Flutter ne pouvait voir — dont une création de course **refusée dès que le contenu du colis n'était pas décrit**, et une fiche qui restait « Brouillon » après publication parce qu'un garde de relecture comparait des identifiants qui ne pouvaient jamais être égaux. Détail complet dans le journal.
+
+⚠️ **Deux choses à savoir avant de le lancer.** Il consomme **deux inscriptions sur les dix par heure** (une pour le décor, une pour le test d'inscription), donc il ne s'enchaîne pas avec `run-all-scenarios.sh` qui en consomme huit. Et `android/gradle.properties` fait lire à Gradle un magasin **PKCS12 dérivé du magasin de certificats Windows** : sans lui la compilation échoue en `PKIX path building failed`, le JetBrains Runtime d'Android Studio n'embarquant pas SunMSCAPI — motif complet dans le fichier.
 
 ### Outils d'exploitation
 

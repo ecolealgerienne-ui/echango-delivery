@@ -218,9 +218,40 @@ export class CreateOrderDto {
 }
 
 export class OrderItemDto {
+  /**
+   * Ce que contient le colis.
+   *
+   * ⚠️ **Facultative depuis le 02/08/2026, et c'est la correction d'un défaut
+   * bloquant sur le chemin principal du commerçant.**
+   *
+   * Elle était exigée (`@IsString()` sans `@IsOptional()`) pendant que le
+   * formulaire la traitait comme facultative : ni étoile, ni entrée dans sa
+   * liste `missing`. Et comme le champ « Nombre de colis » est pré-rempli à
+   * `1`, le formulaire considère **toujours** qu'il a des détails de colis à
+   * transmettre — il envoyait donc **toujours** un `items[0]`, en omettant la
+   * description quand elle était vide.
+   *
+   * Résultat : **toute course créée sans décrire le contenu était refusée**,
+   * sur un « Certaines informations saisies sont invalides » qui ne nommait
+   * aucun champ. Aucun des sept scénarios de `scripts/` ne pouvait le voir —
+   * ils composent leur corps de requête à la main. Il a fallu le premier
+   * parcours joué **dans l'application** (`integration_test/`) pour le trouver.
+   *
+   * Pourquoi assouplir le serveur plutôt que durcir le formulaire : la
+   * correction du 01/08/2026 (revue D3) a explicitement voulu qu'un colis
+   * **fragile**, compté ou pesé voyage même sans description — exiger une
+   * description reviendrait sur cette décision. Le service se contente de
+   * recopier `items` dans `meta`, donc rien en aval n'en dépend.
+   *
+   * ⚠️ **`quantity` porte la même exposition, en plus étroit** : elle reste
+   * exigée, et le formulaire l'omet quand la saisie n'est pas lisible. Le champ
+   * étant pré-rempli, le cas ne s'ouvre que si le commerçant le vide en cochant
+   * « fragile ». Laissé tel quel faute d'être observé — à reprendre si ça sort.
+   */
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  description: string;
+  description?: string;
 
   /**
    * Nombre de colis.

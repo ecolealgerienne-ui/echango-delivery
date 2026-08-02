@@ -27,6 +27,19 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   List<SavedAddress> _addresses = [];
   List<KnownDriver> _favourites = [];
   MerchantOrder? _selected;
+
+  /// L'identifiant **avec lequel** la fiche ouverte a été demandée.
+  ///
+  /// ⚠️ Il ne se déduit pas de la commande chargée, et c'est tout le problème
+  /// qu'il résout (02/08/2026). Trois identifiants coexistent pour une même
+  /// course — le cuid local du BFF, l'uuid Fleetbase, et le `public_id`
+  /// `order_…` — et l'écran de détail est ouvert avec le **premier**, celui que
+  /// rend la création. Le modèle, lui, ne porte que les deux autres.
+  ///
+  /// Comparer `_selected.id` ou `_selected.publicId` à cet identifiant de route
+  /// ne pouvait donc **jamais** être vrai. On garde celui qu'on a demandé, pour
+  /// comparer ce qui est comparable.
+  String? _selectedRequestId;
   Map<String, dynamic>? _tracking;
   bool _isLoading = false;
   String? _errorMessage;
@@ -227,6 +240,7 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
     _tracking = null;
     notifyListeners();
     try {
+      _selectedRequestId = id;
       _selected = await _apiClient.getMerchantOrder(id);
       // Le suivi n'existe pas tant que la commande n'est pas dispatchée :
       // son absence est normale, pas une erreur à remonter.
@@ -245,6 +259,7 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
 
   void clearSelection() {
     _selected = null;
+    _selectedRequestId = null;
     _tracking = null;
   }
 
@@ -373,7 +388,20 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   Future<bool> _orderWrite(String id, Future<void> Function() action) =>
       runWrite(action, reload: () async {
         await loadOrders();
-        if (_selected?.id == id || _selected?.publicId == id) {
+        // ⚠️ Comparé à l'identifiant **de la demande**, jamais à ceux que porte
+        // la commande chargée. Le garde d'origine testait `_selected.id` et
+        // `_selected.publicId` — l'uuid Fleetbase et le `public_id` — contre le
+        // cuid local passé par la route. Aucun des deux ne pouvait l'égaler,
+        // donc la relecture n'a **jamais** eu lieu, ni après publication ni
+        // après annulation : la fiche restait « Brouillon » et son bouton
+        // « Publier » restait offert sur une course déjà diffusée.
+        //
+        // Trouvé le 02/08/2026 par le parcours joué dans l'application
+        // (`integration_test/`), en lisant les journaux du BFF : après le
+        // `POST …/publier`, la liste était bien rechargée et la fiche jamais.
+        // Aucun test unitaire ne pouvait le voir — les trois identifiants s'y
+        // valent, c'est le vrai serveur qui les distingue.
+        if (_selectedRequestId == id) {
           await selectOrder(id);
         }
       });
