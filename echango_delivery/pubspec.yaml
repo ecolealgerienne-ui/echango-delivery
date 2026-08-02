@@ -78,6 +78,18 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
+  # Pilotage de l'application sur un vrai appareil (02/08/2026).
+  #
+  # `flutter_test` monte des widgets dans un moteur sans plateforme ; il ne peut
+  # donc rien dire du démarrage réel, du stockage sécurisé, ni du réseau. Ce
+  # paquet lance `main()` sur un émulateur et tape dans l'écran — c'est le seul
+  # moyen de croiser l'application et le BFF, que les sept scénarios de
+  # `scripts/` exercent aujourd'hui **sans jamais passer par l'app**.
+  #
+  # Vient du SDK, donc aucune version à épingler ni à faire vieillir.
+  integration_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true
 

@@ -43,6 +43,12 @@ app.*.map.json
 /android/app/release
 /android/app/profile
 
+# Sortie du projet Gradle racine — apparaît dès qu'on invoque `./gradlew`
+# directement dans `android/` (ce que fait le diagnostic d'un échec de
+# résolution), là où `flutter build` écrit dans `/build/`. Ni l'un ni l'autre
+# des deux .gitignore livrés ne la couvrait.
+/android/build/
+
 # iOS/macOS
 **/ios/**/*.mode1v3
 **/ios/**/*.mode2v3

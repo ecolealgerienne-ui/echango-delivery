@@ -2,3 +2,8 @@ fleetbase-src/
 .env
 node_modules/
 graphify-out
+
+# Magasin de confiance derive du magasin de certificats Windows.
+# Machine-specifique et regenerable (voir echango_delivery/android/gradle.properties) :
+# il ne doit pas voyager avec le depot.
+windows-root.p12
