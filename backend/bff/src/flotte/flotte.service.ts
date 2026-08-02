@@ -52,23 +52,42 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
+      const page = query.page || 1;
+      const limit = query.limit || 25;
 
-      let owned = allOrders.filter(
+      // ── Découpé par Fleetbase, pas en mémoire (02/08/2026) ──────────────────
+      //
+      // Les deux critères de cette liste — le facilitateur et le statut — sont
+      // honorés côté serveur, vérifiés contre un témoin inventé (`facilitator`
+      // 26 contre 0, `status=created` 37 contre 0, sur 422 commandes). Rien
+      // n'est décidé après coup : Fleetbase peut donc rendre la page et son
+      // total, au lieu de nous faire rapatrier jusqu'à cinquante pages pour en
+      // afficher vingt-cinq.
+      //
+      // ⚠️ **Ce n'est vrai que tant que rien ne s'ajoute en mémoire.** Le jour
+      // où cette liste gagne un critère que Fleetbase ne sait pas exprimer, la
+      // page devient incomplète et le total faux — il faudra alors revenir au
+      // parcours complet, et non filtrer la page.
+      const { orders, total } = await this.fleetbaseClient.getOrderPage(page, limit, {
+        facilitator: fleet.fleetbaseVendorUuid,
+        ...(query.status ? { status: query.status } : {}),
+      });
+
+      // Total absent : on ne l'invente pas — `orders.length` dirait « voilà
+      // tout » sur une page pleine. Le parcours complet est lent, il est juste.
+      if (total === null) return this.everyOrderPaged(fleet, query, page, limit);
+
+      // ⚠️ **Le contrôle en mémoire reste, et il n'est pas un doublon.** Le
+      // filtre serveur allège la requête, il n'autorise pas. Fleetbase
+      // abandonnant en silence un filtre qu'il ne reconnaît plus, cette ligne
+      // est ce qui fait qu'une régression de nom **vide la page** au lieu de
+      // servir les courses d'une autre entreprise.
+      const owned = orders.filter(
         (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
       );
 
-      if (query.status) {
-        owned = owned.filter((order: any) => order?.status === query.status);
-      }
-
-      const page = query.page || 1;
-      const limit = query.limit || 25;
-      const total = owned.length;
       // Hydratée APRÈS la pagination : le coût suit la page, pas l'historique.
-      const paged = await this.hydratePage(
-        owned.slice((page - 1) * limit, (page - 1) * limit + limit),
-      );
+      const paged = await this.hydratePage(owned);
 
       return {
         // Projection en liste d'autorisation : le BFF décide de ce qui sort,
@@ -1216,6 +1235,43 @@ export class FlotteService {
    */
   private fetchAllOrders(vendorUuid: string): Promise<any[]> {
     return this.fleetbaseClient.fetchEveryOrder(100, 50, { facilitator: vendorUuid });
+  }
+
+  /**
+   * Le chemin d'avant : tout rapatrier, filtrer et découper en mémoire.
+   *
+   * ⚠️ **Conservé, et pas par prudence décorative.** Il sert quand Fleetbase ne
+   * dit pas combien de commandes existent (`meta.total` absent) : sans ce
+   * nombre, une page pleine est indiscernable de la dernière page, et la liste
+   * s'arrêterait en silence sur un multiple de la taille de page.
+   *
+   * Lent et coûteux, mais **juste** — et c'est ce qui rend l'optimisation sûre :
+   * elle ne peut pas produire de résultat faux, seulement ne pas s'appliquer.
+   */
+  private async everyOrderPaged(
+    fleet: { fleetbaseVendorUuid: string },
+    query: ListFleetOrdersQueryDto,
+    page: number,
+    limit: number,
+  ) {
+    const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
+
+    let owned = allOrders.filter(
+      (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
+    );
+    if (query.status) {
+      owned = owned.filter((order: any) => order?.status === query.status);
+    }
+
+    const total = owned.length;
+    const paged = await this.hydratePage(
+      owned.slice((page - 1) * limit, (page - 1) * limit + limit),
+    );
+
+    return {
+      data: paged.map((o: any) => projectOrderForFleet(this.withEffectiveMeta(o))),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
   }
 
   /**

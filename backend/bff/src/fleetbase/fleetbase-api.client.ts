@@ -868,6 +868,64 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * **Une** page de commandes, découpée par Fleetbase, avec son total.
+   *
+   * ── Ce que cette méthode évite ──────────────────────────────────────────────
+   *
+   * `fetchEveryOrder(100, 50)` rapatrie jusqu'à cinquante pages — 5 000
+   * commandes — pour en afficher vingt-cinq. C'est correct et ça le restera :
+   * le coût grandit simplement avec le réseau, et il grandit chez nous.
+   *
+   * Quand **tous** les critères d'une liste sont honorés par Fleetbase, il n'y a
+   * aucune raison de faire ce voyage : il pagine nativement et sert `meta.total`.
+   *
+   * ── La condition d'emploi, et elle n'est pas négociable ─────────────────────
+   *
+   * ⚠️ **N'employer cette méthode que si le découpage est fait sur des filtres
+   * intégralement honorés.** Un critère évalué en mémoire après coup (statut
+   * combiné, course réclamable, préférence de zone) rendrait des pages
+   * incomplètes et un total faux : Fleetbase compterait des commandes que le
+   * BFF retire ensuite. Dans ce cas-là, `fetchEveryOrder` reste la bonne
+   * réponse — c'est un coût, pas un défaut.
+   *
+   * ⚠️ **Et chaque filtre déplacé se vérifie contre un témoin inventé.**
+   * Fleetbase abandonne **en silence** un filtre qu'il ne reconnaît pas : un
+   * nom erroné ne produit ni erreur ni journal, seulement toute la compagnie
+   * servie comme si c'était le résultat. Mesuré le 02/08/2026 sur 422
+   * commandes — `facilitator` 26 contre 0 pour un uuid inventé, `status=created`
+   * 37 contre 0, `without_driver` 123 contre 422. ⚠️ Le premier banc comparait
+   * le **nombre de lignes** et non les totaux : plafonné à `limit`, il concluait
+   * « ignoré » sur un filtre qui marchait.
+   *
+   * ── `total` peut être `null`, et il ne faut pas le remplacer ────────────────
+   *
+   * Si `meta.total` manque, **on ne le devine pas** : `orders.length` dirait
+   * « voilà tout » sur une page pleine, donc une liste tronquée en silence — le
+   * défaut que le total servi corrige justement. L'appelant reçoit `null` et
+   * retombe sur le parcours complet, qui est lent mais juste.
+   */
+  async getOrderPage(
+    page: number,
+    limit: number,
+    filters: OrderFilters = {},
+  ): Promise<{ orders: any[]; total: number | null }> {
+    const response = await this.getAllOrders(page, limit, filters);
+    const orders = this.extractCollection(response, 'orders');
+
+    const raw = (response as any)?.meta?.total;
+    const total = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+
+    if (total === null) {
+      this.logger.warn(
+        'Fleetbase n’a pas servi meta.total sur cette page : impossible de dire ' +
+          'combien de commandes existent, l’appelant doit reprendre le parcours complet',
+      );
+    }
+
+    return { orders, total };
+  }
+
+  /**
    * Every company order, across as many pages as it takes.
    *
    * `getAllOrders()` above returns ONE page, and its 100-item default silently

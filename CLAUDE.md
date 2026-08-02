@@ -403,11 +403,17 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 > Ce qui reste ici : **ce qui n'est pas fait**. Une case cochée n'a plus rien à
 > apprendre à qui écrit du code aujourd'hui ; une case vide, si.
 
-- [ ] **Paginer côté Fleetbase là où c'est possible (02/08/2026)** — seul écart au principe « Fleetbase d'abord » trouvé en auditant les 16 tables du BFF. **Sept sites** rapatrient toutes les pages puis filtrent et découpent en mémoire : `fetchEveryOrder(100, 50)` va chercher jusqu'à 5 000 commandes pour en afficher 25.
+- [x] ✅ **Paginer côté Fleetbase là où c'est possible — fait le 02/08/2026**, et l'énoncé de départ était trop large.
 
-  **La moitié est inévitable** : `isClaimable` combine statut, `adhoc`, conducteur et facilitateur, et aucun filtre Fleetbase ne l'exprime — il faut tout ramener. **L'autre moitié ne l'est pas** : `getFleetOrders` filtre sur `facilitator` et `status`, tous deux honorés côté serveur, puis pagine à la main, alors que Fleetbase pagine nativement et rend `meta.total`. Même chose sur les deux listes du transporteur (`transporteur.service.ts:639` et `:648`).
+  **Un seul site était déplaçable, pas trois.** `FlotteService.getOrders` découpe désormais côté Fleetbase (`getOrderPage`), avec `facilitator` et `status` passés au serveur et `meta.total` relu. Les autres restent, et c'est justifié : `isClaimable` combine statut, `adhoc`, conducteur et facilitateur, `listOrders` (transporteur) applique ensuite véhicule, refus et **zone** — aucun filtre Fleetbase ne les exprime, il faut tout ramener. Le compte de « sept sites » venait d'un recensement, pas d'un examen de chacun.
 
-  Ça ne fausse rien — ça coûte, et le coût grandit avec le réseau. Lot contenu, à contrat constant : une requête au lieu de cinquante. ⚠️ **Ne pas y toucher sans le témoin** : un filtre inconnu est abandonné en silence par Fleetbase, donc chaque filtre déplacé côté serveur se vérifie en comparant à un uuid inventé.
+  ⚠️ **Ce qui rend l'optimisation sûre est le repli, pas le filtre.** Si `meta.total` manque, la route **reprend le parcours complet** au lieu de deviner : `orders.length` dirait « voilà tout » sur une page pleine, donc une liste tronquée en silence — exactement le défaut que le total servi corrige. Le chemin lent est conservé parce qu'il est **juste** ; l'optimisation ne peut donc pas produire un résultat faux, seulement ne pas s'appliquer.
+
+  ⚠️ **Le contrôle d'appartenance en mémoire reste**, et ce n'est pas un doublon : le filtre serveur allège, il n'autorise pas. Une régression de nom de filtre **vide la page** au lieu de servir les courses d'une autre entreprise.
+
+  **Mesuré, chaque filtre contre un témoin inventé** (422 commandes) : `facilitator` 26 contre 0, `status=created` 37 contre 0, `without_driver` 123 contre 422. Bout en bout : la route rend 26, Fleetbase en compte 26 pour ce vendor, deux pages consécutives ne se recouvrent pas, et `status=created` rend 2 — le compte exact de la base.
+
+  ⚠️ **Mon premier banc comparait le NOMBRE DE LIGNES et non les totaux.** Plafonné à `limit=100`, il rendait 100 des deux côtés et concluait « filtre ignoré » sur un filtre qui marchait. C'est le défaut que ce banc existe pour détecter, commis dans le banc. ⚠️ Et un `0` contre un témoin à `0` ne prouve rien non plus : `status=completed` rendait 0, ce qui pouvait aussi bien dire « filtre cassé » — il a fallu la répartition réelle (24 `dispatched`, 2 `created`) pour savoir que le zéro était vrai.
 
   ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables sont justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. Le registre COD est l'exception nommée, `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
 
@@ -473,15 +479,19 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **Ce que ça ne règle pas** : la question juridique demeure, mais elle se déplace. Elle n'est plus « qui est responsable » — c'est tranché — mais « le contrat Echango–transporteur suffit-il à couvrir la détention d'espèces pour compte de tiers ». À voir avec les transporteurs et les commerçants.
 
-- [ ] **Devise — l'affichage dit DZD, Fleetbase stocke en USD (décidé le 02/08/2026, NON implémenté)**
+- [x] ✅ **Devise — fait le 02/08/2026, et la cause n'était pas celle qu'on croyait**
 
-  Fleetbase n'offre pas le DZD. **Aucune conversion n'est visée** : la plateforme est locale à l'Algérie, mono-devise, et le libellé est décoratif.
+  « 777 USD » à côté de « À encaisser : 2727 DZD ». La ligne d'origine attribuait l'écart à « deux sources qui se contredisent » — c'était vrai, mais la source du `USD` a été trouvée ailleurs, et elle est instructive.
 
-  ⚠️ **Le défaut n'est pas que « USD existe » — c'est que deux sources se contredisent sur le même écran.** Le registre de caisse stocke littéralement `DZD` (colonne `currency` de `CashCollection`), et la ligne « À encaisser » l'affiche ; seul le **prix** relaie le champ de Fleetbase. Constaté à l'écran : « 777 USD » à côté de « À encaisser : 2727 DZD ».
+  ⚠️ **`Order` a DÉJÀ une colonne `currency` chez Fleetbase, dont le défaut est `USD` — et notre champ personnalisé porte le même nom.** Sur la **liste**, où les valeurs des champs personnalisés sont absentes (ressource d'index), le repli « à plat » de `readOrderCustomFields` lisait `order.currency` — celle de Fleetbase — et, les champs personnalisés étant fusionnés **en dernier**, cette valeur **l'emportait** sur le `DZD` correct venu de `specMeta`. **Un repli qui gagne contre sa source n'est plus un repli.**
 
-  **Où normaliser** : côté **BFF**, dans la projection qui choisit déjà les champs servis, avec une constante nommée (`PLATFORM_CURRENCY`, DZD par défaut) — et non par une substitution côté application, qui créerait une **troisième** règle dans un fichier où personne n'ira la chercher (règle 5).
+  ⚠️ **Aucune relecture ne pouvait le montrer** : chaque couche prise séparément disait `DZD` — le champ personnalisé, `meta`, `specMeta` — et l'écran disait `USD`. Il a fallu comparer ce que servent **la liste et la fiche pour la même commande** : fiche `DZD`, liste `USD`. Les treize clés du catalogue ont ensuite été comparées aux 37 de la ressource d'index — **une seule collision**, celle-là. À refaire à chaque nouveau champ personnalisé : un nom déjà pris par Fleetbase ne produit aucune erreur, seulement une valeur silencieusement fausse.
 
-  **À vérifier avant d'écrire une ligne** : l'Organization Fleetbase a-t-elle un champ devise ? Si oui, c'est de la configuration et la question disparaît.
+  **Deux corrections, parce qu'elles ne traitent pas le même manque** : le repli à plat ignore désormais les clés que Fleetbase sert lui-même (`FLEETBASE_OWNED_ORDER_KEYS`) ; et la devise est décidée **en un seul endroit** (`common/money/currency.ts`, DZD par défaut), que lisent la tarification, le registre de caisse et la projection — sans quoi la même décision resterait écrite trois fois (règle 5).
+
+  ⚠️ **Aucune conversion, et aucune devise sans montant** : « DZD » seul décrirait une somme qui n'existe pas (règle 10). Vérifié en réel — **50 courses servies en USD avant, 0 après** (26 en DZD, 24 sans prix donc sans devise). Éprouvé par mutation : sans la garde et sans la normalisation, 4 des 9 cas échouent.
+
+  **Reste ouvert** : l'Organization Fleetbase a-t-elle un champ devise ? Si oui, c'est de la configuration, et la constante deviendrait un repli au lieu d'une décision.
 
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.
