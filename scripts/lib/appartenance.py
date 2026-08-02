@@ -83,38 +83,115 @@ PERSONAS = [
         'nom': 'commerçant',
         'a': os.environ.get('MERCHANT_EMAIL', 'app-parcours-commercant@echango.local'),
         'b': os.environ.get('MERCHANT_B_EMAIL', 'appartenance-commercant-b@echango.local'),
-        'inscription': ('/auth/merchant/register',
-                        {'businessName': 'Témoin appartenance', 'phone': '0555000101'}),
-        'list': '/commercant/commandes?limit=5',
-        'witness': ('GET', '/commercant/commandes/{id}'),
-        'probes': [
-            ('GET', '/commercant/commandes/{id}'),
-            ('GET', '/commercant/commandes/{id}/modele'),
-            ('GET', '/commercant/commandes/{id}/suivi'),
-            ('GET', '/commercant/commandes/{id}/position'),
-            ('GET', '/commercant/commandes/{id}/preuve'),
-            ('POST', '/commercant/commandes/{id}/annuler'),
-            ('POST', '/commercant/commandes/{id}/publier'),
-            ('POST', '/commercant/commandes/{id}/encaissement',
-             {'collectedAmount': 0}),
+        'ressources': [
+            {
+                'quoi': 'commande',
+                'list': '/commercant/commandes?limit=5',
+                # Le témoin fort : A obtient sa ressource par cette route même.
+                'witness': ('GET', '/commercant/commandes/{id}'),
+                'probes': [
+                    ('GET', '/commercant/commandes/{id}'),
+                    ('GET', '/commercant/commandes/{id}/modele'),
+                    ('GET', '/commercant/commandes/{id}/suivi'),
+                    ('GET', '/commercant/commandes/{id}/position'),
+                    ('GET', '/commercant/commandes/{id}/preuve'),
+                    ('POST', '/commercant/commandes/{id}/annuler'),
+                    ('POST', '/commercant/commandes/{id}/publier'),
+                    ('POST', '/commercant/commandes/{id}/encaissement',
+                     {'collectedAmount': 0}),
+                ],
+            },
+            {
+                'quoi': 'adresse du carnet',
+                'list': '/commercant/adresses',
+                # ⚠️ **Aucun témoin fort possible : il n'existe pas de
+                # `GET /commercant/adresses/:id`.** Le seul témoin est que
+                # l'identifiant vient de la liste de A — il est donc réel, du bon
+                # type, et à lui. C'est plus faible, et le rapport le dit :
+                # exercer PUT ou DELETE avec le jeton de A pour prouver que la
+                # route marche **détruirait sa donnée**.
+                'witness': None,
+                'probes': [
+                    ('PUT', '/commercant/adresses/{id}',
+                     {'name': 'sonde', 'contactPhone': '0555000199',
+                      'latitude': 36.75, 'longitude': 3.06}),
+                    ('DELETE', '/commercant/adresses/{id}'),
+                ],
+            },
+            {
+                'quoi': 'favori',
+                'list': '/commercant/transporteurs/favoris',
+                'witness': None,
+                # ⚠️ A n'a pas toujours de favori, et une ressource « non
+                # éprouvée » à chaque passage rendrait le banc durablement
+                # rouge — donc ignoré. Le banc pose son propre décor et le
+                # retire : il ne dépend pas de l'état laissé par d'autres.
+                # ⚠️ Un identifiant inventé est REFUSÉ (400) : la route vérifie
+                # que le conducteur existe. Il faut donc un vrai — celui du
+                # conducteur de test, réglable pour un autre environnement.
+                'provision': ('POST', '/commercant/transporteurs/favoris',
+                              {'fleetbaseDriverUuid': os.environ.get(
+                                   'SONDE_DRIVER_UUID',
+                                   'eec8c72d-fd1e-4416-b516-69b584a1a65b'),
+                               'driverName': 'Sonde appartenance',
+                               'partyType': 'driver'}),
+                'cleanup': ('DELETE', '/commercant/transporteurs/favoris/{id}'),
+                'probes': [
+                    ('DELETE', '/commercant/transporteurs/favoris/{id}'),
+                ],
+            },
         ],
     },
     {
         'nom': 'entreprise',
         'a': os.environ.get('FLEET_EMAIL', 'app-parcours-entreprise@echango.local'),
         'b': os.environ.get('FLEET_B_EMAIL', 'appartenance-entreprise-b@echango.local'),
-        'inscription': ('/auth/flotte/register',
-                        {'businessName': 'Flotte témoin', 'phone': '0555000102'}),
-        'list': '/flotte/commandes?limit=5',
-        'witness': ('GET', '/flotte/commandes/{id}'),
-        'probes': [
-            ('GET', '/flotte/commandes/{id}'),
-            ('POST', '/flotte/commandes/{id}/assigner',
-             {'driverId': 'zzz-inexistant-0000'}),
+        'ressources': [
+            {
+                'quoi': 'commande',
+                'list': '/flotte/commandes?limit=5',
+                'witness': ('GET', '/flotte/commandes/{id}'),
+                'probes': [
+                    ('GET', '/flotte/commandes/{id}'),
+                    ('POST', '/flotte/commandes/{id}/assigner',
+                     {'driverId': 'zzz-inexistant-0000'}),
+                ],
+            },
+        ],
+    },
+    {
+        'nom': 'transporteur',
+        'a': os.environ.get('DRIVER_EMAIL', 'driver-test-10000@echango.local'),
+        'b': os.environ.get('DRIVER_B_EMAIL', 'transporteur-test-4093@echango.local'),
+        # ⚠️ **Pas d'inscription possible ici** : un conducteur entre par
+        # invitation, pas par un formulaire ouvert. Les deux comptes doivent
+        # donc préexister — à défaut le persona est déclaré NON COUVERT, ce qui
+        # est la bonne réponse : mieux vaut un trou nommé qu'un vert supposé.
+        'sans_inscription': True,
+        'ressources': [
+            {
+                'quoi': 'course assignée',
+                'list': '/transporteur/commandes?type=assigned',
+                'witness': ('GET', '/transporteur/commandes/{id}'),
+                # `accepter` et `refuser` sont exclus : une course **libre** est
+                # ouverte à tout transporteur, et l'appartenance n'y est pas la
+                # question. Ici la course est assignée à A, donc les gestes qui
+                # la font avancer n'appartiennent qu'à lui.
+                'probes': [
+                    ('GET', '/transporteur/commandes/{id}'),
+                    ('GET', '/transporteur/commandes/{id}/activites-suivantes'),
+                    ('POST', '/transporteur/commandes/{id}/demarrer'),
+                    ('POST', '/transporteur/commandes/{id}/terminer',
+                     {'collectedAmount': 0}),
+                    ('POST', '/transporteur/commandes/{id}/activite',
+                     {'activity': {'code': 'dispatched'}}),
+                    ('POST', '/transporteur/commandes/{id}/echec',
+                     {'reason': 'client_absent'}),
+                ],
+            },
         ],
     },
 ]
-
 
 def call(verb, path, token=None, body=None, timeout=25):
     url = BASE.rstrip('/') + path
@@ -220,74 +297,107 @@ def verdict(status):
 
 def run():
     print('banc d’appartenance — la ressource de A doit être refusée à B\n')
-    total_refus = 0
-    breaches = []
-    unclear = []
-    skipped = []
+    refus = 0
+    breches, flous, non_couverts = [], [], []
 
     for p in PERSONAS:
         print('══ %s ══' % p['nom'])
         token_a = login(p['a'])
         if not token_a:
             print('   ❌ connexion A impossible (%s) — persona NON COUVERT' % p['a'])
-            skipped.append(p['nom'])
+            non_couverts.append(p['nom'])
             continue
-        time.sleep(1)
-        token_b, created = ensure(p['b'], *p['inscription'])
-        if not token_b:
-            print('   ❌ compte B indisponible (%s) — persona NON COUVERT' % p['b'])
-            skipped.append(p['nom'])
-            continue
-        if created:
-            print('   (compte B créé — une inscription consommée, une seule fois)')
 
-        status, body = call('GET', p['list'], token_a)
-        rid = first_id(body) if 200 <= status < 300 else None
-        if not rid:
-            print('   ❌ aucune ressource chez A (liste %s) — persona NON COUVERT' % status)
-            skipped.append(p['nom'])
-            continue
-        print('   ressource de A : %s' % rid)
+        if p.get('sans_inscription'):
+            token_b = login(p['b'])
+            if not token_b:
+                print('   ❌ second compte indisponible (%s) et non inscriptible' % p['b'])
+                print('      — un conducteur entre par invitation. Persona NON COUVERT.')
+                non_couverts.append(p['nom'])
+                continue
+        else:
+            token_b = login(p['b'])
+            if not token_b:
+                print('   ❌ compte B indisponible (%s) — persona NON COUVERT' % p['b'])
+                non_couverts.append(p['nom'])
+                continue
 
-        # ── Le témoin, sans lequel tout refus serait creux ────────────────────
-        wverb, wpath = p['witness']
-        wstatus, _ = call(wverb, wpath.format(id=rid), token_a)
-        time.sleep(PACE)
-        if not 200 <= wstatus < 300:
-            print('   ❌ témoin manqué : A n’obtient pas sa propre ressource (%s).' % wstatus)
-            print('      Sans lui, un 404 pour B ne prouverait rien — persona NON COUVERT.')
-            skipped.append(p['nom'])
-            continue
-        print('   témoin : A lit bien sa ressource (%s)' % wstatus)
+        for r in p['ressources']:
+            status, body = call('GET', r['list'], token_a)
+            rid = first_id(body) if 200 <= status < 300 else None
+            pose = False
+            if not rid and r.get('provision'):
+                pverb, ppath, pbody = r['provision']
+                pstatus, pbody_out = call(pverb, ppath, token_a, pbody)
+                time.sleep(PACE)
+                if 200 <= pstatus < 300:
+                    rid = pbody_out.get('id') or pbody_out.get('uuid')
+                    pose = bool(rid)
+                if not pose:
+                    print('   ⚠️ %s : décor impossible à poser (%s)' % (r['quoi'], pstatus))
+            if not rid:
+                print('   ⚠️ %s : aucune ressource chez A (liste %s) — NON ÉPROUVÉE'
+                      % (r['quoi'], status))
+                non_couverts.append('%s/%s' % (p['nom'], r['quoi']))
+                continue
 
-        for sonde in p['probes']:
-            verb, path = sonde[0], sonde[1]
-            corps = sonde[2] if len(sonde) > 2 else None
-            status, body = call(verb, path.format(id=rid), token_b, corps)
-            time.sleep(PACE)
-            issue = verdict(status)
-            if issue == 'brèche':
-                breaches.append((p['nom'], verb, path, status))
-                print('   ❌ %-6s %-44s SERVIE À B (%s)' % (verb, path, status))
-            elif issue == 'non concluant':
-                unclear.append((p['nom'], verb, path, status, body.get('code')))
-                print('   ⚠️ %-6s %-44s %s / %s' % (verb, path, status, body.get('code')))
+            if r['witness']:
+                wverb, wpath = r['witness']
+                wstatus, _ = call(wverb, wpath.format(id=rid), token_a)
+                time.sleep(PACE)
+                if not 200 <= wstatus < 300:
+                    print('   ❌ %s : témoin manqué — A n’obtient pas sa ressource (%s).'
+                          % (r['quoi'], wstatus))
+                    print('      Sans lui, un refus pour B ne prouverait rien. NON ÉPROUVÉE.')
+                    non_couverts.append('%s/%s' % (p['nom'], r['quoi']))
+                    continue
+                temoin = 'A lit sa ressource (%s)' % wstatus
             else:
-                total_refus += 1
-                print('   ✓ %-6s %-44s %s' % (verb, path, status))
+                # ⚠️ Témoin faible, et il est nommé comme tel : l'identifiant
+                # vient de la liste de A, donc il est réel et à lui — mais
+                # aucune route ne confirme qu'elle répond 2xx pour son
+                # propriétaire, parce que l'exercer détruirait sa donnée.
+                temoin = 'identifiant issu de la liste de A (témoin faible)'
+
+            print('   %s %s — %s' % (r['quoi'], rid, temoin))
+            for sonde in r['probes']:
+                verb, path = sonde[0], sonde[1]
+                corps = sonde[2] if len(sonde) > 2 else None
+                status, body = call(verb, path.format(id=rid), token_b, corps)
+                time.sleep(PACE)
+                issue = verdict(status)
+                if issue == 'brèche':
+                    breches.append((p['nom'], verb, path, status))
+                    print('      ❌ %-6s %-46s SERVIE À B (%s)' % (verb, path, status))
+                elif issue == 'non concluant':
+                    flous.append((p['nom'], verb, path, status, body.get('code')))
+                    print('      ⚠️ %-6s %-46s %s / %s'
+                          % (verb, path, status, body.get('code')))
+                else:
+                    refus += 1
+                    print('      ✓ %-6s %-46s %s' % (verb, path, status))
+
+            # Le décor posé par le banc repart avec lui : un favori oublié
+            # changerait l'attribution des courses des scénarios suivants.
+            if pose and r.get('cleanup'):
+                cverb, cpath = r['cleanup']
+                call(cverb, cpath.format(id=rid), token_a)
+                time.sleep(PACE)
+                print('      (décor retiré)')
         print()
 
-    print('=' * 64)
-    print('  %d refus constatés · %d brèche(s) · %d non concluant(s) · %d persona(s) non couvert(s)'
-          % (total_refus, len(breaches), len(unclear), len(skipped)))
-    if skipped:
-        print('  ⚠️ non couverts : %s — leur silence n’est PAS un succès.' % ', '.join(skipped))
-    print('=' * 64)
+    print('=' * 70)
+    print('  %d refus constatés · %d brèche(s) · %d non concluant(s) · %d non couvert(s)'
+          % (refus, len(breches), len(flous), len(non_couverts)))
+    if non_couverts:
+        print('  ⚠️ non couverts : %s' % ', '.join(non_couverts))
+        print('     Leur silence n’est PAS un succès.')
+    print('=' * 70)
 
-    if breaches:
+    if breches:
         print('❌ des ressources d’autrui sont servies.')
         return 1
-    if skipped or unclear:
+    if non_couverts or flous:
         print('⚠️ aucune brèche vue, mais la couverture est incomplète — verdict PARTIEL.')
         return 1
     print('✅ toutes les routes éprouvées refusent la ressource d’autrui.')

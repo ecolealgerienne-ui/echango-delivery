@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ListFleetOrdersQueryDto {
@@ -33,4 +33,50 @@ export class ListFleetOrdersQueryDto {
 export class AssignDriverDto {
   @IsString()
   driverId: string;
+}
+
+/**
+ * Les conducteurs dont on veut la position, en une seule requête.
+ *
+ * ── Pourquoi une classe pour un seul champ ─────────────────────────────────
+ *
+ * Le paramètre était lu en `@Query('driverIds') driverIds?: string`, donc
+ * **hors du `ValidationPipe`** — qui ne valide que les classes décorées
+ * (règle 13). Une chaîne de dix mille identifiants séparés par des virgules
+ * était acceptée telle quelle, découpée, et chaque élément partait interroger
+ * Fleetbase. Une requête courte faisait faire beaucoup de travail au BFF, sans
+ * qu'aucune borne ne s'y oppose.
+ *
+ * ⚠️ **Le plafond n'est pas une opinion sur le confort** : c'est ce qui borne
+ * le travail qu'un appelant peut déclencher. `MAX_DRIVER_POSITIONS` est aligné
+ * sur ce qu'une flotte affiche réellement sur une carte ; au-delà, la question
+ * n'est plus « où sont mes conducteurs » mais « combien de temps puis-je faire
+ * travailler le serveur ».
+ */
+export const MAX_DRIVER_POSITIONS = 100;
+
+export class DriverPositionsQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(MAX_DRIVER_POSITIONS * 40, {
+    message: 'Trop d’identifiants demandés en une fois',
+  })
+  @Matches(/^[A-Za-z0-9_,-]*$/, {
+    message: 'driverIds ne doit contenir que des identifiants séparés par des virgules',
+  })
+  driverIds?: string;
+
+  /**
+   * La liste effectivement demandée, bornée et dédoublonnée.
+   *
+   * ⚠️ **Tronquer plutôt que refuser** serait le mauvais choix : une carte
+   * silencieusement incomplète est indiscernable de conducteurs hors ligne
+   * (règle 10). Au-delà du plafond, la requête est refusée — la borne de
+   * longueur ci-dessus s'en charge avant même d'arriver ici.
+   */
+  ids(): string[] {
+    if (!this.driverIds) return [];
+    return Array.from(new Set(this.driverIds.split(',').filter(Boolean)))
+      .slice(0, MAX_DRIVER_POSITIONS);
+  }
 }

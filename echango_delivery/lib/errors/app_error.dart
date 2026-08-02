@@ -175,6 +175,15 @@ class AppError {
   static const String serverInvalidProfileType = 'server.invalid_profile_type';
   static const String serverPersonaForbidden = 'server.persona_forbidden';
 
+  /// Panne non prévue côté serveur — tout ce qui n'est pas un refus délibéré.
+  ///
+  /// ⚠️ Existe depuis que le filtre d'exception du BFF attrape **toutes** les
+  /// erreurs et non les seules `HttpException` : une `TypeError` ou une erreur
+  /// de base sortait auparavant sans code, donc arrivait ici en
+  /// [AppError.unknown]. Ce code la distingue — « le serveur a un problème »
+  /// n'est pas « nous n'avons pas compris la réponse ».
+  static const String serverUnexpected = 'server.unexpected';
+
   // ── Constats du client, sans contrepartie serveur ───────────────────────
   static const String networkError = 'network.error';
   static const String serverError = 'server.error';

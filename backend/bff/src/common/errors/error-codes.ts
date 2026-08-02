@@ -225,6 +225,20 @@ export const ErrorCode = {
   SERVER_SCHEMA_OUT_OF_SYNC: 'server.schema_out_of_sync',
   SERVER_INVALID_PROFILE_TYPE: 'server.invalid_profile_type',
   SERVER_PERSONA_FORBIDDEN: 'server.persona_forbidden',
+  /**
+   * Panne non prévue : tout ce qui n'est pas une `HttpException`.
+   *
+   * ⚠️ **Ce code existe parce que son absence était un trou de la règle 3.**
+   * `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError`
+   * ou une erreur Prisma ne passait pas par lui, sortait par le gestionnaire
+   * par défaut de Nest, donc **sans `code`** — et l'application retombait sur
+   * son message générique au moment précis où l'on comprend le moins ce qui
+   * s'est passé.
+   *
+   * Il n'est **jamais levé à la main** : c'est le filet, et l'y trouver dans un
+   * journal veut dire qu'un chemin d'erreur n'a pas été prévu.
+   */
+  SERVER_UNEXPECTED: 'server.unexpected',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

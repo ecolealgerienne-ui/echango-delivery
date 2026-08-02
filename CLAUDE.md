@@ -280,11 +280,11 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 ⚠️ **Authentifier n'est pas autoriser, et c'est la confusion qui coûte le plus cher.** Le garde prouve **qui** vous êtes ; il ne prouve pas que la commande, le conducteur ou l'adresse que vous nommez sont à vous. Cette seconde vérification vit **dans chaque service** (`getMerchantWithValidation`, `resolveOrder`, `getDriverOrFail`, `getFleetWithValidation`) — donc dans quatre-vingt-dix endroits, chacun reposant sur le fait que son auteur y a pensé. **Toute route qui accepte un identifiant doit vérifier l'appartenance avant de s'en servir**, et le pire cas doit être « introuvable », jamais « la ressource de quelqu'un d'autre ».
 
-✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **10** routes. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
+✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **19** routes, sur les trois personas. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
 
 ⚠️ **La leçon, et elle vaut plus que les bancs** : la première version du banc de refus a **passé la mutation**. Ouvrir une route la faisait quitter l'ensemble testé, et le total tombait de 87 à 86 sans un mot. **Un contrôle qui prend sa cible dans la donnée qu'il examine ne contrôle rien** — d'où l'épinglage des routes ouvertes, chacune étant une décision qui doit s'écrire.
 
-⚠️ **Reste à couvrir** : 31 des 41 routes à identifiant, dont tout le persona transporteur. Détail en Prochaines étapes — une couverture partielle nommée vaut mieux qu'une couverture supposée.
+⚠️ **Reste à couvrir** : 22 des 41 routes à identifiant — notifications, remises, encaissements, adhésions. Détail en Prochaines étapes ; une couverture partielle nommée vaut mieux qu'une couverture supposée.
 
 ⚠️ **Et un refus doit sortir avec son code.** `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError` ou une erreur Prisma **ne passe pas par lui**, sort par le gestionnaire par défaut de Nest, donc **sans `code`** — et l'application retombe sur son message générique au moment précis où l'on comprend le moins ce qui s'est passé. C'est la règle 3 percée sur son chemin le plus obscur.
 
@@ -567,28 +567,38 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Et il a fallu deux versions, parce que la première a passé la mutation.** `@Public` posé sur `GET /commercant/commandes` : le banc est passé **au vert**, de 87 routes à 86 — la route ouverte avait simplement **quitté l'ensemble testé**, en silence. C'était le défaut exact qu'il existe pour attraper, et il l'a laissé passer parce qu'il **prenait sa cible dans la donnée qu'il examinait**. Les huit routes ouvertes sont désormais **épinglées** (`PUBLIC_ROUTES`) : en ouvrir une neuvième fait échouer le banc tant que la décision n'est pas écrite là. Prouvé ensuite dans les deux sens — brèche → refus (sortie 1), correction → 259/259 (sortie 0).
 
-  ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **10 routes éprouvées, 10 refus** : la commande de A demandée avec le jeton de B rend 403, jamais la ressource.
+  ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **19 routes éprouvées, 19 refus** sur les trois personas : commandes, adresses et favoris du commerçant ; commandes de l'entreprise ; course assignée du transporteur. La ressource de A demandée avec le jeton de B rend 403 ou 404, jamais la ressource.
 
   ⚠️ **Chaque épreuve porte son témoin, et c'est ce qui la rend non tautologique** : A doit d'abord obtenir SA ressource (2xx). Un identifiant du **mauvais type** rend 404 partout — un banc naïf y lirait « l'appartenance est vérifiée » et serait vert sans rien prouver. Sans témoin, le persona est déclaré **non couvert**, jamais réussi. Les identifiants sont découverts en listant les ressources de A, jamais écrits en dur.
 
   Prouvé par mutation du vrai service : `getOrderDetail` privé de son filtre par commerçant → « **SERVIE À B (200)** », sortie 1 ; restauré → 10/10, sortie 0.
 
-  ⚠️ **Ce que ce banc ne couvre pas encore**, et le dire vaut mieux que le laisser supposer : **10 routes sur 41**. Manquent le persona transporteur (17 routes — il faut un second conducteur, et l'inscription passe par une invitation), les adresses, les favoris, les notifications et les remises — chacun demande une ressource **du bon type** appartenant à A, donc du décor. Les routes où l'appartenance n'est **pas** la question (accepter une course libre, prendre une opportunité) sont exclues délibérément.
+  ⚠️ **Trois précautions de conception, chacune née d'un essai qui prouvait moins qu'il n'en avait l'air** :
+
+  - **Le témoin faible est nommé comme tel.** Il n'existe pas de `GET /commercant/adresses/:id` : exercer PUT ou DELETE avec le jeton de A pour prouver que la route répond **détruirait sa donnée**. Le témoin se réduit alors à « l'identifiant vient de la liste de A », et le rapport l'écrit plutôt que de laisser croire à une preuve à deux temps.
+  - **Le banc pose son propre décor** quand A n'a pas la ressource (un favori), et le retire. Sans cela il resterait durablement « incomplet », donc rouge — et **un banc durablement rouge finit ignoré**. ⚠️ Le décor exige un **vrai** conducteur : un identifiant inventé est refusé en 400, et la sonde ne prouvait rien.
+  - **Les corps des sondes viennent des DTO réels**, pas d'une supposition — `activity` est un objet, `reason` vient d'une liste fermée, `terminer` attend un montant. Un corps invalide fait répondre 400 **avant** l'appartenance : la route ressort « non concluante » et reste non éprouvée sous couvert de refus. Deux routes étaient dans ce cas.
+
+  ⚠️ **Ce qui n'est toujours pas couvert** : **22 routes sur 41** — notifications, remises et encaissements des trois personas, adhésions d'entreprise, opportunités. Chacune demande une ressource **du bon type** appartenant à A, donc du décor à poser. Les routes où l'appartenance n'est **pas** la question (accepter une course libre, prendre une opportunité) sont exclues délibérément et ne comptent pas dans ce reste.
 
   ⚠️ **Trois fois le banc a accusé le mauvais coupable avant d'être juste** : un champ hors DTO refusé par `forbidNonWhitelisted` (ma propre inscription, rejetée par la validation stricte), des comptes créés mais **en attente de validation** (`merchant_pending`), et le **plafond de connexion que le banc épuisait lui-même** (5/min) — il rapportait alors « persona NON COUVERT », un verdict qui accuse l'appartenance pour un problème de débit. Les trois disaient la même chose : *« je n'ai pas pu savoir »* n'est pas *« rien à signaler »*.
 
-  **(3) `tool/check_dto_hygiene`, avec son `--self-test`** (règle 8) : refuser une regex en clair là où un motif nommé existe, un champ de DTO sans décorateur, un `@Body` non typé par une classe décorée, un `@Param('id')` sans pipe. ⚠️ **Il protège le code à venir, ce qu'aucun rangement du code présent ne fait** — c'est pourquoi il passe avant le refactor des décorateurs composés.
+  ✅ **(3) L'hygiène de la frontière, tenue par un test — fait le 02/08/2026** : `common/dto-hygiene.spec.ts` refuse un `@Body` typé en ligne, un champ de DTO sans décorateur, un `@Param('id')` sans pipe, et une regex partagée recopiée en clair. Onze cas, dont **six qui doivent échouer**, et une **mutation de deux vrais fichiers** (pipe retiré, motif recopié) qui les fait tomber tous les deux.
 
-  **(4) La copie échappée** de `register.dto.ts:128` → importer `FLEETBASE_ID_PATTERN`. Deux lignes.
+  ⚠️ **Un test Jest plutôt qu'un script à part** : il tourne avec `npm test`, donc il ne peut pas être oublié. Et **il protège le code à venir, ce qu'aucun rangement du code présent ne fait** — le dépôt était déjà propre sur ces quatre points ; ce qui manquait, c'est ce qui empêche la prochaine route de rouvrir un des quatre trous.
 
-  **(5) Les six correctifs courts, chacun mesuré :**
+  ✅ **(4) La copie échappée** de `register.dto.ts` importe désormais `FLEETBASE_ID_PATTERN`.
 
-  - **`@Catch(HttpException)` ne couvre pas les erreurs non HTTP** — une `TypeError` ou une erreur Prisma sort **sans `code`** (règle 3 percée sur son chemin le plus obscur).
-  - **Aucun `helmet`** : pas un en-tête de sécurité.
-  - **CORS : `FLEET_APP_URL` retombe sur `http://localhost:3001`**, qui est **le port du BFF lui-même**. Un copier-coller qui se lit comme une erreur.
-  - **Trois `@Query` bruts** : `nonLues`, `waypoint`, et surtout **`driverIds`** — une liste **sans borne**, éclatée vers Fleetbase. Faire faire beaucoup de travail au BFF avec une requête courte.
-  - **Le débit est par IP et en mémoire** : derrière un proxy sans `TRUST_PROXY` correct, tout le monde partage un compteur ; à deux instances, les compteurs ne s'additionnent pas.
-  - **Aucun identifiant de corrélation** dans les journaux : un incident ne se suit pas entre l'app, le BFF et Fleetbase.
+  ✅ **(5) Les correctifs courts — faits le 02/08/2026, et constatés en service** :
+
+  - **`@Catch()` sans argument** : le filtre attrape désormais **toutes** les exceptions, pas seulement les HTTP. Une `TypeError` ou une erreur Prisma sort avec `server.unexpected` au lieu de sortir sans `code` — la règle 3 était percée sur son chemin le plus obscur. ⚠️ **Le message d'origine ne sort pas** (une erreur Prisma cite des colonnes, une erreur Axios une URL interne) ; il va au journal. Six cas, dont le témoin qui vérifie qu'une `HttpException` garde son propre code — sans lui, un filtre qui écraserait tout en `server.unexpected` passerait les cinq autres.
+  - **En-têtes de sécurité, sans `helmet`** : `nosniff`, `DENY`, `no-referrer`, et `X-Powered-By` retiré. ⚠️ Écrits à la main **parce que le BFF sert du JSON à deux applications mobiles** : sur les quinze en-têtes d'`helmet`, la douzaine qui concerne le rendu n'a aucun effet ici. **Cet arbitrage tombe le jour où une page web est servie.**
+  - **CORS** : le défaut `FLEET_APP_URL` valait `http://localhost:3001` — **le port du BFF lui-même**.
+  - **`driverIds` borné** par un DTO (`DriverPositionsQueryDto`) : il était lu en `@Query('driverIds')`, donc **hors du `ValidationPipe`**. Constaté : liste normale 200, liste énorme **400**, caractères hors motif **400**.
+  - **Identifiant de corrélation** : posé sur chaque requête, rendu en `X-Request-Id`, présent dans le journal et dans le corps d'erreur. L'en-tête entrant est **repris** mais **nettoyé** — sinon une chaîne venue du dehors finirait recopiée dans un journal qu'on lit. Constaté : `bad<>;value` → `badvalue`.
+  - ⚠️ **Reste ouvert** : le débit est par IP et **en mémoire** — derrière un proxy sans `TRUST_PROXY` correct tout le monde partage un compteur, et à deux instances les compteurs ne s'additionnent pas. À traiter au déploiement VPS.
+
+  ⚠️ **Deux mutations n'ont pas pris effet avant d'être justes**, et c'est à consigner : casser `/health` pour déclencher une erreur non HTTP a laissé la route répondre 200 (essai sans valeur, remplacé par un test unitaire sur le vrai filtre), et désactiver le filet par `if (false)` a **cassé le typage** — la suite ne compilait plus, ce qui n'est pas un refus. *« La mutation n'a jamais pris effet »* et *« le contrôle est aveugle »* sont deux choses.
 
   **(6) Deux décisions à prendre, pas des correctifs :**
 

@@ -240,14 +240,34 @@ def _code(raw):
         return None
 
 
-def login(base, email, password):
-    req = urllib.request.Request(
-        base.rstrip('/') + '/auth/login',
-        data=json.dumps({'email': email, 'password': password}).encode('utf-8'),
-        method='POST')
-    req.add_header('Content-Type', 'application/json')
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return (json.loads(resp.read().decode('utf-8')) or {}).get('token')
+def login(base, email, password, patience=6):
+    """
+    Se connecter, en distinguant « refusé » de « trop vite ».
+
+    ⚠️ **Le plafond de connexion est de 5 par minute, et ce banc n'est pas
+    seul.** Lancé juste après un autre qui s'est connecté, il partait en 429 et
+    se déclarait « connexion impossible » — un refus de conclure honnête, mais
+    pour une raison qui n'a rien à voir avec la sécurité. Constaté en suite
+    complète : le banc a rendu 2 alors que rien n'était cassé.
+
+    Un 429 n'est donc pas un échec de connexion, c'est « pas encore ».
+    """
+    for _ in range(patience):
+        # `call()` ne porte pas de corps : on construit la requête ici.
+        req = urllib.request.Request(
+            base.rstrip('/') + '/auth/login',
+            data=json.dumps({'email': email, 'password': password}).encode('utf-8'),
+            method='POST')
+        req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return (json.loads(resp.read().decode('utf-8')) or {}).get('token')
+        except urllib.error.HTTPError as err:
+            if err.code != 429:
+                raise
+            print('   (plafond de connexion atteint — 20 s avant nouvel essai)')
+            time.sleep(20)
+    raise RuntimeError('plafond de connexion tenace après %d essais' % patience)
 
 
 # ── Auto-test (règle 8) ──────────────────────────────────────────────────────
