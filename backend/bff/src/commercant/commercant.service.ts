@@ -8,6 +8,8 @@ import { AuditService } from '../common/audit/audit.service';
 // recopier ici serait la deuxième copie d'un fait vérifié une fois (règle 5).
 import { FACILITATOR_TYPE_VENDOR, FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
+import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { OrderPickup, orderPickup, zoneAllowsPickup } from '../common/orders/driver-zone';
 import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
@@ -72,6 +74,7 @@ export class CommerçantService {
     private pricing: PricingService,
     private cash: CashService,
     private orderCustomFields: OrderCustomFieldsService,
+    private driverZone: DriverZoneService,
   ) {}
 
   /**
@@ -428,6 +431,36 @@ export class CommerçantService {
   }
 
   /**
+   * Parmi ces favoris, ceux dont la zone déclarée accepte ce départ.
+   *
+   * ── Pourquoi une lecture par favori, et pourquoi c'est acceptable ──────────
+   *
+   * La préférence vit dans les champs personnalisés du `Driver` : la lire coûte
+   * un appel chacun. Le coût suit donc le nombre de favoris **encore en lice** —
+   * un ou deux en pratique, après les filtres véhicule et disponibilité — et non
+   * la taille du réseau. Même raisonnement que la résolution de disponibilité
+   * juste au-dessus (journal §24).
+   *
+   * ⚠️ **Une zone illisible ne retire personne.** `DriverZoneService.read()`
+   * rend « aucune préférence » sur n'importe quel échec, et cette fonction s'en
+   * remet à lui : une panne Fleetbase doit coûter un filtre, jamais un favori.
+   */
+  private async favouritesAllowingPickup(accounts: any[], pickup: OrderPickup) {
+    if (!accounts.length) return accounts;
+    // Rien de connu sur le départ : il n'y a rien à comparer, donc rien à
+    // retirer. Éviter l'appel plutôt que le faire pour n'en rien tirer.
+    if (!pickup.wilaya && !pickup.point) return accounts;
+
+    const readings = await Promise.all(
+      accounts.map((a: any) => this.driverZone.read(a.fleetbaseDriverUuid)),
+    );
+
+    return accounts.filter((_: any, i: number) =>
+      zoneAllowsPickup(pickup, readings[i].zone, readings[i].point),
+    );
+  }
+
+  /**
    * Premier transporteur favori actuellement en ligne, ou `null`.
    *
    * ── Ce que fait ce repli, et ce qu'il ne fait pas ──────────────────────────
@@ -447,6 +480,12 @@ export class CommerçantService {
     merchantId: string,
     vehicleType?: string,
     codAmount?: number,
+    /**
+     * D'où part la course. ⚠️ **Optionnel, et son absence n'écarte personne** :
+     * les deux appelants la connaissent, mais un troisième qui l'oublierait
+     * doit dégrader vers « aucun filtrage » et non vers « aucun favori ».
+     */
+    pickup: OrderPickup = { wilaya: null, point: null },
   ) {
     // ⚠️ **Conducteurs seulement, et c'est un choix d'incrément.**
     //
@@ -513,7 +552,23 @@ export class CommerçantService {
       return null;
     }
 
-    const available = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
+    const onlineAccounts = accounts.filter((a: any) => online.has(a.fleetbaseDriverUuid));
+
+    // ⚠️ **La zone déclarée écarte aussi d'une sollicitation, pas seulement
+    // d'une liste** (décision produit du 02/08/2026 : le rayon gouverne les
+    // notifications, pas que l'affichage).
+    //
+    // C'est ici que ça compte le plus, et l'argument est **exactement celui que
+    // ce fichier fait déjà pour `online`** : assigner pose
+    // `driver_assigned_uuid`, donc **sort la course du pool**. La confier à
+    // quelqu'un qui a filtré cette wilaya, c'est la confier à quelqu'un qui ne
+    // la regardera pas — et rien ne la reprend (voir la limite décrite plus
+    // haut). Le repli, lui, est sans danger : la course part au pool.
+    //
+    // Même biais qu'ailleurs : `zoneAllowsPickup` laisse passer tout ce qu'il
+    // ignore — zone illisible, course sans wilaya, conducteur sans position.
+    // Un favori n'est jamais écarté par une préférence qu'on n'a pas su lire.
+    const available = await this.favouritesAllowingPickup(onlineAccounts, pickup);
 
     if (!codAmount) {
       if (available[0]) return asDriverPick(available[0]);
@@ -1620,7 +1675,18 @@ export class CommerçantService {
       // `publishOrder`, qui lit déjà `meta` : deux réponses différentes pour
       // la même course selon qu'elle passe ou non par un brouillon.
       const favourite = dto.preferFavourites && !dto.draft
-        ? await this.pickAvailableFavourite(merchantId, dto.vehicleType, meta?.cod_amount)
+        ? await this.pickAvailableFavourite(
+            merchantId,
+            dto.vehicleType,
+            meta?.cod_amount,
+            // ⚠️ Ici la commande n'existe PAS encore : le depart vient du
+            // formulaire, pas d'une lecture. C'est la raison d'etre de
+            // `OrderPickup` — meme regle, deux origines.
+            {
+              wilaya: dto.pickupProvince ?? null,
+              point: { latitude: dto.pickupLatitude, longitude: dto.pickupLongitude },
+            },
+          )
         : null;
 
       // Les données métier partent DEUX fois, et ce n'est pas une duplication
@@ -1836,7 +1902,13 @@ export class CommerçantService {
     const meta = live.meta ?? {};
     const preferFavourites = meta.prefer_favourites !== false;
     const favourite = preferFavourites
-      ? await this.pickAvailableFavourite(merchantId, meta.vehicle_type, meta.cod_amount)
+      ? await this.pickAvailableFavourite(
+          merchantId,
+          meta.vehicle_type,
+          meta.cod_amount,
+          // La commande existe : son depart se lit sur elle.
+          orderPickup(live),
+        )
       : null;
 
     try {

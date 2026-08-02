@@ -91,6 +91,26 @@ export function pickupWilaya(order: any): string | null {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
 }
 
+/**
+ * D'où part la course : sa wilaya et son point, quand on les connaît.
+ *
+ * Existe parce que **deux chemins posent la même question sans avoir la même
+ * chose en main**. La liste des opportunités tient une commande Fleetbase
+ * complète ; la sollicitation d'un favori, elle, se décide **avant** que la
+ * commande existe — il n'y a que le formulaire du commerçant. Les deux doivent
+ * pourtant appliquer la même règle, sans quoi un transporteur serait écarté
+ * d'une liste et assigné d'office à la même course (règle 5).
+ */
+export interface OrderPickup {
+  wilaya: string | null;
+  point: DriverPoint | null;
+}
+
+/** Ce qu'on sait du départ d'une course déjà créée. */
+export function orderPickup(order: any): OrderPickup {
+  return { wilaya: pickupWilaya(order), point: pickupPoint(order) };
+}
+
 /** Le point d'enlèvement, quand la course en porte un. */
 export function pickupPoint(order: any): DriverPoint | null {
   const coords =
@@ -149,20 +169,39 @@ export function zoneAllows(
   zone: DriverZone | null | undefined,
   driverPoint: DriverPoint | null | undefined,
 ): boolean {
+  return zoneAllowsPickup(orderPickup(order), zone, driverPoint);
+}
+
+/**
+ * La même règle, à partir de ce qu'on sait du départ.
+ *
+ * ⚠️ **C'est ici que la décision vit, et nulle part ailleurs.** Deux chemins
+ * l'appliquent — la liste des opportunités et la sollicitation d'un favori — et
+ * ils ne doivent pas pouvoir diverger : un transporteur écarté d'une liste et
+ * assigné d'office à la même course serait pire que l'absence de filtre, parce
+ * que la course lui **resterait** (`driver_assigned_uuid` la sort du pool).
+ *
+ * Rend `true` quand rien ne s'y oppose — même biais qu'au-dessus : on ne
+ * retire que ce qu'on **sait** être hors zone.
+ */
+export function zoneAllowsPickup(
+  pickup: OrderPickup,
+  zone: DriverZone | null | undefined,
+  driverPoint: DriverPoint | null | undefined,
+): boolean {
   if (!zone) return true;
 
   // ── La wilaya ─────────────────────────────────────────────────────────────
-  if (zone.wilaya) {
-    const wilaya = pickupWilaya(order);
-    // Course sans wilaya : on ne sait pas, donc on montre.
-    if (wilaya && !sameWilaya(wilaya, zone.wilaya)) return false;
+  // Course sans wilaya : on ne sait pas, donc on laisse passer.
+  if (zone.wilaya && pickup.wilaya && !sameWilaya(pickup.wilaya, zone.wilaya)) {
+    return false;
   }
 
   // ── Le rayon ──────────────────────────────────────────────────────────────
-  if (zone.radiusKm != null && driverPoint) {
-    const point = pickupPoint(order);
-    // Course sans point : on ne sait pas, donc on montre.
-    if (point && distanceKm(driverPoint, point) > zone.radiusKm) return false;
+  // Course sans point, ou transporteur sans position : on ne sait pas, donc on
+  // laisse passer — et seule la wilaya aura filtré.
+  if (zone.radiusKm != null && driverPoint && pickup.point) {
+    if (distanceKm(driverPoint, pickup.point) > zone.radiusKm) return false;
   }
 
   return true;
