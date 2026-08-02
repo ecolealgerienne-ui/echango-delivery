@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../i18n/driver_strings.dart';
 import '../../i18n/order_strings.dart';
 import '../../models/cash.dart';
 import '../../state/locale_state.dart';
@@ -103,7 +104,32 @@ class OrderDetailScreen extends StatelessWidget {
                                 final c =
                                     driverStatusColors(context, order.status);
                                 return Chip(
-                                  label: Text(order.status),
+                                  // ⚠️ **`driverLabel`, PAS `_t`** — et
+                                  // l'erreur ne levait rien, elle affichait la
+                                  // clé (02/08/2026).
+                                  //
+                                  // `orderStateLabelForDriver` produit des clés
+                                  // `driver.state.*`, qui vivent dans
+                                  // `driver_strings.dart` ; `_t` interroge
+                                  // `order_strings.dart`, la table du
+                                  // commerçant. Cette puce affichait donc
+                                  // **`driver.state.broadcast` en clair** au
+                                  // transporteur.
+                                  //
+                                  // Le tableau de bord appelle la même fonction
+                                  // avec la bonne table : le défaut ne se voyait
+                                  // que sur un écran sur deux. Et aucun contrôle
+                                  // ne pouvait l'attraper — la clé **existe**
+                                  // dans la table du transporteur, or
+                                  // `check_error_codes` compare les tables entre
+                                  // elles, jamais le choix de table d'un
+                                  // appelant. Trouvé en lisant ce que
+                                  // l'application affichait pendant un parcours
+                                  // joué sur l'appareil.
+                                  label: Text(orderStateLabelForDriver(
+                                      order,
+                                      (k) => driverLabel(k,
+                                          context.read<LocaleState>().locale))),
                                   backgroundColor: c.background,
                                   labelStyle: TextStyle(
                                     color: c.foreground,
@@ -142,7 +168,7 @@ class OrderDetailScreen extends StatelessWidget {
                               padding: const EdgeInsets.all(AppSpacing.md),
                               decoration: BoxDecoration(
                                 color: context.semantic.warningContainer,
-                                borderRadius: BorderRadius.circular(AppRadius.md),
+                                borderRadius: BorderRadius.circular(AppRadius.control),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -179,8 +205,14 @@ class OrderDetailScreen extends StatelessWidget {
                           // « Créée le » était une heure trop tôt, juste
                           // au-dessus d'une date d'échec que le même écran
                           // localisait. `formatFull` porte le `toLocal()`.
-                          _buildInfoRow(_t(context, 'driver.order.created'), formatFull(order.createdAt)),
-                          _buildInfoRow(_t(context, 'driver.order.updated'), formatFull(order.updatedAt)),
+                          _buildInfoRow(
+                              _t(context, 'driver.order.created'),
+                              formatFull(order.createdAt,
+                                  context.read<LocaleState>().locale)),
+                          _buildInfoRow(
+                              _t(context, 'driver.order.updated'),
+                              formatFull(order.updatedAt,
+                                  context.read<LocaleState>().locale)),
                         ],
                       ),
                   ),
@@ -905,7 +937,8 @@ class _FailureHistory extends StatelessWidget {
                   // avoir à comparer les dates.
                   _t(context, 'driver.order.failures.attempt', {
                     'n': '${failures.length - i}',
-                    'date': formatDayTime(failures[i].createdAt),
+                    'date': formatDayTime(
+                        failures[i].createdAt, context.read<LocaleState>().locale),
                   }),
                   style: theme.textTheme.labelLarge
                       ?.copyWith(color: theme.colorScheme.onErrorContainer),

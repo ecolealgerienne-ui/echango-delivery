@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../i18n/order_strings.dart';
+
 /// Catégories de véhicule, partagées par les deux profils.
 ///
 /// La même liste sert au commerçant (ce qu'il exige) et au transporteur (ce
@@ -18,9 +20,20 @@ IconData vehicleIcon(String? type) => switch (type) {
       _ => Icons.help_outline,
     };
 
-String vehicleLabel(String? type) => switch (type) {
-      'moto' => 'Moto',
-      'voiture' => 'Voiture',
-      'utilitaire' => 'Utilitaire',
-      _ => 'Indifférent',
-    };
+/// Le nom du véhicule, dans la langue courante.
+///
+/// ⚠️ **La locale est exigée**, pour la raison déjà retenue pour
+/// `formatRelative` et `orderStatusLabel` : un paramètre facultatif valant
+/// français aurait laissé chaque nouvel appelant introduire un mot français
+/// dans un écran arabe sans que personne relise. C'est exactement ce qui s'est
+/// produit ici — l'unique appelant compose `'{vehicle} على الأقل'`, donc un
+/// commerçant arabophone lisait « Moto على الأقل ».
+String vehicleLabel(String? type, Locale locale) => orderLabel(
+      switch (type) {
+        'moto' => 'order.vehicle.moto',
+        'voiture' => 'order.vehicle.voiture',
+        'utilitaire' => 'order.vehicle.utilitaire',
+        _ => 'order.vehicle.any',
+      },
+      locale,
+    );

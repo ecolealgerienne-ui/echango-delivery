@@ -52,20 +52,42 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
-      const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
+      const page = query.page || 1;
+      const limit = query.limit || 25;
 
-      let owned = allOrders.filter(
+      // ── Découpé par Fleetbase, pas en mémoire (02/08/2026) ──────────────────
+      //
+      // Les deux critères de cette liste — le facilitateur et le statut — sont
+      // honorés côté serveur, vérifiés contre un témoin inventé (`facilitator`
+      // 26 contre 0, `status=created` 37 contre 0, sur 422 commandes). Rien
+      // n'est décidé après coup : Fleetbase peut donc rendre la page et son
+      // total, au lieu de nous faire rapatrier jusqu'à cinquante pages pour en
+      // afficher vingt-cinq.
+      //
+      // ⚠️ **Ce n'est vrai que tant que rien ne s'ajoute en mémoire.** Le jour
+      // où cette liste gagne un critère que Fleetbase ne sait pas exprimer, la
+      // page devient incomplète et le total faux — il faudra alors revenir au
+      // parcours complet, et non filtrer la page.
+      const { orders, total } = await this.fleetbaseClient.getOrderPage(page, limit, {
+        facilitator: fleet.fleetbaseVendorUuid,
+        ...(query.status ? { status: query.status } : {}),
+      });
+
+      // Total absent : on ne l'invente pas — `orders.length` dirait « voilà
+      // tout » sur une page pleine. Le parcours complet est lent, il est juste.
+      if (total === null) return this.everyOrderPaged(fleet, query, page, limit);
+
+      // ⚠️ **Le contrôle en mémoire reste, et il n'est pas un doublon.** Le
+      // filtre serveur allège la requête, il n'autorise pas. Fleetbase
+      // abandonnant en silence un filtre qu'il ne reconnaît plus, cette ligne
+      // est ce qui fait qu'une régression de nom **vide la page** au lieu de
+      // servir les courses d'une autre entreprise.
+      const owned = orders.filter(
         (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
       );
 
-      if (query.status) {
-        owned = owned.filter((order: any) => order?.status === query.status);
-      }
-
-      const page = query.page || 1;
-      const limit = query.limit || 25;
-      const total = owned.length;
-      const paged = owned.slice((page - 1) * limit, (page - 1) * limit + limit);
+      // Hydratée APRÈS la pagination : le coût suit la page, pas l'historique.
+      const paged = await this.hydratePage(owned);
 
       return {
         // Projection en liste d'autorisation : le BFF décide de ce qui sort,
@@ -111,7 +133,9 @@ export class FlotteService {
       const page = query.page || 1;
       const limit = query.limit || 25;
       const total = claimable.length;
-      const paged = claimable.slice((page - 1) * limit, (page - 1) * limit + limit);
+      const paged = await this.hydratePage(
+        claimable.slice((page - 1) * limit, (page - 1) * limit + limit),
+      );
 
       return {
         data: paged.map((o: any) =>
@@ -265,7 +289,16 @@ export class FlotteService {
     fleetId: string,
     order: any,
   ): Promise<{ codAmount: number; merchantId: string } | null> {
-    const codAmount = Number(order?.meta?.cod_amount) || 0;
+    // ⚠️ Hydrate **lui-même**, plutôt que d'espérer que l'appelant l'ait fait.
+    //
+    // Depuis la migration du 30/07, `cod_amount` vit dans `custom_field_values`
+    // et non dans `meta`. Lire `order?.meta?.cod_amount` brut donnait `0` sur
+    // toute commande non recomposée — donc un `return null` silencieux, et le
+    // seul garde-fou du paiement à la livraison **désarmé sans un mot**. Son
+    // jumeau du module transporteur hydratait déjà, avec un commentaire disant
+    // exactement pourquoi ; la garde ne doit pas dépendre de la discipline de
+    // ses quatre appelants (règle 5).
+    const codAmount = Number(this.withEffectiveMeta(order)?.meta?.cod_amount) || 0;
     if (codAmount <= 0) return null;
 
     const cached = await this.prisma.order.findFirst({
@@ -274,7 +307,7 @@ export class FlotteService {
     });
     if (!cached) return null;
 
-    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
+    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
       fleetParty(fleetId),
       merchantParty(cached.merchantId),
       codAmount,
@@ -287,9 +320,9 @@ export class FlotteService {
       badRequest(
         'cash.ceiling_exceeded',
         scope === 'person'
-          ? `Votre entreprise détient déjà ${debt} ${this.cash.currency} au total, et cette ` +
+          ? `Votre entreprise détient déjà ${held} ${this.cash.currency} au total, et cette ` +
               `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
-          : `Votre entreprise détient déjà ${debt} ${this.cash.currency} pour ce commerçant, et ` +
+          : `Votre entreprise détient déjà ${held} ${this.cash.currency} pour ce commerçant, et ` +
               `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
       );
     }
@@ -1172,10 +1205,22 @@ export class FlotteService {
     );
 
     if (!forDriver.allowed) {
-      conflict(
+      // ⚠️ **Avec les chiffres, et en `badRequest` comme partout ailleurs.**
+      //
+      // Cette copie levait un `conflict` (409) sans aucun montant, là où les deux
+      // autres lèvent un `badRequest` (400) en disant la somme détenue, celle de
+      // la course et le plafond. Deux défauts pour le même code d'erreur : un
+      // client qui distingue 400 et 409 traitait le même refus de deux façons
+      // selon le persona, et « refusé » sans chiffre laisse sans moyen de savoir
+      // combien faire remettre — le motif exact écrit dans le jumeau transporteur.
+      //
+      // Le message ne nomme toujours pas ce que le conducteur détient ailleurs :
+      // ce sont les affaires d'une autre entreprise (voir plus haut).
+      badRequest(
         'cash.ceiling_exceeded',
-        'Ce conducteur détient déjà trop d\'espèces non remises pour prendre ' +
-          'une course encaissée. Faites-lui remettre ce qu\'il doit.',
+        `Ce conducteur détient déjà ${forDriver.held} ${this.cash.currency} non remis, et cette ` +
+          `course en ajouterait ${codAmount} — au-delà du plafond de ${forDriver.ceiling}. ` +
+          'Faites-lui remettre les espèces avant de la lui confier.',
       );
     }
   }
@@ -1190,6 +1235,43 @@ export class FlotteService {
    */
   private fetchAllOrders(vendorUuid: string): Promise<any[]> {
     return this.fleetbaseClient.fetchEveryOrder(100, 50, { facilitator: vendorUuid });
+  }
+
+  /**
+   * Le chemin d'avant : tout rapatrier, filtrer et découper en mémoire.
+   *
+   * ⚠️ **Conservé, et pas par prudence décorative.** Il sert quand Fleetbase ne
+   * dit pas combien de commandes existent (`meta.total` absent) : sans ce
+   * nombre, une page pleine est indiscernable de la dernière page, et la liste
+   * s'arrêterait en silence sur un multiple de la taille de page.
+   *
+   * Lent et coûteux, mais **juste** — et c'est ce qui rend l'optimisation sûre :
+   * elle ne peut pas produire de résultat faux, seulement ne pas s'appliquer.
+   */
+  private async everyOrderPaged(
+    fleet: { fleetbaseVendorUuid: string },
+    query: ListFleetOrdersQueryDto,
+    page: number,
+    limit: number,
+  ) {
+    const allOrders = await this.fetchAllOrders(fleet.fleetbaseVendorUuid);
+
+    let owned = allOrders.filter(
+      (order: any) => order?.facilitator_uuid === fleet.fleetbaseVendorUuid,
+    );
+    if (query.status) {
+      owned = owned.filter((order: any) => order?.status === query.status);
+    }
+
+    const total = owned.length;
+    const paged = await this.hydratePage(
+      owned.slice((page - 1) * limit, (page - 1) * limit + limit),
+    );
+
+    return {
+      data: paged.map((o: any) => projectOrderForFleet(this.withEffectiveMeta(o))),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
   }
 
   /**
@@ -1298,6 +1380,82 @@ export class FlotteService {
     // La spécification est un filet posé sur les commandes créées PAR un
     // commerçant d'Echango ; une entreprise lit ce que Fleetbase porte.
     return { ...order, meta: effectiveOrderMeta(order, null) };
+  }
+
+  /**
+   * Recharge une page de commandes en **lecture unitaire**, seule forme qui
+   * porte les montants.
+   *
+   * ── Le défaut que ceci répare (revue du 01/08/2026, C1) ──────────────────
+   *
+   * `withEffectiveMeta()` recompose `meta` depuis `custom_field_values`. Sur une
+   * commande issue d'une **liste**, il n'y a rien à recomposer : Fleetbase sert
+   * une ressource d'index allégée, qui remplace `meta` par le seul drapeau
+   * `{_index_resource: true}` et **n'inclut aucune valeur de champ
+   * personnalisé**.
+   *
+   * ⚠️ Le commentaire de `getAllOrders` affirmait le contraire — « le demander
+   * ici les charge en une fois » — et **c'est cette phrase qui a servi
+   * d'argument** pour écrire l'hydratation des deux listes de ce module. Mesuré
+   * le 01/08/2026 : `GET /int/v1/orders?limit=2&with[]=customFieldValues.customField`
+   * rend `meta = {_index_resource: true}`, `custom_field_values` absent,
+   * `meta.price = null` ; la même commande en lecture unitaire rend `meta` réel
+   * et huit valeurs. Une donnée d'appui fausse ne dort pas dans un commentaire,
+   * elle fait conclure.
+   *
+   * Conséquence de l'ancien état : une entreprise décidait de prendre une course
+   * **sans voir le prix, le montant à encaisser, le véhicule exigé ni les
+   * consignes** — c'est-à-dire le défaut D6 que ce module croyait avoir fermé.
+   * Rien ne le signalait : `pick()` omet les clés absentes, la ligne s'affiche,
+   * seuls les chiffres manquent. Les modules commerçant et transporteur y
+   * échappaient parce qu'ils hydratent depuis `Order.specMeta`, le filet local
+   * que ce module n'a pas.
+   *
+   * ── Pourquoi une lecture par commande, et pas une requête groupée ─────────
+   *
+   * Il n'y en a pas. Mesuré : `custom-field-values?subject_uuid=` est bien
+   * honoré (13 valeurs contre 0 pour un uuid inventé — le témoin le prouve),
+   * mais `subject_uuid[]=A&subject_uuid[]=B` n'en retient **qu'un**, et la forme
+   * à virgule rend 0. Le coût est donc borné par la **page** — 25 lignes — et
+   * non par le nombre de courses de l'entreprise : d'où l'hydratation **après**
+   * la pagination, jamais avant.
+   *
+   * ⚠️ Une lecture qui échoue ne fait pas tomber la liste : la ligne reste,
+   * amputée de ses montants, et le journal le dit. Perdre vingt-quatre lignes
+   * lisibles parce que la vingt-cinquième a échoué serait le remède pire que le
+   * mal — mais un montant manquant sans trace serait le défaut qu'on corrige.
+   */
+  private async hydratePage(orders: any[]): Promise<any[]> {
+    const BATCH = 8;
+    const out: any[] = [];
+
+    for (let i = 0; i < orders.length; i += BATCH) {
+      const slice = orders.slice(i, i + BATCH);
+      const loaded = await Promise.all(
+        slice.map(async (o: any) => {
+          if (!o?.uuid) return o;
+          try {
+            // ⚠️ Par `readOrder`, jamais par le client directement : la lecture
+            // unitaire est **enveloppée** dans `{order: {…}}` là où la liste rend
+            // l'objet nu. Appeler le client sans déballer rendait huit lignes
+            // d'`uuid: null` par page — soit exactement la taille d'un lot, la
+            // seule trace qu'il y ait eu. `readOrder` porte déjà cet unwrap,
+            // avec le commentaire qui dit pourquoi (règle 5).
+            const full = await this.readOrder(o.uuid);
+            return full ?? o;
+          } catch (error) {
+            this.logger.warn(
+              `Commande ${o.uuid} non rechargée (${error?.message}) — elle s'affichera ` +
+                'sans ses montants',
+            );
+            return o;
+          }
+        }),
+      );
+      out.push(...loaded);
+    }
+
+    return out;
   }
 
   private async getFleetWithValidation(fleetId: string) {

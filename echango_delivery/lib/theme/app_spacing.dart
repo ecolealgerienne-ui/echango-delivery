@@ -72,17 +72,52 @@ class AppSpacing {
   static const double xxl = 32;
 }
 
-/// Rayons d'arrondi.
+/// Rayons d'arrondi — **nommés par ce qu'ils arrondissent**, jamais par taille.
+///
+/// ── Pourquoi cette gamme, et pourquoi ces noms (02/08/2026) ───────────────
+///
+/// Reprise du système d'Echango Promo (`docs/design_echangopromo.md` §4), où
+/// chaque rayon est attribué à un usage plutôt que rangé sur une échelle
+/// abstraite. C'est ce qui donne sa silhouette au produit : des cartes très
+/// arrondies, des contrôles franchement arrondis, des puces discrètes.
+///
+/// ⚠️ **Les noms de taille ont été délibérément abandonnés**, et c'est le point
+/// le plus important de ce fichier. Leur `md` vaut 16, notre ancien `md` valait
+/// 8, et notre `AppSpacing.md` vaut 12 : transposer par nom aurait changé d'un
+/// coup les rayons **et** les espacements, sans que rien ne le signale. Un rayon
+/// se transpose par affectation — « ce qui arrondit un bouton » —, jamais par
+/// l'étiquette qu'il portait dans l'autre dépôt.
+///
+/// L'ancien `AppRadius.md` (8) est devenu [chip] : la valeur ne bouge que là où
+/// l'affectation le demande, et les six sites qui l'employaient ont été relus
+/// un par un.
 class AppRadius {
   AppRadius._();
 
-  /// 8 — **la seule valeur du dépôt**, partagée par les cartes, les champs de
-  /// saisie et les boutons. `theme/app_theme.dart` l'emploie déjà pour les
-  /// bordures d'`InputDecoration` et d'`ElevatedButton` ; ce jeton la nomme pour
-  /// les écrans, qui l'écrivaient en dur.
+  /// 8 — puces, étiquettes, petites surfaces posées **dans** le contenu.
   ///
-  /// Un seul nom tant qu'il n'y a qu'une valeur : en inventer deux (`card`,
-  /// `input`) laisserait croire à une distinction que le rendu ne fait pas, et
-  /// la première divergence passerait pour intentionnelle.
-  static const double md = 8;
+  /// C'est l'ancienne valeur unique du dépôt : ce qui était une puce ou une
+  /// vignette la garde, ce qui était un contrôle passe à [control].
+  static const double chip = 8;
+
+  /// 16 — boutons, champs de saisie, images, blocs en ligne.
+  ///
+  /// Tout ce sur quoi on agit ou qu'on remplit. `PromoCard` arrondit sa photo
+  /// au même rayon que ses boutons, et c'est cohérent : une image posée dans une
+  /// ligne est un objet du contenu, pas une surface qui le porte.
+  static const double control = 16;
+
+  /// 24 — cartes, feuilles modales, dialogues.
+  ///
+  /// Réservé aux **surfaces qui portent du contenu**. C'est le rayon le plus
+  /// visible de l'identité ; l'employer sur un bouton effacerait la distinction
+  /// que toute la gamme existe pour faire.
+  static const double card = 24;
+
+  // ⚠️ **Pas de `pill` (999).** Promo en a un, pour son badge « -X% » ; nous
+  // n'avons aucune pastille, donc le jeton n'aurait **aucun appelant** — et un
+  // jeton sans appelant est exactement le défaut que la règle 9 nomme. Il
+  // s'ajoutera avec le premier badge, pas avant : la décision est consignée
+  // dans `docs/design_echangopromo.md`, où une décision peut attendre son
+  // usage sans faire croire qu'elle est appliquée.
 }

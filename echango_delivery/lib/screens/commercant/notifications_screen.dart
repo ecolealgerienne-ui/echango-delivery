@@ -62,7 +62,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: () => state.loadNotifications(),
-        child: items.isEmpty
+        // ⚠️ L'indisponibilité AVANT le vide, comme partout. Cet écran est le
+        // SUBSTITUT du push, qui n'est pas branché : « Aucune notification » s'y
+        // lit « personne n'a pris ma course ». L'affirmer sur un relevé qui a
+        // échoué est le pire endroit où le faire.
+        child: state.notificationsUnavailable && items.isEmpty
+            ? AppEmptyState.unavailable(
+                title: _t('order.notif.unavailable'),
+                hint: _t('order.notif.unavailable.hint'),
+                onRetry: () => state.loadNotifications(),
+              )
+            : items.isEmpty
             ? AppEmptyState(
                 title: _t('order.notifications.empty'),
                 hint: _t('order.notifications.empty.hint'),
@@ -119,6 +129,34 @@ class _NotificationTile extends StatelessWidget {
     };
   }
 
+  /// Le titre, traduit depuis le `type`.
+  ///
+  /// ⚠️ Le repli sur `notification.title` n'est pas de la prudence gratuite :
+  /// c'est le seul cas où un texte serveur a le droit d'atteindre l'écran — un
+  /// `type` que cette version de l'application ne connaît pas encore. Mieux
+  /// vaut une phrase en français qu'une ligne vide dans le journal de ses
+  /// livraisons.
+  String _title(BuildContext context) => _translated(context, 'title')
+      ?? notification.title;
+
+  String _body(BuildContext context) => _translated(context, 'body')
+      ?? notification.body;
+
+  String? _translated(BuildContext context, String part) {
+    final locale = context.read<LocaleState>().locale;
+    final key = switch (notification.type) {
+      'order.assigned' when part == 'body' && !notification.data.containsKey('driver') =>
+        'order.notif.assigned.body.anon',
+      'order.assigned' => 'order.notif.assigned.$part',
+      'order.released' => 'order.notif.released.$part',
+      'order.completed' => 'order.notif.completed.$part',
+      'order.canceled' => 'order.notif.canceled.$part',
+      _ => null,
+    };
+    if (key == null) return null;
+    return orderLabel(key, locale, notification.data);
+  }
+
   @override
   Widget build(BuildContext context) {
     final (icon, color) = _visual(context);
@@ -132,7 +170,7 @@ class _NotificationTile extends StatelessWidget {
       // fausse, mais ce refus-ci ne bouge pas — 3.27 reste au-dessus de 3.24.)
       leading: Icon(icon, color: color),
       title: Text(
-        notification.title,
+        _title(context),
         style: TextStyle(
           // Le gras porte l'information « pas encore vu », pas une pastille
           // supplémentaire : sur une liste, le contraste se lit plus vite
@@ -143,13 +181,11 @@ class _NotificationTile extends StatelessWidget {
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(notification.body),
+          Text(_body(context)),
           const SizedBox(height: 2),
           Text(
             // La locale est exigée depuis que cette fonction produit des mots :
-            // « il y a 12 min » ne se lit pas dans un écran arabe. Le reste de
-            // cet écran est encore en français en dur (dette assumée), mais on
-            // n'ajoute pas un site qui *ne pourrait pas* suivre.
+            // « il y a 12 min » ne se lit pas dans un écran arabe.
             formatRelative(
               notification.createdAt,
               context.watch<LocaleState>().locale,

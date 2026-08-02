@@ -1,18 +1,4 @@
-import {
-  IsString,
-  IsNumber,
-  IsOptional,
-  IsArray,
-  IsInt,
-  IsISO8601,
-  IsIn,
-  IsBoolean,
-  ValidateNested,
-  ArrayMaxSize,
-  MaxLength,
-  Min,
-  Max,
-} from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -66,6 +52,32 @@ export class CreateOrderDto {
   @MaxLength(120)
   pickupCity?: string;
 
+  /**
+   * Wilaya de l'enlèvement.
+   *
+   * ── Pourquoi elle manquait, et ce que ça bloquait (02/08/2026) ──────────
+   *
+   * Le géocodage inverse l'extrait (`state`/`region` → `province`,
+   * `common/geocoding`), le carnet d'adresses la conserve (`SaveAddressDto`),
+   * et la projection la **sert déjà** au transporteur — mais elle n'était
+   * transportée nulle part entre les deux : ce DTO n'avait que commune et
+   * quartier. **La wilaya se perdait donc entre le carnet et la course.**
+   *
+   * C'est la donnée sur laquelle repose la décision produit du 02/08/2026 —
+   * « le transporteur choisit ce qu'il voit, wilaya d'abord » : sans elle, un
+   * filtre par wilaya n'a rien sur quoi filtrer.
+   *
+   * ⚠️ Facultative ici comme au carnet, et c'est délibéré : elle vient du
+   * géocodage, jamais d'une saisie. L'exiger ferait échouer la création d'une
+   * course pour une raison que le commerçant ne comprendrait pas — il tape une
+   * rue, pas une wilaya. C'est au **filtre** de ne pas cacher une course dont
+   * la wilaya est inconnue, pas à la création de la refuser.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupProvince?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -95,6 +107,12 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(120)
   dropoffCity?: string;
+
+  /** Wilaya de la livraison. Même motif que [pickupProvince]. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dropoffProvince?: string;
 
   @IsOptional()
   @IsString()
@@ -232,9 +250,40 @@ export class CreateOrderDto {
 }
 
 export class OrderItemDto {
+  /**
+   * Ce que contient le colis.
+   *
+   * ⚠️ **Facultative depuis le 02/08/2026, et c'est la correction d'un défaut
+   * bloquant sur le chemin principal du commerçant.**
+   *
+   * Elle était exigée (`@IsString()` sans `@IsOptional()`) pendant que le
+   * formulaire la traitait comme facultative : ni étoile, ni entrée dans sa
+   * liste `missing`. Et comme le champ « Nombre de colis » est pré-rempli à
+   * `1`, le formulaire considère **toujours** qu'il a des détails de colis à
+   * transmettre — il envoyait donc **toujours** un `items[0]`, en omettant la
+   * description quand elle était vide.
+   *
+   * Résultat : **toute course créée sans décrire le contenu était refusée**,
+   * sur un « Certaines informations saisies sont invalides » qui ne nommait
+   * aucun champ. Aucun des sept scénarios de `scripts/` ne pouvait le voir —
+   * ils composent leur corps de requête à la main. Il a fallu le premier
+   * parcours joué **dans l'application** (`integration_test/`) pour le trouver.
+   *
+   * Pourquoi assouplir le serveur plutôt que durcir le formulaire : la
+   * correction du 01/08/2026 (revue D3) a explicitement voulu qu'un colis
+   * **fragile**, compté ou pesé voyage même sans description — exiger une
+   * description reviendrait sur cette décision. Le service se contente de
+   * recopier `items` dans `meta`, donc rien en aval n'en dépend.
+   *
+   * ⚠️ **`quantity` porte la même exposition, en plus étroit** : elle reste
+   * exigée, et le formulaire l'omet quand la saisie n'est pas lisible. Le champ
+   * étant pré-rempli, le cas ne s'ouvre que si le commerçant le vide en cochant
+   * « fragile ». Laissé tel quel faute d'être observé — à reprendre si ça sort.
+   */
+  @IsOptional()
   @IsString()
   @MaxLength(200)
-  description: string;
+  description?: string;
 
   /**
    * Nombre de colis.
@@ -268,13 +317,26 @@ export class ListOrdersQueryDto {
   @IsString()
   status?: string; // 'pending', 'active', 'completed', 'failed', 'cancelled'
 
+  /**
+   * ⚠️ **Bornées dans les deux sens.** Sans `@Min`, `?limit=-1` fait basculer
+   * Prisma en « les N derniers » ; sans `@Max`, `?limit=1000000` charge et
+   * projette tout l'historique, depuis un simple compte valide, et
+   * l'amplification pénalise ensuite tout le monde via le plafond global de
+   * débit (revue du 01/08/2026, S3).
+   *
+   * 100 est le plafond que Fleetbase applique de son côté : au-delà, la page
+   * demandée n'existe de toute façon pas.
+   */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
   page?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
+  @Max(100)
   limit?: number;
 }

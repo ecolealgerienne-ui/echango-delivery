@@ -169,7 +169,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       spacing: 8,
                       children: authState.ambiguousRoles
                           .map((r) => ActionChip(
-                                label: Text(r.label),
+                                label: Text(
+                                    r.label(context.read<LocaleState>().locale)),
                                 onPressed: authState.isLoading
                                     ? null
                                     : () => _submit(authState, role: r),

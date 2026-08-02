@@ -32,8 +32,22 @@ export interface OrderFilters {
   facilitator?: string;
   /** uuid du Driver assigné. Accepte aussi un public_id. */
   driver?: string;
-  /** Non assignées **et** non terminées : `whereDoesntHave` + exclusion de completed/canceled/expired. */
-  without_driver?: boolean;
+  /**
+   * Non assignées **et** non terminées : `whereDoesntHave` + exclusion de
+   * completed/canceled/expired.
+   *
+   * ⚠️ Typé `true`, jamais `boolean`. C'est un filtre **à présence**, pas un
+   * booléen : mesuré le 01/08/2026, `?without_driver=true` rend 53 commandes et
+   * `?without_driver=false` en rend **178**, c'est-à-dire la totalité. Un
+   * `false` n'exclut donc pas, **il élargit**.
+   *
+   * Le type `boolean` invitait à écrire `{ without_driver: uneVariable }` — et
+   * ce jour-là la requête serait passée de « les courses libres » à « toutes
+   * les courses de la compagnie », sans erreur. C'est exactement le mode de
+   * panne que ces interfaces fermées existent pour empêcher (`facilitator_uuid`),
+   * reproduit à l'intérieur d'un nom pourtant valide.
+   */
+  without_driver?: true;
   status?: string;
 }
 
@@ -276,15 +290,33 @@ export class FleetbaseApiClient {
     const found = first.find((v: any) => v?.uuid === vendorUuid);
     if (found || first.length === 0) return found ?? null;
 
+    this.logger.warn(
+      `GET /vendors/${vendorUuid} a rendu une COLLECTION sans le fournisseur demandé — ` +
+        'le tampon de compatibilité sert, contrairement à ce qui a été mesuré sur 0.7.52',
+    );
     return this.findVendorAcrossPages(vendorUuid);
   }
 
   /**
    * Parcourt les pages de `/vendors` à la recherche d'un uuid.
    *
-   * Appelé seulement quand la première réponse était une collection ne le
-   * contenant pas — donc jamais sur le chemin nominal, où `GET /vendors/{uuid}`
-   * rend l'objet ou une première page qui suffit.
+   * Appelé seulement quand la première réponse était une **collection** ne le
+   * contenant pas.
+   *
+   * ⚠️ **Mesuré le 01/08/2026 : ce chemin ne sert plus.** Sur Fleetbase 0.7.52,
+   * `GET /int/v1/vendors/{uuid}` honore bien son paramètre — vérifié avec le
+   * test durci « demander le DERNIER élément, pas le premier », sans quoi un
+   * endpoint qui ignore son paramètre passerait au vert (la leçon de V9).
+   *
+   * Il est **conservé quand même** : c'est un tampon de compatibilité, et le
+   * retirer ferait échouer toute lecture de fournisseur sur une installation où
+   * l'ancien comportement existe — donc empêcher des commerçants de se
+   * connecter, pour supprimer soixante lignes.
+   *
+   * Ce qui change, c'est qu'il **le dit** quand il sert. Un tampon silencieux
+   * dont on croit qu'il ne sert jamais est indiscernable d'un tampon qui sert
+   * tous les jours (règle 9) : le jour où la mesure ci-dessus cesse d'être
+   * vraie, on veut le lire dans un journal, pas le redécouvrir.
    */
   private async findVendorAcrossPages(
     vendorUuid: string,
@@ -423,6 +455,18 @@ export class FleetbaseApiClient {
        */
       city?: string;
       neighborhood?: string;
+      /**
+       * Wilaya, ajoutée le 02/08/2026.
+       *
+       * ⚠️ Le lieu d'une **course** ne la recevait pas, alors que le lieu du
+       * **carnet d'adresses** l'écrivait déjà (`addressComponents`). Les deux
+       * chemins créent pourtant le même objet `Place`, et la projection sert
+       * `province` au transporteur depuis le 31/07 : elle arrivait donc
+       * toujours vide sur une course. C'est la règle 5 dans sa forme la plus
+       * banale — deux chemins vers un même enregistrement, un seul tenu à
+       * jour.
+       */
+      province?: string;
     },
   ) {
     const response = await this.callFleetOps('POST', '/places', {
@@ -433,6 +477,7 @@ export class FleetbaseApiClient {
       },
       ...(contact?.address ? { street1: contact.address } : {}),
       ...(contact?.city ? { city: contact.city } : {}),
+      ...(contact?.province ? { province: contact.province } : {}),
       ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
       ...(contact?.phone ? { phone: contact.phone } : {}),
       ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),
@@ -557,11 +602,54 @@ export class FleetbaseApiClient {
   }
 
   /**
-   * List Places owned by a given Vendor (a merchant's saved addresses).
+   * Le carnet d'adresses d'un commerçant, **en entier**.
+   *
+   * ── Le plafond invisible que ceci ferme (revue du 01/08/2026, F1) ────────
+   *
+   * L'appel n'envoyait ni `page` ni `limit`, et **Fleetbase pagine `/places` à
+   * 30 par défaut** (mesuré le 01/08/2026 : `meta.per_page = 30`). Au 31ᵉ lieu
+   * enregistré, trois choses cassaient d'un coup, toutes en silence :
+   *
+   *   · le carnet affichait 30 adresses sans dire qu'il en manquait ;
+   *   · `assertOwnsPlace()` ne trouvait plus les adresses au-delà de la page 1
+   *     et refusait `PUT`/`DELETE` sur une adresse **qui existe et lui
+   *     appartient**, avec un message qui l'envoyait chercher une faute de
+   *     saisie ;
+   *   · `clearOtherDefaults()` laissait deux « adresse principale » coexister.
+   *
+   * Fail-closed, donc aucune fuite — mais la panne arrive par le simple usage,
+   * et rien ne la nomme. Troisième occurrence du même plafond dans ce dépôt
+   * après `/orders` et `/vendors`.
+   *
+   * ⚠️ La borne haute est **100 et non 200** : au-delà, Fleetbase plafonne sans
+   * le dire (`?limit=200` et `?limit=500` rendent l'un et l'autre 100), donc
+   * demander plus donne l'illusion que la question est traitée.
    */
   async getOwnedPlaces(ownerUuid: string) {
-    const response = await this.callFleetOps('GET', '/places', undefined, { owner_uuid: ownerUuid });
-    return response.data;
+    const pageSize = 100;
+    const maxPages = 20;
+    const all: any[] = [];
+
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.callFleetOps('GET', '/places', undefined, {
+        owner_uuid: ownerUuid,
+        page,
+        limit: pageSize,
+      });
+      const batch = this.extractCollection(response.data, 'places');
+      all.push(...batch);
+
+      // On s'arrête sur ce que le serveur a SERVI, jamais sur un total annoncé :
+      // un total supérieur à ce qu'il sait rendre ferait boucler jusqu'au
+      // garde-fou.
+      if (batch.length < pageSize) return all;
+    }
+
+    this.logger.warn(
+      `getOwnedPlaces a atteint le garde-fou de ${maxPages} pages pour ${ownerUuid} — ` +
+        'le carnet est tronqué, et une adresse au-delà sera déclarée introuvable',
+    );
+    return all;
   }
 
   /**
@@ -573,9 +661,14 @@ export class FleetbaseApiClient {
    * (`custom-fields.js` : `store.query('custom-field', { subject_uuid: config.id })`).
    */
   async listCustomFields(subjectUuid: string) {
+    // ⚠️ 100 et non 200 : Fleetbase plafonne `limit` à 100 **en silence**
+    // (mesuré — `?limit=200` et `?limit=500` rendent l'un et l'autre 100).
+    // Demander davantage donnait l'impression que la borne était traitée alors
+    // qu'elle était ignorée. Treize définitions aujourd'hui, donc la marge est
+    // large ; ce qui se corrige ici, c'est la fausse assurance.
     const response = await this.callFleetOps('GET', '/custom-fields', undefined, {
       subject_uuid: subjectUuid,
-      limit: 200,
+      limit: 100,
     });
     return response.data;
   }
@@ -729,12 +822,30 @@ export class FleetbaseApiClient {
     const response = await this.callFleetOps('GET', '/orders', undefined, {
       page,
       limit,
-      // Charge les valeurs de champs personnalisés avec leur définition.
+      // ⚠️ **CE PARAMÈTRE EST SANS EFFET, ET LA LISTE NE PORTE AUCUN MONTANT.**
       //
-      // Sans ça elles arrivent quand même — `withCustomFields()` fait un
-      // `loadMissing()` sur chaque ressource — mais **une requête par
-      // commande** : cent commandes, deux cents requêtes côté Fleetbase.
-      // Le demander ici les charge en une fois.
+      // Le commentaire qui vivait ici affirmait qu'il chargeait les valeurs
+      // « en une fois ». C'est faux, mesuré le 01/08/2026 :
+      //
+      //   GET /int/v1/orders?limit=2&with[]=customFieldValues.customField
+      //     → meta = {"_index_resource": true}
+      //       custom_field_values ABSENT · meta.price = null
+      //   GET /int/v1/orders/{uuid}   (sans aucun with[])
+      //     → meta réel · 8 valeurs de champs personnalisés
+      //
+      // Fleetbase sert une **ressource d'index allégée** (`Http/Resources/v1/
+      // Index/Order.php`), qui remplace `meta` par un drapeau signalant que
+      // l'enregistrement est partiel. Aucun paramètre ne la rend complète.
+      //
+      // Le paramètre est conservé : il ne coûte rien, et il redeviendra utile si
+      // l'amont enrichit la ressource d'index. Mais **tout appelant qui a besoin
+      // d'un montant doit recharger la commande unitairement** — c'est ce que
+      // fait `FlotteService.hydratePage()`, et ce que les modules commerçant et
+      // transporteur obtiennent autrement, par `Order.specMeta`.
+      //
+      // Cette phrase fausse a servi d'argument, textuellement, pour écrire une
+      // hydratation qui ne recomposait rien : une donnée d'appui fausse ne dort
+      // pas dans un commentaire, elle fait conclure (cf. la borne du `pubspec`).
       with: ['customFieldValues.customField'],
       ...filters,
     });
@@ -754,6 +865,64 @@ export class FleetbaseApiClient {
       }
     }
     return Array.isArray(response) ? response : [];
+  }
+
+  /**
+   * **Une** page de commandes, découpée par Fleetbase, avec son total.
+   *
+   * ── Ce que cette méthode évite ──────────────────────────────────────────────
+   *
+   * `fetchEveryOrder(100, 50)` rapatrie jusqu'à cinquante pages — 5 000
+   * commandes — pour en afficher vingt-cinq. C'est correct et ça le restera :
+   * le coût grandit simplement avec le réseau, et il grandit chez nous.
+   *
+   * Quand **tous** les critères d'une liste sont honorés par Fleetbase, il n'y a
+   * aucune raison de faire ce voyage : il pagine nativement et sert `meta.total`.
+   *
+   * ── La condition d'emploi, et elle n'est pas négociable ─────────────────────
+   *
+   * ⚠️ **N'employer cette méthode que si le découpage est fait sur des filtres
+   * intégralement honorés.** Un critère évalué en mémoire après coup (statut
+   * combiné, course réclamable, préférence de zone) rendrait des pages
+   * incomplètes et un total faux : Fleetbase compterait des commandes que le
+   * BFF retire ensuite. Dans ce cas-là, `fetchEveryOrder` reste la bonne
+   * réponse — c'est un coût, pas un défaut.
+   *
+   * ⚠️ **Et chaque filtre déplacé se vérifie contre un témoin inventé.**
+   * Fleetbase abandonne **en silence** un filtre qu'il ne reconnaît pas : un
+   * nom erroné ne produit ni erreur ni journal, seulement toute la compagnie
+   * servie comme si c'était le résultat. Mesuré le 02/08/2026 sur 422
+   * commandes — `facilitator` 26 contre 0 pour un uuid inventé, `status=created`
+   * 37 contre 0, `without_driver` 123 contre 422. ⚠️ Le premier banc comparait
+   * le **nombre de lignes** et non les totaux : plafonné à `limit`, il concluait
+   * « ignoré » sur un filtre qui marchait.
+   *
+   * ── `total` peut être `null`, et il ne faut pas le remplacer ────────────────
+   *
+   * Si `meta.total` manque, **on ne le devine pas** : `orders.length` dirait
+   * « voilà tout » sur une page pleine, donc une liste tronquée en silence — le
+   * défaut que le total servi corrige justement. L'appelant reçoit `null` et
+   * retombe sur le parcours complet, qui est lent mais juste.
+   */
+  async getOrderPage(
+    page: number,
+    limit: number,
+    filters: OrderFilters = {},
+  ): Promise<{ orders: any[]; total: number | null }> {
+    const response = await this.getAllOrders(page, limit, filters);
+    const orders = this.extractCollection(response, 'orders');
+
+    const raw = (response as any)?.meta?.total;
+    const total = typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+
+    if (total === null) {
+      this.logger.warn(
+        'Fleetbase n’a pas servi meta.total sur cette page : impossible de dire ' +
+          'combien de commandes existent, l’appelant doit reprendre le parcours complet',
+      );
+    }
+
+    return { orders, total };
   }
 
   /**
@@ -1492,38 +1661,85 @@ export class FleetbaseApiClient {
    * matches public_id and never uuid. Rather than assume which one DELETE
    * accepts, look the device up and try the public_id first.
    */
+  /**
+   * ⚠️ Paginé — sans quoi la purge des jetons morts cesse en silence.
+   *
+   * Cette lecture est le repli appelé quand la suppression par identifiant
+   * stocké a échoué, lors d'une rotation de jeton Firebase. Elle ne demandait
+   * ni `page` ni `limit`, et Fleetbase sert **30 lignes** par défaut (mesuré) :
+   * au-delà de 30 `UserDevice` dans l'organisation — un par téléphone, plus les
+   * rotations —, le jeton cherché est hors page 1, la fonction rend `null`, et
+   * il ne reste qu'un `warn`.
+   *
+   * Le `UserDevice` périmé survit alors, et comme `routeNotificationForFcm()`
+   * renvoie **tous** les devices du `user_uuid`, les `OrderPing` partent
+   * indéfiniment vers un jeton mort. Panne strictement silencieuse : des
+   * notifications qui n'arrivent pas, et rien dans les journaux (revue F2).
+   */
   async findUserDeviceByToken(token: string) {
+    const pageSize = 100;
+    const maxPages = 20;
+
     try {
-      const response = await this.callFleetOps('GET', '/user-devices');
-      const devices =
-        response.data?.user_devices || response.data?.data ||
-        (Array.isArray(response.data) ? response.data : []);
-      return (devices || []).find((d: any) => d?.token === token) || null;
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.callFleetOps('GET', '/user-devices', undefined, {
+          page,
+          limit: pageSize,
+        });
+        const devices = this.extractCollection(response.data, 'user_devices');
+        const hit = devices.find((d: any) => d?.token === token);
+        if (hit) return hit;
+        if (devices.length < pageSize) return null;
+      }
+
+      // Distinct de « pas trouvé » : ici on n'a pas fini de chercher, et taire
+      // la différence ferait conclure à l'absence d'un jeton qu'on n'a pas
+      // regardé (règle 10).
+      this.logger.warn(
+        `findUserDeviceByToken a atteint le garde-fou de ${maxPages} pages — ` +
+          'le jeton peut exister au-delà et ne sera pas purgé',
+      );
+      return null;
     } catch (error) {
       this.logger.warn(`UserDevice lookup by token failed: ${error.message}`);
       return null;
     }
   }
 
+  // ── Champs personnalisés d'un conducteur ──────────────────────────────────
+
   /**
-   * List ALL company Position records, unfiltered. Confirmed by reading
-   * PositionFilter.php (28/07/2026) that there is no `driver_uuid` (or any
-   * per-driver) query filter on this endpoint - it only supports a free-text
-   * `query` search, `createdAt`, and automatic company-wide scoping. `GET
-   * /int/v1/driver-positions` (previously assumed here) does not exist at
-   * all - confirmed 404 ("There is nothing to see here", the masked
-   * NotFoundHttpException pattern from docs/journal_implementation_bff.md
-   * §2.1). The real resource is the generic `/int/v1/positions` endpoint.
-   * Callers MUST filter the result client-side by `driver_uuid`.
+   * Le conducteur, **avec ses valeurs de champs personnalisés**.
    *
-   * ⚠️ Plus utilisé par la carte de flotte : télécharger tout l'historique de
-   * la compagnie pour n'afficher qu'un point par driver ne tenait pas à
-   * l'échelle. `FlotteService.getDriverPositions()` sert désormais le miroir
-   * local alimenté par `POST /transporteur/position`. Cette méthode reste pour
-   * un besoin d'historique — ne pas la rebrancher sur la carte.
+   * `with[]=customFieldValues.customField` est indispensable : sans lui la
+   * réponse porte les valeurs sans leur définition, donc sans le `name` qui
+   * permet de savoir laquelle est laquelle. On lirait alors des uuid.
    */
-  async getAllPositions() {
-    const response = await this.callFleetOps('GET', '/positions');
+  async getDriverWithCustomFields(driverId: string) {
+    const response = await this.callFleetOps('GET', `/drivers/${driverId}`, undefined, {
+      'with[]': 'customFieldValues.customField',
+    });
+    return response.data?.driver ?? response.data;
+  }
+
+  /**
+   * Écrit des valeurs de champs personnalisés sur un conducteur.
+   *
+   * ⚠️ **Le corps DOIT être enveloppé sous `driver`.** Envoyé à plat, Laravel
+   * rend un **500** : `Validation\Factory::make(): Argument #1 ($data) must be
+   * of type array, null given`. Le message nomme un fichier du framework et ne
+   * dit rien du contrat — mesuré le 02/08/2026, sur les deux formes
+   * d'identifiant et avec ou sans champs personnalisés, avant de comprendre que
+   * l'enveloppe était en cause. C'est la même convention que la lecture
+   * unitaire d'une commande, servie sous `{order: {…}}`.
+   */
+  async setDriverCustomFieldValues(
+    driverId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/drivers/${driverId}`, {
+      driver: { custom_field_values: values },
+    });
     return response.data;
   }
 }

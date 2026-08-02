@@ -25,6 +25,7 @@
  */
 
 import { readOrderCustomFields } from '../../fleetbase/order-custom-fields';
+import { platformCurrency } from '../money/currency';
 
 /**
  * Niveau de détail d'un lieu.
@@ -413,7 +414,43 @@ function projectMeta(meta: any): Record<string, any> | undefined {
   if (!source || typeof source !== 'object') return undefined;
 
   const projected = pick(source, META_FIELDS);
+  normaliseCurrencies(projected);
   return Object.keys(projected).length ? projected : undefined;
+}
+
+/**
+ * Une seule devise sur toute la course — décidée ici, pas relayée.
+ *
+ * ── Le défaut (02/08/2026) ──────────────────────────────────────────────────
+ *
+ * « 777 USD » pour le prix, « À encaisser : 2727 DZD » deux lignes plus bas.
+ * Deux devises sur la même course, parce que les deux nombres venaient de deux
+ * sources : le prix relayait le champ de Fleetbase, le montant à encaisser
+ * venait du registre de caisse, qui écrit `DZD`. Motif complet et cause exacte
+ * (une collision de noms avec la colonne `currency` de Fleetbase) dans
+ * `common/money/currency.ts`.
+ *
+ * ── Pourquoi ici et pas dans l'application ──────────────────────────────────
+ *
+ * Substituer le libellé côté écran créerait une **troisième** règle, dans un
+ * fichier où personne n'irait la chercher — et il faudrait la répéter pour
+ * chacun des trois personas (règle 5). La projection est le point par lequel
+ * passent déjà les trois, et c'est elle qui décide de ce qui sort.
+ *
+ * ── Ce que cette fonction ne fait pas ───────────────────────────────────────
+ *
+ * ⚠️ **Aucune conversion.** Les montants ne sont pas touchés ; seul leur nom
+ * est corrigé, parce que Fleetbase ne propose pas le DZD et que sa case ne peut
+ * donc jamais dire la vérité de cette plateforme.
+ *
+ * ⚠️ **Aucune devise sans montant.** Une course sans prix ne reçoit pas de
+ * devise : « DZD » tout seul décrirait une somme qui n'existe pas, et l'absence
+ * de prix est une information qu'un repli effacerait (règle 10).
+ */
+function normaliseCurrencies(meta: Record<string, any>): void {
+  const currency = platformCurrency(process.env.CURRENCY);
+  if (meta.price !== undefined && meta.price !== null) meta.currency = currency;
+  if (meta.cod_amount !== undefined && meta.cod_amount !== null) meta.cod_currency = currency;
 }
 
 /**

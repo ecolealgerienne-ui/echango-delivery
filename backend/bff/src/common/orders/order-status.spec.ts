@@ -92,4 +92,25 @@ describe('ce qui reste réclamable', () => {
       isClaimable({ adhoc: true, status: 'dispatched', facilitator_uuid: 'v1' }),
     ).toBe(false);
   });
+
+  // ⚠️ Le cas qui manquait, et qui s'est produit en réel (02/08/2026).
+  //
+  // Une course **démarrée mais sans conducteur assigné** passait le prédicat :
+  // elle est `adhoc`, elle n'a pas de conducteur, elle n'est pas terminale.
+  // L'onglet « Opportunités » l'offrait donc avec un bouton « Accepter », et
+  // Fleetbase refusait — `400 Order has already started`. Le transporteur
+  // recevait un message d'erreur brut là où il croyait prendre du travail.
+  it('ni si elle a déjà commencé, même sans conducteur assigné', () => {
+    expect(isClaimable({ adhoc: true, status: 'started' })).toBe(false);
+    expect(isClaimable({ adhoc: true, status: 'enroute' })).toBe(false);
+    expect(isClaimable({ adhoc: true, status: 'driver_enroute' })).toBe(false);
+  });
+
+  // Le biais du fichier est conservé, et il est délibéré : un statut que nous
+  // ne connaissons pas ne doit pas faire **disparaître** du travail en silence.
+  // Mieux vaut une course offerte puis refusée qu'une course jamais montrée.
+  it('mais un statut inconnu reste offert — l’absence ne doit pas cacher', () => {
+    expect(isClaimable({ adhoc: true, status: 'un_statut_que_fleetbase_inventera' }))
+      .toBe(true);
+  });
 });

@@ -7,6 +7,8 @@ import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
   projectOrderForDriver,
@@ -34,6 +36,7 @@ export class TransporteurService {
     private readonly notifications: NotificationsService,
     private readonly cash: CashService,
     private readonly configService: ConfigService,
+    private readonly driverZone: DriverZoneService,
   ) {}
 
   /**
@@ -535,6 +538,44 @@ export class TransporteurService {
    * utilitaire ne lui est pas proposée s'il roule en moto. Ne rien déclarer
    * reste le comportement le plus ouvert — il voit tout.
    */
+  /**
+   * La zone déclarée, et le rayon **proposé** à qui n'a rien réglé.
+   *
+   * ⚠️ `suggestedRadiusKm` n'est pas `radiusKm`, et les confondre viderait la
+   * liste de tous ceux qui n'ont jamais ouvert le réglage. Le premier est une
+   * valeur d'écran, le second une décision de l'utilisateur — seul le second
+   * filtre quoi que ce soit.
+   */
+  async readZone(driverId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    return {
+      wilaya: zone?.wilaya ?? null,
+      radius_km: zone?.radiusKm ?? null,
+      suggested_radius_km: DEFAULT_ZONE_RADIUS_KM,
+      // Dire si la position est connue : sans elle le rayon ne s'applique pas,
+      // et l'écran doit pouvoir l'expliquer plutôt que de laisser croire à un
+      // filtre qui ne filtre rien.
+      position_known: point != null,
+    };
+  }
+
+  async saveZone(driverId: string, dto: { wilaya?: string | null; radiusKm?: number | null }) {
+    const driver = await this.getDriverOrFail(driverId);
+    const wilaya = typeof dto.wilaya === 'string' && dto.wilaya.trim() ? dto.wilaya.trim() : null;
+    const radiusKm = typeof dto.radiusKm === 'number' ? dto.radiusKm : null;
+
+    // L'identifiant public est indispensable à l'écriture (voir `write`) ; il
+    // est résolu et mémorisé par ce helper, donc il ne coûte qu'une fois.
+    const publicId = await this.getDriverPublicId(driver);
+    await this.driverZone.write(driver.fleetbaseDriverUuid, publicId, { wilaya, radiusKm });
+
+    // Relu plutôt que déduit : le stockage est chez Fleetbase, et rendre ce
+    // qu'on vient d'envoyer masquerait un refus silencieux — le mode d'échec
+    // habituel de cette API.
+    return this.readZone(driverId);
+  }
+
   async updateVehicleType(driverId: string, vehicleType?: string) {
     const driver = await this.getDriverOrFail(driverId);
     await this.prisma.driverAccount.update({
@@ -701,7 +742,21 @@ export class TransporteurService {
       adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
     );
 
-    const adhoc = adhocHydrated.filter(suits);
+    // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
+    //
+    // C'est lui qui choisit sa course (décision produit du 02/08/2026) : la
+    // liste ne s'aligne donc pas sur `adhoc_distance`, qui gouverne les
+    // sollicitations, mais sur ce qu'il a **déclaré vouloir voir**.
+    //
+    // `zoneAllows` laisse passer tout ce qu'il ignore — course sans wilaya,
+    // course sans point, transporteur sans position, transporteur sans
+    // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
+    // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
+    // sans que personne ne puisse constater ce qui manque.
+    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    const adhoc = adhocHydrated
+      .filter(suits)
+      .filter((o) => zoneAllows(o, zone, point));
 
     // ⚠️ `cancelled` à deux « l » compris : sans lui, une course annulée par le
     // chemin qui emploie cette orthographe restait dans les courses actives du
@@ -1276,46 +1331,29 @@ export class TransporteurService {
   }
 
   /**
-   * Le facilitateur de cette course, ou `null` si elle n'en porte pas.
+   * Le facilitateur de cette course — **délégué au registre**.
    *
-   * ── Où vit l'information ────────────────────────────────────────────────
+   * ── Pourquoi ce n'est plus écrit ici (revue du 01/08/2026, C2) ───────────
    *
-   * Sur `Order.facilitator_uuid` chez Fleetbase, natif et prévu pour ça. Le BFF
-   * ne le recopie nulle part : il le lit, et ne conserve que le lien vers le
-   * compte Echango correspondant, une fois figé dans une écriture comptable.
+   * Ces quatre-vingt-dix lignes existaient **en double**, une copie par module,
+   * et l'ancien commentaire de celle-ci affirmait que le repli plateforme était
+   * « ici et nulle part ailleurs ». Il était aussi dans `commercant.service.ts`,
+   * en sens inverse : un `return null` là où celle-ci rendait Echango.
    *
-   * ⚠️ Rend `null` quand le fournisseur n'a **aucun compte Echango**. Ce cas
-   * est réel : un opérateur peut rattacher une commande à un `Vendor` en
-   * console sans que ce fournisseur soit une entreprise inscrite chez nous. La
-   * course se comporte alors comme une course sans facilitateur — le conducteur
-   * règle avec le commerçant — plutôt que de créer une dette envers une partie
-   * qui n'existe pas dans le registre.
+   * Les deux alimentent le même registre, et `legScope()` construit une jambe
+   * différente selon que le facilitateur est nul — donc **deux contreparties
+   * pour deux courses identiques**, selon le chemin de clôture. Un commentaire
+   * ne peut pas échouer ; `CashService` le tient désormais pour les deux.
    */
-  private async resolveFacilitator(
+  private resolveFacilitator(
     order: any,
   ): Promise<{ id: string; isPlatform: boolean } | null> {
-    const vendorUuid = order?.facilitator_uuid;
-    if (!vendorUuid) return null;
-
-    const fleet = await this.prisma.fleetAccount.findUnique({
-      where: { fleetbaseVendorUuid: vendorUuid },
-      select: { id: true, isPlatform: true },
-    });
-
-    if (!fleet) {
-      this.logger.warn(
-        `Commande ${order?.uuid} rattachée au fournisseur ${vendorUuid}, qui n'a pas de compte ` +
-          'Echango — traitée comme une course sans facilitateur',
-      );
-      return null;
-    }
-
-    return fleet;
+    return this.cash.resolveFacilitator(order);
   }
 
   /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
-  private async resolveFacilitatorId(order: any): Promise<string | null> {
-    return (await this.resolveFacilitator(order))?.id ?? null;
+  private resolveFacilitatorId(order: any): Promise<string | null> {
+    return this.cash.resolveFacilitatorId(order);
   }
 
   /**
@@ -1348,26 +1386,39 @@ export class TransporteurService {
     // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
     // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
     const facilitatorId = await this.resolveFacilitatorId(order);
+    const counterparty = this.cash.driverCounterparty(facilitatorId, cached.merchantId);
 
-    const { allowed, debt, ceiling, scope } = await this.cash.canTakeCashOrder(
+    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
       driverParty(driverId),
-      this.cash.driverCounterparty(facilitatorId, cached.merchantId),
+      counterparty,
       codAmount,
     );
 
     if (!allowed) {
-      // ⚠️ « pour ce commerçant » est faux quand c'est le plafond par personne
-      // qui a mordu : le conducteur irait remettre à celui-là, sans se
-      // débloquer, et conclurait à un défaut de l'application.
+      // ⚠️ Le message nomme la contrepartie RÉELLE, et il y en a trois.
+      //
+      // « pour ce commerçant » est faux dans deux cas sur trois, et chacun
+      // envoie le conducteur remettre au mauvais endroit — donc ne pas se
+      // débloquer, et conclure à un défaut de l'application :
+      //
+      //   · plafond par personne  → le total, toutes contreparties confondues ;
+      //   · contrepartie `fleet`  → une entreprise, ou **Echango** depuis que le
+      //     pool a un facilitateur (01/08/2026). C'est le cas le plus courant, et
+      //     le total y est agrégé sur TOUS les commerçants du pool : « pour ce
+      //     commerçant » y désignait un montant qui n'est pas le sien.
       badRequest(
         'cash.ceiling_exceeded',
         scope === 'person'
-          ? `Vous détenez déjà ${debt} ${this.cash.currency} au total, toutes entreprises et ` +
+          ? `Vous détenez déjà ${held} ${this.cash.currency} au total, toutes entreprises et ` +
               `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
               `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
-          : `Vous détenez déjà ${debt} ${this.cash.currency} pour ce commerçant, et cette ` +
-              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-              'Remettez les espèces avant de reprendre une course encaissée pour lui.',
+          : counterparty.type === 'fleet'
+            ? `Vous détenez déjà ${held} ${this.cash.currency} pour le compte de votre ` +
+                `donneur d'ordre, et cette course en ajouterait ${codAmount} — au-delà du ` +
+                `plafond de ${ceiling}. Remettez les espèces avant de reprendre une course encaissée.`
+            : `Vous détenez déjà ${held} ${this.cash.currency} pour ce commerçant, et cette ` +
+                `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
+                'Remettez les espèces avant de reprendre une course encaissée pour lui.',
       );
     }
   }
@@ -1375,11 +1426,37 @@ export class TransporteurService {
   /**
    * Cette transition clôt-elle la livraison ?
    *
-   * `completed` est le code terminal des configurations de commande Fleetbase —
-   * le même que celui sur lequel l'application colore déjà son bouton. Reconnu
-   * ici pour savoir quand exiger la déclaration d'encaissement.
+   * ── Pourquoi ce n'est plus un littéral (revue du 01/08/2026, S4) ──────────
+   *
+   * La garde « pas de clôture sans déclaration d'encaissement » était accrochée
+   * à la chaîne `'completed'`, alors que la source de vérité est le `flow` de
+   * l'`OrderConfig` — **modifiable depuis la console**, et choisie par
+   * `configs.find(key === 'transport') || configs[0]`. Le jour où l'activité
+   * terminale d'une configuration porte un autre code, une livraison encaissée
+   * se clôturait sans que `settleCashIfDue()` ne s'exécute : livraison close,
+   * argent dans la poche du conducteur, aucune `CashCollection`, aucune dette,
+   * et rien pour le dire. C'est le mode d'échec exact du §16, où la même garde
+   * était décorative pour une autre raison.
+   *
+   * Chaque entrée du `flow` porte un drapeau `complete` — vérifié le 01/08/2026
+   * sur la configuration réelle : `created/enroute/started/dispatched` à
+   * `false`, `completed` à `true`. Et `next-activity`, d'où l'application tire
+   * l'objet qu'elle nous renvoie, sert ces entrées telles quelles ; le DTO les
+   * laisse passer intactes (`Record<string, any>`).
+   *
+   * Le drapeau **fait donc autorité dans les deux sens** : `false` veut dire que
+   * la configuration ne clôt pas ici, quel que soit le code. Le littéral ne
+   * subsiste qu'en repli, pour un client qui enverrait une activité amputée — et
+   * il le dit, plutôt que de décider en silence.
    */
   private isTerminalActivity(activity: any): boolean {
+    if (typeof activity?.complete === 'boolean') return activity.complete;
+
+    this.logger.warn(
+      `Activité « ${activity?.code ?? '?'} » reçue sans son drapeau « complete » — ` +
+        'la clôture est déduite du code, ce qui est faux dès que la configuration ' +
+        'de commande emploie un autre vocabulaire',
+    );
     return activity?.code === 'completed' || activity?.status === 'completed';
   }
 

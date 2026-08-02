@@ -109,6 +109,7 @@ class _MembershipsTabState extends State<MembershipsTab> {
     final t = widget.t;
     final state = context.watch<FleetState>();
     final memberships = state.memberships;
+    final unavailable = state.membershipsUnavailable;
 
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -155,7 +156,20 @@ class _MembershipsTabState extends State<MembershipsTab> {
 
         const Divider(height: 32),
 
-        if (memberships.isEmpty)
+        // ⚠️ `membershipsUnavailable` était calculé, exposé, et lu par
+        // PERSONNE (règle 9) — ses deux jumeaux `driversUnavailable` et
+        // `addressesUnavailable` ont chacun leur lecteur. L'erreur n'était
+        // visible que par `_errorMessage`, que `load()` remet à `null` au
+        // premier tirer-pour-rafraîchir : après ce geste, l'entreprise lisait
+        // « Aucun rattachement » sans bandeau. Soit l'onglet le lit, soit le
+        // champ se supprime — il ne peut pas rester à mi-chemin.
+        if (unavailable)
+          ListTile(
+            leading: const Icon(Icons.cloud_off_outlined),
+            title: Text(t('fleet.members.unavailable')),
+            subtitle: Text(t('fleet.members.unavailable.hint')),
+          )
+        else if (memberships.isEmpty)
           ListTile(
             title: Text(t('fleet.members.empty')),
             subtitle: Text(t('fleet.members.empty.hint')),

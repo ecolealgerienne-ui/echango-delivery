@@ -44,6 +44,23 @@ désigné par `driver_assigned_uuid` et rattaché à son entreprise par
 
 ## 2. Décisions prises le 31/07/2026
 
+> ⚠️ **DÉCIDÉ, PAS ENCORE BRANCHÉ (vérifié dans le code le 01/08/2026).**
+>
+> Les cases ✅ de cette section marquent des décisions **prises**, pas des
+> fonctionnalités livrées. À ce jour, `resolveFacilitator()` rend `null` dès que
+> `facilitator_uuid` est absent, et **rien ne pose Echango comme facilitateur
+> d'une course du pool** — les seuls écrivains de cette colonne sont la prise par
+> une entreprise et la remise au pool qui l'efface.
+>
+> Conséquence : sur une course du pool, la chaîne reste à **deux** maillons
+> (conducteur → commerçant), la commission reste non recouvrable, et c'est le
+> commerçant qui porte le risque. Le §7.1 décrit donc l'état **cible**.
+>
+> Également décidés et non branchés : les **favoris polymorphes** (§6.1) et le
+> **persona opérateur** (D21). `isPlatform` existe et fonctionne, mais reste
+> dormant faute d'un facilitateur plateforme posé automatiquement.
+
+
 ### 2.1 ✅ Le facilitateur porte l'argent vis-à-vis du commerçant
 
 > **Quand il y a un facilitateur dans la boucle, c'est le facilitateur qui porte

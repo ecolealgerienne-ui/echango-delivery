@@ -50,6 +50,13 @@ export interface NotifyInput {
   body: string;
   fleetbaseOrderUuid?: string | null;
   orderId?: string | null;
+  /**
+   * Les variables du message, servies **à part** du message.
+   *
+   * L'application traduit depuis `type` (règle 4) ; les cuire dans `body`
+   * rendait la phrase intraduisible sans la redécouper.
+   */
+  data?: Record<string, string | null> | null;
 }
 
 /**
@@ -99,6 +106,7 @@ export class NotificationsService {
           body: input.body,
           fleetbaseOrderUuid: input.fleetbaseOrderUuid ?? null,
           orderId: input.orderId ?? null,
+          data: input.data ?? undefined,
         },
       });
     } catch (error: any) {
@@ -152,8 +160,11 @@ export class NotificationsService {
       data: notifications.map((n: any) => ({
         id: n.id,
         type: n.type,
+        // Servis en repli d'un `type` inconnu du client — jamais comme le
+        // texte à afficher : ils sont en français dans le code serveur.
         title: n.title,
         body: n.body,
+        data: n.data ?? null,
         // L'identifiant local, pas l'uuid Fleetbase : c'est celui que le
         // module commerçant sait résoudre, et il évite d'exposer l'amont.
         order_id: n.orderId,

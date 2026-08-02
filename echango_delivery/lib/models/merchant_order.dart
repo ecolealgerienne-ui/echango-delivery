@@ -2,6 +2,8 @@ import 'dart:ui' show Locale;
 
 import 'package:equatable/equatable.dart';
 
+import '../i18n/order_strings.dart';
+import '../utils/dates.dart';
 import 'cash.dart';
 import 'fleetbase_json.dart';
 // `DeliveryFailure` est partagé avec le transporteur : c'est le même
@@ -307,11 +309,16 @@ class OrderItemLine extends Equatable {
 
   /// Une ligne lisible : « Gâteau · 2 kg · fragile ». Les parties absentes
   /// disparaissent au lieu d'afficher un tiret.
-  String get label => [
+  ///
+  /// `2×` reste littéral : c'est un signe, pas un mot, et il se lit dans les
+  /// deux langues. `kg` et `fragile` non — ils étaient en français en dur au
+  /// milieu d'une fiche par ailleurs traduite.
+  String label(Locale locale) => [
         if (quantity > 1) '$quantity×',
         description,
-        if (weight != null) '$weight kg',
-        if (fragile) 'fragile',
+        if (weight != null)
+          orderLabel('order.item.weight', locale, {'weight': '$weight'}),
+        if (fragile) orderLabel('order.item.fragile', locale),
       ].where((p) => p.isNotEmpty).join(' · ');
 
   @override
@@ -560,15 +567,25 @@ class DriverPosition extends Equatable {
 
   /// Ancienneté du relevé, en clair. `null` quand la date manque — on ne
   /// prétend alors pas savoir.
-  String? get freshness {
+  ///
+  /// ── C'était un second formateur de durée, et il ne parlait que français ──
+  ///
+  /// Cette méthode portait sa propre échelle — « à l'instant », « il y a X min »,
+  /// « il y a X h », « position ancienne » — c'est-à-dire une **copie** de
+  /// [formatRelative], à trois mots près et sans arabe. Règle 5 : la question
+  /// n'est pas si les deux se ressemblent, mais si l'une doit changer quand
+  /// l'autre change. Reformuler « il y a » ici et pas là afficherait deux
+  /// tournures pour la même idée dans la même application.
+  ///
+  /// ⚠️ **Un changement d'affichage assumé** : au-delà de 24 h, le texte était
+  /// « position ancienne » et devient « il y a 2 j », puis la date au-delà
+  /// d'une semaine. C'est plus précis, et l'information que le point est périmé
+  /// n'est pas perdue — elle est portée par [isStale], qui grise le repère dès
+  /// dix minutes. « Position ancienne » ne disait pas *à quel point*.
+  String? freshness(Locale locale) {
     final at = recordedAt;
     if (at == null) return null;
-
-    final delta = DateTime.now().difference(at);
-    if (delta.inMinutes < 2) return 'à l\'instant';
-    if (delta.inMinutes < 60) return 'il y a ${delta.inMinutes} min';
-    if (delta.inHours < 24) return 'il y a ${delta.inHours} h';
-    return 'position ancienne';
+    return formatRelative(at, locale);
   }
 
   /// Au-delà de dix minutes, le point ne décrit plus où se trouve le
@@ -599,6 +616,14 @@ class MerchantNotification extends Equatable {
   final bool read;
   final DateTime createdAt;
 
+  /// Les variables du message — nom du transporteur, numéro de suivi.
+  ///
+  /// ⚠️ `title` et `body` sont écrits **en français dans le code serveur** :
+  /// l'écran ne les affiche qu'en repli d'un `type` inconnu. C'est `data` qui
+  /// permet de reconstruire la phrase dans la langue de l'utilisateur, l'ordre
+  /// des mots n'étant pas le même en arabe.
+  final Map<String, String> data;
+
   const MerchantNotification({
     required this.id,
     required this.type,
@@ -607,6 +632,7 @@ class MerchantNotification extends Equatable {
     required this.read,
     required this.createdAt,
     this.orderId,
+    this.data = const {},
   });
 
   factory MerchantNotification.fromJson(Map<String, dynamic> json) =>
@@ -616,6 +642,10 @@ class MerchantNotification extends Equatable {
         title: (json['title'] ?? '') as String,
         body: (json['body'] ?? '') as String,
         orderId: json['order_id'] as String?,
+        data: {
+          for (final e in ((json['data'] as Map?) ?? const {}).entries)
+            if (e.value != null) '${e.key}': '${e.value}',
+        },
         read: json['read'] == true,
         createdAt: readDate(json, 'created_at'),
       );
@@ -659,6 +689,24 @@ class KnownDriver extends Equatable {
   final String? name;
   final String? favouriteId;
 
+  /// `driver` ou `fleet` — un transporteur, ou une entreprise de transport.
+  ///
+  /// ── Pourquoi le type doit voyager, et pas seulement l'uuid ───────────────
+  ///
+  /// `Driver` et `Vendor` sont **deux espaces d'identifiants distincts** chez
+  /// Fleetbase : rien n'interdit qu'un uuid apparaisse dans les deux. C'est la
+  /// raison pour laquelle l'unicité, côté serveur, porte sur le couple
+  /// `(partyType, uuid)` et non sur l'uuid seul — et l'écran doit raisonner sur
+  /// la même clé, sinon une entreprise en favori marquerait un conducteur
+  /// homonyme comme « déjà en favori ».
+  ///
+  /// **`driver` par défaut** : c'est ce que valent toutes les réponses écrites
+  /// avant que le serveur serve ce champ, et toutes celles d'un serveur plus
+  /// ancien. Le défaut ne change donc le sens d'aucune donnée existante.
+  final String partyType;
+
+  bool get isFleet => partyType == 'fleet';
+
   /// Ce transporteur a-t-il installé l'application ?
   ///
   /// La recherche porte sur l'annuaire Fleetbase — celui que l'opérateur
@@ -676,6 +724,7 @@ class KnownDriver extends Equatable {
     this.name,
     this.favouriteId,
     this.hasAccount = true,
+    this.partyType = 'driver',
   });
 
   factory KnownDriver.fromJson(Map<String, dynamic> json) => KnownDriver(
@@ -683,14 +732,37 @@ class KnownDriver extends Equatable {
         name: json['name'] as String?,
         favouriteId: json['id'] as String?,
         hasAccount: json['has_account'] == null || json['has_account'] == true,
+        // Un type inconnu retombe sur `driver` plutôt que d'être propagé tel
+        // quel : l'écran s'en sert pour choisir une icône et un libellé, et un
+        // troisième type inattendu produirait une ligne muette.
+        partyType: json['party_type'] == 'fleet' ? 'fleet' : 'driver',
       );
 
-  String get displayName => (name != null && name!.isNotEmpty)
-      ? name!
-      : 'Transporteur ${driverUuid.substring(0, driverUuid.length.clamp(0, 8))}';
+  /// La clé qui identifie cette partie **sans ambiguïté**.
+  ///
+  /// L'uuid seul ne suffit pas : voir [partyType]. Utilisée par l'écran des
+  /// favoris pour savoir ce qui est déjà enregistré.
+  String get partyKey => '$partyType:$driverUuid';
+
+  /// Le nom affichable, avec un repli **traduit** quand il manque.
+  ///
+  /// ⚠️ La locale est exigée, comme pour `orderStatusLabel` et `vehicleLabel` :
+  /// le repli produit des mots. La version précédente rendait « Transporteur
+  /// 3f2a… » en français quelle que soit la langue — dette héritée que le
+  /// balayage i18n du 01/08 avait manquée, et que le passage aux entreprises
+  /// aurait doublée.
+  String displayName(Locale locale) {
+    if (name != null && name!.isNotEmpty) return name!;
+    final short = driverUuid.substring(0, driverUuid.length.clamp(0, 8));
+    return orderLabel(
+      isFleet ? 'order.party.fleet.unnamed' : 'order.party.driver.unnamed',
+      locale,
+      {'id': short},
+    );
+  }
 
   @override
-  List<Object?> get props => [driverUuid, name, favouriteId];
+  List<Object?> get props => [partyType, driverUuid, name, favouriteId];
 }
 
 /// Résultat d'une recherche de transporteur.

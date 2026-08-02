@@ -2,7 +2,7 @@ import { Controller, Get, Post, Param, Body, Query, Request } from '@nestjs/comm
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
-import { ListFleetOrdersQueryDto, AssignDriverDto } from './dto/order.dto';
+import { ListFleetOrdersQueryDto, AssignDriverDto, DriverPositionsQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
@@ -179,9 +179,12 @@ export class FlotteController {
   }
 
   @Get('drivers/positions')
-  async getDriverPositions(@Request() req: any, @Query('driverIds') driverIds?: string) {
-    const ids = driverIds ? driverIds.split(',').filter(Boolean) : [];
-    return this.flotteService.getDriverPositions(this.fleetId(req), ids);
+  async getDriverPositions(@Request() req: any, @Query() query: DriverPositionsQueryDto) {
+    // ⚠️ Passé par un DTO, pas lu en `@Query('driverIds')` : le
+    // `ValidationPipe` ne valide que les classes décorées (règle 13). Avant,
+    // une chaîne de dix mille identifiants partait telle quelle interroger
+    // Fleetbase, un par un.
+    return this.flotteService.getDriverPositions(this.fleetId(req), query.ids());
   }
 
   @Post('commandes/:id/assigner')

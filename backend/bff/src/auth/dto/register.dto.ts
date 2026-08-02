@@ -1,3 +1,4 @@
+import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 import { IsEmail, IsString, MinLength, IsOptional, Matches, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -125,7 +126,12 @@ export class DriverLoginDto {
  */
 export class CreateDriverInvitationDto {
   @IsString()
-  @Matches(/^[A-Za-z0-9_-]{1,64}$/, {
+  // ⚠️ Le motif était recopié en clair ici alors qu'il est nommé et employé six
+  // fois ailleurs. Identique au caractère près, donc libre de diverger le jour
+  // où l'un des deux change — et c'est le motif qui protège les identifiants
+  // interpolés dans une URL Fleetbase appelée avec le jeton de service
+  // (règle 13).
+  @Matches(FLEETBASE_ID_PATTERN, {
     message: 'fleetbaseDriverUuid doit être un identifiant Fleetbase valide',
   })
   fleetbaseDriverUuid: string;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../errors/error_message.dart';
 import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
 import '../../services/bff_api_client.dart';
@@ -93,8 +94,10 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       });
     } catch (e) {
       if (mounted) {
-        setState(() =>
-            _error = _t('order.fav.search.failed', {'error': '$e'}));
+        // ⚠️ `messageForError` et non `'$e'`. `AppException.toString()` rend
+        // `message ?? code` : interpoler affichait le message serveur FRANÇAIS
+        // à un arabophone, ou le code nu, ou le `SocketException` anglais.
+        setState(() => _error = messageForError(e, context.read<LocaleState>().locale));
       }
     } finally {
       if (mounted) setState(() => _searching = false);
@@ -108,7 +111,9 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
     if (ok) {
       // Le résultat disparaît de la recherche une fois ajouté : le laisser
       // ferait douter que l'ajout ait eu lieu.
-      setState(() => _results.removeWhere((r) => r.driverUuid == d.driverUuid));
+      // Par `partyKey` et non par uuid : sur l'uuid seul, ajouter une
+      // entreprise ferait disparaître un conducteur homonyme du résultat.
+      setState(() => _results.removeWhere((r) => r.partyKey == d.partyKey));
     } else {
       showAppError(context, state.errorMessage ?? _t('order.fav.add.failed'));
     }
@@ -135,8 +140,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
       if (mounted) setState(() => _known = known);
     } catch (e) {
       if (mounted) {
-        setState(() =>
-            _error = _t('order.fav.load.failed', {'error': '$e'}));
+        setState(() => _error = messageForError(e, context.read<LocaleState>().locale));
       }
     } finally {
       if (mounted) {
@@ -151,9 +155,19 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<MerchantOrderState>();
-    final favouriteUuids = {for (final f in state.favourites) f.driverUuid};
+    // ⚠️ La clé est le couple **type + uuid**, jamais l'uuid seul.
+    //
+    // `Driver` et `Vendor` sont deux espaces d'identifiants distincts chez
+    // Fleetbase : rien n'interdit qu'un uuid apparaisse dans les deux. Sur
+    // l'uuid seul, une entreprise en favori marquerait un conducteur homonyme
+    // comme « déjà enregistré » — et il disparaîtrait de la liste des
+    // propositions sans que rien ne l'explique.
+    //
+    // C'est la même clé que celle de l'unicité côté serveur ; les deux côtés
+    // doivent raisonner pareil, sans quoi l'écran contredit la base.
+    final favouriteKeys = {for (final f in state.favourites) f.partyKey};
     final candidates =
-        _known.where((d) => !favouriteUuids.contains(d.driverUuid)).toList();
+        _known.where((d) => !favouriteKeys.contains(d.partyKey)).toList();
 
     return Scaffold(
       appBar: AppBar(title: Text(_t('order.fav.title'))),
@@ -230,8 +244,14 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     ..._results.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.person_search_outlined),
-                          title: Text(d.displayName),
+                          leading: Icon(
+                            // Une entreprise et un transporteur se ressemblent
+                            // trop dans une liste : sans marque visible, un
+                            // commerçant confie une course en croyant l'avoir
+                            // confiée à quelqu'un d'autre.
+                            d.isFleet ? Icons.business_outlined : Icons.person_outline,
+                          ),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           // Un transporteur de l'annuaire qui n'a pas encore
                           // l'application ne recevra aucune course : le mettre
                           // en favori serait un geste sans effet, et le taire
@@ -253,7 +273,22 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                   const SizedBox(height: AppSpacing.xl),
                   Text(_t('order.fav.section'), style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: AppSpacing.sm),
-                  if (state.favourites.isEmpty)
+                  // ⚠️ L'indisponibilité AVANT le vide. « Aucun favori. Vos
+                  // livraisons sont proposées à tout le réseau » décrit une
+                  // POLITIQUE DE DIFFUSION : l'affirmer sur une lecture qui a
+                  // échoué faisait croire au commerçant qu'il avait perdu ses
+                  // favoris, et il les ré-ajoutait.
+                  if (state.favouritesUnavailable)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.cloud_off_outlined),
+                        title: Text(_t('order.fav.unavailable')),
+                        subtitle: Text(_t('order.fav.unavailable.hint')),
+                      ),
+                    )
+                  else if (state.favourites.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                       child: Text(
@@ -266,7 +301,7 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                         child: ListTile(
                           leading:
                               Icon(Icons.star, color: context.semantic.warning),
-                          title: Text(d.displayName),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           trailing: IconButton(
                             icon: const Icon(Icons.remove_circle_outline),
                             tooltip: _t('order.fav.remove'),
@@ -292,8 +327,14 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
                     ...candidates.map(
                       (d) => Card(
                         child: ListTile(
-                          leading: const Icon(Icons.person_outline),
-                          title: Text(d.displayName),
+                          leading: Icon(
+                            // Une entreprise et un transporteur se ressemblent
+                            // trop dans une liste : sans marque visible, un
+                            // commerçant confie une course en croyant l'avoir
+                            // confiée à quelqu'un d'autre.
+                            d.isFleet ? Icons.business_outlined : Icons.person_outline,
+                          ),
+                          title: Text(d.displayName(context.read<LocaleState>().locale)),
                           trailing: IconButton(
                             icon: const Icon(Icons.star_outline),
                             tooltip: _t('order.fav.add'),

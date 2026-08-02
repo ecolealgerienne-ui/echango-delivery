@@ -52,7 +52,7 @@ mixin WriteEnvelope on ChangeNotifier {
   }) async {
     busy = true;
     failure = null;
-    notifyListeners();
+    _notify();
     try {
       await action();
       if (reload != null) await reload();
@@ -62,7 +62,40 @@ mixin WriteEnvelope on ChangeNotifier {
       return false;
     } finally {
       busy = false;
-      notifyListeners();
+      _notify();
     }
+  }
+
+  // ── Ne pas notifier une classe déjà détruite (02/08/2026) ─────────────────
+
+  bool _writeDisposed = false;
+
+  /// ⚠️ **Une écriture survit à l'écran qui l'a lancée, et le `finally` le
+  /// découvrait trop tard.**
+  ///
+  /// `runWrite` notifie **deux fois**, dont une dans un `finally` qui s'exécute
+  /// après l'aller-retour réseau. Si la classe d'état a été détruite entre-temps
+  /// — déconnexion, retour arrière, fin d'un parcours — ce second appel lève
+  /// « A OrderState was used after being disposed ».
+  ///
+  /// Trouvé par le parcours transporteur joué dans l'application : les
+  /// assertions passaient, et l'exception tombait **après** la fin du test,
+  /// faisant sortir le processus en erreur sur un scénario réussi. En usage
+  /// réel, c'est le transporteur qui accepte une course puis quitte l'écran
+  /// avant que le serveur ait répondu — le geste le plus banal qui soit sur une
+  /// connexion lente.
+  ///
+  /// Le garde vit dans le mixin, donc **une fois pour les quatre classes**
+  /// d'état : le poser chez chacune serait exactement la duplication que cette
+  /// enveloppe existe pour supprimer.
+  void _notify() {
+    if (_writeDisposed) return;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _writeDisposed = true;
+    super.dispose();
   }
 }

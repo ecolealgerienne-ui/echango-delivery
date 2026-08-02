@@ -70,6 +70,15 @@ export const ErrorCode = {
   AUTH_SESSION_REVOKED: 'auth.session_revoked',
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  /**
+   * Plusieurs prestataires « plateforme » actifs.
+   *
+   * Refus délibéré plutôt qu'un choix au hasard : c'est ce compte qui reçoit
+   * l'argent des courses du pool, donc en prendre un arbitrairement routerait
+   * une somme réelle vers la mauvaise partie, et le défaut ne se verrait qu'au
+   * règlement.
+   */
+  CASH_PLATFORM_AMBIGUOUS: 'cash.platform_ambiguous',
   CASH_AMOUNT_NEGATIVE: 'cash.amount_negative',
   CASH_AMOUNT_EXCEEDS_EXPECTED: 'cash.amount_exceeds_expected',
   CASH_DISCREPANCY_REASON_REQUIRED: 'cash.discrepancy_reason_required',
@@ -101,6 +110,7 @@ export const ErrorCode = {
   /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
   /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
   CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
+  CASH_DRIVER_UNKNOWN_TO_MERCHANT: 'cash.driver_unknown_to_merchant',
   /**
    * L'identifiant de contrepartie d'une remise ne correspond à aucun compte.
    *
@@ -190,9 +200,24 @@ export const ErrorCode = {
   MERCHANT_NOT_FOUND: 'merchant.not_found',
   MERCHANT_INACTIVE: 'merchant.inactive',
   MERCHANT_ADDRESS_NOT_FOUND: 'merchant.address_not_found',
+  /**
+   * Le carnet d'adresses n'a pas pu être lu.
+   *
+   * ⚠️ **Ce code existe parce que son absence produisait un mensonge.** Mesuré
+   * le 03/08/2026 en coupant Fleetbase : `GET /commercant/adresses` rendait
+   * `{"data": []}` en **HTTP 200** pour un commerçant qui a deux adresses. Rien
+   * ne distinguait « votre carnet est vide » de « je n'ai pas pu le lire » —
+   * exactement le défaut déjà constaté côté conducteurs (règle 10).
+   */
+  MERCHANT_ADDRESSES_UNAVAILABLE: 'merchant.addresses_unavailable',
+  /** L'historique des transporteurs déjà employés n'a pas pu être lu. */
+  MERCHANT_KNOWN_DRIVERS_UNAVAILABLE: 'merchant.known_drivers_unavailable',
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
   MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
+  /** L'entreprise visee n'a pas de compte actif chez nous : elle ne peut
+   *  recevoir aucune course, la mettre en favori n'aurait pas de sens. */
+  MERCHANT_FLEET_NOT_IN_NETWORK: 'merchant.fleet_not_in_network',
   MERCHANT_FAVOURITE_ADD_UNAVAILABLE: 'merchant.favourite_add_unavailable',
   MERCHANT_ADDRESS_SAVE_FAILED: 'merchant.address_save_failed',
   MERCHANT_ADDRESS_UPDATE_FAILED: 'merchant.address_update_failed',
@@ -212,6 +237,20 @@ export const ErrorCode = {
   SERVER_SCHEMA_OUT_OF_SYNC: 'server.schema_out_of_sync',
   SERVER_INVALID_PROFILE_TYPE: 'server.invalid_profile_type',
   SERVER_PERSONA_FORBIDDEN: 'server.persona_forbidden',
+  /**
+   * Panne non prévue : tout ce qui n'est pas une `HttpException`.
+   *
+   * ⚠️ **Ce code existe parce que son absence était un trou de la règle 3.**
+   * `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError`
+   * ou une erreur Prisma ne passait pas par lui, sortait par le gestionnaire
+   * par défaut de Nest, donc **sans `code`** — et l'application retombait sur
+   * son message générique au moment précis où l'on comprend le moins ce qui
+   * s'est passé.
+   *
+   * Il n'est **jamais levé à la main** : c'est le filet, et l'y trouver dans un
+   * journal veut dire qu'un chemin d'erreur n'a pas été prévu.
+   */
+  SERVER_UNEXPECTED: 'server.unexpected',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -40,6 +40,60 @@ export function isTerminalOrderStatus(status: unknown): boolean {
   return typeof status === 'string' && TERMINAL_ORDER_STATUSES.includes(status);
 }
 
+/** Les orthographes qu'une annulation peut prendre chez Fleetbase. */
+export const CANCELLED_ORDER_STATUSES = ['canceled', 'cancelled'];
+
+/**
+ * Cette course s'est-elle terminée par une **annulation** ?
+ *
+ * ── Pourquoi ce prédicat, alors que la constante existait déjà ────────────
+ *
+ * `order-reconciler.service.ts` importait `TERMINAL_ORDER_STATUSES`, s'en
+ * servait deux fois — puis, dix lignes plus bas, réénumérait
+ * `status === 'canceled' || status === 'cancelled'` à la main pour choisir sa
+ * notification (revue du 01/08/2026, A5).
+ *
+ * Le jour où une quatrième graphie est ajoutée à la constante — **le motif même
+ * de son existence**, Fleetbase en émettant déjà deux —, le filtre de la ligne
+ * 109 la reconnaîtrait et la notification cesserait : le commerçant ne serait
+ * plus prévenu de l'annulation de sa livraison, sans erreur ni journal. La
+ * panne décrite dans l'en-tête de ce fichier, reproduite dans le fichier qui
+ * importe le correctif.
+ */
+export function isCancelledOrderStatus(status: unknown): boolean {
+  return typeof status === 'string' && CANCELLED_ORDER_STATUSES.includes(status);
+}
+
+/**
+ * Les statuts qui disent qu'une course a **déjà commencé**.
+ *
+ * ── Pourquoi ils excluent la réclamation (02/08/2026) ─────────────────────
+ *
+ * Trouvé par le parcours transporteur joué dans l'application : l'onglet
+ * « Opportunités » proposait une course du 30/07 avec un bouton « Accepter »,
+ * et le serveur refusait — `400 Order has already started`. Elle passait le
+ * prédicat parce qu'elle était `adhoc`, **sans conducteur assigné**, et pas
+ * terminale : `started` n'était exclu par rien.
+ *
+ * Une course commencée mais sans conducteur n'est pas une bizarrerie de
+ * laboratoire — elle apparaît dès qu'une acceptation aboutit à moitié, ou
+ * qu'un conducteur rend une course déjà démarrée. Ce qui est certain, et
+ * mesuré, c'est que Fleetbase la refuse : l'offrir ne peut donc produire qu'un
+ * message d'erreur brut là où le transporteur croyait prendre du travail.
+ *
+ * ⚠️ **Liste des statuts OBSERVÉS, pas une liste blanche des statuts permis.**
+ * Le biais de ce fichier est explicite — « une course dont on ignore l'état ne
+ * doit pas devenir invisible » — et il est conservé : un statut inconnu reste
+ * offert. Renverser ce biais ferait disparaître du travail en silence le jour
+ * où Fleetbase ajoute un état, ce qui est le mauvais côté de l'erreur ici.
+ */
+export const BEGUN_ORDER_STATUSES = ['started', 'enroute', 'driver_enroute'];
+
+/** Cette course a-t-elle déjà commencé ? Un statut inconnu répond **non**. */
+export function isBegunOrderStatus(status: unknown): boolean {
+  return typeof status === 'string' && BEGUN_ORDER_STATUSES.includes(status);
+}
+
 /**
  * Cette course est-elle **libre** ?
  *
@@ -84,6 +138,8 @@ export function isOrderClaimable(order: any): boolean {
   return (
     order?.adhoc === true &&
     !order?.driver_assigned_uuid &&
+    // Ni déjà commencée : cf. `BEGUN_ORDER_STATUSES` ci-dessus.
+    !isBegunOrderStatus(order?.status) &&
     !order?.facilitator_uuid &&
     // Tous les statuts terminaux, et non le seul `canceled` : terminer une
     // course n'efface pas `adhoc`, donc rien d'autre ne l'excluait.

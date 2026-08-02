@@ -28,6 +28,15 @@ const Map<String, String> _fr = {
   'common.cancel': 'Annuler',
   'common.back': 'Retour',
 
+  // ── Profils ─────────────────────────────────────────────────────────────
+  //
+  // Ici et non dans `auth_strings` : un profil se nomme partout, pas seulement
+  // à la connexion. `UserRole.label` les servait en français uniquement, et le
+  // tableau de bord transporteur les injecte dans une phrase traduite.
+  'common.role.transporteur': 'Transporteur',
+  'common.role.commercant': 'Commerçant',
+  'common.role.flotte': 'Gestionnaire de flotte',
+
   // ── Accueil ─────────────────────────────────────────────────────────────
   // ⚠️ « Echango Delivery » n'est PAS ici : une marque ne se traduit pas.
   'common.splash.tagline': 'Commandez, livrez, suivez',
@@ -55,6 +64,11 @@ const Map<String, String> _ar = {
   'common.retry': 'إعادة المحاولة',
   'common.cancel': 'إلغاء',
   'common.back': 'رجوع',
+
+  // ── Profils ─────────────────────────────────────────────────────────────
+  'common.role.transporteur': 'ناقل',
+  'common.role.commercant': 'تاجر',
+  'common.role.flotte': 'مسؤول أسطول',
 
   // ── Accueil ─────────────────────────────────────────────────────────────
   'common.splash.tagline': 'اطلب، وصّل، تابع',

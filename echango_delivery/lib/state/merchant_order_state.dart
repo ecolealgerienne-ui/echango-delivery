@@ -27,6 +27,19 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   List<SavedAddress> _addresses = [];
   List<KnownDriver> _favourites = [];
   MerchantOrder? _selected;
+
+  /// L'identifiant **avec lequel** la fiche ouverte a été demandée.
+  ///
+  /// ⚠️ Il ne se déduit pas de la commande chargée, et c'est tout le problème
+  /// qu'il résout (02/08/2026). Trois identifiants coexistent pour une même
+  /// course — le cuid local du BFF, l'uuid Fleetbase, et le `public_id`
+  /// `order_…` — et l'écran de détail est ouvert avec le **premier**, celui que
+  /// rend la création. Le modèle, lui, ne porte que les deux autres.
+  ///
+  /// Comparer `_selected.id` ou `_selected.publicId` à cet identifiant de route
+  /// ne pouvait donc **jamais** être vrai. On garde celui qu'on a demandé, pour
+  /// comparer ce qui est comparable.
+  String? _selectedRequestId;
   Map<String, dynamic>? _tracking;
   bool _isLoading = false;
   String? _errorMessage;
@@ -42,6 +55,18 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   /// Même forme que `FleetState.driversUnavailable`, et pour la même raison —
   /// une liste vide obtenue par échec ne se dit pas comme une liste vide.
   bool _addressesUnavailable = false;
+  /// La lecture des favoris a-t-elle échoué ?
+  ///
+  /// ⚠️ Sans lui, l'écran affirmait « Aucun favori. Vos livraisons sont
+  /// proposées à tout le réseau » — une phrase qui **décrit une politique de
+  /// diffusion**, donc une affirmation forte, et fausse. Le commerçant croyait
+  /// avoir perdu ses favoris et les ré-ajoutait.
+  bool _favouritesUnavailable = false;
+  /// Le relevé du journal a-t-il échoué ?
+  ///
+  /// ⚠️ Sur l'écran qui sert de substitut au push non branché, « Aucune
+  /// notification » se lit « personne n'a pris ma course ».
+  bool _notificationsUnavailable = false;
 
   MerchantOrderState({required BffApiClient apiClient, required LocaleState localeState})
       : _apiClient = apiClient,
@@ -92,6 +117,8 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   }
   List<SavedAddress> get addresses => _addresses;
   bool get addressesUnavailable => _addressesUnavailable;
+  bool get favouritesUnavailable => _favouritesUnavailable;
+  bool get notificationsUnavailable => _notificationsUnavailable;
 
   /// Transporteurs favoris. Sollicités en premier à la création d'une course,
   /// avec repli automatique sur le pool commun si aucun n'est disponible.
@@ -164,16 +191,24 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   Future<void> loadFavourites() async {
     try {
       _favourites = await _apiClient.getFavouriteDrivers();
+      _favouritesUnavailable = false;
     } catch (_) {
       // Les favoris sont un confort : leur absence ne doit pas empêcher de
-      // créer une course. On garde la liste précédente.
+      // créer une course. On garde la liste précédente — MAIS on pose le
+      // drapeau : sans lui, une liste jamais chargée se lit comme une liste
+      // vide, et l'écran affirme une politique de diffusion au lieu d'un aveu.
+      _favouritesUnavailable = true;
     }
     notifyListeners();
   }
 
   Future<bool> addFavourite(KnownDriver driver) async {
     try {
-      await _apiClient.addFavouriteDriver(driver.driverUuid, name: driver.name);
+      await _apiClient.addFavouriteDriver(
+        driver.driverUuid,
+        name: driver.name,
+        partyType: driver.partyType,
+      );
       await loadFavourites();
       return true;
     } catch (e) {
@@ -205,6 +240,7 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
     _tracking = null;
     notifyListeners();
     try {
+      _selectedRequestId = id;
       _selected = await _apiClient.getMerchantOrder(id);
       // Le suivi n'existe pas tant que la commande n'est pas dispatchée :
       // son absence est normale, pas une erreur à remonter.
@@ -223,6 +259,7 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
 
   void clearSelection() {
     _selected = null;
+    _selectedRequestId = null;
     _tracking = null;
   }
 
@@ -261,9 +298,14 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
       final result = await _apiClient.getNotifications();
       _notifications = result.items;
       _unreadNotifications = result.unread;
+      _notificationsUnavailable = false;
       notifyListeners();
     } catch (_) {
-      // On garde ce qu'on avait.
+      // On garde ce qu'on avait — et on dit qu'on n'a pas pu savoir. « Aucune
+      // notification » est une affirmation ; ne pas avoir pu relever n'en est
+      // pas une.
+      _notificationsUnavailable = true;
+      notifyListeners();
     }
   }
 
@@ -346,7 +388,20 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   Future<bool> _orderWrite(String id, Future<void> Function() action) =>
       runWrite(action, reload: () async {
         await loadOrders();
-        if (_selected?.id == id || _selected?.publicId == id) {
+        // ⚠️ Comparé à l'identifiant **de la demande**, jamais à ceux que porte
+        // la commande chargée. Le garde d'origine testait `_selected.id` et
+        // `_selected.publicId` — l'uuid Fleetbase et le `public_id` — contre le
+        // cuid local passé par la route. Aucun des deux ne pouvait l'égaler,
+        // donc la relecture n'a **jamais** eu lieu, ni après publication ni
+        // après annulation : la fiche restait « Brouillon » et son bouton
+        // « Publier » restait offert sur une course déjà diffusée.
+        //
+        // Trouvé le 02/08/2026 par le parcours joué dans l'application
+        // (`integration_test/`), en lisant les journaux du BFF : après le
+        // `POST …/publier`, la liste était bien rechargée et la fiche jamais.
+        // Aucun test unitaire ne pouvait le voir — les trois identifiants s'y
+        // valent, c'est le vrai serveur qui les distingue.
+        if (_selectedRequestId == id) {
           await selectOrder(id);
         }
       });

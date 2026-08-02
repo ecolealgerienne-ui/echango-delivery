@@ -18,6 +18,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/error_banner.dart';
 import 'status_colors.dart';
+import 'zone_card.dart';
 import '../../widgets/section_card.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -397,7 +398,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  _d('driver.order.card.status', {'status': order.status}),
+                  _d('driver.order.card.status', {'status': orderStateLabelForDriver(order, _d)}),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         // Le fond seul : ici le statut est du texte sur la carte,
                         // pas une puce — c'est la teinte de statut qui sert
@@ -508,7 +509,11 @@ class ProfileScreen extends StatelessWidget {
                           const SizedBox(height: AppSpacing.sm),
                           Text(
                             _d(context, 'driver.profile.role',
-                                {'role': authState.role?.label ?? '—'}),
+                                {
+                                  'role': authState.role
+                                          ?.label(context.read<LocaleState>().locale) ??
+                                      '—'
+                                }),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
@@ -527,6 +532,11 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
           const _VehicleTypeCard(),
+          const SizedBox(height: AppSpacing.lg),
+          // Juste sous le véhicule : les deux répondent à la même question —
+          // « quelles courses me sont proposées » — et les séparer obligerait
+          // à chercher dans deux endroits pourquoi la liste est courte.
+          const ZoneCard(),
           const SizedBox(height: AppSpacing.xxl),
           Consumer<AuthState>(
             builder: (context, authState, _) {

@@ -163,6 +163,19 @@ const Map<String, String> _fr = {
   // ⚠️ Distinct de `fleet.drivers.empty` : « aucun conducteur » est une
   // affirmation sur l'entreprise, celui-ci un aveu sur nous. Les confondre
   // faisait dire à une entreprise qui a des conducteurs qu'elle n'en a pas.
+  // ⚠️ Distinct de `fleet.opportunities.empty`, et pour la même raison que le
+  // couple `drivers.empty`/`drivers.unavailable` : « aucune course libre » est
+  // une affirmation sur le RÉSEAU, celle-ci un aveu sur nous. Les confondre
+  // faisait conclure à une entreprise que le réseau était vide sur un simple
+  // 500 — précisément sur l'onglet où elle vient chercher du travail.
+  'fleet.opportunities.unavailable':
+      'Impossible de charger les courses libres pour le moment.',
+  'fleet.opportunities.unavailable.hint':
+      'Des courses sont peut-être disponibles. Réessayez dans un instant.',
+  'fleet.members.unavailable':
+      'Impossible de charger vos rattachements pour le moment.',
+  'fleet.members.unavailable.hint':
+      'Vos conducteurs restent rattachés. Réessayez dans un instant.',
   'fleet.drivers.unavailable':
       'Impossible de charger vos conducteurs pour le moment.',
   // La consigne dit quoi faire, et surtout ce qu'il ne faut PAS conclure : la
@@ -341,6 +354,12 @@ const Map<String, String> _ar = {
   'fleet.drivers.name_required': 'الاسم إلزامي.',
   'fleet.drivers.contact_required':
       'أدخل بريداً إلكترونياً أو رقم هاتف — وإلا لن يتمكن هذا السائق من تلقي دعوته.',
+  'fleet.opportunities.unavailable': 'تعذّر تحميل الرحلات المتاحة حالياً.',
+  'fleet.opportunities.unavailable.hint':
+      'قد تكون هناك رحلات متاحة. أعد المحاولة بعد قليل.',
+  'fleet.members.unavailable': 'تعذّر تحميل ارتباطاتك حالياً.',
+  'fleet.members.unavailable.hint':
+      'سائقوك ما زالوا مرتبطين. أعد المحاولة بعد قليل.',
   'fleet.drivers.unavailable': 'تعذّر تحميل قائمة سائقيك حالياً.',
   'fleet.drivers.unavailable.hint':
       'سائقوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',

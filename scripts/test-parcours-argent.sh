@@ -107,32 +107,25 @@ step "Sessions"
 . "$(dirname "$0")/lib/resolve-driver.sh"
 . "$(dirname "$0")/lib/ledger.sh"
 
-# Active le fournisseur du commerçant, comme le ferait un admin dans la console.
+# ── La forme de la chaîne dépend du provisionnement ───────────────────────
 #
-# Le nom porte un suffixe unique parce que la recherche se fait par nom : la
-# console affiche déjà une douzaine de « Test Argent », et « prendre le plus
-# récent » est une mauvaise instruction — la liste n'est pas triée par date, et
-# activer le mauvais fournisseur produit un refus qu'on met dix minutes à
-# comprendre.
-activate_vendor() { # nom du fournisseur
-  local vendors uuid
-  vendors="$(fb_get '/int/v1/vendors?limit=200')" || return 1
-  uuid="$(echo "$vendors" | jq -r --arg n "$1" \
-    '(.vendors // .data // []) | map(select(.name == $n)) | last.uuid // empty')"
-  [ -n "$uuid" ] || { FLEETBASE_ERROR="fournisseur « $1 » introuvable côté Fleetbase"; return 1; }
-
-  fb_api PUT "/int/v1/vendors/$uuid" '{"status":"active"}' >/dev/null || return 1
-
-  # Relu plutôt que déduit du code HTTP : `status` n'est pas garanti `fillable`,
-  # et un `PUT` qui l'ignore renvoie 200 sans rien changer. Le refus de
-  # connexion trois lignes plus bas serait alors mis sur le compte du garde.
-  vendors="$(fb_get "/int/v1/vendors?limit=200")" || return 1
-  local now
-  now="$(echo "$vendors" | jq -r --arg u "$uuid" \
-    '(.vendors // .data // []) | map(select(.uuid == $u)) | first.status // empty')"
-  [ "$now" = "active" ] || {
-    FLEETBASE_ERROR="statut du fournisseur resté « ${now:-inconnu} » après le PUT"; return 1; }
-}
+# Depuis le 01/08/2026, une course du pool a **Echango pour facilitateur** —
+# quand un prestataire plateforme est désigné (`provision-platform.sh`). La
+# chaîne passe alors de deux maillons à trois :
+#
+#     sans plateforme   conducteur ─────────────▶ commerçant
+#     avec plateforme   conducteur ──▶ Echango ──▶ commerçant
+#
+# ⚠️ **Ce script teste la forme réellement configurée, et la nomme.** Écrire en
+# dur l'une des deux le ferait échouer sur l'autre pour une raison qui n'est pas
+# un défaut — et la configuration est une décision de déploiement légitime, pas
+# un état transitoire. Le §5 de `specs_facilitateur.md` annonçait ce changement
+# de contrat : le voici, sous condition plutôt qu'en rupture.
+PLATFORM_ID=""; PLATFORM_EMAIL=""; OPERATOR_TOKEN=""
+# La resolution vit dans lib/fleetbase.sh : trois scenarios en dependent, et
+# une copie qui diverge ferait lire la dette au mauvais endroit — donc 0 sur
+# un registre parfaitement juste, ce qui s'est produit (regle 5).
+fb_resolve_platform || fail "${FLEETBASE_ERROR:-}"
 
 if [ -z "$EMAIL" ]; then
   SUFFIX="$(date +%s)"
@@ -160,7 +153,7 @@ if [ -z "$EMAIL" ]; then
     fail "Inscription en échec (HTTP $status)" "$body"
   fi
 
-  activate_vendor "$BUSINESS" \
+  fb_activate_vendor_by_email "$EMAIL" \
     || fail "Activation du fournisseur impossible : ${FLEETBASE_ERROR:-}
    Activez « $BUSINESS » dans la console (Fleet-Ops → Fournisseurs → Statut),
    puis relancez avec EMAIL=$EMAIL"
@@ -191,6 +184,19 @@ obtain_driver_token "$DRIVER_UUID" || fail "Session transporteur impossible" "${
 pass "Transporteur connecté — ${DRIVER_SESSION_NOTE:-}"
 
 # ── 1. Brouillon avec encaissement ─────────────────────────────────────────
+# La contrepartie du conducteur, et sa dette AVANT cette livraison.
+#
+# Relevée ici — après les sessions, avant toute écriture — parce que c'est le
+# seul moment où elle décrit l'état d'entrée. Sur le pool, le compte plateforme
+# est partagé entre exécutions : sans ce point de départ, le §4 lirait un cumul.
+if [ -n "$PLATFORM_ID" ]; then
+  COUNTERPARTY="$PLATFORM_ID"; COUNTERPARTY_LABEL="Echango ($PLATFORM_EMAIL)"
+else
+  COUNTERPARTY="$MERCHANT_ID"; COUNTERPARTY_LABEL="ce commerçant"
+fi
+DUE_BEFORE="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$COUNTERPARTY")")"
+echo "   dette du conducteur envers $COUNTERPARTY_LABEL avant ce run : $DUE_BEFORE"
+
 step "1. Création d'un brouillon encaissé"
 
 order="$(mapi POST /commercant/commandes "$(jq -n \
@@ -291,11 +297,33 @@ dledger="$(dapi GET /transporteur/caisse)"
 # écriture de `first(…)`, dont le piège est justement de ne RIEN rendre sur un
 # flux vide. Le repli `.merchant_id` de la version précédente était mort : la
 # projection pose `counterparty_id` sur toutes les lignes.
-dmine="$(debt_toward "$dledger" "$MERCHANT_ID")"
-[ "$(amount_number "$dmine")" = "$due" ] \
-  || fail "Le transporteur doit voir $due dû à CE commerçant, il voit $dmine" \
+# La contrepartie et la dette de départ ont été résolues avant la livraison :
+# les recalculer ici lirait l'état d'APRÈS, donc un delta nul.
+
+# ⚠️ **Le DELTA, jamais le total — et c'est le même piège qu'au §4 d'origine.**
+#
+# Ce script note déjà que « un conducteur réutilisé porte les dettes des runs
+# précédents — constaté en réel, 2600 au lieu de 1300, sur un code parfaitement
+# juste ». La parade était de lire côté commerçant, neuf à chaque exécution.
+#
+# Le facilitateur de pool **rouvre exactement ce piège** : le compte plateforme
+# est unique et partagé, donc la dette du conducteur envers Echango s'accumule
+# d'un run à l'autre. Constaté au premier essai : 2600. On mesure donc ce que
+# CETTE livraison ajoute, pas ce que la base contient.
+dmine="$(amount_number "$(debt_toward "$dledger" "$COUNTERPARTY")")"
+added=$((dmine - DUE_BEFORE))
+[ "$added" = "$due" ] \
+  || fail "Cette livraison doit ajouter $due à la dette envers $COUNTERPARTY_LABEL — elle en ajoute $added (avant $DUE_BEFORE, après $dmine)" \
      "$(echo "$dledger" | jq -c '.balances')"
-pass "Transporteur : $due DZD à remettre — les deux vues concordent"
+pass "Transporteur : +$due DZD à remettre à $COUNTERPARTY_LABEL (total $dmine)"
+
+# ⚠️ Et le conducteur retient bien sa course — même sur une chaîne à trois
+# maillons. C'est ce qui distingue Echango d'une entreprise réelle : sa
+# rémunération est un montant que nous connaissons (`isPlatform`), donc elle lui
+# revient. Chez une entreprise il retiendrait 0 et devrait la totalité.
+[ "$added" = "$((expected - FEE))" ] \
+  || fail "Le conducteur devrait retenir sa course ($FEE) — cette livraison ajoute $added sur $expected perçus"
+pass "Retenue de $FEE appliquée : Echango n'est pas un employeur"
 
 details="$(mapi GET /commercant/encaissements/details)"
 net="$(echo "$details" | jq -r '.data[0].net_amount // "absent"')"
@@ -316,23 +344,88 @@ step "5. Remise"
 # les précédents.
 [ -n "$MERCHANT_ID" ] || fail "Identifiant du commerçant introuvable" "$login"
 
+# ⚠️ `merchantId` garde son nom dans le DTO — il est gelé par le contrôle de
+# référence — mais désigne **la contrepartie**, que le serveur type lui-même.
 declared="$(dapi POST /transporteur/caisse/remises \
-  "$(jq -n --arg m "$MERCHANT_ID" --argjson a "$due" '{merchantId:$m, amount:$a}')")"
+  "$(jq -n --arg m "$COUNTERPARTY" --argjson a "$due" '{merchantId:$m, amount:$a}')")"
 REMITTANCE_ID="$(echo "$declared" | jq -r '.id // empty')"
 [ -n "$REMITTANCE_ID" ] || fail "Déclaration de remise refusée" "$(echo "$declared" | jq -c '.')"
-pass "Remise de $due déclarée par le transporteur"
+pass "Remise de $due déclarée par le transporteur à $COUNTERPARTY_LABEL"
 
 # ⚠️ Le contrôle qui donne son sens au registre : tant que l'autre partie n'a
 # rien confirmé, une remise est une AFFIRMATION, pas un fait. La dette ne doit
 # donc pas avoir bougé.
-still="$(ledger_total "$(mapi GET /commercant/encaissements)")"
-[ "$(amount_number "$still")" = "$due" ] \
-  || fail "Une remise NON confirmée ne doit pas réduire la dette (reçu $still)"
+#
+# Elle se lit **côté conducteur** : sur la chaîne à trois maillons, ce que le
+# commerçant voit ne bouge pas du tout à cette étape — c'est le maillon interne
+# qui se règle —, donc l'observer chez lui ne prouverait rien.
+still="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$COUNTERPARTY")")"
+[ "$still" = "$((DUE_BEFORE + due))" ] \
+  || fail "Une remise NON confirmée ne doit pas réduire la dette (attendu $((DUE_BEFORE + due)), reçu $still)"
 pass "Dette inchangée avant confirmation — c'est le point du modèle"
 
-confirmed="$(mapi POST "/commercant/encaissements/remises/$REMITTANCE_ID/confirmer")"
-echo "$confirmed" | is_error \
-  && fail "Confirmation refusée" "$(echo "$confirmed" | jq -c '.')"
+if [ -n "$PLATFORM_ID" ]; then
+  # ── Chaîne à trois maillons : c'est l'OPÉRATEUR qui confirme ────────────
+  #
+  # ⚠️ Sans lui, la dette d'un conducteur du pool **ne s'éteindrait jamais** :
+  # personne d'autre ne peut confirmer une remise faite à Echango. C'est le
+  # coût nommé au §2.3 de `specs_facilitateur.md`, et il est réel.
+  olog="$(curl -sS -X POST "$BFF_URL/auth/login" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg e "$PLATFORM_EMAIL" --arg p "$PASSWORD" '{email:$e,password:$p}')")"
+  OPERATOR_TOKEN="$(echo "$olog" | jq -r '.token // empty')"
+  [ -n "$OPERATOR_TOKEN" ] || fail \
+    "Connexion de l'opérateur $PLATFORM_EMAIL impossible — sans elle, aucune remise au pool n'est confirmable.
+   Fournir son mot de passe :  PASSWORD='<le bon>' $0 ${DRIVER_HINT:-}" "$olog"
+
+  oapi() { # method path [body] — opérateur Echango, persona `fleet`
+    local m="$1" p="$2" b="${3:-}"
+    if [ -n "$b" ]; then
+      curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
+        -H "Authorization: Bearer $OPERATOR_TOKEN" -d "$b"
+    else
+      curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $OPERATOR_TOKEN"
+    fi
+  }
+
+  confirmed="$(oapi POST "/flotte/caisse/remises/$REMITTANCE_ID/confirmer")"
+  echo "$confirmed" | is_error \
+    && fail "L'opérateur ne peut pas confirmer la remise" "$(echo "$confirmed" | jq -c '.')"
+  after="$(amount_number "$(debt_toward "$(dapi GET /transporteur/caisse)" "$PLATFORM_ID")")"
+  # ⚠️ Retour à l'état d'ENTRÉE, pas à zéro : la remise porte sur cette
+  # livraison, pas sur l'encours que le conducteur traîne des exécutions
+  # précédentes. Exiger zéro ferait échouer le script au second passage, sur un
+  # registre parfaitement juste.
+  [ "$after" = "$DUE_BEFORE" ] \
+    || fail "Après confirmation la dette doit revenir à $DUE_BEFORE — elle vaut $after"
+  pass "Maillon interne soldé : les $due de cette livraison sont remis à Echango"
+
+  # ── Second maillon : Echango remet au commerçant ────────────────────────
+  #
+  # C'est ici que le commerçant est enfin payé, et **c'est Echango qui le doit**
+  # — pas le conducteur. Toute la décision du 31/07 tient dans cette ligne.
+  before_m="$(amount_number "$(ledger_total "$(mapi GET /commercant/encaissements)")")"
+  [ "$before_m" = "$due" ] \
+    || fail "Le commerçant devrait attendre $due d'Echango, il voit $before_m"
+
+  # ⚠️ `counterpartyId` ici, `merchantId` côté transporteur : les deux routes ne
+  # nomment PAS le même champ pour la même chose. Celle du transporteur a gardé
+  # `merchantId` par compatibilité — il est gelé par le contrôle de référence —,
+  # celle de la flotte a été écrite après la généralisation et porte le nom
+  # juste. Le deviner par analogie donne un `validation.failed` qui accuse la
+  # donnée alors que c'est la clé qui est fausse.
+  d2="$(oapi POST /flotte/caisse/remises \
+    "$(jq -n --arg m "$MERCHANT_ID" --argjson a "$due" '{counterpartyId:$m, amount:$a}')")"
+  R2="$(echo "$d2" | jq -r '.id // empty')"
+  [ -n "$R2" ] || fail "Echango ne peut pas déclarer sa remise au commerçant" "$(echo "$d2" | jq -c '.')"
+
+  c2="$(mapi POST "/commercant/encaissements/remises/$R2/confirmer")"
+  echo "$c2" | is_error && fail "Le commerçant ne peut pas confirmer" "$(echo "$c2" | jq -c '.')"
+  pass "Second maillon soldé : Echango a payé le commerçant"
+else
+  confirmed="$(mapi POST "/commercant/encaissements/remises/$REMITTANCE_ID/confirmer")"
+  echo "$confirmed" | is_error \
+    && fail "Confirmation refusée" "$(echo "$confirmed" | jq -c '.')"
+fi
 
 # Une dette soldée disparaît de `balances` (`filter(.debt != 0)`), donc la
 # somme d'une liste vide vaut 0 — c'est bien ce qu'on veut lire.
@@ -448,9 +541,16 @@ echo "════════════════════════�
 echo " Parcours complet validé — publication ET chaîne d'argent."
 echo
 echo " Marchandise $GOODS + course $FEE = $expected réclamés à la porte"
-echo " Transporteur retient $FEE, doit $due, remet, le commerçant confirme."
-echo
-echo " ⚠️ À rejouer À L'IDENTIQUE après la généralisation du registre aux"
-echo "    entreprises de transport : c'est ce qui prouvera qu'elle est bien"
-echo "    à contrat constant."
+if [ -n "$PLATFORM_ID" ]; then
+  echo " Transporteur retient $FEE, doit $due à ECHANGO, remet ;"
+  echo " l'opérateur confirme, puis Echango remet $due au commerçant."
+  echo
+  echo " Forme à TROIS maillons — prestataire plateforme provisionné :"
+  echo " $PLATFORM_EMAIL"
+else
+  echo " Transporteur retient $FEE, doit $due, remet, le commerçant confirme."
+  echo
+  echo " Forme à DEUX maillons — aucun prestataire plateforme provisionné."
+  echo " ./scripts/provision-platform.sh <email> pour passer à trois."
+fi
 echo "════════════════════════════════════════════════════════════"

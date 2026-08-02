@@ -6,6 +6,7 @@ import 'driver_picker.dart';
 import 'memberships_tab.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../models/fleet_order_state.dart';
+import '../../models/vehicle_type.dart';
 import '../../state/auth_state.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
@@ -261,6 +262,22 @@ class _OpportunitiesTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<FleetState>();
+    // `t` ne suffit pas ici : les faits d'une opportunité contiennent une heure
+    // et un nom de véhicule, qui se formatent avec la locale et non avec une
+    // clé.
+    final locale = context.watch<LocaleState>().locale;
+    // ⚠️ « Indisponible » AVANT « vide », toujours dans cet ordre : les deux
+    // donnent une liste vide, et tester le vide en premier ferait affirmer
+    // qu'il n'y a rien à un onglet qui n'a rien pu lire. C'est l'onglet où une
+    // entreprise vient chercher du travail — s'y tromper la fait refermer
+    // l'application en concluant que le réseau est vide.
+    if (state.opportunitiesUnavailable) {
+      return AppEmptyState.unavailable(
+        title: t('fleet.opportunities.unavailable'),
+        hint: t('fleet.opportunities.unavailable.hint'),
+        onRetry: () => context.read<FleetState>().load(),
+      );
+    }
     if (state.opportunities.isEmpty) {
       return AppEmptyState(
         title: t('fleet.opportunities.empty'),
@@ -329,7 +346,7 @@ class _OpportunitiesTab extends StatelessWidget {
         // règle, pas la course, et la répéter mangeait la place des chiffres.
         return ListTile(
           title: Text(_journey(order), maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(_opportunityFacts(order, meta, t)),
+          subtitle: Text(_opportunityFacts(order, meta, t, locale)),
           isThreeLine: true,
           // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
           // cette course ? ». La liste ne pouvait pas y répondre seule : le
@@ -645,28 +662,22 @@ String _opportunityFacts(
   Map<String, dynamic> order,
   Map<String, dynamic> meta,
   _Translate t,
+  Locale locale,
 ) {
-  final money = <String>[];
-  final price = meta['price'];
-  final cod = meta['cod_amount'];
-  final currency = meta['currency'] ?? meta['cod_currency'] ?? '';
-  if (price is num && price > 0) {
-    money.add('${t('fleet.orders.price')} : ${price.toStringAsFixed(0)} $currency'.trim());
-  }
-  // ⚠️ Servi même quand il vaut zéro ? Non : une course sans encaissement ne
-  // doit pas afficher « à encaisser : 0 », qui se lit comme une anomalie. Son
-  // absence dit déjà qu'il n'y a rien à percevoir.
-  if (cod is num && cod > 0) {
-    money.add('${t('fleet.orders.cod')} : ${cod.toStringAsFixed(0)} $currency'.trim());
-  }
+  final money = _moneyParts(meta, t);
 
   final facts = <String>[];
   final distance = _distanceLabel(order['distance'], t);
   if (distance != null) facts.add(distance);
-  final scheduled = _scheduledLabel(order['scheduled_at'], t);
+  final scheduled = _scheduledLabel(order['scheduled_at'], t, locale);
   if (scheduled != null) facts.add(scheduled);
   final vehicle = meta['vehicle_type'];
-  if (vehicle is String && vehicle.trim().isNotEmpty) facts.add(vehicle.trim());
+  // ⚠️ Le **code** brut était affiché — « moto », « utilitaire » —, c'est-à-dire
+  // la valeur que le serveur stocke, au milieu d'une ligne par ailleurs
+  // traduite. Trouvé en faisant passer la locale ici, pas en relisant.
+  if (vehicle is String && vehicle.trim().isNotEmpty) {
+    facts.add(vehicleLabel(vehicle.trim(), locale));
+  }
 
   return [
     if (money.isNotEmpty) money.join('  ·  '),
@@ -695,11 +706,11 @@ String? _distanceLabel(Object? metres, _Translate t) {
 /// ⚠️ Rien du tout quand la course est immédiate : afficher « dès que possible »
 /// sur chaque ligne remettrait exactement le bruit qu'on vient d'enlever. C'est
 /// la mention d'une heure qui est une information ; son absence est la norme.
-String? _scheduledLabel(Object? raw, _Translate t) {
+String? _scheduledLabel(Object? raw, _Translate t, Locale locale) {
   if (raw is! String || raw.trim().isEmpty) return null;
   final at = DateTime.tryParse(raw);
   if (at == null) return null;
-  return '${t('fleet.orders.scheduled')} ${formatDayTime(at)}';
+  return '${t('fleet.orders.scheduled')} ${formatDayTime(at, locale)}';
 }
 
 String _dropoffLabel(Map<String, dynamic> order) {
@@ -738,13 +749,45 @@ String _stateLabel(Map<String, dynamic> order, _Translate t) {
 /// non du `meta` brut de Fleetbase : c'est le défaut D6, corrigé au Lot 2. Sans
 /// cette recomposition, une entreprise décidait de prendre une course sans voir
 /// ni ce qu'elle rapporte ni ce qu'il faudra encaisser.
+/// Les montants d'une course, **écrits comme dans l'onglet d'à côté**.
+///
+/// ── Ce qui divergeait, et pourquoi ça se voyait ─────────────────────────
+///
+/// Cette fonction et `_opportunityFacts` répondent à la même question et ne
+/// s'accordaient sur rien : « Prix : 650 — À encaisser : 1950 » d'un côté,
+/// « Prix : 650 DZD · À encaisser : 1950 DZD » de l'autre. Une entreprise qui
+/// prenait une course la voyait **perdre sa devise** en passant d'un onglet à
+/// l'autre (revue du 01/08/2026, D9).
+///
+/// Elles divergeaient aussi sur le test de nullité : `!= null` ici, `> 0` là —
+/// avec, en face, le commentaire qui explique pourquoi zéro ne doit pas
+/// s'afficher. La règle était écrite d'un seul côté et appliquée d'un seul côté.
+///
+/// Le formatage est donc délégué à [_moneyParts], qui les sert toutes les deux :
+/// si la façon d'écrire un montant change, elle change aux deux endroits
+/// (règle 5).
 String _amount(Map<String, dynamic> meta, _Translate t) {
+  final parts = _moneyParts(meta, t);
+  return parts.isEmpty ? '' : '\n${parts.join('  ·  ')}';
+}
+
+/// Prix et montant à encaisser, formatés une seule fois pour tout l'écran.
+List<String> _moneyParts(Map<String, dynamic> meta, _Translate t) {
   final price = meta['price'];
   final cod = meta['cod_amount'];
+  final currency = meta['currency'] ?? meta['cod_currency'] ?? '';
   final parts = <String>[];
-  if (price != null) parts.add('${t('fleet.orders.price')} : $price');
-  if (cod != null) parts.add('${t('fleet.orders.cod')} : $cod');
-  return parts.isEmpty ? '' : '\n${parts.join(' — ')}';
+
+  if (price is num && price > 0) {
+    parts.add('${t('fleet.orders.price')} : ${price.toStringAsFixed(0)} $currency'.trim());
+  }
+  // ⚠️ Servi même quand il vaut zéro ? Non : une course sans encaissement ne
+  // doit pas afficher « à encaisser : 0 », qui se lit comme une anomalie. Son
+  // absence dit déjà qu'il n'y a rien à percevoir.
+  if (cod is num && cod > 0) {
+    parts.add('${t('fleet.orders.cod')} : ${cod.toStringAsFixed(0)} $currency'.trim());
+  }
+  return parts;
 }
 
 Future<void> _claim(BuildContext context, String uuid, _Translate t) async {

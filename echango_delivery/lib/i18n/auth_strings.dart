@@ -28,6 +28,34 @@ const Map<String, String> _fr = {
 
   // ── Inscription ─────────────────────────────────────────────────────────
   'auth.register.title': 'Créer un compte',
+  // ── Le profil qu'on crée ────────────────────────────────────────────────
+  //
+  // ⚠️ Trois parcours, dont deux n'avaient AUCUN écran (revue du 01/08/2026,
+  // A1) : `registerDriverWithInvitation` était écrite côté client sans le
+  // moindre appelant, et `POST /auth/flotte/register` n'avait que des scripts.
+  // Au pilote, un opérateur remettait un jeton d'invitation à un transporteur
+  // qui n'avait nulle part où le saisir, et une entreprise ne pouvait pas
+  // s'inscrire du tout — avec cinq lots d'écrans construits derrière.
+  'auth.register.as': 'Je suis',
+  'auth.register.as.merchant': 'Commerçant',
+  'auth.register.as.fleet': 'Entreprise de transport',
+  'auth.register.as.driver': 'Transporteur',
+  'auth.register.fleet.name': 'Nom de l’entreprise *',
+  'auth.register.fleet.name.hint': 'Affiché aux commerçants',
+  'auth.register.driver.name': 'Prénom',
+  'auth.register.driver.lastname': 'Nom',
+  'auth.register.invitation': 'Code d’invitation *',
+  // La consigne dit d'où vient le code, parce qu'un transporteur qui ne l'a pas
+  // n'a aucun moyen de le deviner — et qu'il n'existe pas d'auto-inscription.
+  'auth.register.invitation.hint':
+      'Remis par Echango ou par votre entreprise de transport.',
+  'auth.register.missing.fleet': 'Nom de l’entreprise, email et mot de passe sont requis',
+  'auth.register.missing.driver': 'Code d’invitation, email et mot de passe sont requis',
+  // Ce n'est pas une erreur : la demande est enregistrée, l'accès attend une
+  // validation. L'afficher en rouge, comme avant, faisait lire une inscription
+  // réussie comme un échec.
+  'auth.register.pending.title': 'Demande enregistrée',
+
   'auth.register.missing': 'Commerce, email et mot de passe sont requis',
   'auth.register.password.short':
       'Le mot de passe doit faire au moins {n} caractères',
@@ -53,6 +81,20 @@ const Map<String, String> _ar = {
 
   // ── Inscription ─────────────────────────────────────────────────────────
   'auth.register.title': 'إنشاء حساب',
+  'auth.register.as': 'أنا',
+  'auth.register.as.merchant': 'تاجر',
+  'auth.register.as.fleet': 'شركة نقل',
+  'auth.register.as.driver': 'ناقل',
+  'auth.register.fleet.name': 'اسم الشركة *',
+  'auth.register.fleet.name.hint': 'يظهر للتجار',
+  'auth.register.driver.name': 'الاسم',
+  'auth.register.driver.lastname': 'اللقب',
+  'auth.register.invitation': 'رمز الدعوة *',
+  'auth.register.invitation.hint': 'يُسلَّم من إيشانغو أو من شركة النقل التابع لها.',
+  'auth.register.missing.fleet': 'اسم الشركة والبريد وكلمة المرور مطلوبة',
+  'auth.register.missing.driver': 'رمز الدعوة والبريد وكلمة المرور مطلوبة',
+  'auth.register.pending.title': 'تم تسجيل الطلب',
+
   'auth.register.missing': 'اسم المتجر والبريد وكلمة المرور مطلوبة',
   'auth.register.password.short':
       'يجب أن تتكون كلمة المرور من {n} أحرف على الأقل',

@@ -1,0 +1,16 @@
+# Les scripts shell sont exécutés par bash, jamais par Windows.
+#
+# ⚠️ Sans cette ligne, `core.autocrlf=true` — le défaut d'installation de Git
+# pour Windows — convertit les `.sh` en CRLF au checkout, et bash échoue sur la
+# PREMIÈRE ligne du premier `source` avec un message qui ne dit pas pourquoi :
+#
+#     scripts/lib/fleetbase.sh: line 16: $'\r': command not found
+#
+# Constaté le 01/08/2026 en jouant `test-multi-appartenance.sh` depuis WSL sur
+# un dépôt cloné côté Windows. Rien dans le message ne nomme les fins de ligne,
+# et le script échoue APRÈS avoir affiché ses premières lignes — donc il a l'air
+# de tourner. Le piège attend quiconque clone ce dépôt sous Windows.
+*.sh text eol=lf
+
+# Même raison : lus par le shell des hooks, jamais par un éditeur Windows.
+scripts/lib/* text eol=lf

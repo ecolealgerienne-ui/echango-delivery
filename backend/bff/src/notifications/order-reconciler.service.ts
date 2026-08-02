@@ -5,7 +5,7 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { NotificationsService } from './notifications.service';
 
 /** Statuts Fleetbase après lesquels plus rien ne bouge. */
-import { TERMINAL_ORDER_STATUSES as TERMINAL } from '../common/orders/order-status';
+import { TERMINAL_ORDER_STATUSES as TERMINAL, isCancelledOrderStatus } from '../common/orders/order-status';
 
 /**
  * Rapproche périodiquement le cache local de l'état réel des commandes chez
@@ -167,7 +167,12 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
-    const notify = (type: any, title: string, body: string) =>
+    const notify = (
+      type: any,
+      title: string,
+      body: string,
+      data?: Record<string, string | null>,
+    ) =>
       this.notifications.notify({
         merchantId: row.merchantId,
         orderId: row.id,
@@ -175,6 +180,7 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
         type,
         title,
         body,
+        data,
       });
 
     if (driverChanged) {
@@ -185,6 +191,9 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
           driverName
             ? `${driverName} a pris votre livraison ${trackingNumber ?? ''}`.trim()
             : 'Un transporteur a pris votre livraison',
+          // Les variables partent à part : c'est ce qui rend la phrase
+          // traduisible côté app sans avoir à la redécouper.
+          { driver: driverName ?? null, tracking: trackingNumber ?? null },
         );
       } else if (!TERMINAL.includes(status)) {
         // Désassignation hors annulation : le transporteur s'est désisté. Le
@@ -200,7 +209,7 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
     if (statusChanged) {
       if (status === 'completed') {
         await notify('order.completed', 'Livraison effectuée', 'Votre livraison est arrivée à destination.');
-      } else if (status === 'canceled' || status === 'cancelled') {
+      } else if (isCancelledOrderStatus(status)) {
         await notify('order.canceled', 'Livraison annulée', 'Votre demande de livraison a été annulée.');
       }
     }

@@ -9,6 +9,7 @@ import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
+import '../models/driver_zone.dart';
 import '../models/fleet_driver_position.dart';
 import '../models/cash.dart';
 
@@ -262,6 +263,46 @@ class BffApiClient {
     }
   }
 
+  /// Inscription d'une **entreprise de transport**.
+  ///
+  /// ⚠️ Elle se termine par un refus, et c'est normal : le `Vendor` naît
+  /// `inactive` et `registerFleet` lève `fleet_pending` — la demande est
+  /// enregistrée, l'accès pas encore ouvert (Lot 4 du 29/07). Aucun jeton n'est
+  /// délivré : le faire aurait fait entrer l'entreprise immédiatement, et le
+  /// garde n'aurait servi qu'à sa deuxième visite.
+  ///
+  /// ⚠️ `POST /auth/flotte/register` existait depuis le chantier facilitateur
+  /// et **n'avait aucun appelant Dart** — seulement quatre scripts (revue du
+  /// 01/08/2026, A1). Une entreprise ne pouvait pas s'inscrire du tout, avec
+  /// cinq lots d'écrans construits derrière.
+  Future<Map<String, dynamic>> registerFleet({
+    required String email,
+    required String password,
+    required String businessName,
+    String? firstName,
+    String? lastName,
+    String? phone,
+  }) async {
+    try {
+      final data = await _post('/auth/flotte/register', {
+        'email': email,
+        'password': password,
+        'businessName': businessName,
+        if (firstName != null && firstName.isNotEmpty) 'firstName': firstName,
+        if (lastName != null && lastName.isNotEmpty) 'lastName': lastName,
+        if (phone != null && phone.isNotEmpty) 'phone': phone,
+      });
+      return (data ?? <String, dynamic>{}) as Map<String, dynamic>;
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw AppException(
+        code: AppError.networkError,
+        message: _networkErrorMessage(e),
+        originalError: e,
+      );
+    }
+  }
+
   /// Inscription transporteur, sur invitation d'un opérateur.
   ///
   /// Le driver visé est porté par le jeton d'invitation, plus par la requête :
@@ -378,6 +419,34 @@ class BffApiClient {
   ///
   /// À appeler après authentification (route protégée par JWT) et à chaque
   /// rafraîchissement du jeton par Firebase (`onTokenRefresh`).
+  /// Enregistre le jeton push d'un **commerçant**.
+  ///
+  /// ── Pourquoi une seconde méthode et pas un paramètre ────────────────────
+  ///
+  /// Deux routes distinctes côté serveur, deux tables distinctes : la variante
+  /// transporteur écrit dans `DriverDeviceToken` **et** miroite un `UserDevice`
+  /// chez Fleetbase (le dispatch natif en a besoin) ; celle-ci écrit dans
+  /// `DeviceToken`, relié à `MerchantAccount`, et ne touche pas à Fleetbase —
+  /// un commerçant n'est délibérément pas un `User` Fleetbase.
+  ///
+  /// ⚠️ `POST /auth/device-token` existait depuis le 28/07 et **n'avait aucun
+  /// appelant** (revue du 01/08/2026, A3), alors que le schéma Prisma et
+  /// `CLAUDE.md` affirmaient tous deux « les jetons sont bien collectés : il ne
+  /// manque que l'expéditeur ». La table était structurellement vide. Le jour
+  /// où le credential Firebase serveur arrive, on aurait branché un expéditeur
+  /// sur une table vide et cherché le défaut du côté de Firebase.
+  Future<Map<String, dynamic>> registerMerchantDeviceToken({
+    required String token,
+    required String platform,
+  }) async {
+    try {
+      return await _post('/auth/device-token', {'token': token, 'platform': platform}) ?? {};
+    } catch (e) {
+      if (e is AppException) rethrow;
+      throw AppException(code: AppError.networkError, message: '$e');
+    }
+  }
+
   Future<Map<String, dynamic>> registerDeviceToken({
     required String token,
     required String platform, // 'ios' ou 'android'
@@ -1236,11 +1305,27 @@ class BffApiClient {
     return _listOf(await _get('/commercant/transporteurs/favoris'), 'data', KnownDriver.fromJson);
   }
 
-  Future<void> addFavouriteDriver(String driverUuid, {String? name}) async {
+  /// Met une partie en favori — un transporteur, ou une **entreprise**.
+  ///
+  /// ⚠️ `partyType` est envoyé même quand il vaut `driver`, sa valeur par
+  /// défaut côté serveur. L'omettre marcherait aujourd'hui, mais ferait
+  /// dépendre le sens de la requête d'un défaut distant : le jour où ce défaut
+  /// change, l'app enregistrerait des favoris du mauvais type sans qu'aucune
+  /// erreur ne le dise. On dit ce qu'on veut.
+  ///
+  /// Le nom du champ reste `fleetbaseDriverUuid` pour les deux familles : c'est
+  /// le contrat que le serveur expose, et le renommer demanderait de déployer
+  /// les deux côtés en même temps pour un gain de vocabulaire.
+  Future<void> addFavouriteDriver(
+    String partyUuid, {
+    String? name,
+    String partyType = 'driver',
+  }) async {
     await _post(
       '/commercant/transporteurs/favoris',
       {
-        'fleetbaseDriverUuid': driverUuid,
+        'partyType': partyType,
+        'fleetbaseDriverUuid': partyUuid,
         if (name != null) 'driverName': name,
       },
     );
@@ -1253,6 +1338,25 @@ class BffApiClient {
   /// Déclare la catégorie de véhicule du transporteur connecté.
   Future<void> setVehicleType(String? vehicleType) async {
     await _post('/transporteur/vehicule', {if (vehicleType != null) 'vehicleType': vehicleType});
+  }
+
+  /// La zone de travail déclarée : sa wilaya, son rayon.
+  Future<DriverZone> getZone() async {
+    return DriverZone.fromJson(await _get('/transporteur/zone') ?? const {});
+  }
+
+  /// Enregistre la zone. `null` sur un champ **efface** la préférence.
+  ///
+  /// ⚠️ Les deux clés sont envoyées **même à `null`**, et c'est nécessaire :
+  /// le serveur distingue « ne touche pas » de « efface » par leur présence.
+  /// Les omettre quand elles sont nulles rendrait le réglage impossible à
+  /// défaire — un réglage qu'on ne peut pas annuler est un piège, pas un choix.
+  Future<DriverZone> setZone({String? wilaya, int? radiusKm}) async {
+    final data = await _put('/transporteur/zone', {
+      'wilaya': wilaya,
+      'radiusKm': radiusKm,
+    });
+    return DriverZone.fromJson((data as Map<String, dynamic>?) ?? const {});
   }
 
   /// Recherche d'adresse, relayée par le BFF.

@@ -265,3 +265,39 @@ export class UpdateVehicleTypeDto {
   @IsIn(['moto', 'voiture', 'utilitaire'])
   vehicleType?: string;
 }
+
+/**
+ * La zone de travail qu'un transporteur déclare.
+ *
+ * ⚠️ **Les deux champs sont facultatifs, et l'absence a un sens précis** :
+ * `null` ou vide **efface** la préférence, donc rétablit « je vois tout ».
+ * C'est ce qui permet à quelqu'un de revenir en arrière sans nous demander —
+ * un réglage qu'on ne peut pas défaire est un piège, pas un choix.
+ *
+ * ⚠️ Aucune liste fermée de wilayas ici, délibérément. En figer une dans le DTO
+ * en ferait une copie à tenir accordée avec la réalité administrative — et une
+ * wilaya renommée ou créée refuserait alors des réglages parfaitement valides.
+ * La valeur vient du géocodage inverse, qui est notre source ; c'est le filtre
+ * qui compare, et il compare sans casse.
+ */
+export class DriverZoneDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  wilaya?: string | null;
+
+  /**
+   * Rayon en kilomètres. `null` retire la limite.
+   *
+   * Bornes larges à dessein : `@Min(1)` parce qu'un rayon nul ne montrerait
+   * rien, et `@Max(2000)` parce que l'Algérie tient dedans — au-delà, la valeur
+   * ne veut plus rien dire et vaut mieux être refusée que silencieusement
+   * inopérante.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(2000)
+  radiusKm?: number | null;
+}

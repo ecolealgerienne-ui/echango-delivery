@@ -128,7 +128,7 @@ class _PhotoFieldState extends State<PhotoField> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderRadius: BorderRadius.circular(AppRadius.control),
           child: Image.memory(
             Uint8List.fromList(photo.bytes),
             height: 200,

@@ -3,6 +3,7 @@ import 'dart:ui' show Locale;
 import 'package:equatable/equatable.dart';
 
 import '../i18n/order_strings.dart';
+import 'fleet_order_state.dart';
 import 'fleetbase_json.dart';
 
 class Order extends Equatable {
@@ -387,4 +388,36 @@ class DeliveryFailure extends Equatable {
 
   @override
   List<Object?> get props => [id, reason, photoUrl, notes, createdAt];
+}
+
+/// Le libellé d'état d'une course, **pour le transporteur**.
+///
+/// ── Ce qui est partagé, et ce qui ne l'est pas ─────────────────────────────
+///
+/// La **décision** vient d'`orderStateKey`, écrite une seule fois et partagée
+/// avec le profil entreprise : « dans quel état est cette course » est un
+/// invariant, et une seconde copie divergerait sans bruit (règle 5).
+///
+/// Les **libellés** restent séparés, et le critère répond non : l'entreprise
+/// parle d'un tiers (« Conducteur désigné — en attente de démarrage »), le
+/// transporteur parle de lui-même (« À démarrer »). Si l'un change, l'autre n'a
+/// aucune raison de changer.
+///
+/// ⚠️ Le repli sur le statut brut est **délibéré** : un statut Fleetbase que
+/// cette version ne connaît pas n'a pas de traduction et n'en aura pas.
+/// L'afficher tel quel dit au moins de quoi il s'agit ; lui inventer un libellé
+/// rassurant affirmerait un fait qu'on ignore (règle 10).
+String orderStateLabelForDriver(Order order, String Function(String) t) {
+  final key = orderStateKey(
+    status: order.status,
+    // Une course servie au transporteur est la sienne dès qu'elle porte un
+    // conducteur : `driverId` est le seul champ dont il dispose, et il suffit.
+    hasDriver: order.driverId != null,
+    adhoc: order.adhoc,
+    // `dispatched` n'est pas projeté vers le transporteur : une course non
+    // diffusée et non assignée n'apparaît de toute façon jamais dans sa liste.
+    dispatched: false,
+  );
+  if (key == null) return order.status;
+  return t('driver.state.${key.substring('fleet.state.'.length)}');
 }

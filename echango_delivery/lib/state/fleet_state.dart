@@ -74,6 +74,17 @@ class FleetState extends ChangeNotifier {
   /// rattaché à votre entreprise » — une affirmation possiblement fausse, au
   /// moment précis où elle veut désigner quelqu'un.
   bool _driversUnavailable = false;
+  /// La lecture des courses libres a-t-elle échoué ?
+  ///
+  /// ⚠️ Sans lui, l'onglet affirmait « Aucune course libre pour le moment » sur
+  /// un 500 — sans bandeau ni bouton de reprise, **sur l'onglet où une
+  /// entreprise vient chercher du travail**. Elle en concluait que le réseau
+  /// était vide et refermait l'application.
+  ///
+  /// Quatrième occurrence de la règle 10 sous cette forme, et la plus gênante :
+  /// elle est dans le fichier même où les deux autres listes portent déjà leur
+  /// drapeau, dix lignes plus bas.
+  bool _opportunitiesUnavailable = false;
 
   /// Course en cours de prise, pour que le bouton concerné seul se désactive.
   /// Un indicateur global ferait clignoter toute la liste à chaque geste.
@@ -94,6 +105,7 @@ class FleetState extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   bool get driversUnavailable => _driversUnavailable;
+  bool get opportunitiesUnavailable => _opportunitiesUnavailable;
   List<Map<String, dynamic>> get memberships => List.unmodifiable(_memberships);
   bool get membershipsUnavailable => _membershipsUnavailable;
   String? get errorMessage => _errorMessage;
@@ -119,9 +131,16 @@ class FleetState extends ChangeNotifier {
       // quand même voir ses courses. Faire échouer l'écran entier parce qu'une
       // des trois listes manque, c'est cacher les deux autres — et le
       // diagnostic devient « l'espace flotte ne marche pas ».
+      _opportunitiesUnavailable = false;
       final opportunitiesPage = await _apiClient
           .getFleetOpportunities(page: 1, limit: _opportunitiesPage.pageSize)
-          .catchError((_) => <String, dynamic>{});
+          .catchError((_) {
+        // Le repli reste — une liste qui manque ne doit pas cacher les deux
+        // autres — mais il POSE SON DRAPEAU. Un repli muet ne dit pas « vide »,
+        // il dit « je n'ai pas pu savoir », et c'est à l'écran de le distinguer.
+        _opportunitiesUnavailable = true;
+        return <String, dynamic>{};
+      });
       _opportunitiesPage.reset(_rows(opportunitiesPage), _total(opportunitiesPage));
 
       _driversUnavailable = false;

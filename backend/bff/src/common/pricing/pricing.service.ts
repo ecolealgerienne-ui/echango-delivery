@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { platformCurrency } from '../money/currency';
+
 /**
  * Origine d'un montant. **Enregistrée avec le prix**, jamais déduite.
  *
@@ -71,7 +73,7 @@ export class PricingService {
   constructor(private readonly configService: ConfigService) {}
 
   get currency(): string {
-    return this.configService.get('CURRENCY') || 'DZD';
+    return platformCurrency(this.configService.get('CURRENCY'));
   }
 
   /**

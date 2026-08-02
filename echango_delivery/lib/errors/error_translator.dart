@@ -53,6 +53,10 @@ const Map<String, String> _fr = {
   'auth.session_revoked': 'Session révoquée, reconnectez-vous.',
 
   // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  'merchant.fleet_not_in_network':
+      'Cette entreprise ne fait pas partie du réseau Echango.',
+  'cash.platform_ambiguous':
+      'Configuration incomplète côté Echango. Contactez le support.',
   'cash.amount_negative': 'Le montant ne peut pas être négatif.',
   'cash.amount_exceeds_expected': 'Le montant dépasse celui attendu.',
   'cash.discrepancy_reason_required':
@@ -98,6 +102,9 @@ const Map<String, String> _fr = {
   'cash.counterparty_not_found': 'Contrepartie introuvable.',
   'cash.driver_no_account':
       'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
+  'cash.driver_unknown_to_merchant':
+      'Ce transporteur n’a jamais livré pour vous et n’est pas dans vos favoris : '
+          'ajoutez-le d’abord à vos transporteurs.',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   'order.not_found': 'Commande introuvable.',
@@ -189,6 +196,12 @@ const Map<String, String> _fr = {
   'server.schema_out_of_sync': 'Erreur technique, réessayez.',
   'server.invalid_profile_type': 'Profil non reconnu.',
   'server.persona_forbidden': 'Cette action n\'est pas autorisée pour votre profil.',
+  'merchant.addresses_unavailable':
+      'Impossible de lire votre carnet d’adresses. Réessayez dans un instant.',
+  'merchant.known_drivers_unavailable':
+      'Impossible de lire vos transporteurs habituels.',
+  'server.unexpected':
+      'Le serveur a rencontré un problème. Réessayez dans un instant.',
 
   // ── Constats du client, sans contrepartie serveur ───────────────────────
   'network.error': 'Connexion au serveur impossible. Vérifiez votre réseau.',
@@ -239,6 +252,8 @@ const Map<String, String> _ar = {
   'auth.session_revoked': 'تم إلغاء الجلسة، يرجى تسجيل الدخول مجدداً.',
 
   // ── الصندوق (التحصيل والتسليم) ───────────────────────────────────────────
+  'merchant.fleet_not_in_network': 'هذه الشركة ليست ضمن شبكة Echango.',
+  'cash.platform_ambiguous': 'إعداد غير مكتمل لدى Echango. اتصل بالدعم.',
   'cash.amount_negative': 'لا يمكن أن يكون المبلغ سالباً.',
   'cash.amount_exceeds_expected': 'المبلغ يتجاوز المبلغ المتوقع.',
   'cash.discrepancy_reason_required': 'يرجى توضيح سبب الفرق في المبلغ المتوقع.',
@@ -280,6 +295,8 @@ const Map<String, String> _ar = {
   'cash.counterparty_not_found': 'الطرف المقابل غير موجود.',
   'cash.driver_no_account':
       'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
+  'cash.driver_unknown_to_merchant':
+      'لم يقم هذا الناقل بأي توصيل لك وليس ضمن مفضّليك: أضفه أولاً إلى ناقليك.',
 
   // ── الطلبيات ──────────────────────────────────────────────────────────────
   'order.not_found': 'الطلبية غير موجودة.',
@@ -369,6 +386,11 @@ const Map<String, String> _ar = {
   'server.schema_out_of_sync': 'خطأ تقني، يرجى المحاولة مرة أخرى.',
   'server.invalid_profile_type': 'الملف الشخصي غير معروف.',
   'server.persona_forbidden': 'هذا الإجراء غير مسموح به لملفك الشخصي.',
+  'merchant.addresses_unavailable':
+      'تعذّرت قراءة دفتر عناوينك. أعد المحاولة بعد لحظات.',
+  'merchant.known_drivers_unavailable':
+      'تعذّرت قراءة قائمة ناقليك المعتادين.',
+  'server.unexpected': 'واجه الخادم مشكلة. أعد المحاولة بعد لحظات.',
 
   // ── ملاحظات جهاز العميل، بدون رمز من الخادم ──────────────────────────────
   'network.error': 'تعذر الاتصال بالخادم. تحقق من شبكتك.',

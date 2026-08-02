@@ -78,6 +78,18 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^5.0.0
 
+  # Pilotage de l'application sur un vrai appareil (02/08/2026).
+  #
+  # `flutter_test` monte des widgets dans un moteur sans plateforme ; il ne peut
+  # donc rien dire du démarrage réel, du stockage sécurisé, ni du réseau. Ce
+  # paquet lance `main()` sur un émulateur et tape dans l'écran — c'est le seul
+  # moyen de croiser l'application et le BFF, que les sept scénarios de
+  # `scripts/` exercent aujourd'hui **sans jamais passer par l'app**.
+  #
+  # Vient du SDK, donc aucune version à épingler ni à faire vieillir.
+  integration_test:
+    sdk: flutter
+
 flutter:
   uses-material-design: true
 
@@ -85,3 +97,39 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/translations/
+
+  # ── Les polices du système de design, EMBARQUÉES ──────────────────────────
+  #
+  # Cairo pour les titres, IBM Plex Sans Arabic pour le corps : deux familles
+  # retenues parce qu'elles **dessinent l'arabe**, pas parce qu'elles sont jolies
+  # en latin (voir `lib/theme/app_theme.dart`).
+  #
+  # ⚠️ Embarquées et non chargées par `google_fonts`, contrairement à Echango
+  # Promo dont ce lot reprend le système : le paquet télécharge les polices au
+  # premier usage, donc un premier lancement sans réseau retombe **en silence**
+  # sur la police système. Nos transporteurs ouvrent l'application sur le
+  # terrain — l'identité y disparaîtrait précisément là où l'application sert.
+  # ~970 ko dans l'APK, licences OFL comprises, contre une dépendance de plus et
+  # un repli invisible.
+  #
+  # ⚠️ Cairo n'existe en amont qu'en police **variable** : les trois graisses ont
+  # été instanciées (`fontTools.varLib.instancer`, wght=400|600|700, slnt=0)
+  # plutôt qu'employées via `fontVariations`, pour que `fontWeight` se comporte
+  # normalement. Les fichiers sont nommés par leur graisse, et non par un nom
+  # commercial (« SemiBold »), pour que le lien avec le `weight:` d'à côté soit
+  # lisible sans connaître la convention.
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-400.ttf
+          weight: 400
+        - asset: assets/fonts/Cairo-600.ttf
+          weight: 600
+        - asset: assets/fonts/Cairo-700.ttf
+          weight: 700
+    - family: IBMPlexSansArabic
+      fonts:
+        - asset: assets/fonts/IBMPlexSansArabic-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSansArabic-Medium.ttf
+          weight: 500

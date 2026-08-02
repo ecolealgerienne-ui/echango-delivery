@@ -90,6 +90,33 @@ const Map<String, String> _fr = {
   'order.form.vehicle.voiture': 'Voiture minimum',
   'order.form.vehicle.utilitaire': 'Utilitaire requis',
 
+  // Le véhicule **nu**, sans « minimum ». Les clés `order.form.vehicle.*`
+  // ci-dessus empaquettent l'exigence dans le libellé, ce qui convient à un
+  // sélecteur mais pas à `order.detail.row.vehicle.value` ('{vehicle} minimum'),
+  // qui compose la phrase lui-même. `vehicleLabel` servait ces quatre mots en
+  // français uniquement, donc un écran arabe recevait « Moto » au milieu de
+  // « {vehicle} على الأقل ».
+  'order.vehicle.any': 'Indifférent',
+  'order.vehicle.moto': 'Moto',
+  'order.vehicle.voiture': 'Voiture',
+  'order.vehicle.utilitaire': 'Utilitaire',
+
+  // ── Ligne de colis ──────────────────────────────────────────────────────
+  //
+  // Le résumé « Gâteau · 2 kg · fragile » de `OrderItemLine.label`. Distinct de
+  // `order.form.item.fragile` ('Contenu fragile'), qui est le libellé d'une
+  // case à cocher : ici c'est une mention dans une énumération.
+  'order.item.weight': '{weight} kg',
+  'order.item.fragile': 'fragile',
+
+  // ── Favoris : le repli quand la partie n'a pas de nom ────────────────────
+  //
+  // Une entreprise et un transporteur ne se nomment pas pareil quand le nom
+  // manque : « Transporteur 3f2a… » sur une société serait faux, et le lecteur
+  // n'aurait aucun moyen de le savoir.
+  'order.party.driver.unnamed': 'Transporteur {id}',
+  'order.party.fleet.unnamed': 'Entreprise {id}',
+
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'Rémunération proposée (DZD)',
   'order.form.price.hint':
@@ -424,9 +451,41 @@ const Map<String, String> _fr = {
 
   // ── Transporteurs favoris ───────────────────────────────────────────────
   'order.fav.title': 'Mes transporteurs',
-  'order.fav.search.failed': 'Recherche impossible : {error}',
+  // ⚠️ **Plus de `{error}`.** Ces deux clés interpolaient l'exception brute —
+  // les seuls sites du dépôt à le faire —, ce qui affichait soit le message
+  // serveur en français à un utilisateur arabophone (règle 4), soit le code nu
+  // `merchant.favourite_not_found`, soit le texte technique anglais d'un
+  // `SocketException: Failed host lookup…`. Le message traduit vient désormais
+  // de `messageForError()`, comme partout ailleurs.
+  'order.fav.search.failed': 'Recherche impossible.',
   'order.fav.add.failed': 'Ajout impossible',
-  'order.fav.load.failed': 'Chargement impossible : {error}',
+  // ── Journal d'évènements ────────────────────────────────────────────────
+  //
+  // ⚠️ Traduits **depuis le `type`**, jamais depuis le texte serveur. Le
+  // réconciliateur écrit `title` et `body` en français dans son propre code :
+  // les afficher tels quels faisait lire à un commerçant arabophone son unique
+  // canal d'évènements entièrement en français, sous un titre arabe (règle 4,
+  // revue du 01/08/2026 D1). Ils restent comme repli d'un type inconnu — c'est
+  // le seul cas où un texte serveur a le droit d'atteindre l'écran.
+  'order.notif.assigned.title': 'Livraison prise en charge',
+  'order.notif.assigned.body': '{driver} a pris votre livraison {tracking}',
+  // Sans nom de transporteur : le serveur n'a pas toujours la relation chargée,
+  // et « a pris votre livraison » sans sujet ne se dit pas.
+  'order.notif.assigned.body.anon': 'Un transporteur a pris votre livraison',
+  'order.notif.released.title': 'Transporteur désisté',
+  'order.notif.released.body':
+      'Votre livraison a été proposée à nouveau aux transporteurs du réseau.',
+  'order.notif.completed.title': 'Livraison effectuée',
+  'order.notif.completed.body': 'Votre livraison est arrivée à destination.',
+  'order.notif.canceled.title': 'Livraison annulée',
+  'order.notif.canceled.body': 'Votre demande de livraison a été annulée.',
+  'order.fav.load.failed': 'Chargement impossible.',
+  'order.fav.unavailable': 'Impossible de charger vos favoris.',
+  'order.fav.unavailable.hint':
+      'Vos favoris sont toujours enregistrés. Réessayez dans un instant.',
+  'order.notif.unavailable': 'Impossible de relever votre journal.',
+  'order.notif.unavailable.hint':
+      'Des évènements ont peut-être eu lieu. Réessayez dans un instant.',
   'order.fav.add.section': 'Ajouter un transporteur',
   'order.fav.search': 'Nom ou téléphone du transporteur',
   'order.fav.search.hint':
@@ -518,6 +577,19 @@ const Map<String, String> _ar = {
   'order.form.vehicle.moto': 'دراجة نارية على الأقل',
   'order.form.vehicle.voiture': 'سيارة على الأقل',
   'order.form.vehicle.utilitaire': 'شاحنة صغيرة إلزامية',
+
+  'order.vehicle.any': 'لا يهم',
+  'order.vehicle.moto': 'دراجة نارية',
+  'order.vehicle.voiture': 'سيارة',
+  'order.vehicle.utilitaire': 'شاحنة صغيرة',
+
+  // ── Ligne de colis ──────────────────────────────────────────────────────
+  'order.item.weight': '{weight} كغ',
+  'order.item.fragile': 'قابل للكسر',
+
+  // ── Favoris : le repli quand la partie n'a pas de nom ────────────────────
+  'order.party.driver.unnamed': 'ناقل {id}',
+  'order.party.fleet.unnamed': 'شركة {id}',
 
   // ── Tarification ────────────────────────────────────────────────────────
   'order.form.price.label': 'الأجر المقترح (دج)',
@@ -802,9 +874,23 @@ const Map<String, String> _ar = {
 
   // ── Transporteurs favoris ───────────────────────────────────────────────
   'order.fav.title': 'ناقليّ',
-  'order.fav.search.failed': 'تعذّر البحث: {error}',
+  'order.fav.search.failed': 'تعذّر البحث.',
   'order.fav.add.failed': 'تعذّرت الإضافة',
-  'order.fav.load.failed': 'تعذّر التحميل: {error}',
+  'order.notif.assigned.title': 'تم استلام التوصيلة',
+  'order.notif.assigned.body': 'أخذ {driver} توصيلتك {tracking}',
+  'order.notif.assigned.body.anon': 'أخذ أحد الناقلين توصيلتك',
+  'order.notif.released.title': 'انسحب الناقل',
+  'order.notif.released.body': 'أُعيد عرض توصيلتك على ناقلي الشبكة.',
+  'order.notif.completed.title': 'تمت التوصيلة',
+  'order.notif.completed.body': 'وصلت توصيلتك إلى وجهتها.',
+  'order.notif.canceled.title': 'أُلغيت التوصيلة',
+  'order.notif.canceled.body': 'أُلغي طلب التوصيل الخاص بك.',
+  'order.fav.load.failed': 'تعذّر التحميل.',
+  'order.fav.unavailable': 'تعذّر تحميل مفضّليك.',
+  'order.fav.unavailable.hint': 'مفضّلوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',
+  'order.notif.unavailable': 'تعذّر تحديث سجلّك.',
+  'order.notif.unavailable.hint':
+      'ربما وقعت أحداث. أعد المحاولة بعد قليل.',
   'order.fav.add.section': 'إضافة ناقل',
   'order.fav.search': 'اسم الناقل أو هاتفه',
   'order.fav.search.hint':

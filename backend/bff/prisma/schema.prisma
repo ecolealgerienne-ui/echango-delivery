@@ -275,12 +275,22 @@ model DriverInvitation {
 
 // Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
 //
-// Stored here rather than in Fleetbase because whether a per-waypoint "failed"
-// status exists natively is still unverified (§4.3 flags it as to-confirm, and
-// nothing in the routes or the Activity model contradicts that). Until it is,
-// the BFF is the source of truth for the failure itself; what we do push to
-// Fleetbase is the operator-visible trace (photo proof + remarks), so a
-// dispatcher looking at the order sees something rather than silence.
+// Stocké ici et pas chez Fleetbase parce que **son flux n'a aucun état
+// d'échec** — ce que ce commentaire donnait pour « à confirmer » jusqu'au
+// 02/08/2026, et qui est désormais mesuré : le `flow` de l'`OrderConfig` est
+// une chaîne linéaire stricte,
+//
+//     created → dispatched → started → enroute → completed
+//
+// où chaque étape ne déclare qu'un seul suivant et où rien ne contient
+// `fail`/`attempt`/`unsuccess`. Une tentative de livraison ratée — client
+// absent, adresse fausse — n'a donc littéralement pas où s'écrire : ce n'est
+// pas une annulation, et le flux ne bifurque pas.
+//
+// C'est le cas nommé par la règle 1 : ce que Fleetbase ne peut
+// **structurellement** pas porter. Ce qu'on y pousse quand même est la trace
+// visible par l'opérateur (preuve photo + remarques), pour qu'un dispatcher
+// qui ouvre la commande voie quelque chose plutôt que du silence.
 model DeliveryFailure {
   id                String   @id @default(cuid())
   driverId          String
@@ -423,9 +433,10 @@ model Order {
   /// modifiée en amont reste donc autoritaire — seul l'effacement est réparé.
   specMeta          Json?
 
-  // Failure details
-  failureReason     String?
-  failureNotes      String?
+  // Le motif d'échec vit dans `DeliveryFailure`, jamais ici : `failureReason`
+  // et `failureNotes` ont existé sans être écrites ni lues une seule fois
+  // (revue du 01/08/2026, A7). Deux colonnes qui laissaient croire que la
+  // livraison portait son échec.
 
   // `totalAmount` et `commission` supprimés avec le modèle `Commission` :
   // jamais écrits, jamais lus. Deux colonnes de plus qui laissaient croire que
@@ -476,7 +487,6 @@ model AuditLog {
 
   // Details
   details           String?  @db.Text // JSON stringified
-  ipAddress         String?
   userAgent         String?
 
   // Status
@@ -505,23 +515,52 @@ model AuditLog {
 /// sollicités en premier, et la course retombe dans le pool commun si aucun
 /// n'est disponible. Le commerçant garde son habitude, le réseau garde sa
 /// liquidité.
+/// ── Un favori peut être un conducteur OU une entreprise ────────────────────
+///
+/// Décision du 30/07/2026 (`specs_flux_argent_quatre_acteurs.md` §6.1) : le
+/// commerçant choisit **au même endroit** un transporteur du pool ou une
+/// entreprise de transport. Deux tables auraient produit deux écrans, deux
+/// recherches et deux chemins de sollicitation pour une seule question — « à qui
+/// je confie mes livraisons ? ».
+///
+/// ⚠️ Le nom du modèle reste `DriverFavourite` et la colonne
+/// `fleetbaseDriverUuid` garde son nom **en base** (`@map`) : les renommer
+/// imposerait une migration de données sur une table qui porte des préférences
+/// réelles, pour un gain purement cosmétique. Le champ Prisma, lui, est
+/// renommé — c'est celui que le code lit, et un nom qui ment coûte plus cher
+/// dans le code que dans une colonne.
 model DriverFavourite {
   id                  String   @id @default(cuid())
 
   merchantId          String
   merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
-  /// Driver Fleetbase, pas un compte Echango : un transporteur peut exister
-  /// dans Fleetbase sans avoir encore créé son compte applicatif.
-  fleetbaseDriverUuid String
+  /// `driver` ou `fleet`. **Défaut `driver`**, ce qui est exactement ce que
+  /// valent les lignes déjà en base : elles ont toutes été créées avant que les
+  /// entreprises soient éligibles. Aucune migration de données n'est donc
+  /// nécessaire, et aucune préférence existante ne change de sens.
+  partyType           String   @default("driver")
+
+  /// Uuid Fleetbase de la partie : un `Driver` quand `partyType = 'driver'`,
+  /// un `Vendor` quand `partyType = 'fleet'`.
+  ///
+  /// Fleetbase et non un compte Echango : un transporteur peut exister dans
+  /// l'annuaire sans avoir encore créé son compte applicatif — et c'est aussi
+  /// vrai d'une entreprise.
+  fleetbasePartyUuid  String   @map("fleetbaseDriverUuid")
 
   /// Nom au moment de la mise en favori, pour l'afficher sans dépendre d'un
   /// appel Fleetbase à chaque ouverture de l'écran.
-  driverName          String?
+  partyName           String?  @map("driverName")
 
   createdAt           DateTime @default(now())
 
-  @@unique([merchantId, fleetbaseDriverUuid])
+  /// ⚠️ L'unicité porte sur le **couple type + uuid**, pas sur l'uuid seul.
+  /// Un `Driver` et un `Vendor` peuvent porter le même uuid — ce sont deux
+  /// espaces d'identifiants distincts chez Fleetbase —, et sans le type dans
+  /// la clé, mettre une entreprise en favori pourrait être refusé au motif
+  /// qu'un conducteur homonyme y figure déjà.
+  @@unique([merchantId, partyType, fleetbasePartyUuid])
   @@index([merchantId])
 }
 
@@ -710,7 +749,14 @@ model CashCollection {
   /// C'est le comportement d'avant ce chantier, et c'est celui de toutes les
   /// lignes existantes : la reprise de données n'a rien à écrire.
   facilitatorId       String?
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
+  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
+  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
+  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
+  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
+  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
+  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
+  /// change rien au solde que voit le commerçant »).
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
 
   /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
   /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
@@ -896,7 +942,14 @@ model DriverEarning {
 
   /// Facilitateur de la course, figé — voir `CashCollection.facilitatorId`.
   facilitatorId       String?
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: SetNull)
+  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
+  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
+  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
+  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
+  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
+  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
+  /// change rien au solde que voit le commerçant »).
+  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
 
   /// Qui **encaisse** cette rémunération : `driver` ou `fleet`.
   ///
@@ -970,8 +1023,22 @@ model MerchantNotification {
   /// Voir NOTIFICATION_TYPES dans notifications.service.ts.
   type               String
 
+  /// ⚠️ Écrits **en français**, dans le code serveur. Ils restent parce qu'ils
+  /// sont le repli d'un `type` que le client ne connaîtrait pas — mais
+  /// l'application ne les affiche plus quand elle sait traduire le type
+  /// (règle 4 : le serveur envoie un code, l'app traduit). Avant le
+  /// 01/08/2026 elle les affichait tels quels, donc un commerçant arabophone
+  /// lisait son unique canal d'évènements entièrement en français, sous un
+  /// titre et une consigne arabes.
   title              String
   body               String
+
+  /// Les variables du message — nom du transporteur, numéro de suivi.
+  ///
+  /// Servies **à part** parce que l'ordre des mots change d'une langue à
+  /// l'autre : les cuire dans `body` rend la phrase intraduisible sans la
+  /// redécouper.
+  data               Json?
 
   readAt             DateTime?
   createdAt          DateTime @default(now())

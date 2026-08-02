@@ -55,11 +55,30 @@ export function validateEnv(config: Record<string, unknown>) {
     }
   }
 
-  // `development` ouvre le renvoi des détails d'erreur Fleetbase au client
-  // (identifiants internes, structure de l'organisation). Le compose du dépôt
-  // posait cette valeur en dur — la refuser sur un port non local.
-  if (config.NODE_ENV === 'production' && config.ALLOW_DEV_ERRORS === 'true') {
-    errors.push('ALLOW_DEV_ERRORS ne peut pas être activé en production');
+  // ── La vanne des détails d'erreur, gardée sur la BONNE variable ───────────
+  //
+  // ⚠️ Ce test portait sur `ALLOW_DEV_ERRORS`, qui n'est lue **nulle part** dans
+  // le dépôt (revue du 01/08/2026, A4). La condition qui ouvre réellement le
+  // renvoi au client des détails Fleetbase — identifiants internes, structure de
+  // l'organisation — est `NODE_ENV === 'development'`, recopiée six fois dans
+  // les services.
+  //
+  // Le garde était donc inerte dans les deux sens : il ne se déclenchait que
+  // sous `NODE_ENV === 'production'`, c'est-à-dire précisément quand la fuite
+  // est déjà impossible ; et poser `ALLOW_DEV_ERRORS=false` ne fermait rien tout
+  // en donnant l'impression du contraire. Une garde qui protège une variable
+  // morte est pire qu'une garde absente : l'absence fait vérifier.
+  //
+  // Ce qui est refusé maintenant, c'est **le cas réel** : un déploiement
+  // exposé qui démarre en `development`. Le compose du dépôt pose cette valeur
+  // en dur, donc le cas n'est pas théorique.
+  const exposedPort = config.PORT && config.PORT !== '3000' && config.PORT !== '3001';
+  if (config.NODE_ENV === 'development' && (config.PUBLIC_URL || exposedPort)) {
+    errors.push(
+      "NODE_ENV=development sur un déploiement exposé : les détails d'erreur " +
+        'Fleetbase (identifiants internes, structure de l\'organisation) seraient ' +
+        'renvoyés aux clients. Poser NODE_ENV=production.',
+    );
   }
 
   if (errors.length) {
