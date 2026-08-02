@@ -775,7 +775,10 @@ export class CommerçantService {
       orders = await this.fetchLiveOrders(cached, merchant.fleetbaseVendorUuid);
     } catch (error) {
       this.logger.warn(`Historique transporteurs indisponible : ${error.message}`);
-      return { data: [] };
+      // Même raison que pour le carnet d'adresses : une liste vide se lit
+      // « vous n'avez jamais travaillé avec personne », ce qui est faux.
+      badRequest('merchant.known_drivers_unavailable',
+        'Impossible de lire vos transporteurs habituels pour le moment.');
     }
 
     const seen = new Map<string, string | null>();
@@ -2649,7 +2652,13 @@ export class CommerçantService {
       return { data: places.map((p: any) => projectPlace(p, 'full')) };
     } catch (error) {
       this.logger.error(`Failed to fetch addresses: ${error.message}`);
-      return { data: [] };
+      // ⚠️ **Surtout pas `{ data: [] }`.** Mesuré le 03/08/2026 en coupant
+      // Fleetbase : le commerçant qui a deux adresses en voyait zéro, en
+      // HTTP 200, et son écran affichait « aucune adresse enregistrée ». Un
+      // repli qui détruit l'information d'absence (règle 10) — et ici il fait
+      // pire que masquer : il invite à ressaisir une adresse qui existe.
+      badRequest('merchant.addresses_unavailable',
+        'Impossible de lire votre carnet d’adresses pour le moment.');
     }
   }
 

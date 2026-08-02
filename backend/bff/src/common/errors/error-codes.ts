@@ -200,6 +200,18 @@ export const ErrorCode = {
   MERCHANT_NOT_FOUND: 'merchant.not_found',
   MERCHANT_INACTIVE: 'merchant.inactive',
   MERCHANT_ADDRESS_NOT_FOUND: 'merchant.address_not_found',
+  /**
+   * Le carnet d'adresses n'a pas pu être lu.
+   *
+   * ⚠️ **Ce code existe parce que son absence produisait un mensonge.** Mesuré
+   * le 03/08/2026 en coupant Fleetbase : `GET /commercant/adresses` rendait
+   * `{"data": []}` en **HTTP 200** pour un commerçant qui a deux adresses. Rien
+   * ne distinguait « votre carnet est vide » de « je n'ai pas pu le lire » —
+   * exactement le défaut déjà constaté côté conducteurs (règle 10).
+   */
+  MERCHANT_ADDRESSES_UNAVAILABLE: 'merchant.addresses_unavailable',
+  /** L'historique des transporteurs déjà employés n'a pas pu être lu. */
+  MERCHANT_KNOWN_DRIVERS_UNAVAILABLE: 'merchant.known_drivers_unavailable',
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
   MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',

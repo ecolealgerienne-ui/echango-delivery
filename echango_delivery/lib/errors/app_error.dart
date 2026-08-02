@@ -175,6 +175,18 @@ class AppError {
   static const String serverInvalidProfileType = 'server.invalid_profile_type';
   static const String serverPersonaForbidden = 'server.persona_forbidden';
 
+  /// Le carnet d'adresses n'a pas pu être lu.
+  ///
+  /// ⚠️ Le serveur rendait auparavant une liste **vide** en HTTP 200 quand
+  /// Fleetbase était injoignable : l'écran affichait « aucune adresse
+  /// enregistrée » à quelqu'un qui en a deux, et l'invitait à en ressaisir une.
+  /// Ce code permet enfin d'afficher `AppEmptyState.unavailable`.
+  static const String merchantAddressesUnavailable = 'merchant.addresses_unavailable';
+
+  /// L'historique des transporteurs déjà employés n'a pas pu être lu.
+  static const String merchantKnownDriversUnavailable =
+      'merchant.known_drivers_unavailable';
+
   /// Panne non prévue côté serveur — tout ce qui n'est pas un refus délibéré.
   ///
   /// ⚠️ Existe depuis que le filtre d'exception du BFF attrape **toutes** les

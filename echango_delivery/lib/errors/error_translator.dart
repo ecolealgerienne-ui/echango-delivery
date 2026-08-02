@@ -196,6 +196,10 @@ const Map<String, String> _fr = {
   'server.schema_out_of_sync': 'Erreur technique, réessayez.',
   'server.invalid_profile_type': 'Profil non reconnu.',
   'server.persona_forbidden': 'Cette action n\'est pas autorisée pour votre profil.',
+  'merchant.addresses_unavailable':
+      'Impossible de lire votre carnet d’adresses. Réessayez dans un instant.',
+  'merchant.known_drivers_unavailable':
+      'Impossible de lire vos transporteurs habituels.',
   'server.unexpected':
       'Le serveur a rencontré un problème. Réessayez dans un instant.',
 
@@ -382,6 +386,10 @@ const Map<String, String> _ar = {
   'server.schema_out_of_sync': 'خطأ تقني، يرجى المحاولة مرة أخرى.',
   'server.invalid_profile_type': 'الملف الشخصي غير معروف.',
   'server.persona_forbidden': 'هذا الإجراء غير مسموح به لملفك الشخصي.',
+  'merchant.addresses_unavailable':
+      'تعذّرت قراءة دفتر عناوينك. أعد المحاولة بعد لحظات.',
+  'merchant.known_drivers_unavailable':
+      'تعذّرت قراءة قائمة ناقليك المعتادين.',
   'server.unexpected': 'واجه الخادم مشكلة. أعد المحاولة بعد لحظات.',
 
   // ── ملاحظات جهاز العميل، بدون رمز من الخادم ──────────────────────────────

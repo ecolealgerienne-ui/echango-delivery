@@ -623,6 +623,20 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Et une leçon de méthode, parce qu'elle s'est produite trois fois dans la même journée** : mon scanner de DTO a annoncé **six champs non validés qui l'étaient tous** — il s'arrêtait sur le `})` d'un décorateur multi-ligne. Deux versions ont échoué avant la bonne. **Un outil d'audit se vérifie comme un vérificateur** : sur des cas dont on sait qu'il doit les refuser, et sur des cas dont on sait qu'il doit les accepter.
 
+- [ ] **Résilience — mesurée le 03/08/2026 en coupant Fleetbase, deux mensonges corrigés, le reste à faire**
+
+  L'expérience tient en une commande : `docker stop fleetbase-src-httpd-1`, on interroge, on redémarre. Elle a rendu plus que trois heures de lecture.
+
+  ✅ **Deux routes rendaient une liste vide en HTTP 200.** `GET /commercant/adresses` servait `{"data": []}` à un commerçant qui a **deux** adresses — son écran affichait « aucune adresse enregistrée » et l'invitait à ressaisir ce qui existe déjà. Idem pour l'historique des transporteurs. Les deux levaient un `catch → return { data: [] }` : **le repli qui détruit l'information d'absence** (règle 10), la faute la plus documentée du dépôt, vivante sur deux routes. Corrigé en `merchant.addresses_unavailable` / `merchant.known_drivers_unavailable`, vérifié sous coupure réelle.
+
+  ✅ **Ce qui dégradait déjà correctement** : la liste de commandes du commerçant sert le cache local avec `stale: true` par ligne, et l'application le lit (`MerchantOrder.degraded`). Les listes de l'entreprise et du transporteur lèvent `order.fetch_failed` / `driver.fetch_failed` — un refus codé, donc traduisible.
+
+  ⚠️ **`GET /health` rend 200 alors que Fleetbase est à terre.** Une sonde qui ne peut pas échouer n'est pas une sonde : derrière un répartiteur de charge, elle continuerait d'envoyer du trafic sur un BFF incapable de servir. **Non corrigé délibérément** — faire échouer `/health` peut déclencher une boucle de redémarrage en orchestration. La bonne forme est probablement de **rapporter l'état de la dépendance sans échouer**, et le choix appartient au déploiement.
+
+  ⚠️ **Un refus amont sort en 400, pas en 503.** `order.fetch_failed` dit « votre requête est fautive » là où l'amont est en panne — un client peut en conclure qu'il est inutile de réessayer. Le code est juste, le statut ment.
+
+  **Reste entier** : la concurrence (deux clôtures simultanées, un double appui sur une remise), la charge, et le comportement quand Fleetbase répond **lentement** plutôt que pas du tout — le délai est à 30 s, ce qui est très long pour un écran.
+
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.
 
