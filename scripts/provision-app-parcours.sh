@@ -1,43 +1,65 @@
 #!/usr/bin/env bash
-# Pose le décor d'un parcours joué **dans l'application**, puis rend les
-# identifiants à passer à `flutter drive`.
+# Pose le décor des parcours joués **dans l'application**, pour les TROIS
+# personas, puis rend les identifiants à passer à `flutter drive`.
 #
-#   ./scripts/provision-app-parcours.sh
-#   EMAIL=x@y.z ./scripts/provision-app-parcours.sh    # reprend un commerçant
+#   ./scripts/provision-app-parcours.sh [conducteur]
 #
 # ── Pourquoi un script à part, et pourquoi en shell ─────────────────────────
 #
 # Le test d'intégration Flutter pilote l'application ; il ne peut donc faire que
-# ce qu'un commerçant peut faire à l'écran. Or deux choses lui manquent avant de
-# pouvoir commencer, et **aucune des deux n'est un geste de commerçant** :
+# ce qu'un utilisateur peut faire à l'écran. Or trois choses lui manquent avant
+# de pouvoir commencer, et **aucune n'est un geste d'utilisateur** :
 #
-#   1. **L'activation du compte.** Depuis le Lot 4, une inscription enregistre
-#      une *demande* : `merchant_pending`, aucun jeton, aucune connexion tant
-#      qu'un administrateur n'a pas passé le `Vendor` à `active`. Le garde est
-#      volontaire et reste entier — c'est le rôle d'admin qui est tenu ici, pas
-#      le garde qui est contourné. (Même parti pris que `test-parcours-argent.sh`.)
+#   1. **L'activation des comptes.** Depuis le Lot 4, inscrire un commerçant ou
+#      une entreprise enregistre une *demande* : `403 merchant_pending` /
+#      `fleet_pending`, aucun jeton, aucune connexion tant qu'un administrateur
+#      n'a pas passé le `Vendor` à `active`. Le garde est volontaire et reste
+#      entier — c'est le rôle d'admin qui est tenu ici, pas le garde qui est
+#      contourné. (Même parti pris que `test-parcours-argent.sh`.)
 #
 #   2. **Deux adresses au carnet.** Le formulaire de course exige quatre
 #      coordonnées, désignées soit par la carte, soit par le carnet. Piloter une
 #      carte glissante depuis un test est fragile et ne prouve rien du métier ;
-#      choisir deux entrées d'un carnet est déterministe. Le carnet d'un
-#      commerçant neuf est vide, donc on le remplit ici.
+#      choisir deux entrées d'un carnet est déterministe.
+#
+#   3. **Des courses à prendre.** Le transporteur et l'entreprise doivent
+#      trouver quelque chose dans « Courses libres ». Les poser ici plutôt que
+#      de faire dépendre un parcours du précédent : deux tests qui se passent
+#      un état échouent ensemble, et le second accuse le premier.
 #
 # Ce script ne teste rien : il **provisionne**. Ce qui est vérifié l'est par
-# `integration_test/parcours_commercant_test.dart`, dans l'application.
+# `integration_test/`, dans l'application.
 #
-# ⚠️ Il consomme **une inscription sur les 10/h** du throttle, comme la suite
-# `run-all-scenarios.sh`. Les deux à la suite passent mal ; réutiliser un
-# commerçant déjà provisionné (`EMAIL=…`) ne consomme rien.
+# ── ⚠️ Idempotent, et c'est une contrainte de plafond, pas de confort ───────
+#
+# Les emails sont **stables**, pas aléatoires : le throttle d'inscription est de
+# dix par heure et la suite `run-all-scenarios.sh` en consomme déjà huit. Une
+# version à `$RANDOM` rendait ce script inutilisable deux fois de suite. Sur un
+# compte déjà présent, l'inscription répond le même `*_pending` et l'activation
+# ne coûte rien — on rejoue sans rien consommer.
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib/fleetbase.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/resolve-driver.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/driver-session.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/free-driver.sh"
 
 BFF_URL="${BFF_URL:-http://localhost:3001}"
 PASSWORD="${PASSWORD:-motdepasse123}"
-SUFFIX="${SUFFIX:-$RANDOM}"
-EMAIL="${EMAIL:-app-parcours-$SUFFIX@echango.local}"
-BUSINESS="${BUSINESS:-Boulangerie Parcours $SUFFIX}"
+DRIVER_HINT="${1:-}"
+
+MERCHANT_EMAIL="${MERCHANT_EMAIL:-app-parcours-commercant@echango.local}"
+FLEET_EMAIL="${FLEET_EMAIL:-app-parcours-entreprise@echango.local}"
+BUSINESS="${BUSINESS:-Boulangerie du Parcours}"
+FLEET_NAME="${FLEET_NAME:-Transports du Parcours}"
+
+PICKUP_NAME="${PICKUP_NAME:-Dépôt Alger-Centre}"
+DROPOFF_NAME="${DROPOFF_NAME:-Client Hydra}"
+
+# Combien de courses libres laisser en attente. Une pour le transporteur, une
+# pour l'entreprise, plus une de marge — un parcours qui échoue en consomme
+# parfois une sans la rendre.
+SPARE_ORDERS="${SPARE_ORDERS:-3}"
 
 command -v jq >/dev/null 2>&1 || { echo "❌ jq requis." >&2; exit 1; }
 
@@ -54,71 +76,176 @@ fail() { echo "❌ $1" >&2; [ -n "${2:-}" ] && echo "   Réponse : $2" >&2; exit
 # **toutes** les erreurs, y compris celles sans code métier.
 is_error() { jq -e 'type == "object" and ((.statusCode | type) == "number")' >/dev/null 2>&1; }
 
-# ── 1. Le compte ────────────────────────────────────────────────────────────
-
-step "Commerçant"
-
-register_body="$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" --arg b "$BUSINESS" \
-  '{email:$e, password:$p, businessName:$b, phone:"0550000000"}')"
-
+# Inscrit un persona et le fait valider — le refus EST le résultat attendu.
+#
 # ⚠️ La route est `/auth/merchant/register`, **pas** `/auth/register/merchant`.
 # Écrite à l'envers ici le 02/08/2026 : le 404 qui en est sorti n'a pas de champ
-# `code`, et la première version de ce script ne regardait que `code` — elle a
-# donc annoncé « ✅ Inscription enregistrée » sur une route inexistante, et n'a
-# échoué que trois étapes plus loin, en accusant l'activation. D'où la lecture
-# du **code HTTP** ci-dessous, qui ne peut pas manquer.
-reg="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/merchant/register" \
-  -H 'Content-Type: application/json' -d "$register_body")"
-reg_status="$(tail -n1 <<<"$reg")"
-reg_body="$(sed '$d' <<<"$reg")"
-reg_code="$(jq -r '.code // empty' <<<"$reg_body" 2>/dev/null || true)"
+# `code`, et la première version ne regardait que `code` — elle a donc annoncé
+# « ✅ Inscription enregistrée » sur une route inexistante, et n'a échoué que
+# trois étapes plus loin, en accusant l'activation. D'où la lecture du **code
+# HTTP**, qui ne peut pas manquer.
+register_and_activate() { # route email corps_json libellé code_attendu
+  local route="$1" email="$2" body="$3" label="$4" want="$5"
+  local out status payload code
 
-# **Le refus EST le résultat attendu.** Une inscription commerçant répond 403
-# `merchant_pending` : demande enregistrée, accès fermé. Mesuré, pas supposé —
-# et un 2xx ici signifierait que le garde du Lot 4 a sauté, ce qui est un défaut
-# bien plus grave que l'échec du provisionnement.
-if [ "$reg_status" = "403" ] && [ "$reg_code" = "merchant_pending" ]; then
-  pass "Demande enregistrée, accès en attente — $EMAIL"
-elif [ "$reg_status" = "200" ] || [ "$reg_status" = "201" ]; then
-  fail "L'inscription a délivré un accès sans validation — le garde du Lot 4 ne tient plus" "$reg_body"
-else
-  fail "Inscription refusée pour une raison inattendue (HTTP $reg_status)" "$reg_body"
-fi
+  out="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL$route" \
+    -H 'Content-Type: application/json' -d "$body")"
+  status="$(tail -n1 <<<"$out")"
+  payload="$(sed '$d' <<<"$out")"
+  code="$(jq -r '.code // empty' <<<"$payload" 2>/dev/null || true)"
 
-step "Activation (rôle admin, tenu par le script)"
-fb_activate_vendor_by_email "$EMAIL" \
-  || fail "Activation impossible : ${FLEETBASE_ERROR:-raison inconnue}"
-pass "Vendor passé à « active »"
+  if [ "$status" = "200" ] || [ "$status" = "201" ]; then
+    fail "$label : un accès a été délivré SANS validation — le garde du Lot 4 ne tient plus" "$payload"
+  fi
 
-# ── 2. La session, pour poser le carnet ─────────────────────────────────────
+  # ⚠️ **Trois réponses sont acceptables, et la troisième n'a été découverte
+  # qu'au deuxième passage (02/08/2026).**
+  #
+  #   403 `*_pending`      → compte neuf, demande enregistrée : le cas nominal
+  #   409 `auth.email_taken` → compte DÉJÀ provisionné par un passage précédent
+  #
+  # La première version n'acceptait que la première, parce qu'elle avait été
+  # éprouvée sur un compte encore en attente. Une fois le `Vendor` activé, le
+  # rejeu ne rend plus `*_pending` du tout — il rend `email_taken`, et le script
+  # échouait donc **exactement dans le mode de réutilisation qu'il existe pour
+  # servir**. C'est le même piège que partout ici : un chemin éprouvé une seule
+  # fois n'a été éprouvé que dans un seul état.
+  case "$status:$code" in
+    "403:$want")
+      info "$label : demande enregistrée, accès en attente" ;;
+    409:auth.email_taken|409:email_taken)
+      info "$label : compte déjà provisionné, repris tel quel" ;;
+    *)
+      fail "$label : refus inattendu (HTTP $status, code « ${code:-aucun} »)" "$payload" ;;
+  esac
 
-step "Connexion"
-login="$(curl -sS -X POST "$BFF_URL/auth/login" -H 'Content-Type: application/json' \
-  -d "$(jq -n --arg e "$EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')")"
+  # Activation rejouée dans les deux cas : elle est idempotente (le `PUT` relit
+  # le statut) et coûte une requête, là où deviner l'état en coûterait autant
+  # pour un résultat moins sûr.
+  fb_activate_vendor_by_email "$email" \
+    || fail "$label : activation impossible — ${FLEETBASE_ERROR:-raison inconnue}"
+  pass "$label validé — $email"
+}
+
+# Jeton, avec attente du plafond si besoin.
+#
+# ⚠️ **Cinq connexions par minute, et ce script en fait trois** — plus celles
+# des parcours qui suivent. Enchaîner décor et tests franchit la limite, et le
+# refus ressemble alors à un mot de passe faux. On attend la fenêtre une fois,
+# puis on abandonne en **nommant** la cause : un script qui dit « connexion
+# refusée » sur un 429 envoie chercher au mauvais endroit.
+login_token() { # email -> jeton sur stdout, vide et LOGIN_ERROR si échec
+  local email="$1" out status body
+  LOGIN_ERROR=""
+  for attempt in 1 2; do
+    out="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/login" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg e "$email" --arg p "$PASSWORD" '{email:$e, password:$p}')")"
+    status="$(tail -n1 <<<"$out")"
+    body="$(sed '$d' <<<"$out")"
+
+    local token
+    token="$(jq -r '.token // empty' <<<"$body")"
+    if [ -n "$token" ]; then printf '%s' "$token"; return 0; fi
+
+    if [ "$status" = "429" ] && [ "$attempt" = "1" ]; then
+      info "plafond de connexions atteint — attente de la fenêtre (65 s)"
+      sleep 65
+      continue
+    fi
+    LOGIN_ERROR="HTTP $status — $(jq -r '.message // .code // "sans message"' <<<"$body")"
+    return 1
+  done
+}
+
+# ── 1. Le commerçant ────────────────────────────────────────────────────────
+
+step "Commerçant"
+register_and_activate /auth/merchant/register "$MERCHANT_EMAIL" \
+  "$(jq -n --arg e "$MERCHANT_EMAIL" --arg p "$PASSWORD" --arg b "$BUSINESS" \
+     '{email:$e, password:$p, businessName:$b, phone:"0550000000"}')" \
+  "Commerçant" merchant_pending
+
 # ⚠️ Le champ s'appelle `token`. Ni `accessToken`, ni `access_token` — les deux
 # ont été essayés d'abord, et un jeton vide se serait manifesté trois requêtes
 # plus loin par un 401 sur le carnet d'adresses.
-TOKEN="$(jq -r '.token // empty' <<<"$login")"
-[ -n "$TOKEN" ] || fail "Aucun jeton délivré" "$login"
-pass "Jeton obtenu"
+MERCHANT_TOKEN="$(login_token "$MERCHANT_EMAIL")"
+[ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant refusée : ${LOGIN_ERROR:-raison inconnue}"
+pass "Jeton commerçant obtenu"
 
 mapi() { # méthode chemin [corps]
   local m="$1" p="$2" b="${3:-}"
   if [ -n "$b" ]; then
     curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
-      -H "Authorization: Bearer $TOKEN" -d "$b"
+      -H "Authorization: Bearer $MERCHANT_TOKEN" -d "$b"
   else
-    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $TOKEN"
+    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $MERCHANT_TOKEN"
   fi
 }
 
-# ── 3. Le carnet ────────────────────────────────────────────────────────────
+# ── 2. Le carnet d'adresses ─────────────────────────────────────────────────
 #
 # Deux adresses **réelles et distantes de quelques kilomètres** : un enlèvement
 # et une livraison au même point passeraient la validation tout en ne prouvant
 # rien du calcul de distance ni de l'affichage d'itinéraire.
 
 step "Carnet d'adresses"
+
+book="$(mapi GET /commercant/adresses)"
+
+# ⚠️ **Comparaison insensible à la casse — sinon le carnet enfle à chaque
+# passage (constaté le 02/08/2026).**
+#
+# Fleetbase rend les noms de lieux transformés : « Dépôt Alger-Centre » revient
+# en « DéPôT ALGER-CENTRE ». Une égalité stricte ne matchait donc jamais, le
+# script recréait les deux adresses à chaque exécution, et il y en avait **trois
+# copies** avant qu'on s'en aperçoive. Le décor se dégradait avec son propre
+# usage — le même défaut que les quatorze « Transports Alpha » du 01/08.
+#
+# `ascii_downcase` suffit : il abaisse les lettres ASCII et laisse les accents
+# tels quels des deux côtés, donc « DéPôT » et « Dépôt » se rejoignent.
+have() {
+  jq -e --arg n "$1" \
+    '[(.data // .)[]? | .name | ascii_downcase] | index($n | ascii_downcase) != null' \
+    >/dev/null 2>&1 <<<"$book"
+}
+
+# Les doublons déjà accumulés sont retirés : le formulaire propose une liste, et
+# trois entrées de même nom rendent le choix du test ambigu — un test ambigu
+# échoue un jour sur deux sans qu'on sache pourquoi.
+count_named() { # nom -> nombre d'entrées portant ce nom
+  jq -r --arg n "$1" \
+    '[(.data // .)[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))] | length' \
+    <<<"$book"
+}
+
+prune_duplicates() { # nom
+  local ids before after
+  before="$(count_named "$1")"
+  [ "$before" -gt 1 ] || return 0
+
+  ids="$(jq -r --arg n "$1" \
+    '[(.data // .)[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))]
+     | .[1:] | .[] | (.id // .uuid // empty)' <<<"$book")"
+  while read -r id; do
+    [ -n "$id" ] || continue
+    mapi DELETE "/commercant/adresses/$id" >/dev/null || true
+  done <<<"$ids"
+
+  # ⚠️ **Relu, jamais déduit du succès de `curl`.** La première version
+  # imprimait « doublon retiré » dès que la requête partait — or `curl` réussit
+  # aussi quand le serveur répond 400 ou 404. Le script a donc annoncé quatre
+  # suppressions à chaque passage **sans qu'aucune n'ait lieu**, et les doublons
+  # se sont accumulés derrière un message rassurant. C'est le défaut que la
+  # règle 8 nomme : un contrôle qui ne sait que dire oui.
+  book="$(mapi GET /commercant/adresses)"
+  after="$(count_named "$1")"
+  if [ "$after" -lt "$before" ]; then
+    info "« $1 » : $((before - after)) doublon(s) retiré(s), $after restant(e)"
+  else
+    info "⚠️  « $1 » : $before entrées, aucune supprimée — le carnet restera ambigu"
+  fi
+}
 
 add_address() { # nom adresse lat lon contact
   local body out
@@ -127,38 +254,182 @@ add_address() { # nom adresse lat lon contact
     '{name:$n, address:$a, latitude:$lat, longitude:$lon,
       contactName:$c, contactPhone:"0551020304", city:"Alger", country:"DZ"}')"
   out="$(mapi POST /commercant/adresses "$body")"
-  if is_error <<<"$out"; then
-    fail "Adresse « $1 » refusée" "$out"
-  fi
+  is_error <<<"$out" && fail "Adresse « $1 » refusée" "$out"
   pass "Adresse « $1 »"
 }
 
-# Le carnet peut déjà les porter (reprise via `EMAIL=`) : on ne les repose que
-# s'il en manque. Deux entrées de même nom rendraient le choix du test ambigu,
-# et un test ambigu échoue un jour sur deux sans qu'on sache pourquoi.
-book="$(mapi GET /commercant/adresses)"
-have() { jq -e --arg n "$1" '[(.data // .)[]? | .name] | index($n) != null' >/dev/null 2>&1 <<<"$book"; }
+# Deux entrées de même nom rendraient le choix du test ambigu, et un test ambigu
+# échoue un jour sur deux sans qu'on sache pourquoi.
+prune_duplicates "$PICKUP_NAME"
+prune_duplicates "$DROPOFF_NAME"
 
-PICKUP_NAME="${PICKUP_NAME:-Dépôt Alger-Centre}"
-DROPOFF_NAME="${DROPOFF_NAME:-Client Hydra}"
+if have "$PICKUP_NAME"; then
+  info "« $PICKUP_NAME » déjà au carnet"
+else
+  add_address "$PICKUP_NAME" "12 rue Didouche Mourad, Alger-Centre" 36.7719 3.0589 "Karim"
+fi
+if have "$DROPOFF_NAME"; then
+  info "« $DROPOFF_NAME » déjà au carnet"
+else
+  add_address "$DROPOFF_NAME" "8 chemin Mackley, Hydra" 36.7434 3.0290 "Nadia"
+fi
 
-have "$PICKUP_NAME"  || add_address "$PICKUP_NAME"  "12 rue Didouche Mourad, Alger-Centre" 36.7719 3.0589 "Karim"
-have "$DROPOFF_NAME" || add_address "$DROPOFF_NAME" "8 chemin Mackley, Hydra"              36.7434 3.0290 "Nadia"
-have "$PICKUP_NAME" && info "Carnet déjà pourvu, rien réécrit"
+# ── 3. L'entreprise de transport (le facilitateur) ──────────────────────────
 
-# ── 4. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
+step "Entreprise de transport"
+register_and_activate /auth/flotte/register "$FLEET_EMAIL" \
+  "$(jq -n --arg e "$FLEET_EMAIL" --arg p "$PASSWORD" --arg b "$FLEET_NAME" \
+     '{email:$e, password:$p, businessName:$b, firstName:"Test", lastName:"Entreprise",
+       phone:"0551111111"}')" \
+  "Entreprise" fleet_pending
+
+FLEET_TOKEN="$(login_token "$FLEET_EMAIL")"
+[ -n "$FLEET_TOKEN" ] || fail "Connexion entreprise refusée : ${LOGIN_ERROR:-raison inconnue}"
+pass "Jeton entreprise obtenu"
+
+# ── 4. Le conducteur ────────────────────────────────────────────────────────
+#
+# Résolu et provisionné par la bibliothèque partagée : l'invitation est émise
+# par un opérateur, un transporteur ne s'inscrit pas seul (revue C2). La même
+# discipline que les scénarios s'applique — plusieurs conducteurs, il faut dire
+# lequel.
+
+step "Conducteur"
+resolve_driver "$DRIVER_HINT" || fail "${RESOLVE_DRIVER_ERROR:-Conducteur introuvable}"
+obtain_driver_token "$DRIVER_UUID" || fail "${DRIVER_SESSION_ERROR:-Session conducteur impossible}"
+pass "Conducteur : ${DRIVER_LABEL:-$DRIVER_UUID}"
+[ -n "${DRIVER_SESSION_NOTE:-}" ] && info "$DRIVER_SESSION_NOTE"
+[ -n "$DRIVER_EMAIL" ] || fail "Aucun email de conducteur — impossible de se connecter dans l'app"
+
+# ⚠️ **L'application se connecte par la route UNIFIÉE, pas par celle du
+# transporteur — et les deux ne répondent pas pareil (constaté le 02/08/2026).**
+#
+# `POST /auth/login` résout le profil depuis l'email. Si le même email porte
+# **deux** comptes de personas différents, il répond `requiresRoleSelection`
+# **sans jeton**, et l'écran de connexion propose un choix au lieu de naviguer.
+# Le parcours transporteur échouait alors en accusant l'accueil de ne jamais
+# venir, alors que la connexion attendait un clic.
+#
+# Le cas n'est pas théorique : les scénarios d'argent réutilisent la variable
+# `EMAIL` pour le **commerçant**, et un conducteur créé dans leur foulée peut
+# hériter du même email. `driver-session.sh` documente déjà ce piège.
+#
+# On le vérifie donc ici, où il se lit, plutôt que dans l'application, où il se
+# déguise en écran qui ne s'ouvre pas.
+unified_raw="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg e "$DRIVER_EMAIL" --arg p "$PASSWORD" '{email:$e, password:$p}')")"
+unified_status="$(tail -n1 <<<"$unified_raw")"
+unified="$(sed '$d' <<<"$unified_raw")"
+
+# ⚠️ **Le code HTTP d'abord, l'interprétation ensuite — sinon on accuse le mauvais
+# coupable (constaté sur ce script même, 02/08/2026).** La première version
+# concluait « cet email porte plusieurs comptes » dès qu'aucun jeton ne
+# revenait ; elle a donc affirmé ça sur un `429 ThrottlerException`, c'est-à-dire
+# sur un compte parfaitement sain qu'on venait d'interroger cinq fois. Un
+# diagnostic sûr de lui sur une donnée qu'il n'a pas regardée est pire que pas
+# de diagnostic.
+if [ "$unified_status" = "429" ]; then
+  fail "Plafond de connexions atteint (5/minute) — attendre une minute et rejouer.
+   Ni le compte ni le mot de passe ne sont en cause."
+fi
+if [ -z "$(jq -r '.token // empty' <<<"$unified")" ]; then
+  roles="$(jq -r '(.roles // []) | join(", ")' <<<"$unified")"
+  if [ -n "$roles" ]; then
+    fail "Le conducteur « $DRIVER_EMAIL » ne peut pas se connecter dans l'application.
+   La connexion unifiée exige un choix de profil : $roles.
+   Cet email porte plusieurs comptes ; l'app ne peut pas trancher à sa place.
+   Choisir un autre conducteur :  $0 <nom|email|ID>" "$(jq -c '.' <<<"$unified")"
+  fi
+  fail "Connexion conducteur refusée (HTTP $unified_status)" "$(jq -c '.' <<<"$unified")"
+fi
+pass "Connexion unifiée vérifiée — l'app pourra ouvrir ce profil sans ambiguïté"
+
+# Appel authentifié côté conducteur — attendu par `lib/free-driver.sh`, qui le
+# suppose défini par l'appelant comme le font les sept scénarios.
+dapi() { # méthode chemin [corps]
+  local m="$1" p="$2" b="${3:-}"
+  if [ -n "$b" ]; then
+    curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $DRIVER_TOKEN" -d "$b"
+  else
+    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $DRIVER_TOKEN"
+  fi
+}
+
+# Le parcours transporteur **prend** une course : un conducteur déjà occupé se
+# verrait refuser (« driver.unavailable ») et le test accuserait l'écran.
+# `UNBLOCK=1` libère, comme pour les scénarios.
+require_free_driver
+
+# ── 5. Des courses libres à prendre ─────────────────────────────────────────
+#
+# Publiées ici, et non laissées à la charge du parcours commerçant : deux tests
+# qui se passent un état échouent ensemble, et le second accuse le premier.
+
+step "Courses libres"
+
+published=0
+
+# Une course libre = **diffusée et sans conducteur**.
+#
+# ⚠️ Le nom du champ conducteur n'est pas supposé : trois orthographes existent
+# selon la ressource Fleetbase servie (`driver_assigned_uuid`, `driver_uuid`,
+# `driver`). Les trois sont testées, et l'absence de toutes vaut « libre » —
+# tester une seule aurait compté comme libres des courses déjà prises, donc
+# n'aurait rien publié et fait échouer les parcours transporteur et entreprise
+# en accusant l'application.
+free_now() {
+  mapi GET '/commercant/commandes?page=1&limit=50' \
+    | jq '[(.orders // [])[]
+           | select(.status == "dispatched")
+           | select((.driver_assigned_uuid // .driver_uuid // .driver) == null)]
+          | length'
+}
+already="$(free_now)"
+info "déjà disponibles : $already"
+
+while [ "$((already + published))" -lt "$SPARE_ORDERS" ]; do
+  # ⚠️ `draft: true`, puis publication explicite — le parcours réel du
+  # commerçant. Avec `draft: false` la commande est diffusée **dès la
+  # création**, et le `publier` qui suit est refusé (`order.already_published`,
+  # constaté). Passer par le brouillon garde les deux gestes distincts, comme à
+  # l'écran.
+  body="$(jq -n '{
+    draft: true,
+    pickupLocationName: "Dépôt du Parcours", pickupLatitude: 36.7719, pickupLongitude: 3.0589,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: "Client du Parcours", dropoffLatitude: 36.7434, dropoffLongitude: 3.0290,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    price: 650, podMethod: "aucune", preferFavourites: false }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création d'une course libre refusée" "$out"
+  oid="$(jq -r '.id // empty' <<<"$out")"
+  [ -n "$oid" ] || fail "Course créée sans identifiant" "$out"
+
+  pub="$(mapi POST "/commercant/commandes/$oid/publier")"
+  is_error <<<"$pub" && fail "Publication refusée" "$pub"
+  published=$((published + 1))
+  pass "Course libre publiée ($published)"
+done
+
+[ "$published" = "0" ] && info "Assez de courses libres, aucune créée"
+
+# ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
 step "Prêt"
-info "Le décor est posé. La commande à lancer côté Windows :"
+info "Le décor est posé pour les trois personas. La commande à lancer côté Windows :"
 echo
 cat <<CMD
   cd echango_delivery
   flutter drive \\
     --driver=test_driver/integration_test.dart \\
-    --target=integration_test/parcours_commercant_test.dart \\
+    --target=integration_test/parcours_trois_personas_test.dart \\
     -d <émulateur> \\
-    --dart-define=TEST_MERCHANT_EMAIL=$EMAIL \\
-    --dart-define=TEST_MERCHANT_PASSWORD=$PASSWORD \\
+    --dart-define=TEST_MERCHANT_EMAIL=$MERCHANT_EMAIL \\
+    --dart-define=TEST_FLEET_EMAIL=$FLEET_EMAIL \\
+    --dart-define=TEST_DRIVER_EMAIL=$DRIVER_EMAIL \\
+    --dart-define=TEST_PASSWORD=$PASSWORD \\
     --dart-define=TEST_PICKUP_NAME="$PICKUP_NAME" \\
     --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME"
 CMD
