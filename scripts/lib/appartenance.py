@@ -78,6 +78,13 @@ PACE = float(os.environ.get('PACE_SECONDS', '0.55'))
 SONDE_DRIVER = os.environ.get('SONDE_DRIVER_UUID',
                               'eec8c72d-fd1e-4416-b516-69b584a1a65b')
 
+# Un PNG d'un pixel transparent : la plus petite donnée qui franchisse la
+# validation d'une photo. Le banc n'envoie jamais rien de plus lourd — il
+# éprouve un refus, pas un téléversement.
+PIXEL_PNG = (
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+)
+
 
 # ── Les trois personas, chacun avec ses deux comptes et ses routes ───────────
 #
@@ -215,6 +222,18 @@ PERSONAS = [
                      {'activity': {'code': 'dispatched'}}),
                     ('POST', '/transporteur/commandes/{id}/echec',
                      {'reason': 'client_absent'}),
+                    # ⚠️ **Rangée à tort avec les preuves à décor.** Elle porte
+                    # le mot « preuve », mais elle n'exige AUCUNE preuve
+                    # existante : seulement une photo dans le corps et une
+                    # course de A, que le banc a déjà. Classée sur le nom au
+                    # lieu du besoin — le tri paresseux que le reste de ce
+                    # fichier existe pour débusquer.
+                    #
+                    # Le PNG d'un pixel suffit à passer la validation
+                    # (`@ArrayMinSize(1)`), et il ne sera jamais écrit :
+                    # l'appartenance doit refuser avant.
+                    ('POST', '/transporteur/commandes/{id}/preuve',
+                     {'photos': [PIXEL_PNG]}),
                 ],
             },
             {

@@ -280,11 +280,11 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 ⚠️ **Authentifier n'est pas autoriser, et c'est la confusion qui coûte le plus cher.** Le garde prouve **qui** vous êtes ; il ne prouve pas que la commande, le conducteur ou l'adresse que vous nommez sont à vous. Cette seconde vérification vit **dans chaque service** (`getMerchantWithValidation`, `resolveOrder`, `getDriverOrFail`, `getFleetWithValidation`) — donc dans quatre-vingt-dix endroits, chacun reposant sur le fait que son auteur y a pensé. **Toute route qui accepte un identifiant doit vérifier l'appartenance avant de s'en servir**, et le pire cas doit être « introuvable », jamais « la ressource de quelqu'un d'autre ».
 
-✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **25** routes, sur les trois personas. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
+✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **26** routes, sur les trois personas. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
 
 ⚠️ **La leçon, et elle vaut plus que les bancs** : la première version du banc de refus a **passé la mutation**. Ouvrir une route la faisait quitter l'ensemble testé, et le total tombait de 87 à 86 sans un mot. **Un contrôle qui prend sa cible dans la donnée qu'il examine ne contrôle rien** — d'où l'épinglage des routes ouvertes, chacune étant une décision qui doit s'écrire.
 
-⚠️ **Reste à couvrir** : 11 des 41 routes à identifiant — remises, encaissements et preuves de livraison, qui demandent un décor **comptable ou photographique** ; 5 autres sont exclues parce que l'appartenance n'y est pas la question. Décomposition complète en Prochaines étapes : un total sans sa décomposition ne se vérifie pas.
+⚠️ **Reste à couvrir** : 10 des 41 routes à identifiant — remises, encaissements et lecture des preuves, qui demandent un décor **comptable ou photographique** ; 5 autres sont exclues parce que l'appartenance n'y est pas la question. Décomposition complète en Prochaines étapes : un total sans sa décomposition ne se vérifie pas.
 
 ⚠️ **Et un refus doit sortir avec son code.** `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError` ou une erreur Prisma **ne passe pas par lui**, sort par le gestionnaire par défaut de Nest, donc **sans `code`** — et l'application retombe sur son message générique au moment précis où l'on comprend le moins ce qui s'est passé. C'est la règle 3 percée sur son chemin le plus obscur.
 
@@ -567,16 +567,18 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Et il a fallu deux versions, parce que la première a passé la mutation.** `@Public` posé sur `GET /commercant/commandes` : le banc est passé **au vert**, de 87 routes à 86 — la route ouverte avait simplement **quitté l'ensemble testé**, en silence. C'était le défaut exact qu'il existe pour attraper, et il l'a laissé passer parce qu'il **prenait sa cible dans la donnée qu'il examinait**. Les huit routes ouvertes sont désormais **épinglées** (`PUBLIC_ROUTES`) : en ouvrir une neuvième fait échouer le banc tant que la décision n'est pas écrite là. Prouvé ensuite dans les deux sens — brèche → refus (sortie 1), correction → 259/259 (sortie 0).
 
-  ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **25 routes éprouvées, 25 refus** sur les trois personas. La ressource de A demandée avec le jeton de B rend 403 ou 404, jamais la ressource.
+  ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **26 routes éprouvées, 26 refus** sur les trois personas. La ressource de A demandée avec le jeton de B rend 403 ou 404, jamais la ressource.
 
   **Le compte exact des 41 routes à identifiant**, parce qu'un total sans sa décomposition ne se vérifie pas :
 
   | | routes | |
   |---|---|---|
-  | **éprouvées** | **25** | commandes, adresses, favoris, notifications (commerçant) · commandes, adhésions (entreprise) · course assignée, rattachements (transporteur) |
+  | **éprouvées** | **26** | commandes, adresses, favoris, notifications (commerçant) · commandes, adhésions (entreprise) · course assignée, dépôt de preuve, rattachements (transporteur) |
   | exclues, l'appartenance n'y est pas la question | 5 | opportunités (visibles à toute entreprise), prendre une opportunité, inviter un conducteur, accepter/refuser une course libre |
-  | décor **comptable** | 8 | remises et encaissements des trois personas — les poser demanderait d'**écrire dans le registre de caisse** |
-  | décor **photographique** | 3 | preuves de livraison — il faut une livraison achevée avec sa photo |
+  | décor **comptable** | 8 | `remises/:id/confirmer\|contester` des trois personas et `encaissements/:id/confirmer\|contester` du transporteur — les poser demanderait d'**écrire dans le registre de caisse** |
+  | décor **photographique** | 2 | `GET preuves/:id` (commerçant et transporteur) — il faut une preuve existante, donc une livraison achevée avec sa photo |
+
+  ⚠️ **Une route avait été rangée sur son NOM plutôt que sur son besoin.** `POST /transporteur/commandes/:id/preuve` était comptée avec les preuves à décor parce qu'elle en porte le mot — alors qu'elle n'exige **aucune preuve existante** : une photo dans le corps (un PNG d'un pixel suffit) et une course de A, que le banc avait déjà. Le tri paresseux que ce fichier dénonce partout, commis dans son propre inventaire.
 
   ⚠️ **Chaque épreuve porte son témoin, et c'est ce qui la rend non tautologique** : A doit d'abord obtenir SA ressource (2xx). Un identifiant du **mauvais type** rend 404 partout — un banc naïf y lirait « l'appartenance est vérifiée » et serait vert sans rien prouver. Sans témoin, le persona est déclaré **non couvert**, jamais réussi. Les identifiants sont découverts en listant les ressources de A, jamais écrits en dur.
 
