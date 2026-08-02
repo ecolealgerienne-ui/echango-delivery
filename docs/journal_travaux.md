@@ -1,3 +1,27 @@
+- [x] **Le parcours d'argent joué à l'écran (02/08/2026)** : le transporteur prend une course encaissée, la mène à son terme, **déclare la somme dans le tiroir**, et ce montant apparaît dans sa caisse **et** dans celle du commerçant. Six parcours au total, `+7 All tests passed`.
+
+  **C'est la moitié que `test-parcours-argent.sh` ne peut pas vérifier.** Le scénario en `curl` prouve que le registre est juste ; il ne prouve pas que quelqu'un sache le lire ni l'alimenter. Or « une dette que seul le débiteur voit n'est pas une dette, c'est une note personnelle » — la question centrale de ce produit se tranche à l'écran ou nulle part.
+
+  **Six pièges rencontrés, dont trois qui n'ont rien de spécifique au métier et se reproduiront.**
+
+  ⚠️ **(a) `ListView.builder` ne construit que ce qui est visible.** Le serveur sert vingt-et-une opportunités ; la course cherchée était plus bas, donc **jamais construite**, donc introuvable — et le test concluait que le décor ne l'avait pas publiée. Mesuré à part : le serveur la servait bien. Le parcours fait désormais défiler avant de conclure.
+
+  ⚠️ **(b) Relancer `app.main()` au milieu d'un test laisse l'instance précédente vivante.** Son client HTTP garde son jeton **en mémoire**, que le vidage du stockage sécurisé n'atteint pas : les écrans commerçant partaient avec un jeton de transporteur et le serveur répondait « This endpoint requires one of: merchant » — un refus juste, sur une session fantôme. Un test par persona, et le montant déclaré est **transmis** au suivant plutôt que recalculé : recalculer des deux côtés masquerait la divergence qu'on cherche.
+
+  ⚠️ **(c) Entre deux écritures, la colonne d'actions est vide** — la fiche se recharge. `find.byType(FilledButton).first` levait « Bad state: No element », deux fois, à deux endroits. Et le compte importe : tant que les transitions ne sont pas revenues, il ne reste qu'un bouton, le **signalement d'échec** — `.first` aurait donc visé l'action destructrice.
+
+  **(d) Le montant attendu se LIT sur le tiroir.** J'avais écrit 1950 ; le serveur en demande **2727** — la marchandise plus la livraison, `codIncludesDelivery` valant `false`. Le serveur avait raison. Un test qui impose son arithmétique finit par vérifier son erreur plutôt que le produit.
+
+  **(e) La carte d'une opportunité n'expose ni le destinataire ni le montant à encaisser** — le premier est masqué tant que la course n'est pas prise, une course libre devant se juger sans désigner une porte. Elle affiche le **prix** : c'est donc lui qui identifie la course d'argent, à 777 pour ne pas se confondre avec les 650 ordinaires.
+
+  **(f) `tester.pageBack()` cherche un bouton Cupertino** et échoue sur « One back button expected » alors que la flèche Material est bien là.
+
+  ⚠️ **Et un défaut du décor, de la famille que ce dépôt proscrit** : il consommait **deux inscriptions à chaque exécution** — plafonnées à dix par heure — pour des comptes dont il savait qu'ils existaient. Six passages épuisaient le quota, et le parcours d'inscription, le seul qui en ait réellement besoin, se voyait refusé. Une connexion, bornée à la minute et non à l'heure, dit gratuitement la même chose.
+
+  ⚠️ **Constat non corrigé, à arbitrer** : la fiche affiche « **777 USD** » pour le prix à côté de « À encaisser : 2727 **DZD** ». Aucune occurrence de `USD` dans le BFF — c'est la devise par défaut de l'organisation Fleetbase, que l'application relaie fidèlement. Le correctif est une configuration, pas une ligne de code.
+
+  **Restent à porter à l'écran** : le parcours d'argent à trois maillons, la multi-appartenance, la régularisation par le commerçant, l'écart à la porte et la dette négative, les trois sorties d'une course. Les **deux plafonds** resteront probablement en shell : ils exigent de modifier le `.env` et de redémarrer le BFF **en cours de scénario**, ce qui couperait l'application au milieu d'un parcours.
+
 - [x] **Les TROIS personas joués dans l'application (02/08/2026)** : `integration_test/parcours_trois_personas_test.dart` + `harness.dart`. Le parcours commerçant est étendu au **transporteur** et à l'**entreprise**, chacun se connectant pour de vrai sur l'émulateur. Quatre parcours : inscription commerçant (la demande reste en attente), commerçant complet, transporteur qui prend une course dans « Opportunités », entreprise qui en prend une depuis son onglet. `00:43 +5: All tests passed!`
 
   **Trois défauts de produit de plus, tous invisibles aux 87 tests Jest et aux 78 tests Flutter.**

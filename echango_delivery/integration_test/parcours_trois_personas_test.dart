@@ -166,6 +166,16 @@ void main() {
             '\n  Fiche : ${visibleTexts()}');
   });
 
+  // ── Argent ───────────────────────────────────────────────────────────────
+  //
+  // ⚠️ **Avant le parcours transporteur, et l'ordre est une contrainte, pas un
+  // goût.** Un conducteur ne détient qu'une course à la fois : celui qui en
+  // prend une dans le parcours suivant ne peut plus en accepter d'autre. Le
+  // parcours d'argent, lui, **termine** la sienne — il rend donc le conducteur
+  // libre pour la suite. L'inverse laissait le conducteur occupé et faisait
+  // échouer l'argent en accusant le décor de n'avoir rien publié.
+  parcoursArgentDeuxMaillons();
+
   // ── Transporteur ─────────────────────────────────────────────────────────
 
   testWidgets('transporteur — connexion, opportunités, prise d’une course',
@@ -268,6 +278,224 @@ void main() {
     expect(outcome, contains(fleetLabel('fleet.opportunities.taken', const Locale('fr'))),
         reason: 'la prise a été refusée, ou son message a changé');
   });
+}
+
+/// ── Le parcours d'argent, à l'écran ────────────────────────────────────────
+///
+/// Le scénario `test-parcours-argent.sh` vérifie la même chose en `curl`. Ce
+/// qu'il ne peut pas vérifier, et qui est tout l'enjeu : que le transporteur
+/// **puisse déclarer** l'encaissement, et que les deux parties **le voient**.
+/// Un registre juste que personne ne sait lire ne vaut rien.
+void parcoursArgentDeuxMaillons() {
+  testWidgets('argent — le transporteur encaisse, les deux caisses le voient',
+      (tester) async {
+    requireCredentials({
+      'TEST_DRIVER_EMAIL': driverEmail,
+      'TEST_MERCHANT_EMAIL': merchantEmail,
+    });
+
+    // ── 1. Le transporteur prend la course encaissée ───────────────────────
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+    await openTab(tester, 0);
+
+    // Reconnue à son **prix**, seul repère que la carte expose : le nom du
+    // destinataire est masqué tant que la course n'est pas prise, et le montant
+    // à encaisser n'est pas sur la carte. Motif complet dans `harness.dart`.
+    final codRow = rowContaining(codFee);
+
+    // La liste peut compter des dizaines d'opportunités, et `ListView.builder`
+    // ne construit que ce qui est à l'écran : sans défilement, une course plus
+    // bas dans la liste est introuvable — motif complet dans `harness.dart`.
+    await pumpUntil(tester, find.byType(ListTile),
+        reason: 'la liste des opportunités');
+    await scrollUntilFound(tester, codRow);
+
+    await pumpUntil(tester, codRow,
+        reason: 'la course encaissée (prix $codFee) dans les opportunités',
+        onTimeout: 'introuvable même après défilement — le décor ne l’a pas '
+            'publiée, ou quelqu’un l’a déjà prise. '
+            'Relancer scripts/provision-app-parcours.sh');
+    await tapVisible(tester, codRow.first);
+
+    final accept = find.byType(FilledButton);
+    await pumpUntil(tester, accept, reason: 'fiche de la course encaissée');
+    expect(accept, findsOneWidget,
+        reason: 'une opportunité réclamable n’offre que « Accepter »');
+    await tapAndCatchOutcome(tester, accept);
+    await pumpUntilGone(tester, find.byIcon(Icons.do_not_disturb_on_outlined),
+        reason: 'la course est prise',
+        onTimeout: 'fiche : ${visibleTexts()}');
+
+    // ── 2. Il la termine, et déclare l'argent ──────────────────────────────
+    //
+    // ⚠️ **Le premier bouton plein est la transition suivante**, et l'ordre
+    // n'est pas un hasard : la fiche empile les activités, PUIS le refus, PUIS
+    // le signalement d'échec. Prendre `.first` désigne donc l'action normale,
+    // jamais l'action destructrice — ce qui serait le pire tap possible.
+    //
+    // ⚠️ **Attendre qu'il y en ait un.** La fiche se recharge après
+    // l'acceptation, et sa colonne d'actions est vide le temps de l'aller-retour
+    // : prendre `.first` sans attendre lève « Bad state: No element » — un
+    // message qui parle de Dart et pas du produit, donc qui envoie chercher au
+    // mauvais endroit.
+    // ⚠️ **Attendre DEUX boutons, pas un.** La fiche d'une course prise porte
+    // au minimum la transition suivante **et** le signalement d'échec, dans cet
+    // ordre. Tant que les activités ne sont pas revenues du serveur, il n'y a
+    // qu'un bouton — le signalement — et `.first` désignerait donc l'action
+    // destructrice. Le compte est la seule façon de savoir qu'on a bien la
+    // liste complète.
+    await pumpUntilTrue(
+        tester, () => find.byType(FilledButton).evaluate().length >= 2,
+        reason: 'les actions de la course prise (transition + signalement)',
+        onTimeout: 'fiche : ${visibleTexts()}');
+
+    // Le tiroir d'encaissement ne s'ouvre QUE si la course en attend un : son
+    // apparition vaut donc vérification que le montant a bien voyagé jusqu'ici.
+    final sheetAmount = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(TextField));
+
+    // La course peut demander plusieurs transitions avant d'être livrée
+    // (« en route », puis « livrée ») ; la configuration Fleetbase en décide,
+    // pas nous. On avance donc jusqu'à ce que l'argent soit demandé, plutôt que
+    // de parier sur le nombre d'étapes.
+    //
+    // ⚠️ **Chaque tour attend que les actions soient revenues.** La fiche se
+    // recharge après chaque transition : taper `.first` sans attendre lève
+    // « Bad state: No element » — deux fois de suite, à deux endroits
+    // différents, pour la même raison. Le même piège que plus haut : entre deux
+    // écritures, la colonne d'actions est vide, et ce n'est pas un défaut.
+    for (var step = 0; step < 4 && sheetAmount.evaluate().isEmpty; step++) {
+      final ready = await _actionsReady(tester);
+      if (!ready) break;
+      await tapVisible(tester, find.byType(FilledButton).first);
+      await _reachedSheet(tester, sheetAmount);
+    }
+
+    await pumpUntil(tester, sheetAmount,
+        reason: 'tiroir de déclaration d’encaissement',
+        onTimeout: 'la course a été close SANS demander l’argent — '
+            'le montant à encaisser n’est pas arrivé jusqu’à l’écran. '
+            'Écran : ${visibleTexts()}');
+
+    // ⚠️ **Le montant se LIT sur le tiroir, il ne se suppose pas.** Écrire
+    // `codAmount` a échoué : avec `codIncludesDelivery: false`, le destinataire
+    // règle la marchandise **et** la livraison, donc 1950 + 777 = 2727. Le
+    // serveur avait raison, mon attente était fausse — et un test qui impose sa
+    // propre arithmétique finit par vérifier son erreur plutôt que le produit.
+    final expected = amountShownInSheet();
+    expect(expected, isNotNull,
+        reason: 'le tiroir n’annonce aucun montant — ${visibleTexts()}');
+
+    await tester.enterText(sheetAmount.first, expected!);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final confirm = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(FilledButton));
+    expect(confirm, findsOneWidget,
+        reason: 'le tiroir n’a qu’une confirmation ; un montant exact '
+            'n’ouvre aucune liste de motifs');
+    await tapVisible(tester, confirm);
+
+    await pumpUntilGone(tester, find.byType(BottomSheet),
+        reason: 'le tiroir se referme — la déclaration est partie',
+        onTimeout: 'écran : ${visibleTexts()}');
+
+    // ── 3. Sa caisse porte la somme ────────────────────────────────────────
+    await goBack(tester);
+    await pumpUntil(tester, find.byType(Tab),
+        reason: 'retour au tableau de bord');
+
+    await tapVisible(
+        tester, find.byIcon(Icons.account_balance_wallet_outlined).first);
+    await pumpUntilTrue(tester, () => screenHas(expected),
+        reason: 'la caisse du transporteur affiche $expected',
+        onTimeout: 'l’encaissement a été déclaré mais n’apparaît pas dans sa '
+            'caisse. Écran : ${visibleTexts(40)}');
+
+    // La somme détenue est reprise par le test suivant, côté commerçant.
+    _montantEncaisse = expected;
+  });
+
+  // ⚠️ **Un test à part, et surtout PAS un second `app.main()` dans le
+  // précédent (02/08/2026).**
+  //
+  // La première version enchaînait `resetDevice()` puis `app.main()` au milieu
+  // du parcours pour changer de persona. L'instance précédente reste vivante :
+  // son client HTTP garde son jeton **en mémoire**, que le vidage du stockage
+  // n'atteint pas. Les écrans commerçant partaient donc avec un jeton qui n'en
+  // était pas un, et le serveur répondait « This endpoint requires one of:
+  // merchant » — un refus parfaitement juste, sur une session fantôme.
+  //
+  // Un test par persona : le harnais repart d'un arbre neuf, et `setUp` vide
+  // le stockage avant chacun.
+  testWidgets('argent — le commerçant voit la somme que son transporteur détient',
+      (tester) async {
+    requireCredentials({'TEST_MERCHANT_EMAIL': merchantEmail});
+    expect(_montantEncaisse, isNotNull,
+        reason: 'le parcours transporteur n’a pas déclaré d’encaissement — '
+            'ce test n’a rien à vérifier');
+
+    app.main();
+    await loginAs(tester, email: merchantEmail, home: Home.merchant);
+
+    // C'est la moitié qui compte vraiment : une dette que seul le débiteur voit
+    // n'est pas une dette, c'est une note personnelle.
+    await tapVisible(
+        tester, find.byIcon(Icons.account_balance_wallet_outlined).first);
+    await pumpUntilTrue(tester, () => screenHas(_montantEncaisse!),
+        reason: 'la caisse du commerçant affiche $_montantEncaisse',
+        onTimeout: 'le commerçant ne voit pas ce que le transporteur détient. '
+            'Écran : ${visibleTexts(40)}');
+  });
+}
+
+/// Ce que le transporteur a déclaré, repris par le test commerçant.
+///
+/// Une variable de fichier plutôt qu'un recalcul : c'est le **même** montant
+/// qui doit apparaître des deux côtés, et le recalculer des deux côtés
+/// laisserait passer une divergence au lieu de la révéler.
+String? _montantEncaisse;
+
+/// La fiche a-t-elle fini de recharger ses actions ?
+///
+/// Deux boutons au minimum : la transition suivante **et** le signalement
+/// d'échec. Un seul signifie que les activités ne sont pas revenues — taper
+/// alors `.first` viserait l'action destructrice.
+Future<bool> _actionsReady(WidgetTester tester) async {
+  final until = DateTime.now().add(const Duration(seconds: 12));
+  while (DateTime.now().isBefore(until)) {
+    await tester.pump(const Duration(milliseconds: 150));
+    if (find.byType(FilledButton).evaluate().length >= 2) return true;
+  }
+  return false;
+}
+
+/// Laisse au tiroir le temps d'apparaître, sans échouer s'il ne vient pas —
+/// l'appelant enchaîne alors la transition suivante.
+Future<void> _reachedSheet(WidgetTester tester, Finder sheet) async {
+  final until = DateTime.now().add(const Duration(seconds: 6));
+  while (DateTime.now().isBefore(until)) {
+    await tester.pump(const Duration(milliseconds: 150));
+    if (sheet.evaluate().isNotEmpty) return;
+  }
+}
+
+/// Le montant que le tiroir annonce comme attendu.
+///
+/// Lu sur l'écran plutôt que recalculé : c'est le serveur qui décide si la
+/// livraison s'ajoute à la marchandise, et le test n'a pas à refaire ce calcul.
+String? amountShownInSheet() {
+  final texts = find
+      .descendant(of: find.byType(BottomSheet), matching: find.byType(Text))
+      .evaluate()
+      .map((e) => (e.widget as Text).data)
+      .whereType<String>();
+  for (final t in texts) {
+    final m = RegExp(r'(\d[\d\s]*)').firstMatch(t);
+    if (m != null) return m.group(1)!.replaceAll(RegExp(r'\s'), '');
+  }
+  return null;
 }
 
 /// Ouvre le carnet d'adresses de la ligne `row` et y choisit `addressName`.

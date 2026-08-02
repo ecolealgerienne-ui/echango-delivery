@@ -88,6 +88,20 @@ register_and_activate() { # route email corps_json libellé code_attendu
   local route="$1" email="$2" body="$3" label="$4" want="$5"
   local out status payload code
 
+  # ⚠️ **Ne pas dépenser une inscription pour apprendre ce qu'une connexion
+  # dit gratuitement (02/08/2026).** L'inscription est plafonnée à dix par
+  # heure ; ce script en consommait deux **à chaque exécution**, même sur des
+  # comptes déjà provisionnés dont il savait qu'ils existaient. Six passages
+  # suffisaient donc à épuiser le quota, et le parcours d'inscription — le seul
+  # qui en a réellement besoin — se voyait refusé.
+  #
+  # La connexion, elle, n'est bornée qu'à la minute. Un compte qui rend un
+  # jeton est provisionné ET validé : il n'y a rien à refaire.
+  if [ -n "$(login_token "$email" 2>/dev/null)" ]; then
+    pass "$label déjà provisionné et actif — $email (aucune inscription consommée)"
+    return 0
+  fi
+
   out="$(curl -sS -w '\n%{http_code}' -X POST "$BFF_URL$route" \
     -H 'Content-Type: application/json' -d "$body")"
   status="$(tail -n1 <<<"$out")"
@@ -415,6 +429,58 @@ done
 
 [ "$published" = "0" ] && info "Assez de courses libres, aucune créée"
 
+# ── 5 bis. Une course ENCAISSÉE, pour le parcours d'argent ──────────────────
+#
+# Distincte des précédentes par son nom de destinataire : le parcours d'argent
+# doit prendre **celle-là** et pas une autre, sinon il déclare un encaissement
+# sur une course qui n'en attend aucun et le tiroir ne s'ouvre jamais.
+#
+# ⚠️ `podMethod: aucune` — délibéré. Exiger une photo ferait dépendre le
+# parcours de la capture d'image de l'émulateur, c'est-à-dire d'un composant
+# natif qui n'a rien à voir avec l'argent. La preuve photo se teste à part.
+
+step "Course encaissée"
+
+COD_DROPOFF="${COD_DROPOFF:-Client Encaissement}"
+COD_AMOUNT="${COD_AMOUNT:-1950}"
+
+# ⚠️ **Un prix distinctif, et c'est le seul repère utilisable.** La carte d'une
+# opportunité n'affiche ni le nom du destinataire — masqué tant que la course
+# n'est pas prise, une course libre se juge sans désigner une porte — ni le
+# montant à encaisser. Elle affiche le **prix**. C'est donc lui qui permet au
+# parcours d'argent de reconnaître SA course parmi les autres ; 777 ne peut se
+# confondre avec les 650 des courses ordinaires.
+COD_FEE="${COD_FEE:-777}"
+
+cod_free() {
+  mapi GET '/commercant/commandes?page=1&limit=50' \
+    | jq --arg n "$COD_DROPOFF" '[(.orders // [])[]
+         | select(.status == "dispatched")
+         | select((.driver_assigned_uuid // .driver_uuid // .driver) == null)
+         | select((.dropoff_name // .dropoff // "" | tostring | ascii_downcase)
+                  | contains($n | ascii_downcase))] | length'
+}
+
+if [ "$(cod_free)" -gt 0 ] 2>/dev/null; then
+  info "une course encaissée est déjà disponible"
+else
+  body="$(jq -n --arg d "$COD_DROPOFF" --argjson cod "$COD_AMOUNT" --argjson fee "$COD_FEE" '{
+    draft: true,
+    pickupLocationName: "Dépôt du Parcours", pickupLatitude: 36.7719, pickupLongitude: 3.0589,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: $d, dropoffLatitude: 36.7434, dropoffLongitude: 3.0290,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    price: $fee, codAmount: $cod, codIncludesDelivery: false,
+    podMethod: "aucune", preferFavourites: false }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création de la course encaissée refusée" "$out"
+  oid="$(jq -r '.id // empty' <<<"$out")"
+  [ -n "$oid" ] || fail "Course encaissée créée sans identifiant" "$out"
+  pub="$(mapi POST "/commercant/commandes/$oid/publier")"
+  is_error <<<"$pub" && fail "Publication de la course encaissée refusée" "$pub"
+  pass "Course encaissée publiée — « $COD_DROPOFF », $COD_AMOUNT à encaisser"
+fi
+
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
 step "Prêt"
@@ -431,7 +497,9 @@ cat <<CMD
     --dart-define=TEST_DRIVER_EMAIL=$DRIVER_EMAIL \\
     --dart-define=TEST_PASSWORD=$PASSWORD \\
     --dart-define=TEST_PICKUP_NAME="$PICKUP_NAME" \\
-    --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME"
+    --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME" \\
+    --dart-define=TEST_COD_AMOUNT=$COD_AMOUNT \\
+    --dart-define=TEST_COD_FEE=$COD_FEE
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"

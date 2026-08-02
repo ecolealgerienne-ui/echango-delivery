@@ -35,6 +35,90 @@ const String pickupName =
 const String dropoffName =
     String.fromEnvironment('TEST_DROPOFF_NAME', defaultValue: 'Client Hydra');
 
+/// Le montant à encaisser de la course d'argent, et son **prix distinctif**.
+///
+/// ⚠️ **C'est le prix qui identifie la course, pas le destinataire.** La carte
+/// d'une opportunité n'affiche ni le nom du destinataire — masqué tant que la
+/// course n'est pas prise, une course libre devant se juger sans désigner une
+/// porte — ni le montant à encaisser. Elle affiche le prix, et lui seul permet
+/// au parcours de reconnaître SA course parmi les autres.
+///
+/// Le parcours doit prendre celle-là et pas une autre : sur une course sans
+/// encaissement, le tiroir de déclaration ne s'ouvrirait jamais.
+const String codAmount =
+    String.fromEnvironment('TEST_COD_AMOUNT', defaultValue: '1950');
+const String codFee =
+    String.fromEnvironment('TEST_COD_FEE', defaultValue: '777');
+
+/// Trouve la ligne d'une liste dont un texte contient [needle], casse ignorée.
+///
+/// ⚠️ Casse ignorée parce que **Fleetbase rend les noms de lieux en
+/// MAJUSCULES** : « Client Encaissement » revient « CLIENT ENCAISSEMENT ».
+Finder rowContaining(String needle) {
+  final wanted = needle.toLowerCase();
+  return find.ancestor(
+    of: find.byWidgetPredicate(
+      (w) => w is Text && (w.data?.toLowerCase().contains(wanted) ?? false),
+      description: '« $needle » (casse ignorée)',
+    ),
+    matching: find.byType(ListTile),
+  );
+}
+
+/// Fait défiler la liste visible jusqu'à ce que [target] existe.
+///
+/// ⚠️ **`ListView.builder` ne construit que ce qui est à l'écran**, et c'est le
+/// piège qui a coûté deux tours (02/08/2026). Le serveur sert vingt-et-une
+/// opportunités ; la course cherchée était plus bas dans la liste, donc **jamais
+/// construite**, donc invisible à `find` — et le test concluait que le décor ne
+/// l'avait pas publiée. Le serveur, lui, la servait bien : mesuré à part.
+///
+/// ⚠️ On tire depuis une **coordonnée d'écran**, pas depuis un `Scrollable`
+/// désigné par son type : les onglets d'un `TabBarView` en exposent plusieurs,
+/// et rien ne distingue celui qui est visible de celui qui dort à côté. Tirer
+/// au milieu de l'écran frappe forcément la liste qu'on regarde.
+Future<void> scrollUntilFound(
+  WidgetTester tester,
+  Finder target, {
+  int maxDrags = 25,
+}) async {
+  for (var i = 0; i < maxDrags; i++) {
+    if (target.evaluate().isNotEmpty) return;
+    await tester.dragFrom(
+        tester.getCenter(find.byType(Scaffold).first), const Offset(0, -320));
+    await tester.pump(const Duration(milliseconds: 250));
+  }
+}
+
+/// Revient à l'écran précédent.
+///
+/// ⚠️ **Pas `tester.pageBack()`** : il exige un `CupertinoNavigationBarBackButton`
+/// ou l'icône Material exacte, et il a échoué ici sur « One back button expected
+/// on screen » alors que la flèche était bien à l'écran. On désigne donc la
+/// flèche par son icône, et on dit ce qu'on n'a pas trouvé si elle manque.
+Future<void> goBack(WidgetTester tester) async {
+  final arrow = find.byIcon(Icons.arrow_back);
+  if (arrow.evaluate().isNotEmpty) {
+    await tester.tap(arrow.first);
+  } else if (find.byType(BackButton).evaluate().isNotEmpty) {
+    await tester.tap(find.byType(BackButton).first);
+  } else {
+    fail('Aucun retour trouvé — écran : ${whatIsOnScreen()}');
+  }
+  await tester.pump(const Duration(milliseconds: 600));
+}
+
+/// Un texte de l'écran contient-il [needle] ?
+bool screenHas(String needle) {
+  final wanted = needle.toLowerCase();
+  return find
+      .byType(Text)
+      .evaluate()
+      .map((e) => (e.widget as Text).data)
+      .whereType<String>()
+      .any((s) => s.toLowerCase().contains(wanted));
+}
+
 /// Vérifie que le décor a été posé, et nomme le script sinon.
 void requireCredentials(Map<String, String> needed) {
   final missing = needed.entries.where((e) => e.value.isEmpty).map((e) => e.key);
