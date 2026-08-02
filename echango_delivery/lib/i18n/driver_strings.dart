@@ -103,6 +103,36 @@ const Map<String, String> _fr = {
 
   // ── Véhicule déclaré ────────────────────────────────────────────────────
   'driver.vehicle.title': 'Mon véhicule',
+
+  // ── Ma zone de travail ────────────────────────────────────────────────────
+  //
+  // ⚠️ Les textes d'aide portent l'essentiel : un filtre mal compris se lit
+  // comme une panne. Ils disent donc explicitement ce qui n'est PAS filtré —
+  // tant qu'on n'a rien choisi, et quand la position est inconnue.
+  'driver.zone.title': 'Ma zone de travail',
+  'driver.zone.subtitle':
+      'Choisissez où vous voulez voir des courses. Tant que rien n’est '
+      'enregistré, vous les voyez toutes.',
+  'driver.zone.wilaya': 'Wilaya',
+  'driver.zone.wilaya.hint':
+      'Seules les courses dont l’enlèvement est dans cette wilaya vous seront '
+      'proposées. Laissez vide pour toutes les voir.',
+  'driver.zone.radius': 'Rayon autour de moi',
+  'driver.zone.radius.hint':
+      'Affine la liste autour de votre position actuelle.',
+  'driver.zone.radius.no_position':
+      'Votre position n’est pas connue : ce rayon ne s’applique pas pour '
+      'l’instant. Seule la wilaya filtre.',
+  'driver.zone.km': 'km',
+  'driver.zone.state.none': 'Aucun filtre : vous voyez toutes les courses.',
+  'driver.zone.state.active': 'Filtre actif — wilaya : {wilaya}.',
+  'driver.zone.all_wilayas': 'toutes',
+  'driver.zone.save': 'Enregistrer',
+  'driver.zone.clear': 'Tout voir',
+  'driver.zone.saved': 'Zone enregistrée.',
+  'driver.zone.cleared': 'Filtre retiré : vous voyez toutes les courses.',
+  'driver.zone.load_failed': 'Impossible de lire votre zone de travail.',
+  'driver.zone.save_failed': 'Zone non enregistrée. Réessayez.',
   'driver.vehicle.none': 'Non déclaré',
   'driver.vehicle.moto': 'Moto',
   'driver.vehicle.voiture': 'Voiture',
@@ -173,6 +203,29 @@ const Map<String, String> _ar = {
 
   // ── Véhicule déclaré ────────────────────────────────────────────────────
   'driver.vehicle.title': 'مركبتي',
+
+  // ── منطقة عملي ────────────────────────────────────────────────────────────
+  'driver.zone.title': 'منطقة عملي',
+  'driver.zone.subtitle':
+      'اختر أين تريد رؤية الرحلات. ما لم تسجّل شيئاً، فأنت ترى كل الرحلات.',
+  'driver.zone.wilaya': 'الولاية',
+  'driver.zone.wilaya.hint':
+      'لن تُعرض عليك إلا الرحلات التي يقع الاستلام فيها بهذه الولاية. اتركه '
+      'فارغاً لرؤيتها كلها.',
+  'driver.zone.radius': 'النطاق حولي',
+  'driver.zone.radius.hint': 'يضيّق القائمة حول موقعك الحالي.',
+  'driver.zone.radius.no_position':
+      'موقعك غير معروف: هذا النطاق لا يُطبَّق حالياً. الولاية وحدها تصفّي.',
+  'driver.zone.km': 'كم',
+  'driver.zone.state.none': 'لا تصفية: أنت ترى كل الرحلات.',
+  'driver.zone.state.active': 'تصفية مفعّلة — الولاية: {wilaya}.',
+  'driver.zone.all_wilayas': 'الكل',
+  'driver.zone.save': 'حفظ',
+  'driver.zone.clear': 'عرض الكل',
+  'driver.zone.saved': 'تم حفظ المنطقة.',
+  'driver.zone.cleared': 'أُزيلت التصفية: أنت ترى كل الرحلات.',
+  'driver.zone.load_failed': 'تعذّرت قراءة منطقة عملك.',
+  'driver.zone.save_failed': 'لم تُحفظ المنطقة. أعد المحاولة.',
   'driver.vehicle.none': 'غير مصرَّح بها',
   'driver.vehicle.moto': 'دراجة نارية',
   'driver.vehicle.voiture': 'سيارة',

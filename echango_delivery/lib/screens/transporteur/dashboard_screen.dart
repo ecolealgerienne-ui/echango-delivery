@@ -18,6 +18,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/error_banner.dart';
 import 'status_colors.dart';
+import 'zone_card.dart';
 import '../../widgets/section_card.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -531,6 +532,11 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.lg),
           const _VehicleTypeCard(),
+          const SizedBox(height: AppSpacing.lg),
+          // Juste sous le véhicule : les deux répondent à la même question —
+          // « quelles courses me sont proposées » — et les séparer obligerait
+          // à chercher dans deux endroits pourquoi la liste est courte.
+          const ZoneCard(),
           const SizedBox(height: AppSpacing.xxl),
           Consumer<AuthState>(
             builder: (context, authState, _) {

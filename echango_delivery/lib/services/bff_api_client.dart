@@ -9,6 +9,7 @@ import '../config/app_rules.dart';
 import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
+import '../models/driver_zone.dart';
 import '../models/fleet_driver_position.dart';
 import '../models/cash.dart';
 
@@ -1337,6 +1338,25 @@ class BffApiClient {
   /// Déclare la catégorie de véhicule du transporteur connecté.
   Future<void> setVehicleType(String? vehicleType) async {
     await _post('/transporteur/vehicule', {if (vehicleType != null) 'vehicleType': vehicleType});
+  }
+
+  /// La zone de travail déclarée : sa wilaya, son rayon.
+  Future<DriverZone> getZone() async {
+    return DriverZone.fromJson(await _get('/transporteur/zone') ?? const {});
+  }
+
+  /// Enregistre la zone. `null` sur un champ **efface** la préférence.
+  ///
+  /// ⚠️ Les deux clés sont envoyées **même à `null`**, et c'est nécessaire :
+  /// le serveur distingue « ne touche pas » de « efface » par leur présence.
+  /// Les omettre quand elles sont nulles rendrait le réglage impossible à
+  /// défaire — un réglage qu'on ne peut pas annuler est un piège, pas un choix.
+  Future<DriverZone> setZone({String? wilaya, int? radiusKm}) async {
+    final data = await _put('/transporteur/zone', {
+      'wilaya': wilaya,
+      'radiusKm': radiusKm,
+    });
+    return DriverZone.fromJson((data as Map<String, dynamic>?) ?? const {});
   }
 
   /// Recherche d'adresse, relayée par le BFF.

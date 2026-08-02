@@ -7,6 +7,8 @@ import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
   projectOrderForDriver,
@@ -34,6 +36,7 @@ export class TransporteurService {
     private readonly notifications: NotificationsService,
     private readonly cash: CashService,
     private readonly configService: ConfigService,
+    private readonly driverZone: DriverZoneService,
   ) {}
 
   /**
@@ -535,6 +538,44 @@ export class TransporteurService {
    * utilitaire ne lui est pas proposée s'il roule en moto. Ne rien déclarer
    * reste le comportement le plus ouvert — il voit tout.
    */
+  /**
+   * La zone déclarée, et le rayon **proposé** à qui n'a rien réglé.
+   *
+   * ⚠️ `suggestedRadiusKm` n'est pas `radiusKm`, et les confondre viderait la
+   * liste de tous ceux qui n'ont jamais ouvert le réglage. Le premier est une
+   * valeur d'écran, le second une décision de l'utilisateur — seul le second
+   * filtre quoi que ce soit.
+   */
+  async readZone(driverId: string) {
+    const driver = await this.getDriverOrFail(driverId);
+    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    return {
+      wilaya: zone?.wilaya ?? null,
+      radius_km: zone?.radiusKm ?? null,
+      suggested_radius_km: DEFAULT_ZONE_RADIUS_KM,
+      // Dire si la position est connue : sans elle le rayon ne s'applique pas,
+      // et l'écran doit pouvoir l'expliquer plutôt que de laisser croire à un
+      // filtre qui ne filtre rien.
+      position_known: point != null,
+    };
+  }
+
+  async saveZone(driverId: string, dto: { wilaya?: string | null; radiusKm?: number | null }) {
+    const driver = await this.getDriverOrFail(driverId);
+    const wilaya = typeof dto.wilaya === 'string' && dto.wilaya.trim() ? dto.wilaya.trim() : null;
+    const radiusKm = typeof dto.radiusKm === 'number' ? dto.radiusKm : null;
+
+    // L'identifiant public est indispensable à l'écriture (voir `write`) ; il
+    // est résolu et mémorisé par ce helper, donc il ne coûte qu'une fois.
+    const publicId = await this.getDriverPublicId(driver);
+    await this.driverZone.write(driver.fleetbaseDriverUuid, publicId, { wilaya, radiusKm });
+
+    // Relu plutôt que déduit : le stockage est chez Fleetbase, et rendre ce
+    // qu'on vient d'envoyer masquerait un refus silencieux — le mode d'échec
+    // habituel de cette API.
+    return this.readZone(driverId);
+  }
+
   async updateVehicleType(driverId: string, vehicleType?: string) {
     const driver = await this.getDriverOrFail(driverId);
     await this.prisma.driverAccount.update({
@@ -701,7 +742,21 @@ export class TransporteurService {
       adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
     );
 
-    const adhoc = adhocHydrated.filter(suits);
+    // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
+    //
+    // C'est lui qui choisit sa course (décision produit du 02/08/2026) : la
+    // liste ne s'aligne donc pas sur `adhoc_distance`, qui gouverne les
+    // sollicitations, mais sur ce qu'il a **déclaré vouloir voir**.
+    //
+    // `zoneAllows` laisse passer tout ce qu'il ignore — course sans wilaya,
+    // course sans point, transporteur sans position, transporteur sans
+    // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
+    // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
+    // sans que personne ne puisse constater ce qui manque.
+    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    const adhoc = adhocHydrated
+      .filter(suits)
+      .filter((o) => zoneAllows(o, zone, point));
 
     // ⚠️ `cancelled` à deux « l » compris : sans lui, une course annulée par le
     // chemin qui emploie cette orthographe restait dans les courses actives du

@@ -288,6 +288,29 @@ export class CommerçantService {
     if (dto.items?.length) meta.items = dto.items;
     if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
     if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
+
+    // ⚠️ **La wilaya d'enlèvement est recopiée ici, et ce n'est pas un état
+    // parallèle (02/08/2026).**
+    //
+    // Elle vit sur le `Place`, qui est sa source. Mais **la liste des commandes
+    // ne la sert pas** : mesuré, la ressource d'index rend un point d'enlèvement
+    // à quinze clés — `city` y est, `province` non — là où la fiche unitaire en
+    // rend trente. C'est la troisième fois que cette ressource allégée nous
+    // coûte, après les prix invisibles côté entreprise et le `meta` réduit à son
+    // drapeau.
+    //
+    // Or c'est **sur la liste** que le filtre du transporteur s'applique.
+    // Hydrater chaque course pour la lire coûterait un aller-retour par course,
+    // à trois secondes pièce sur cet environnement — pour une donnée qui ne
+    // changera jamais : le point d'enlèvement d'une course ne se déplace pas.
+    //
+    // Elle rejoint donc `vehicle_type`, que le même filtre lit déjà depuis la
+    // liste par le même chemin. Ce n'est pas un second vocabulaire au sens de la
+    // règle 1 — c'est la spécification figée à la création, comme
+    // `CashCollection.expectedAmount`, et la fiche reste la source pour tout le
+    // reste.
+    if (dto.pickupProvince) meta.pickup_province = dto.pickupProvince;
+    if (dto.dropoffProvince) meta.dropoff_province = dto.dropoffProvince;
     // Reproduit à l'identique par « refaire cette livraison » — sans lui, la
     // duplication retombait systématiquement sur la valeur par défaut du
     // formulaire (`true`), jamais sur le choix réel de la commande d'origine.

@@ -36,7 +36,13 @@ Corollaire, et c'est celui qu'on oublie : **ne pas dériver un état métier de 
 
 **Et pourquoi `meta` reste malgré tout le mauvais endroit** : il est dans le `$fillable` du modèle `Order` et n'a **aucun mutateur**, donc le `$record->update($input)` générique le **remplace en entier**. Le trait `HasMetaAttributes` fournit `setMeta()`/`updateMeta()`, qui fusionnent — mais le chemin de mise à jour de l'API ne les appelle pas. N'importe quel client qui envoie une clé `meta`, par erreur ou non, écrase la nôtre.
 
-**Le bon endroit existe et s'appelle les champs personnalisés.** `Order` utilise `HasCustomFields` : les valeurs vivent dans `custom_field_values`, une table séparée, et `onAfterUpdate()` ne les synchronise **que si la requête les porte** (`if ($customFieldValues)`), sans suppression de ce qui manque par défaut. Une mise à jour qui les ignore les laisse donc intactes — exactement la protection que `meta` n'a pas. C'est là que doivent aller prix, montant à encaisser et options de la course. **Migration à faire, non commencée** (voir Prochaines étapes).
+**Le bon endroit existe et s'appelle les champs personnalisés.** `Order` utilise `HasCustomFields` : les valeurs vivent dans `custom_field_values`, une table séparée, et `onAfterUpdate()` ne les synchronise **que si la requête les porte** (`if ($customFieldValues)`), sans suppression de ce qui manque par défaut. Une mise à jour qui les ignore les laisse donc intactes — exactement la protection que `meta` n'a pas. C'est là que vont prix, montant à encaisser et options de la course.
+
+✅ **Migration FAITE** — et cette ligne a affirmé le contraire pendant deux jours, ce qui m'a fait hésiter le 02/08/2026 devant une question dont le code avait déjà la réponse. `createOrder` envoie `custom_field_values` et n'écrit plus dans `meta` que ce qui n'a **pas** de champ personnalisé (`pricing_inputs` seul). `effectiveOrderMeta` sert trois couches par ordre de durabilité : champs personnalisés d'abord, `meta` historique ensuite, `Order.specMeta` en dernier recours pour les commandes d'avant la migration.
+
+⚠️ **Une documentation périmée est une donnée d'appui fausse en puissance** — même famille que la borne du `pubspec` et que « ✅ Décision prise » lu comme « fait ». Ici elle a coûté une hésitation ; elle aurait pu coûter une réécriture.
+
+⚠️ **Ce qui subsiste et porte à confusion** : le BFF sert cet objet fusionné sous le nom **`meta`**. Un lecteur du contrat croit donc lire le `meta` de Fleetbase alors qu'il lit surtout des champs personnalisés. Le renommer `custom` serait faux dans l'autre sens — la fusion contient aussi l'historique. Point ouvert, voir Prochaines étapes.
 
 **`Order.specMeta` est le filet posé en attendant** : il conserve ce qui a été demandé, figé à la création — une spécification, pas un état —, et `effectiveMeta()` le fait passer **derrière** Fleetbase, clé par clé, pour qu'une valeur corrigée en amont reste autoritaire et que seul l'effacement soit réparé. Il disparaîtra quand les champs personnalisés seront en place.
 
@@ -405,7 +411,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables sont justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. Le registre COD est l'exception nommée, `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
 
-- [ ] **Le transporteur choisit ce qu'il voit : wilaya d'abord, rayon autour (décidé le 02/08/2026, NON implémenté)**
+- [ ] **Le transporteur choisit ce qu'il voit : wilaya d'abord, rayon autour (décidé ET branché le 02/08/2026 — sauf les notifications)**
 
   ⚠️ **Décisions prises, à ne plus reposer.** Elles répondent à l'arbitrage laissé ouvert par la revue du 28/07 (« la diffusion est à 15 km mais la liste est à l'échelle de l'organisation »). Ce n'était pas une divergence à corriger : **c'est le transporteur qui choisit sa course**, pas le rayon qui choisit pour lui.
 
@@ -426,13 +432,30 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ✅ **La wilaya voyage — fait le 02/08/2026.** `CreateOrderDto` porte désormais `pickupProvince` et `dropoffProvince`, `createPlace` les écrit, le formulaire les capture depuis le carnet **et** depuis la carte, et la duplication les restaure (elle les perdait, comme elle avait perdu `podMethod` et la quantité de colis avant). **Vérifié par témoin** : une course créée avec la wilaya rend `payload.pickup.province = "ALGER"`, une créée sans rend `null` — Fleetbase abandonnant un champ inconnu sans rien dire, c'est la seule preuve qui vaille.
 
-  **Reste donc à faire** : la préférence du conducteur (wilaya + rayon), le filtrage de la liste, et celui des notifications.
+  ✅ **La préférence et le filtrage de la liste — faits le 02/08/2026.** `common/orders/driver-zone.ts` porte la décision (`zoneAllows`, 22 tests), `fleetbase/driver-zone.service.ts` la range dans les **champs personnalisés du `Driver`**, `GET`/`PUT /transporteur/zone` l'exposent, et `lib/screens/transporteur/zone_card.dart` la règle depuis l'onglet profil — sans quoi seul un opérateur pourrait le faire depuis la console (règle 9).
 
-  **Deux points restés à trancher** :
-  - `Driver` supporte-t-il `HasCustomFields` ? Vérifié pour `Order`, jamais pour `Driver`. ⚠️ Et **jamais `meta` sur `Driver` non plus** — même piège d'écrasement que celui qui a coûté les données de commande.
-  - Une course qui traverse deux wilayas doit-elle apparaître dans les deux ?
+  ✅ **`Driver` supporte bien `HasCustomFields`** — vérifié dans le source `fleetops` (ligne 60 du modèle, avec quatorze autres modèles), puis **en réel**. La préférence n'est donc dans aucune colonne BFF : la règle 1 est tenue.
 
-  ⚠️ **Les notifications ne s'obtiennent pas gratuitement** : le dispatch géospatial de Fleetbase applique le rayon posé sur **la course** (`adhoc_distance`), pas la préférence du conducteur. L'honorer demande de filtrer sur **notre** chemin de notification, avant l'envoi — ça vit chez nous, et il faut le savoir avant de promettre le comportement.
+  ⚠️ **Trois pièges Fleetbase mesurés en la branchant**, tous invisibles à la lecture : `PUT /int/v1/drivers` exige un corps **enveloppé** `{driver: {…}}` (sinon 500, `TypeError`) et n'accepte que le `public_id` ; la création d'une définition répond sous la clé `custom_field` et non `custom_field_value` ; et **la chaîne vide est refusée sur tout type de champ**, d'où `ZONE_UNSET = '-'` pour dire « effacé » — un `null` ne pouvant pas être écrit.
+
+  ⚠️ **Le filtre est prouvé dans les deux sens, et c'est la seule preuve qui compte** (règle 8) : un filtre qui ne retire rien est indiscernable d'un filtre absent.
+
+  | préférence du conducteur | courses visibles |
+  |---|---|
+  | aucune | 2 |
+  | wilaya = Alger | 2 |
+  | wilaya = Tamanrasset (témoin) | **1** — celle sans wilaya, qui reste montrée |
+  | retour à aucune | 2 |
+
+  ⚠️ **Le biais, et il est délibéré : ce qu'on ignore ne cache jamais du travail.** Course sans wilaya, course sans coordonnées, transporteur sans position — chaque absence **laisse passer**. Même raison que les statuts inconnus dans `isOrderClaimable` : une course offerte puis refusée est un désagrément, une course jamais montrée est un manque à gagner que personne ne peut constater. Sept des 22 tests ne vérifient que cela.
+
+  ⚠️ **La hiérarchie wilaya → rayon n'est pas un ordre de lecture, elle bouche un trou** : à rayon seul, un transporteur dont on ignore la position ne verrait **aucune course**. La wilaya est déclarée et ne dépend d'aucun capteur ; le rayon est un raffinement qui peut ne pas s'appliquer, et l'écran le dit quand c'est le cas.
+
+  ⚠️ **`DEFAULT_ZONE_RADIUS_KM = 15` est une valeur d'écran, jamais un filtre implicite.** Elle pré-remplit le champ ; `zoneAllows` ne filtre que sur ce qui est **déclaré**. Les confondre ferait disparaître du travail pour tous ceux qui n'ont jamais ouvert le réglage — et « le choix revient au transporteur » cesserait d'être vrai pour eux.
+
+  **Reste à faire** : **les notifications**. ⚠️ Elles ne s'obtiennent pas gratuitement — le dispatch géospatial de Fleetbase applique le rayon posé sur **la course** (`adhoc_distance`), pas la préférence du conducteur. L'honorer demande de filtrer sur **notre** chemin de notification, avant l'envoi. Sans effet visible aujourd'hui (aucun push réel n'existe, Firebase est un gabarit), mais à faire **avant** le premier envoi, sinon la préférence mentira sur un canal et pas sur l'autre.
+
+  **Un point resté à trancher** : une course qui traverse deux wilayas doit-elle apparaître dans les deux ? Aujourd'hui non — seul l'enlèvement décide.
 
 - [ ] **Responsabilité des espèces — tranché le 02/08/2026 (décision produit, contrat à écrire)**
 
@@ -461,7 +484,15 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   **À vérifier avant d'écrire une ligne** : l'Organization Fleetbase a-t-elle un champ devise ? Si oui, c'est de la configuration et la question disparaît.
 
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
-- [ ] ~~**Migrer les données métier de `meta` vers les champs personnalisés Fleetbase**~~ (30/07/2026, motif complet en § Règles §1) : `meta` est remplacé en entier par toute mise à jour qui le mentionne, et la console le fait en affectant un transporteur. `custom_field_values` est la mécanique prévue — table séparée, synchronisée seulement si la requête la porte, `delete_missing` désactivé par défaut. **Ce que ça demande** : déclarer les définitions `CustomField` sur l'`OrderConfig` (une par donnée : prix, montant à encaisser, marchandise, véhicule, préférence de favoris…), les envoyer sous `order.custom_field_values` à la création, et les relire via `with[]=customFieldValues`. **Ce que ça apporte en plus de la sûreté** : un admin peut corriger un prix depuis la console et cette correction est visible — ce que `meta` ne permettait pas de façon fiable. **À vérifier en réel avant de basculer** : le format exact accepté par `syncCustomFieldValues`, le comportement quand une définition manque, et si la console affiche bien ces champs sur la fiche commande. `Order.specMeta` reste jusque-là, et sera retiré ensuite.
+- [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.
+
+- [ ] **Le nom `meta` sur le contrat, alors que la source est `custom_field_values` (ouvert le 02/08/2026)** — le BFF sert l'objet fusionné sous le nom `meta`, donc un lecteur croit lire le `meta` de Fleetbase quand il lit surtout des champs personnalisés.
+
+  ⚠️ **`custom` serait faux dans l'autre sens** : la fusion contient aussi le `meta` historique et `specMeta`, pour les commandes d'avant la migration. Le nom juste dirait « les données métier effectives, quelle que soit leur couche » — la fonction s'appelle déjà `effectiveOrderMeta`, c'est le nom **sur le fil** qui ment.
+
+  **Ce que ça coûte** : le champ est lu partout — modèles Flutter des trois personas, projections, scénarios shell. Contenu mais réel. **Ce que ça n'est pas** : un prérequis aux tests humains — aucun testeur ne voit ce JSON.
+
+- [ ] ~~**Ancienne note de migration, conservée pour le motif**~~ (30/07/2026, § Règles §1) : `meta` est remplacé en entier par toute mise à jour qui le mentionne, et la console le fait en affectant un transporteur. `custom_field_values` est la mécanique prévue — table séparée, synchronisée seulement si la requête la porte, `delete_missing` désactivé par défaut. **Ce que ça demande** : déclarer les définitions `CustomField` sur l'`OrderConfig` (une par donnée : prix, montant à encaisser, marchandise, véhicule, préférence de favoris…), les envoyer sous `order.custom_field_values` à la création, et les relire via `with[]=customFieldValues`. **Ce que ça apporte en plus de la sûreté** : un admin peut corriger un prix depuis la console et cette correction est visible — ce que `meta` ne permettait pas de façon fiable. **À vérifier en réel avant de basculer** : le format exact accepté par `syncCustomFieldValues`, le comportement quand une définition manque, et si la console affiche bien ces champs sur la fiche commande. `Order.specMeta` reste jusque-là, et sera retiré ensuite.
 - [ ] **Signaler le bug à l'amont** (`fleetbase/fleetops`) : `addon/services/order-actions.js` → `assignDriver()` sauvegarde une commande issue de la ressource d'index sans la recharger, ce qui écrase `meta` avec le drapeau `_index_resource`. Le correctif tient en trois lignes et existe déjà partout ailleurs dans le même dépôt (`place-actions.js`, `driver-actions.js`, `vehicle-actions.js`, route de détail des commandes) : `if (order?.meta?._index_resource) await order.reload();`. `unassignDriver()` fait le même `order.save()` et mérite la même vérification.
 - [ ] **Au déploiement VPS — brancher les webhooks Fleetbase (Lot 5)** (`docs/plan_migration_fleetbase.md` §7, journal §25) : reporté le 29/07/2026 parce que **Fleetbase refuse toute URL de webhook non publique** (« The url must be a public HTTP or HTTPS URL » — ni `localhost`, ni `host.docker.internal`), ce qui imposait un tunnel, c'est-à-dire exposer un service sur Internet pour un contrôle de dix minutes. Sur le VPS l'obstacle disparaît : domaine et certificat suffisent. **L'endpoint `POST /webhooks/fleetbase` a été écrit puis retiré le même jour** — une route publique sans vérification de signature qu'on ne rouvrirait qu'au déploiement serait déployée avec le reste ; il est dans l'historique git. `scripts/webhook-listener.js` est conservé, c'est un outil de développement autonome. **Entre-temps `OrderReconcilerService` fait le travail**, avec `Order.status`/`Order.driverAssignedUuid` pour mémoire, et la chaîne est validée en réel (§23.5) — plus lent et plus coûteux qu'un webhook, mais pas un pis-aller. **Ordre au moment de le reprendre** : déclarer le webhook (tous identifiants API, tous évènements — leur vocabulaire réel est inconnu), observer avec l'écouteur pour relever le nom et le format de l'en-tête de signature, la forme du corps (commande entière ou simples identifiants ? cela décide si le réconciliateur peut disparaître), **puis seulement** recréer l'endpoint — signature d'abord, effets ensuite.
 - [ ] **Au déploiement VPS — `APP_DEBUG=false` côté Fleetbase** : le 500 du filtre `phone` observé le 29/07/2026 renvoyait une page d'erreur Laravel complète (chemins de fichiers, requêtes SQL).

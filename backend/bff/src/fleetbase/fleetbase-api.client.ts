@@ -1648,4 +1648,40 @@ export class FleetbaseApiClient {
     }
   }
 
+  // ── Champs personnalisés d'un conducteur ──────────────────────────────────
+
+  /**
+   * Le conducteur, **avec ses valeurs de champs personnalisés**.
+   *
+   * `with[]=customFieldValues.customField` est indispensable : sans lui la
+   * réponse porte les valeurs sans leur définition, donc sans le `name` qui
+   * permet de savoir laquelle est laquelle. On lirait alors des uuid.
+   */
+  async getDriverWithCustomFields(driverId: string) {
+    const response = await this.callFleetOps('GET', `/drivers/${driverId}`, undefined, {
+      'with[]': 'customFieldValues.customField',
+    });
+    return response.data?.driver ?? response.data;
+  }
+
+  /**
+   * Écrit des valeurs de champs personnalisés sur un conducteur.
+   *
+   * ⚠️ **Le corps DOIT être enveloppé sous `driver`.** Envoyé à plat, Laravel
+   * rend un **500** : `Validation\Factory::make(): Argument #1 ($data) must be
+   * of type array, null given`. Le message nomme un fichier du framework et ne
+   * dit rien du contrat — mesuré le 02/08/2026, sur les deux formes
+   * d'identifiant et avec ou sans champs personnalisés, avant de comprendre que
+   * l'enveloppe était en cause. C'est la même convention que la lecture
+   * unitaire d'une commande, servie sous `{order: {…}}`.
+   */
+  async setDriverCustomFieldValues(
+    driverId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/drivers/${driverId}`, {
+      driver: { custom_field_values: values },
+    });
+    return response.data;
+  }
 }

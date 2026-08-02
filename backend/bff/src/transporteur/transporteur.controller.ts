@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, Request, Res } from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Param, Query, Request, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
@@ -14,6 +14,7 @@ import {
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
+  DriverZoneDto,
 } from './dto/transporteur.dto';
 import { Persona } from '../common/decorators/persona.decorator';
 import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
@@ -41,6 +42,25 @@ export class TransporteurController {
   // somme unique due à la plateforme mais une série de dettes bilatérales, et
   // c'est ainsi qu'elle se règle — un commerçant à la fois, au prochain
   // enlèvement (docs/specs_paiement_livraison.md §6, Voie B).
+
+  /**
+   * La zone de travail : ce que ce transporteur a déclaré vouloir voir.
+   *
+   * ⚠️ Rend aussi le rayon **proposé par défaut** à qui n'a rien réglé — pour
+   * que l'écran le pré-remplisse — sans que ce défaut soit jamais **appliqué**
+   * au filtrage. La nuance décide de tout : un défaut appliqué en silence
+   * ferait disparaître du travail pour des gens qui n'ont jamais ouvert le
+   * réglage, et « le choix revient au transporteur » cesserait d'être vrai.
+   */
+  @Get('zone')
+  async readZone(@Request() req: any) {
+    return this.transporteurService.readZone(this.driverId(req));
+  }
+
+  @Put('zone')
+  async saveZone(@Request() req: any, @Body() dto: DriverZoneDto) {
+    return this.transporteurService.saveZone(this.driverId(req), dto);
+  }
 
   @Get('caisse')
   async cashBalances(@Request() req: any) {
