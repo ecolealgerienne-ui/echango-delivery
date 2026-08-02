@@ -8,6 +8,12 @@
 
   **Choix assumé** : la wilaya reste **facultative** au DTO, comme au carnet. Elle vient du géocodage, jamais d'une saisie — l'exiger ferait échouer une création pour une raison que le commerçant ne comprendrait pas, puisqu'il tape une rue. C'est au **filtre** de ne pas cacher une course dont la wilaya est inconnue, pas à la création de la refuser.
 
+  ⚠️ **Et le lot avait l'air fait alors que l'application ne transportait rien — trouvé en répondant à « est-ce que tu as tout testé ? ».** La sonde prouvait le chemin **API** ; le chemin de l'**application**, lui, rendait `province: ABSENTE`. Mesuré côte à côte : la course créée par le parcours à 15h02 était vide, celles du décor portaient `ALGER`.
+
+  La cause n'était pas dans le code mais dans sa **source** : les adresses du carnet dataient d'avant l'ajout de la wilaya, et le décor sautait la création quand l'entrée existait déjà. Il repart désormais d'un carnet neuf et **refuse de continuer** si la wilaya manque — plutôt que de laisser le parcours créer une course qu'aucun filtre ne verrait. Vérifié après correction : la course créée depuis le formulaire porte `pickup_province: ALGER`.
+
+  ⚠️ **Deux défauts du script au passage, dont un qui parlait dans le vide.** La suppression employait l'`id` **numérique** que la route refuse — le carnet rend les trois identifiants, seul `public_id` est accepté —, donc chaque suppression répondait 404 et **six doublons** s'étaient accumulés. Le contrôle par relecture signalait bien l'échec ; c'est mon filtre d'affichage qui masquait la ligne. *Un contrôle qui parle dans le vide ne vaut pas mieux qu'un contrôle absent.* Second défaut : la mise à jour partielle est refusée (`contactPhone` obligatoire au DTO), d'où le choix de supprimer puis recréer — un seul chemin plutôt que deux qui doivent rester d'accord.
+
   ⚠️ **Piège d'outillage, à ne pas refaire** : lancer `npm run build` **dans le conteneur de développement** court contre le watcher de `start:dev`. Le `rimraf dist` a laissé une compilation partielle et le BFF est tombé sur `Cannot find module './config/jwt'` — une erreur qui accuse un fichier parfaitement présent. Un redémarrage repart d'une compilation propre.
 
 - [x] **L'écart à la porte et deux sorties de course, à l'écran (02/08/2026)** : neuf parcours, `+10 All tests passed`. S'ajoutent au parcours d'argent : déclarer un montant **différent** de celui annoncé, écarter une opportunité, signaler un échec de livraison.

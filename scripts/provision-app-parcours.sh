@@ -243,31 +243,42 @@ count_named() { # nom -> nombre d'entrées portant ce nom
     <<<"$book"
 }
 
-prune_duplicates() { # nom
+# Repart d'un carnet propre : supprime TOUTES les entrées de ce nom.
+#
+# ⚠️ **Supprimer puis recréer, plutôt que corriger en place** — la mise à jour
+# exige le corps complet (`contactPhone` est obligatoire au DTO), donc un PUT
+# partiel pour ajouter la wilaya est refusé. Un seul chemin vaut mieux que deux
+# qui doivent rester d'accord.
+#
+# ⚠️ **Par `public_id`, jamais par `id`.** Le carnet rend les trois identifiants
+# — `id: 517`, `uuid`, `public_id: place_…` —, et la route n'accepte pas le
+# numérique. La première version prenait `.id // .uuid`, donc le numérique :
+# **chaque suppression répondait 404** et les doublons s'accumulaient. Le
+# contrôle par relecture le signalait bien ; c'est mon filtre d'affichage qui me
+# cachait la ligne. Un contrôle qui parle dans le vide ne vaut pas mieux qu'un
+# contrôle absent.
+prune_named() { # nom
   local ids before after
   before="$(count_named "$1")"
-  [ "$before" -gt 1 ] || return 0
+  [ "$before" -gt 0 ] || return 0
 
   ids="$(jq -r --arg n "$1" \
-    '[(.data // .)[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))]
-     | .[1:] | .[] | (.id // .uuid // empty)' <<<"$book")"
+    '(.data // .)[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))
+     | (.public_id // .uuid // empty)' <<<"$book")"
   while read -r id; do
     [ -n "$id" ] || continue
     mapi DELETE "/commercant/adresses/$id" >/dev/null || true
   done <<<"$ids"
 
-  # ⚠️ **Relu, jamais déduit du succès de `curl`.** La première version
-  # imprimait « doublon retiré » dès que la requête partait — or `curl` réussit
-  # aussi quand le serveur répond 400 ou 404. Le script a donc annoncé quatre
-  # suppressions à chaque passage **sans qu'aucune n'ait lieu**, et les doublons
-  # se sont accumulés derrière un message rassurant. C'est le défaut que la
-  # règle 8 nomme : un contrôle qui ne sait que dire oui.
+  # Relu, jamais déduit du succès de `curl` : il réussit aussi sur un 404.
   book="$(mapi GET /commercant/adresses)"
   after="$(count_named "$1")"
-  if [ "$after" -lt "$before" ]; then
-    info "« $1 » : $((before - after)) doublon(s) retiré(s), $after restant(e)"
+  if [ "$after" -eq 0 ]; then
+    [ "$before" -gt 0 ] && info "« $1 » : $before entrée(s) retirée(s)"
   else
-    info "⚠️  « $1 » : $before entrées, aucune supprimée — le carnet restera ambigu"
+    fail "« $1 » : $after entrée(s) subsistent après suppression — le carnet
+   resterait ambigu, et sans wilaya la course créée depuis l'application
+   n'aurait rien à filtrer."
   fi
 }
 
@@ -285,19 +296,32 @@ add_address() { # nom adresse lat lon contact
 
 # Deux entrées de même nom rendraient le choix du test ambigu, et un test ambigu
 # échoue un jour sur deux sans qu'on sache pourquoi.
-prune_duplicates "$PICKUP_NAME"
-prune_duplicates "$DROPOFF_NAME"
+# ⚠️ **On repart d'un carnet neuf à chaque exécution, et ce n'est pas du
+# gaspillage (02/08/2026).** La version précédente sautait la création quand
+# l'entrée existait — donc les adresses posées **avant** l'ajout de la wilaya
+# gardaient `province: null` pour toujours, et une course créée depuis
+# l'application n'emportait aucune wilaya. Mesuré : la course de 15h02, créée
+# par le parcours, portait `ABSENTE` là où celles du décor portaient `ALGER`.
+#
+# Le lot avait donc l'air fait — le chemin API le prouvait — alors que le chemin
+# de l'application ne transportait rien. C'est exactement le défaut que ce
+# dépôt nomme le plus souvent : *le serveur savait, l'app ignorait*.
+prune_named "$PICKUP_NAME"
+prune_named "$DROPOFF_NAME"
+add_address "$PICKUP_NAME"  "12 rue Didouche Mourad, Alger-Centre" 36.7719 3.0589 "Karim"
+add_address "$DROPOFF_NAME" "8 chemin Mackley, Hydra"              36.7434 3.0290 "Nadia"
 
-if have "$PICKUP_NAME"; then
-  info "« $PICKUP_NAME » déjà au carnet"
-else
-  add_address "$PICKUP_NAME" "12 rue Didouche Mourad, Alger-Centre" 36.7719 3.0589 "Karim"
-fi
-if have "$DROPOFF_NAME"; then
-  info "« $DROPOFF_NAME » déjà au carnet"
-else
-  add_address "$DROPOFF_NAME" "8 chemin Mackley, Hydra" 36.7434 3.0290 "Nadia"
-fi
+# Relu : la wilaya doit être là, sinon le parcours créera une course sans elle
+# et le filtre n'aura rien à filtrer — sans que rien ne le signale.
+book="$(mapi GET /commercant/adresses)"
+missing="$(jq -r --arg a "$PICKUP_NAME" --arg b "$DROPOFF_NAME" \
+  '[(.data // [])[] | select((.name | ascii_downcase) == ($a | ascii_downcase)
+                          or (.name | ascii_downcase) == ($b | ascii_downcase))
+    | select(.province == null or .province == "")] | length' <<<"$book")"
+[ "$missing" = "0" ] \
+  || fail "$missing adresse(s) du carnet sans wilaya — une course créée depuis
+   l'application n'en porterait aucune."
+pass "Carnet : deux adresses, wilaya comprise"
 
 # ── 3. L'entreprise de transport (le facilitateur) ──────────────────────────
 
