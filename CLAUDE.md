@@ -275,7 +275,7 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # les 7 scénarios métier — le BFF en curl
+./scripts/run-all-scenarios.sh [conducteur]     # les 8 scénarios métier — le BFF en curl
 flutter analyze && flutter test                 # 0 problème · 78 tests
 dart tool/check_*.dart [--self-test]            # 5 contrôles · 76 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
@@ -286,7 +286,17 @@ flutter drive --driver=test_driver/integration_test.dart \
   --target=integration_test/parcours_trois_personas_test.dart -d <émulateur> --dart-define=…
 ```
 
-Les sept scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, et les trois sorties d'une course.
+Les huit scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, les trois sorties d'une course, et **le voyage de la wilaya** (`test-wilaya.sh`, 02/08/2026).
+
+⚠️ **`test-wilaya.sh` porte ses propres témoins, et c'est ce qui le rend utile.** La wilaya décide de ce qu'un transporteur voit ; une course qui ne la transporte pas est **invisible au filtre**, sans erreur ni journal — une liste simplement plus courte. Trois contrôles, chacun avec son cas négatif dans le même passage :
+
+- **le champ est honoré** — une course avec la wilaya, une sans. Fleetbase abandonne un champ inconnu **sans rien dire**, donc `province` accepté-mais-ignoré aurait exactement la même apparence que `province` stocké ;
+- **les deux points** — enlèvement `Alger`, livraison `Blida`, délibérément **différentes** : une recopie de l'un sur l'autre passerait un contrôle à valeur unique ;
+- **la duplication conserve** — et la copie d'une course *sans* wilaya ne doit en porter aucune, sinon la duplication en fabriquerait une.
+
+**Éprouvé par mutation du vrai fichier** (la livraison recopie la wilaya de l'enlèvement) : il échoue sur « Wilaya de livraison attendue Blida, lue ALGER ».
+
+⚠️ **Et la mutation elle-même se vérifie.** La première tentative écrivait `null` nu dans un littéral à clé calculée — **TS7018**, le piège déjà documenté plus haut : la compilation échouait, l'ancien code restait en service, et le scénario passait. J'aurais pu en conclure qu'il ne vérifiait rien. Le banc dit désormais « la mutation n'a jamais pris effet — l'essai ne prouve RIEN » plutôt que de trancher : *« le contrôle est aveugle »* et *« la mutation n'est pas en service »* sont deux choses, et les confondre accuse le mauvais coupable.
 
 ⚠️ **Les scénarios ne touchent jamais l'application, et c'est leur angle mort.** Ils composent leur corps de requête en `curl` : un écran peut être absent, muet ou fautif sans qu'aucun ne passe au rouge. Les parcours joués **dans** l'app ont trouvé **six défauts** qu'aucun des 87 tests Jest ni des 78 tests Flutter ne pouvait voir :
 

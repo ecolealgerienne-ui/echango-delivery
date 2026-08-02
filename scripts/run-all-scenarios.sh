@@ -48,6 +48,10 @@ mkdir -p "$LOGDIR"
 # qu'ils sont les contrôles de non-régression du registre — si le socle est
 # cassé, tout le reste échouera pour la même raison et le tableau serait illisible.
 SCENARIOS=(
+  # Placé en tête : il ne touche ni au conducteur ni au registre, donc il ne
+  # dépend d'aucun des autres et n'en dérange aucun. Son email est stable, il
+  # ne consomme donc une inscription qu'à sa toute première exécution.
+  test-wilaya
   test-parcours-argent
   test-parcours-argent-flotte
   test-multi-appartenance

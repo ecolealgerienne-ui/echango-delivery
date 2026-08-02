@@ -1,3 +1,17 @@
+- [x] **Un huitième scénario : le voyage de la wilaya (02/08/2026)** — `scripts/test-wilaya.sh`, ajouté à `run-all-scenarios.sh`. Écrit parce que le lot précédent était vérifié par une sonde jetable : une preuve qui ne se rejoue pas n'est pas une preuve, c'est un souvenir.
+
+  **Trois contrôles, chacun avec son cas négatif dans le même passage** — le scénario se prouve lui-même plutôt que de dépendre d'un banc extérieur :
+
+  - **le champ est honoré** : une course avec la wilaya, une sans. Fleetbase abandonne un champ inconnu **sans rien dire**, donc un `province` accepté-mais-ignoré aurait exactement la même apparence qu'un `province` stocké ;
+  - **les deux points** : enlèvement `Alger`, livraison `Blida`, délibérément **différentes** — une recopie de l'un sur l'autre passerait un contrôle à valeur unique ;
+  - **la duplication conserve**, et la copie d'une course *sans* wilaya ne doit en porter aucune — sinon la duplication fabriquerait une valeur et le contrôle ne distinguerait rien.
+
+  **Éprouvé par mutation du vrai fichier** : la livraison recopie la wilaya de l'enlèvement, le scénario échoue sur « Wilaya de livraison attendue Blida, lue ALGER ».
+
+  ⚠️ **La première mutation ne prouvait rien, et c'est la partie qui vaut d'être retenue.** Elle écrivait `null` nu dans un littéral à clé calculée — **TS7018**, le piège que ce fichier documente depuis le 30/07. La compilation échouait, l'ancien code restait en service, et le scénario passait : j'ai failli en conclure qu'il était aveugle. Le banc distingue désormais les deux cas et refuse de trancher quand la mutation n'est pas en service. **« Le contrôle ne voit rien » et « la mutation n'a pas pris » se ressemblent et n'ont rien à voir** — les confondre fait corriger le mauvais fichier.
+
+  ⚠️ **Email stable, comme le décor** : l'inscription est plafonnée à dix par heure et la suite en consommait déjà huit. Un email aléatoire en aurait coûté une à **chaque** exécution ; on tente la connexion avant d'inscrire, donc un rejeu ne coûte rien.
+
 - [x] **La wilaya voyage enfin du carnet jusqu'à la course (02/08/2026)** — premier travail de la décision « le transporteur choisit ce qu'il voit, wilaya d'abord » : sans cette donnée, le filtre n'aurait rien sur quoi filtrer.
 
   **Le trou était au milieu d'une chaîne dont les deux bouts fonctionnaient.** Le géocodage inverse **extrait** la wilaya (`state`/`region` → `province`), le carnet d'adresses la **conserve**, l'application la porte des deux côtés (`SavedAddress.province`, `PickedLocation.province`), et la projection la **sert déjà** au transporteur depuis le 31/07. Mais `CreateOrderDto` ne l'acceptait pas et l'écran ne la lisait pas : **elle se perdait entre le carnet et la course**. Quatre points branchés — le DTO, `createPlace`, le service, le formulaire.
