@@ -298,9 +298,41 @@ export function readOrderCustomFields(order: any): Record<string, any> {
 
   for (const field of ORDER_CUSTOM_FIELDS) {
     if (out[field.key] !== undefined) continue;
+    // ⚠️ Le repli à plat ne lit **que** ce que Fleetbase ne nomme pas déjà.
+    if (FLEETBASE_OWNED_ORDER_KEYS.includes(field.key)) continue;
     const decoded = decodeCustomFieldValue(field.key, order?.[field.key]);
     if (decoded !== undefined) out[field.key] = decoded;
   }
 
   return out;
 }
+
+/**
+ * Clés que **Fleetbase sert lui-même** sur une commande, et que le repli à plat
+ * doit donc ignorer.
+ *
+ * ── Le défaut, mesuré le 02/08/2026 ─────────────────────────────────────────
+ *
+ * `Order` a une colonne `currency` dont le défaut est `USD`. Notre champ
+ * personnalisé porte le même nom. Sur la **liste**, les valeurs des champs
+ * personnalisés sont absentes (ressource d'index) : le repli à plat lisait donc
+ * `order.currency` — celle de Fleetbase — et, parce que les champs personnalisés
+ * sont fusionnés **en dernier**, cette valeur l'emportait sur le `DZD` correct
+ * venu de `specMeta`. Résultat à l'écran : « 777 USD » à côté de « À encaisser :
+ * 2727 DZD », sur la même course.
+ *
+ * ⚠️ **Un repli qui gagne contre la source n'est plus un repli.** C'est ce
+ * renversement qui rend le défaut invisible : chaque couche prise séparément
+ * disait `DZD` — le champ personnalisé, `meta`, `specMeta` — et l'écran disait
+ * `USD`. Une lecture de code ne pouvait pas le montrer ; il a fallu comparer ce
+ * que servent la liste et la fiche pour la **même** commande.
+ *
+ * ── Ce que la liste contient, et pourquoi une seule entrée suffit ───────────
+ *
+ * Les treize clés du catalogue ont été comparées aux 37 que sert la ressource
+ * d'index : **une seule collision**, celle-ci. La liste n'est donc pas une
+ * précaution vague, c'est une mesure — et elle est à refaire quand on ajoute un
+ * champ personnalisé, parce qu'un nom déjà pris par Fleetbase ne produit aucune
+ * erreur, seulement une valeur silencieusement fausse.
+ */
+export const FLEETBASE_OWNED_ORDER_KEYS = ['currency'];

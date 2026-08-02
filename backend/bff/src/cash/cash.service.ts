@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { badRequest, conflict, notFound } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
+
+import { platformCurrency } from '../common/money/currency';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -86,7 +88,7 @@ export class CashService {
   ) {}
 
   get currency(): string {
-    return this.configService.get('CURRENCY') || 'DZD';
+    return platformCurrency(this.configService.get('CURRENCY'));
   }
 
   /**
