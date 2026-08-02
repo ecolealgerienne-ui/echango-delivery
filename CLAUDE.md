@@ -414,7 +414,9 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   **Ce qui existe déjà** : le géocodage inverse **extrait la wilaya** (`state`/`region` → `province`, `common/geocoding/geocoding.service.ts`), et le carnet d'adresses la conserve — `SaveAddressDto.province`, `SavedAddress.province`, l'écran d'adresses la saisit.
 
-  ⚠️ **Ce qui manque, et qui bloque tout le reste : `CreateOrderDto` ne porte NI `pickupProvince` NI `dropoffProvince`.** Il n'a que `city` et `neighborhood`. **La wilaya se perd donc entre le carnet et la course**, et un filtre par wilaya n'aurait aujourd'hui rien sur quoi filtrer. C'est la première chose à faire, avant l'écran de préférences.
+  ✅ **La wilaya voyage — fait le 02/08/2026.** `CreateOrderDto` porte désormais `pickupProvince` et `dropoffProvince`, `createPlace` les écrit, le formulaire les capture depuis le carnet **et** depuis la carte, et la duplication les restaure (elle les perdait, comme elle avait perdu `podMethod` et la quantité de colis avant). **Vérifié par témoin** : une course créée avec la wilaya rend `payload.pickup.province = "ALGER"`, une créée sans rend `null` — Fleetbase abandonnant un champ inconnu sans rien dire, c'est la seule preuve qui vaille.
+
+  **Reste donc à faire** : la préférence du conducteur (wilaya + rayon), le filtrage de la liste, et celui des notifications.
 
   **Deux points restés à trancher** :
   - `Driver` supporte-t-il `HasCustomFields` ? Vérifié pour `Order`, jamais pour `Driver`. ⚠️ Et **jamais `meta` sur `Driver` non plus** — même piège d'écrasement que celui qui a coûté les données de commande.

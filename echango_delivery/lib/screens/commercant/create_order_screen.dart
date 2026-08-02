@@ -136,6 +136,20 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   String? _dropoffCity;
   String? _dropoffNeighborhood;
 
+  /// La wilaya des deux points.
+  ///
+  /// ⚠️ **Elle était disponible des deux côtés et n'allait nulle part
+  /// (02/08/2026).** `SavedAddress.province` et `PickedLocation.province` la
+  /// portent toutes deux, le géocodage inverse l'extrait, et la projection la
+  /// sert au transporteur — mais cet écran ne la lisait pas, et
+  /// `CreateOrderDto` ne l'acceptait pas. Elle se perdait donc entre le carnet
+  /// et la course.
+  ///
+  /// C'est la donnée sur laquelle repose le filtre du transporteur (décision du
+  /// 02/08/2026, « wilaya d'abord ») : sans elle, il n'y a rien à filtrer.
+  String? _pickupProvince;
+  String? _dropoffProvince;
+
   @override
   void initState() {
     super.initState();
@@ -254,6 +268,31 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     if (dropoffLat != null && dropoffLon != null) {
       _dropoffPoint = LatLng(dropoffLat, dropoffLon);
     }
+
+    // ⚠️ **Les composantes d'adresse aussi (02/08/2026).** La duplication
+    // restaurait le point et le nom, mais ni la commune, ni le quartier, ni la
+    // wilaya : la copie repartait sans ce qui permet de la situer. C'est le
+    // même défaut que `podMethod`, `preferFavourites` et la quantité de colis,
+    // corrigés sur ce chemin les 30 et 31/07 — un champ que la duplication ne
+    // relit pas disparaît en silence.
+    //
+    // Il devient bloquant maintenant que la wilaya porte le filtre du
+    // transporteur : la copie serait **invisible** à qui filtre par wilaya.
+    //
+    // `null` plutôt qu'une chaîne vide quand le modèle ne l'a pas : une
+    // composante absente doit rester absente, pas devenir un filtre qui ne
+    // matche rien.
+    String? component(String key) {
+      final value = t[key];
+      return value is String && value.trim().isNotEmpty ? value : null;
+    }
+
+    _pickupCity = component('pickupCity');
+    _pickupProvince = component('pickupProvince');
+    _pickupNeighborhood = component('pickupNeighborhood');
+    _dropoffCity = component('dropoffCity');
+    _dropoffProvince = component('dropoffProvince');
+    _dropoffNeighborhood = component('dropoffNeighborhood');
   }
 
   @override
@@ -289,6 +328,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _pickupPhone.text = a.contactPhone ?? '';
         _pickupPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
         _pickupCity = a.city;
+        _pickupProvince = a.province;
         _pickupNeighborhood = a.neighborhood;
       } else {
         _dropoffName.text = a.name;
@@ -297,6 +337,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _dropoffPhone.text = a.contactPhone ?? '';
         _dropoffPoint = a.hasPosition ? LatLng(a.latitude, a.longitude) : null;
         _dropoffCity = a.city;
+        _dropoffProvince = a.province;
         _dropoffNeighborhood = a.neighborhood;
       }
     });
@@ -352,6 +393,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'pickupLatitude': _pickupPoint!.latitude,
       'pickupLongitude': _pickupPoint!.longitude,
       if (_pickupCity != null) 'pickupCity': _pickupCity,
+      if (_pickupProvince != null) 'pickupProvince': _pickupProvince,
       if (_pickupNeighborhood != null) 'pickupNeighborhood': _pickupNeighborhood,
       // ⚠️ `'Commerce'` reste en français en dur, et **ce n'est pas un oubli du
       // lot i18n**. Ce n'est pas un libellé : c'est une **donnée** envoyée au
@@ -370,6 +412,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       // Commune et quartier, jamais la rue : c'est ce qui rend une course libre
       // jugeable sans désigner une porte.
       if (_dropoffCity != null) 'dropoffCity': _dropoffCity,
+      if (_dropoffProvince != null) 'dropoffProvince': _dropoffProvince,
       if (_dropoffNeighborhood != null) 'dropoffNeighborhood': _dropoffNeighborhood,
       'dropoffContactName':
           _dropoffContact.text.trim().isEmpty ? _dropoffName.text.trim() : _dropoffContact.text.trim(),
@@ -1002,11 +1045,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (toPickup) {
         _pickupPoint = result.point;
         _pickupCity = result.city;
+        _pickupProvince = result.province;
         _pickupNeighborhood = result.neighborhood;
         if (_pickupAddress.text.trim().isEmpty) _pickupAddress.text = result.label;
       } else {
         _dropoffPoint = result.point;
         _dropoffCity = result.city;
+        _dropoffProvince = result.province;
         _dropoffNeighborhood = result.neighborhood;
         if (_dropoffAddress.text.trim().isEmpty) _dropoffAddress.text = result.label;
       }

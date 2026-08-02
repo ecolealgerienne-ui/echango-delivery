@@ -455,6 +455,18 @@ export class FleetbaseApiClient {
        */
       city?: string;
       neighborhood?: string;
+      /**
+       * Wilaya, ajoutée le 02/08/2026.
+       *
+       * ⚠️ Le lieu d'une **course** ne la recevait pas, alors que le lieu du
+       * **carnet d'adresses** l'écrivait déjà (`addressComponents`). Les deux
+       * chemins créent pourtant le même objet `Place`, et la projection sert
+       * `province` au transporteur depuis le 31/07 : elle arrivait donc
+       * toujours vide sur une course. C'est la règle 5 dans sa forme la plus
+       * banale — deux chemins vers un même enregistrement, un seul tenu à
+       * jour.
+       */
+      province?: string;
     },
   ) {
     const response = await this.callFleetOps('POST', '/places', {
@@ -465,6 +477,7 @@ export class FleetbaseApiClient {
       },
       ...(contact?.address ? { street1: contact.address } : {}),
       ...(contact?.city ? { city: contact.city } : {}),
+      ...(contact?.province ? { province: contact.province } : {}),
       ...(contact?.neighborhood ? { neighborhood: contact.neighborhood } : {}),
       ...(contact?.phone ? { phone: contact.phone } : {}),
       ...(contact?.name ? { meta: { contact_name: contact.name } } : {}),

@@ -1,3 +1,15 @@
+- [x] **La wilaya voyage enfin du carnet jusqu'à la course (02/08/2026)** — premier travail de la décision « le transporteur choisit ce qu'il voit, wilaya d'abord » : sans cette donnée, le filtre n'aurait rien sur quoi filtrer.
+
+  **Le trou était au milieu d'une chaîne dont les deux bouts fonctionnaient.** Le géocodage inverse **extrait** la wilaya (`state`/`region` → `province`), le carnet d'adresses la **conserve**, l'application la porte des deux côtés (`SavedAddress.province`, `PickedLocation.province`), et la projection la **sert déjà** au transporteur depuis le 31/07. Mais `CreateOrderDto` ne l'acceptait pas et l'écran ne la lisait pas : **elle se perdait entre le carnet et la course**. Quatre points branchés — le DTO, `createPlace`, le service, le formulaire.
+
+  ⚠️ **Prouvé par témoin, pas par lecture de code.** Fleetbase abandonne un champ inconnu **sans rien dire** : deux courses créées, l'une avec `pickupProvince`, l'autre sans. La première rend `payload.pickup.province = "ALGER"`, la seconde `null`. Sans le témoin, un champ ignoré aurait produit exactement le même « ça a l'air de marcher ».
+
+  ⚠️ **Un défaut antérieur trouvé en chemin, et c'est la troisième fois sur ce même chemin.** La **reprise d'une livraison** restaurait le point et le nom mais **ni la commune, ni le quartier, ni la wilaya** — ni côté serveur (le modèle ne les rendait pas), ni côté écran. Après `podMethod`/`preferFavourites` (30/07) et la quantité de colis (31/07), c'est le même motif : *un champ que la duplication ne relit pas disparaît en silence*. Il devenait bloquant : une course dupliquée aurait été **invisible** à qui filtre par wilaya, sans que rien ne le signale.
+
+  **Choix assumé** : la wilaya reste **facultative** au DTO, comme au carnet. Elle vient du géocodage, jamais d'une saisie — l'exiger ferait échouer une création pour une raison que le commerçant ne comprendrait pas, puisqu'il tape une rue. C'est au **filtre** de ne pas cacher une course dont la wilaya est inconnue, pas à la création de la refuser.
+
+  ⚠️ **Piège d'outillage, à ne pas refaire** : lancer `npm run build` **dans le conteneur de développement** court contre le watcher de `start:dev`. Le `rimraf dist` a laissé une compilation partielle et le BFF est tombé sur `Cannot find module './config/jwt'` — une erreur qui accuse un fichier parfaitement présent. Un redémarrage repart d'une compilation propre.
+
 - [x] **L'écart à la porte et deux sorties de course, à l'écran (02/08/2026)** : neuf parcours, `+10 All tests passed`. S'ajoutent au parcours d'argent : déclarer un montant **différent** de celui annoncé, écarter une opportunité, signaler un échec de livraison.
 
   **Deux de ces parcours portent une assertion de REFUS, et c'est leur objet.** Un écart sans motif, un écartement sans motif : le tiroir doit rester **non confirmable**. Un motif obligatoire dont on n'a jamais vu le refus n'est pas une obligation, c'est une intention — la règle 8 appliquée à un écran.

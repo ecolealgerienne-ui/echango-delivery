@@ -52,6 +52,32 @@ export class CreateOrderDto {
   @MaxLength(120)
   pickupCity?: string;
 
+  /**
+   * Wilaya de l'enlèvement.
+   *
+   * ── Pourquoi elle manquait, et ce que ça bloquait (02/08/2026) ──────────
+   *
+   * Le géocodage inverse l'extrait (`state`/`region` → `province`,
+   * `common/geocoding`), le carnet d'adresses la conserve (`SaveAddressDto`),
+   * et la projection la **sert déjà** au transporteur — mais elle n'était
+   * transportée nulle part entre les deux : ce DTO n'avait que commune et
+   * quartier. **La wilaya se perdait donc entre le carnet et la course.**
+   *
+   * C'est la donnée sur laquelle repose la décision produit du 02/08/2026 —
+   * « le transporteur choisit ce qu'il voit, wilaya d'abord » : sans elle, un
+   * filtre par wilaya n'a rien sur quoi filtrer.
+   *
+   * ⚠️ Facultative ici comme au carnet, et c'est délibéré : elle vient du
+   * géocodage, jamais d'une saisie. L'exiger ferait échouer la création d'une
+   * course pour une raison que le commerçant ne comprendrait pas — il tape une
+   * rue, pas une wilaya. C'est au **filtre** de ne pas cacher une course dont
+   * la wilaya est inconnue, pas à la création de la refuser.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  pickupProvince?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -81,6 +107,12 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(120)
   dropoffCity?: string;
+
+  /** Wilaya de la livraison. Même motif que [pickupProvince]. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dropoffProvince?: string;
 
   @IsOptional()
   @IsString()

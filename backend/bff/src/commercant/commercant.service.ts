@@ -1430,6 +1430,21 @@ export class CommerçantService {
         [`${prefix}Longitude`]: typeof longitude === 'number' ? longitude : null,
         [`${prefix}ContactName`]: raw.contact_name ?? raw.meta?.contact_name ?? null,
         [`${prefix}ContactPhone`]: raw.phone ?? raw.contact_phone ?? null,
+        // ⚠️ **Les composantes d'adresse manquaient au modèle (02/08/2026).**
+        //
+        // Une duplication restaurait le point et le nom, mais **ni la commune,
+        // ni le quartier, ni la wilaya** — elles ne repartaient donc pas avec
+        // la copie. C'est le défaut déjà corrigé deux fois sur ce chemin
+        // (`podMethod` et `preferFavourites` le 30/07, la quantité de colis le
+        // 31/07) : un champ que la duplication ne relit pas disparaît en
+        // silence.
+        //
+        // Il devient bloquant maintenant que la wilaya porte le filtre du
+        // transporteur : une course dupliquée serait **invisible** à qui filtre
+        // par wilaya, sans que rien ne le signale.
+        [`${prefix}City`]: raw.city ?? null,
+        [`${prefix}Province`]: raw.province ?? null,
+        [`${prefix}Neighborhood`]: raw.neighborhood ?? null,
       };
     };
 
@@ -1530,6 +1545,9 @@ export class CommerçantService {
             name: dto.pickupContactName,
             phone: dto.pickupContactPhone,
             city: dto.pickupCity,
+            // La wilaya voyage enfin jusqu'à la course : c'est elle qui portera
+            // le filtre du transporteur (décision du 02/08/2026).
+            province: dto.pickupProvince,
             neighborhood: dto.pickupNeighborhood,
           },
         ),
@@ -1544,6 +1562,7 @@ export class CommerçantService {
             // réclamée, ces deux-là suffisent à juger un détour et ne
             // désignent aucune porte.
             city: dto.dropoffCity,
+            province: dto.dropoffProvince,
             neighborhood: dto.dropoffNeighborhood,
           },
         ),

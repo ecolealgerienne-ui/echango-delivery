@@ -276,7 +276,8 @@ add_address() { # nom adresse lat lon contact
   body="$(jq -n --arg n "$1" --arg a "$2" --argjson lat "$3" --argjson lon "$4" \
     --arg c "$5" \
     '{name:$n, address:$a, latitude:$lat, longitude:$lon,
-      contactName:$c, contactPhone:"0551020304", city:"Alger", country:"DZ"}')"
+      contactName:$c, contactPhone:"0551020304",
+      city:"Alger", province:"Alger", country:"DZ"}')"
   out="$(mapi POST /commercant/adresses "$body")"
   is_error <<<"$out" && fail "Adresse « $1 » refusée" "$out"
   pass "Adresse « $1 »"
@@ -449,6 +450,8 @@ while [ "$((already + published))" -lt "$SPARE_ORDERS" ]; do
     pickupContactName: "Commerce", pickupContactPhone: "0551020304",
     dropoffLocationName: "Client du Parcours", dropoffLatitude: 36.7434, dropoffLongitude: 3.0290,
     dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Alger", pickupProvince: "Alger",
+    dropoffCity: "Alger", dropoffProvince: "Alger",
     price: 650, podMethod: "aucune", preferFavourites: false }')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création d'une course libre refusée" "$out"
@@ -522,6 +525,8 @@ ensure_cod_order() { # prix libellé
     pickupContactName: "Commerce", pickupContactPhone: "0551020304",
     dropoffLocationName: $d, dropoffLatitude: 36.7434, dropoffLongitude: 3.0290,
     dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Alger", pickupProvince: "Alger",
+    dropoffCity: "Alger", dropoffProvince: "Alger",
     price: $fee, codAmount: $cod, codIncludesDelivery: false,
     podMethod: "aucune", preferFavourites: false }')"
   out="$(mapi POST /commercant/commandes "$body")"
