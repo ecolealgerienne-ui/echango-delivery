@@ -66,12 +66,15 @@ pass "Commerçant + deux courses (O=${O:0:8}…, P=${P:0:8}…)"
 
 # ── missing : la course disparue de Fleetbase ──────────────────────────────
 step "Course DISPARUE de Fleetbase → « missing », pas un 500"
+# La course reste dans le cache local ; seule sa contrepartie Fleetbase part.
+# Le merge doit donc la remonter marquée « missing », PAS la faire disparaître
+# en silence (ce qui laisserait le commerçant croire qu'elle n'a jamais existé).
 fb_api DELETE "/int/v1/orders/$O" >/dev/null 2>&1 || fail "Suppression de O chez Fleetbase impossible"
-liste="$(mapi GET /commercant/commandes)"
-echo "$liste" | jq -e 'type=="object"' >/dev/null 2>&1 || fail "La liste a planté après suppression" "$(echo "$liste" | head -c 200)"
-echo "$liste" | jq -e '[(.orders // .data // [])[] | select((.uuid==$o or .bff_order_id) and .missing==true)] | length > 0' --arg o "$O" >/dev/null \
-  || echo "   (note : O peut être filtré de la liste plutôt que marqué missing — on vérifie surtout l'absence de crash)"
-pass "La liste répond sans planter, course disparue absorbée"
+liste="$(mapi GET /commercant/commandes?limit=100)"
+echo "$liste" | jq -e '.orders|type=="array"' >/dev/null 2>&1 || fail "La liste a planté après suppression" "$(echo "$liste" | head -c 200)"
+echo "$liste" | jq -e '[.orders[] | select(.uuid==$o and .missing==true)] | length == 1' --arg o "$O" >/dev/null \
+  || fail "O devrait remonter marquée « missing », pas disparaître" "$(echo "$liste" | jq -c '[.orders[]|{uuid,missing}]' 2>/dev/null | head -c 300)"
+pass "TÉMOIN : la course disparue remonte « missing », sans planter la liste"
 
 # ── stale : Fleetbase injoignable ──────────────────────────────────────────
 step "Fleetbase INJOIGNABLE → « stale » + /health reste ok"
