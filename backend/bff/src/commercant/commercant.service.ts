@@ -1794,12 +1794,29 @@ export class CommerçantService {
       : null;
 
     try {
-      // État propre, puis la nouvelle affectation.
-      await this.fleetbaseClient.releaseOrderToPool(cached.fleetbaseOrderId, this.adhocRadiusMetres());
+      // ⚠️ Transition EXPLICITE, et chaque branche nettoie l'affectation d'avant.
+      // `assignOrderToDriver` ne pose QUE `driver_assigned_uuid` — ni `adhoc`, ni
+      // le facilitateur —, donc on remet `adhoc: false` et on efface un éventuel
+      // facilitateur nous-mêmes. Sans quoi une course ciblée reste marquée
+      // `adhoc: true`, donc à la fois assignée ET proposée au pool (mesuré par
+      // `test-visibilite-ciblage`). Le pendant pour la branche entreprise :
+      // `attachFacilitator` pose déjà `adhoc: false` mais laisse le conducteur.
       if (target?.kind === 'driver') {
         await this.fleetbaseClient.assignOrderToDriver(target.uuid, cached.fleetbaseOrderId);
+        await this.fleetbaseClient.setOrderFields(cached.fleetbaseOrderId, {
+          adhoc: false,
+          facilitator_uuid: null,
+          facilitator_type: null,
+        });
       } else if (target?.kind === 'fleet') {
         await this.fleetbaseClient.attachFacilitator(cached.fleetbaseOrderId, target.uuid);
+        await this.fleetbaseClient.setOrderFields(cached.fleetbaseOrderId, {
+          driver_assigned_uuid: null,
+        });
+      } else {
+        // Diffusion large : `releaseOrderToPool` efface les DEUX affectations et
+        // pose `adhoc: true`.
+        await this.fleetbaseClient.releaseOrderToPool(cached.fleetbaseOrderId, this.adhocRadiusMetres());
       }
     } catch (error: any) {
       if (error instanceof HttpException) throw error;

@@ -1266,6 +1266,19 @@ export class FleetbaseApiClient {
     return response.data;
   }
 
+  /**
+   * Met à jour des champs NATIFS de la commande (PUT `/orders`, enveloppe
+   * `{order}`). Sert aux transitions de dispatch qui n'ont pas de route dédiée —
+   * notamment poser `adhoc: false` après une assignation, `assignOrderToDriver`
+   * ne touchant que `driver_assigned_uuid`.
+   */
+  async setOrderFields(orderUuid: string, fields: Record<string, any>) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: fields,
+    });
+    return response.data;
+  }
+
   async withdrawFromDispatch(orderUuid: string) {
     const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
       order: {
