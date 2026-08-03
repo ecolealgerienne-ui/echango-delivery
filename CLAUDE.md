@@ -481,8 +481,18 @@ Après la phase d'exploration ci-dessus, une revue croisée par 5 agents spécia
 Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.md` §9. Résumé :
 
 
+> 🗺️ **Où vit quoi — [`docs/ou_vit_quoi.md`](docs/ou_vit_quoi.md)**
+> — la carte du partage BFF ↔ Fleetbase : pour une donnée, où elle est rangée
+> et pourquoi là. **À lire avant d'ajouter une colonne ou un champ
+> personnalisé**, et avant d'écrire un chemin qui lit une liste Fleetbase.
+>
+> ⚠️ Elle porte aussi les **huit pièges Fleetbase mesurés** — la liste qui ne
+> sert aucun champ personnalisé, les enveloppes d'écriture, la chaîne vide
+> refusée, les collisions de noms silencieuses. Aucun n'est documenté en amont,
+> et chacun a coûté au moins une heure.
+
 > 📓 **Les travaux achevés vivent dans [`docs/journal_travaux.md`](docs/journal_travaux.md)**
-> — 63 entrées, du 26/07 au 01/08/2026, avec les défauts rencontrés et leur motif.
+> — du 26/07 au 03/08/2026, avec les défauts rencontrés et leur motif.
 >
 > Ce qui reste ici : **ce qui n'est pas fait**. Une case cochée n'a plus rien à
 > apprendre à qui écrit du code aujourd'hui ; une case vide, si.
