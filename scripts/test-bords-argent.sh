@@ -108,8 +108,13 @@ step "Zéro perçu, avec motif — accepté"
 r="$(dapi POST "/transporteur/commandes/$C/terminer" '{"collectedAmount":0,"discrepancyReason":"refus_de_payer"}')"
 echo "$r" | jq -e 'type=="object" and (.statusCode|type)!="number"' >/dev/null 2>&1 \
   || fail "Clôture à 0 + motif refusée" "$(echo "$r" | jq -c '{code,message}')"
-got="$(fb_get "/int/v1/orders/$C" | jq -c '(.order//.data//.) | {status, cod:.meta.collected_amount, reason:.meta.collection_reason}' 2>/dev/null)"
-pass "Clôturée à 0 avec motif — $got"
+# ⚠️ Le montant perçu vit dans les CHAMPS PERSONNALISÉS, pas dans `meta` brut :
+# une lecture `fb_get` directe le voit `null`. Le service, lui, le lit via
+# `effectiveMeta` (fusion des champs perso) — c'est lui qui fait foi. On vérifie
+# donc la clôture, pas le champ brut.
+got="$(fb_get "/int/v1/orders/$C" | jq -r '(.order//.data//.).status')"
+[ "$got" = "completed" ] || fail "La course n'est pas clôturée ($got)"
+pass "Clôturée à 0 avec motif (statut completed)"
 
 # ── La livrée MUETTE : clôturée hors app, remonte comme « à déclarer » ──────
 step "Livraison muette (clôturée hors application)"
@@ -120,10 +125,10 @@ dapi POST "/transporteur/commandes/$M/accepter" '{}' >/dev/null
 fb_api PUT "/int/v1/orders/$M" '{"order":{"status":"completed"}}' >/dev/null 2>&1 || true
 mst="$(fb_get "/int/v1/orders/$M" | jq -r '(.order//.data//.).status')"
 if [ "$mst" = "completed" ]; then
-  coll="$(mapi GET /commercant/collections)"
-  echo "$coll" | jq -e '[.unrecorded[]?.orderId, .unrecorded[]?.order_id, .unrecorded[]?.uuid] | index("'"$M"'")' >/dev/null \
+  coll="$(mapi GET /commercant/encaissements)"
+  echo "$coll" | jq -e '[.unrecorded[]?.uuid] | index("'"$M"'")' >/dev/null \
     && pass "TÉMOIN : la livraison muette remonte dans « à déclarer »" \
-    || echo "⚠️  livrée muette non retrouvée dans unrecorded — à vérifier (statut $mst, réponse: $(echo "$coll" | jq -c 'keys' 2>/dev/null))"
+    || fail "La livrée muette ne remonte PAS dans « à déclarer »" "unrecorded: $(echo "$coll" | jq -c '[.unrecorded[]?.uuid]' 2>/dev/null)"
 else
   echo "⚠️  la clôture directe Fleetbase n'a pas pris ($mst) — sous-test muet non concluant, PAS un échec produit"
 fi
