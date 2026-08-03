@@ -126,5 +126,23 @@ commande reste `created`, `adhoc: false`. La présence GPS n'est pas exigée.
 `facilitator_uuid` + `facilitator_type: fleet-ops:vendor` + `adhoc: false`
 fonctionne quel que soit l'état du vendor.
 
-Donc « la course attend, assignée à un favori hors-ligne » tient. Implémentation
-en cours.
+Donc « la course attend, assignée à un favori hors-ligne » tient.
+
+## ✅ Implémenté (04/08/2026)
+
+Backend (tsc 0 · build 0 · Jest 168) + app (analyze 0 · test 60 · error-codes
+106) + scénario `test-visibilite-ciblage.sh`. Commits sur la branche.
+
+⚠️ **Dette laissée, à purger dans un lot dédié (règle 9)** : `pickAvailableFavourite`,
+`favouritesAllowingPickup` et `compatibleVehicleTypes` (commercant.service.ts)
+n'ont plus d'appelant depuis la bascule — c'est l'ancien modèle « n'importe quel
+favori ». Cluster mort net (rien d'autre ne les appelle) ; `orderPickup`,
+`zoneAllowsPickup`, `OrderPickup` restent partagés et RESTENT. Non retirés ici
+parce qu'ils encadrent `resolveTargetFavourite` (inséré entre eux) et qu'une
+suppression imprécise casserait un build vert — à faire proprement à froid.
+
+⚠️ **Point ouvert — précondition de redirection.** « Pas encore prise » est
+approché conservativement (refus si terminale / démarrée / diffusée-et-réclamée).
+La distinction fine « assignée vs acceptée » côté Fleetbase n'a pas été mesurée :
+au pire on refuse une redirection légitime, jamais on n'arrache une livraison en
+cours. À affiner si le besoin se confirme.

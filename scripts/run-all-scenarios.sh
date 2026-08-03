@@ -67,6 +67,12 @@ SCENARIOS=(
   test-wilaya
   test-multi-appartenance
   test-sorties-de-course
+  # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
+  # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).
+  test-visibilite-ciblage
+  # La thèse produit : un conducteur sert deux commerçants. Prouvé par l'accès
+  # et l'acceptation, pas par la liste géospatiale (voir l'en-tête du script).
+  test-pool-mutualise
   # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
   # d'un décor RICHE — une course portant des champs personnalisés. Les courses
   # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
