@@ -96,6 +96,8 @@ class AppError {
   static const String orderActivityUpdateFailed = 'order.activity_update_failed';
   static const String orderProofUploadFailed = 'order.proof_upload_failed';
   static const String orderNotFoundUpstream = 'order.not_found_upstream';
+  static const String orderTargetNotFavourite = 'order.target_not_favourite';
+  static const String orderRedirectNotAllowed = 'order.redirect_not_allowed';
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   static const String driverNotFound = 'driver.not_found';

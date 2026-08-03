@@ -375,6 +375,14 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   Future<bool> cancelOrder(String id) =>
       _orderWrite(id, () => _apiClient.cancelMerchantOrder(id));
 
+  /// Change la cible d'une course publiée : un favori nommé, ou — si
+  /// [targetFavouriteUuid] est nul — la diffusion large au pool réseau.
+  Future<bool> redirectOrder(String id, {String? targetFavouriteUuid}) =>
+      _orderWrite(
+        id,
+        () => _apiClient.redirectMerchantOrder(id, targetFavouriteUuid: targetFavouriteUuid),
+      );
+
   /// Écrire sur une commande, puis **relire la liste et la fiche ouverte**.
   ///
   /// La relecture n'est pas cosmétique : sans elle, l'écran de détail continue

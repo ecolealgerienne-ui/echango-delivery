@@ -372,10 +372,13 @@ export const PROJECTED_META_FIELDS = [
   'collected_amount',
   'collected_at',
   'collection_reason',
-  // Choix du commerçant à la création. Écrit depuis le début (il sert à
-  // reproduire une commande dupliquée) mais jamais projeté : la fiche ne
-  // pouvait donc pas lui rappeler s'il avait sollicité ses favoris.
-  'prefer_favourites',
+  // Le favori nommé à qui la course est confiée, et sa nature. Projetés parce
+  // que le commerçant doit voir « en attente de X », et que la duplication
+  // reproduit la cible. Sur une course ciblée, la cible EST le conducteur
+  // assigné (déjà visible) : aucun secret nouveau. Une course diffusée n'en a
+  // pas.
+  'target_favourite_uuid',
+  'target_favourite_kind',
 ];
 
 /**

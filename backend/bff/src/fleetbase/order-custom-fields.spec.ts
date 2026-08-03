@@ -78,7 +78,8 @@ describe('champs personnalisés de commande', () => {
     cod_currency: 'DZD',
     cod_includes_delivery: false,
     vehicle_type: 'car',
-    prefer_favourites: true,
+    target_favourite_uuid: 'af156775-88de-4f3d-ad22-f5bccf9ec368',
+    target_favourite_kind: 'driver',
     instructions: 'Sonner au 3e',
     pickup_notes: 'Rue A',
     dropoff_notes: 'Rue B',
@@ -99,7 +100,13 @@ describe('champs personnalisés de commande', () => {
     const read = readOrderCustomFields({ custom_field_values: simulateFleetbaseRoundTrip(meta) });
 
     expect(read.cod_includes_delivery).toBe(false);
-    expect(read.prefer_favourites).toBe(true);
+  });
+
+  it('rend la cible favorite telle quelle (texte)', () => {
+    const read = readOrderCustomFields({ custom_field_values: simulateFleetbaseRoundTrip(meta) });
+
+    expect(read.target_favourite_uuid).toBe('af156775-88de-4f3d-ad22-f5bccf9ec368');
+    expect(read.target_favourite_kind).toBe('driver');
   });
 
   it('rend le colis en liste exploitable', () => {

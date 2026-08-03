@@ -457,7 +457,7 @@ while [ "$((already + published))" -lt "$SPARE_ORDERS" ]; do
     dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
     pickupCity: "Alger", pickupProvince: "Alger",
     dropoffCity: "Alger", dropoffProvince: "Alger",
-    price: 650, podMethod: "aucune", preferFavourites: false }')"
+    price: 650, podMethod: "aucune" }')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création d'une course libre refusée" "$out"
   oid="$(jq -r '.id // empty' <<<"$out")"
@@ -533,7 +533,7 @@ ensure_cod_order() { # prix libellé
     pickupCity: "Alger", pickupProvince: "Alger",
     dropoffCity: "Alger", dropoffProvince: "Alger",
     price: $fee, codAmount: $cod, codIncludesDelivery: false,
-    podMethod: "aucune", preferFavourites: false }')"
+    podMethod: "aucune" }')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création de la course « $what » refusée" "$out"
   oid="$(jq -r '.id // empty' <<<"$out")"

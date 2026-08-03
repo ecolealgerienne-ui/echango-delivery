@@ -1045,6 +1045,14 @@ class BffApiClient {
     return (await _post('/commercant/commandes/$id/publier') ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
+  /// Redirige une course publiée : un favori nommé, ou — si [targetFavouriteUuid]
+  /// est nul — la diffusion large au pool réseau.
+  Future<void> redirectMerchantOrder(String id, {String? targetFavouriteUuid}) async {
+    await _post('/commercant/commandes/$id/rediriger', {
+      if (targetFavouriteUuid != null) 'targetFavouriteUuid': targetFavouriteUuid,
+    });
+  }
+
   /// Champs à reprendre pour recommencer une livraison identique.
   ///
   /// Ne crée rien : le serveur renvoie de quoi pré-remplir le formulaire, que

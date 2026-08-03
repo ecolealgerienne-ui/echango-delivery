@@ -1,5 +1,7 @@
-import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+
+import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 
 /**
  * Catégories de véhicule.
@@ -166,14 +168,25 @@ export class CreateOrderDto {
   podMethod?: string;
 
   /**
-   * Solliciter d'abord les transporteurs favoris du commerçant.
+   * Confier la course à **un favori nommé** — un conducteur ou une entreprise.
    *
-   * Le repli sur le pool commun est automatique si aucun favori n'est
-   * disponible : c'est ce qui préserve l'effet réseau (voir DriverFavourite).
+   * ── Deux modes explicites, plus de repli automatique (03/08/2026) ──────────
+   *
+   * Absent → **diffusion large** au pool réseau. Présent → **ciblé** : la course
+   * est confiée à ce favori, **en ligne ou non**, et l'attend (invisible au
+   * pool). Décision produit assumée : un favori hors-ligne fait attendre la
+   * course plutôt que de la diffuser, et le commerçant peut la **rediriger**
+   * tant que personne ne l'a prise (`docs/plan_ciblage_favori.md`).
+   *
+   * ⚠️ A remplacé le booléen `preferFavourites` (« n'importe quel favori en
+   * ligne, sinon diffusion »). Le *kind* (driver/fleet) n'est PAS pris ici : il
+   * se **résout depuis la liste de favoris** du commerçant — seule source qui
+   * dit aussi que l'uuid EST bien un favori (on ne cible pas un inconnu).
    */
   @IsOptional()
-  @IsBoolean()
-  preferFavourites?: boolean;
+  @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'targetFavouriteUuid invalide' })
+  targetFavouriteUuid?: string;
 
   /**
    * Rémunération proposée au transporteur, dans la devise de l'organisation.

@@ -99,7 +99,7 @@ create_order() { # avec_wilaya(0|1) -> id sur stdout
     dropoffLocationName: "Client Wilaya", dropoffLatitude: 36.4703, dropoffLongitude: 2.8277,
     dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
     dropoffCity: "Blida",
-    podMethod: "aucune", preferFavourites: false }
+    podMethod: "aucune" }
     + (if $with == 1 then {pickupProvince: $wp, dropoffProvince: $wd} else {} end)')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création refusée" "$out"

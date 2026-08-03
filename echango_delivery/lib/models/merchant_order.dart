@@ -107,7 +107,10 @@ class MerchantOrder extends Equatable {
   /// Les favoris ont-ils été sollicités en premier ?
   ///
   /// `null` sur les commandes créées avant que ce choix soit projeté.
-  final bool? preferFavourites;
+  /// Favori nommé à qui la course est confiée, ou `null` si diffusée en large.
+  /// ⚠️ `'-'` (sentinelle d'effacement après une redirection) est ramené à
+  /// `null` à la lecture — voir `fromJson`.
+  final String? targetFavouriteUuid;
 
   /// Téléphone du transporteur affecté.
   ///
@@ -184,7 +187,7 @@ class MerchantOrder extends Equatable {
     this.pickupNotes,
     this.dropoffNotes,
     this.items = const [],
-    this.preferFavourites,
+    this.targetFavouriteUuid,
     this.driverPhone,
     this.codAmount,
     this.codCurrency,
@@ -283,7 +286,10 @@ class MerchantOrder extends Equatable {
               .map(OrderItemLine.fromJson)
               .toList()
           : const [],
-      preferFavourites: meta?['prefer_favourites'] as bool?,
+      targetFavouriteUuid: () {
+        final t = meta?['target_favourite_uuid'] as String?;
+        return (t == null || t.isEmpty || t == '-') ? null : t;
+      }(),
       price: meta?['price'] as num?,
       currency: meta?['currency'] as String?,
       codAmount: meta?['cod_amount'] as num?,

@@ -87,6 +87,60 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
+  /// Change la cible d'une course en attente : diffusion large, ou un favori
+  /// nommé. Le serveur **refuse** si la course a déjà été prise ou démarrée —
+  /// l'écran n'a donc pas à deviner cette précondition, il la laisse au BFF.
+  Future<void> _redirect(MerchantOrderState orderState) async {
+    // Les favoris ne sont pas forcément chargés sur cet écran : on les tire au
+    // besoin, sinon le tiroir n'offrirait que « large ».
+    if (orderState.favourites.isEmpty) await orderState.loadFavourites();
+    if (!mounted) return;
+    final favourites = orderState.favourites;
+
+    final chosen = await showModalBottomSheet<({bool picked, String? uuid})>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Text(
+                _t('order.detail.redirect'),
+                style: Theme.of(ctx).textTheme.titleMedium,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.public),
+              title: Text(_t('order.form.dispatch.large')),
+              onTap: () => Navigator.pop(ctx, (picked: true, uuid: null)),
+            ),
+            ...favourites.map(
+              (f) => ListTile(
+                leading: Icon(f.isFleet ? Icons.business : Icons.person_outline),
+                title: Text(f.name ?? f.driverUuid),
+                onTap: () => Navigator.pop(ctx, (picked: true, uuid: f.driverUuid)),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || !chosen.picked) return;
+
+    final success = await orderState.redirectOrder(
+      widget.orderId,
+      targetFavouriteUuid: chosen.uuid,
+    );
+    if (!mounted) return;
+    showAppOutcome(
+      context,
+      success ? null : orderState.errorMessage ?? _t('order.detail.redirect.failed'),
+      _t('order.detail.redirect.done'),
+    );
+  }
+
   /// Rouvre le formulaire de création, pré-rempli à partir de cette livraison.
   ///
   /// Le formulaire est ouvert, pas la commande créée : l'enlèvement programmé
@@ -258,6 +312,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             orderState.isLoading ? null : () => _publish(orderState),
                         icon: const Icon(Icons.publish_outlined),
                         label: Text(_t('order.detail.publish')),
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                    // Rediriger une course EN ATTENTE : vers un favori, ou en
+                    // large. Le serveur refuse si elle a déjà été prise, donc
+                    // l'offrir sur toute course « dispatched » est sans risque.
+                    if (order.isWaitingDispatch) ...[
+                      OutlinedButton.icon(
+                        onPressed:
+                            orderState.isLoading ? null : () => _redirect(orderState),
+                        icon: const Icon(Icons.alt_route),
+                        label: Text(_t('order.detail.redirect')),
                       ),
                       const SizedBox(height: AppSpacing.md),
                     ],
@@ -505,14 +571,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       // Repli pour les commandes d'avant la projection détaillée des articles.
       if (order.items.isEmpty && order.packageContents != null)
         (Icons.inventory_2_outlined, _t('order.section.parcel'), order.packageContents!),
-      if (order.preferFavourites != null)
-        (
-          order.preferFavourites! ? Icons.star_outline : Icons.public,
-          _t('order.detail.row.dispatch'),
-          order.preferFavourites!
-              ? _t('order.detail.dispatch.favourites')
-              : _t('order.detail.dispatch.network'),
-        ),
+      (
+        order.targetFavouriteUuid != null ? Icons.star_outline : Icons.public,
+        _t('order.detail.row.dispatch'),
+        order.targetFavouriteUuid != null
+            ? _t('order.detail.dispatch.favourites')
+            : _t('order.detail.dispatch.network'),
+      ),
       if (order.instructions != null)
         (Icons.notes_outlined, _t('order.detail.row.instructions'), order.instructions!),
     ];
