@@ -133,13 +133,16 @@ Donc « la course attend, assignée à un favori hors-ligne » tient.
 Backend (tsc 0 · build 0 · Jest 168) + app (analyze 0 · test 60 · error-codes
 106) + scénario `test-visibilite-ciblage.sh`. Commits sur la branche.
 
-⚠️ **Dette laissée, à purger dans un lot dédié (règle 9)** : `pickAvailableFavourite`,
-`favouritesAllowingPickup` et `compatibleVehicleTypes` (commercant.service.ts)
-n'ont plus d'appelant depuis la bascule — c'est l'ancien modèle « n'importe quel
-favori ». Cluster mort net (rien d'autre ne les appelle) ; `orderPickup`,
-`zoneAllowsPickup`, `OrderPickup` restent partagés et RESTENT. Non retirés ici
-parce qu'ils encadrent `resolveTargetFavourite` (inséré entre eux) et qu'une
-suppression imprécise casserait un build vert — à faire proprement à froid.
+⚠️ **Dette laissée, à purger dans un lot dédié (règle 9)** : un cluster mort
+**self-contained mais large** (~250 lignes) de l'ancien modèle « n'importe quel
+favori » — `PickedFavourite`, `asDriverPick`, `asFleetPick`,
+`favouritesAllowingPickup`, `pickAvailableFavourite`, `pickFleetFavourite`,
+`compatibleVehicleTypes` (tous dans `commercant.service.ts`). Rien d'autre ne
+les appelle (vérifié). ⚠️ `orderPickup`, `zoneAllowsPickup`, `OrderPickup`
+restent **partagés** (transporteur/flotte) et RESTENT. Non retirés ici : le
+cluster est **entrelacé** avec `resolveTargetFavourite` (inséré au milieu), et
+une suppression imprécise casserait un build vert. À faire proprement à froid,
+avec re-vérif tsc/build/Jest.
 
 ⚠️ **Point ouvert — précondition de redirection.** « Pas encore prise » est
 approché conservativement (refus si terminale / démarrée / diffusée-et-réclamée).
