@@ -73,6 +73,9 @@ SCENARIOS=(
   # La thèse produit : un conducteur sert deux commerçants. Prouvé par l'accès
   # et l'acceptation, pas par la liste géospatiale (voir l'en-tête du script).
   test-pool-mutualise
+  # ⚠️ Concurrence : deux acceptations SIMULTANÉES, un seul gagnant. Probabiliste
+  # (plusieurs tours) — un banc de course qui « passe » une fois ne prouve rien.
+  test-concurrence-acceptation
   # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
   # d'un décor RICHE — une course portant des champs personnalisés. Les courses
   # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
