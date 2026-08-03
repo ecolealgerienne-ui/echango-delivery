@@ -488,6 +488,37 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   un chemin que le code décrivait lui-même comme anti-IDOR. L'application suit
   sans changement : elle traite `photo_url` comme une chaîne opaque.
 
+  ⚠️ **LA LEÇON DU LOT, et elle a coûté une régression en production locale :
+  prouver le STOCKAGE n'est pas prouver la LECTURE.**
+
+  La reprise a constaté que **535 commandes sur 535** portaient leurs champs
+  personnalisés. C'était exact. J'en ai conclu que `Order.specMeta` — la copie
+  locale qui servait de filet — ne rattrapait plus rien, et je l'ai retiré.
+
+  **Or la liste ne porte AUCUN champ personnalisé.** `GET /orders` est servi par
+  la ressource d'index : `meta` y vaut `{_index_resource: true}` et
+  `custom_field_values` est **absent**, `with[]` ou pas. Seule la lecture
+  unitaire `GET /orders/{uuid}` les rend. Résultat : le transporteur s'est
+  retrouvé sans prix, sans montant à encaisser et sans exigence de véhicule.
+
+  ⚠️ **L'avertissement était dans le fichier que j'éditais, en majuscules** —
+  « CE PARAMÈTRE EST SANS EFFET, ET LA LISTE NE PORTE AUCUN MONTANT », avec la
+  mesure du 01/08 juste en dessous. Je l'ai lu et je n'en ai pas tiré la
+  conséquence pour le chemin que j'étais en train de casser. Une mesure juste ne
+  protège pas d'une conclusion qui porte à côté — même famille que la borne du
+  `pubspec` et que « le graphe ne sert à rien » (règle 11).
+
+  ✅ **Le remède est `FleetbaseApiClient.hydrateOrders`** : recharge par
+  lectures unitaires, par lots de huit, **après** les filtres que la liste sait
+  porter. Employé par les trois modules. Une commande qu'on ne sait pas
+  recharger est **rendue telle quelle** avec un avertissement, jamais retirée —
+  elle s'affichera sans ses montants, ce qui se voit ; la faire disparaître
+  serait un manque que personne ne peut constater.
+
+  ⚠️ **À savoir avant d'ajouter un champ personnalisé** : tout chemin qui lit
+  par `fetchEveryOrder` doit recharger, sinon le champ est **toujours vide** et
+  rien ne le signale.
+
   ✅ **La reprise de données est un script du dépôt, pas un geste manuel** :
   `scripts/backfill-order-custom-fields.sh`, idempotent, **prouvé par un second
   passage** à chaque fois. Il refuse de bénir un passage incomplet — et il a
