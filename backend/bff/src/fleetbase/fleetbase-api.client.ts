@@ -205,16 +205,6 @@ export class FleetbaseApiClient {
     });
   }
 
-  /**
-   * Login to customer-portal for merchant
-   */
-  async merchantLogin(email: string, password: string) {
-    const response = await this.callCustomerPortal('POST', '/auth/login', {
-      email,
-      password,
-    });
-    return response.data;
-  }
 
   /**
    * Create a Fleetbase Vendor for a merchant
@@ -797,16 +787,6 @@ export class FleetbaseApiClient {
     return response.data;
   }
 
-  /**
-   * Get merchant's orders via customer-portal-api
-   */
-  async getMerchantOrders(token: string, page = 1, limit = 25) {
-    const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
-      page,
-      limit,
-    });
-    return response.data;
-  }
 
   /**
    * Commandes de la compagnie, filtrées côté serveur.
@@ -1694,10 +1674,6 @@ export class FleetbaseApiClient {
     return response.data;
   }
 
-  async getOrderPublic(orderPublicId: string) {
-    const response = await this.callFleetOpsPublic('GET', `/orders/${this.seg(orderPublicId)}`);
-    return response.data;
-  }
 
   /**
    * Delete a UserDevice, used to retire a push token the driver no longer has.

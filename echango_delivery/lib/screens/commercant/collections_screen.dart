@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../i18n/collections_strings.dart';
 import '../../models/collections.dart';
+// ⚠️ `orderStatusLabel` est IMPORTÉ, jamais recopié : le commerçant doit lire
+// le même mot ici et sur la fiche de sa commande. Deux tables recopiées ont
+// déjà affiché deux textes différents pour la même course (règle 5).
+import '../../models/merchant_order.dart' show orderStatusLabel;
 import '../../state/collections_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -10,6 +16,7 @@ import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/app_snack_bar.dart';
 import '../../widgets/section_card.dart';
 
 /// L'argent des commandes du commerçant, en lecture seule.
@@ -225,6 +232,20 @@ class _Section extends StatelessWidget {
   }
 }
 
+/// Une livraison, vue sous l'angle de l'argent.
+///
+/// ── Ce que la ligne montre, et pourquoi tout ça ────────────────────────────
+///
+/// ⚠️ **Quatre champs étaient servis par la route et affichés nulle part**
+/// jusqu'au 03/08/2026 — téléphone du transporteur, date de livraison,
+/// identifiant de commande et statut. Trouvé en relisant le lot, pas à l'écran :
+/// une donnée servie et non lue ne produit aucune erreur, elle produit une
+/// **fonctionnalité absente que personne ne cherche** (règle 9, le défaut le
+/// plus répété de ce dépôt).
+///
+/// Ce n'était pas du poids mort côté serveur : un commerçant qui regarde une
+/// livraison **sans déclaration** veut précisément appeler le transporteur et
+/// ouvrir la commande. C'était donc un manque côté application.
 class _Line extends StatelessWidget {
   const _Line({required this.line, required this.locale, required this.label});
 
@@ -247,52 +268,118 @@ class _Line extends StatelessWidget {
         ? label('collections.line.driver', {'name': line.driverName!})
         : label('collections.line.driver.unknown');
 
-    return AppSectionCard.dense(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(heading, style: theme.textTheme.titleSmall),
-          const SizedBox(height: AppSpacing.xs),
+    final ligne = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text(heading, style: theme.textTheme.titleSmall)),
+            // ⚠️ Le chevron n'apparaît QUE si la ligne mène quelque part : une
+            // affordance qui ne fait rien est pire que pas d'affordance.
+            if (line.orderId != null)
+              Icon(Icons.chevron_right, size: 18, color: scheme.onSurfaceVariant),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                driver,
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+            // Appeler le transporteur : c'est LE geste que demande une
+            // livraison sans déclaration.
+            if (line.driverPhone?.trim().isNotEmpty == true)
+              TextButton.icon(
+                onPressed: () => _appeler(context, line.driverPhone!),
+                icon: const Icon(Icons.phone, size: 16),
+                label: Text(label('collections.line.call')),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+          ],
+        ),
+        // Où en est la livraison — servi pour les trois listes, utile surtout
+        // sur celles qui sont encore en route.
+        if (line.status?.isNotEmpty == true)
           Text(
-            driver,
+            orderStatusLabel(line.status!, locale, driverName: line.driverName),
             style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
-          const SizedBox(height: AppSpacing.sm),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          label('collections.line.expected', {'amount': _amount(line.expectedAmount)}),
+          style: theme.textTheme.bodyMedium,
+        ),
+        if (line.collectedAmount != null)
           Text(
-            label('collections.line.expected', {'amount': _amount(line.expectedAmount)}),
-            style: theme.textTheme.bodyMedium,
+            label('collections.line.collected', {'amount': _amount(line.collectedAmount)}),
+            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
-          if (line.collectedAmount != null)
-            Text(
-              label('collections.line.collected', {'amount': _amount(line.collectedAmount)}),
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
-          if (line.collectedAt != null)
-            Text(
-              label('collections.line.collected.at', {
-                'date': formatDayTime(line.collectedAt!, locale),
-              }),
-              style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          if (line.hasDiscrepancy) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              // Zéro perçu et un écart partiel ne se disent pas pareil : « rien
-              // n'a été perçu » est une information d'une autre nature qu'« il
-              // manque 27 ».
-              line.collectedAmount == 0
-                  ? label('collections.line.nothing_collected', {'reason': _reason()})
-                  : label('collections.line.discrepancy', {
-                      'amount': _amount(line.expectedAmount! - line.collectedAmount!),
-                      'reason': _reason(),
-                    }),
-              style: theme.textTheme.bodySmall?.copyWith(color: context.semantic.warning),
-            ),
-          ],
+        if (line.collectedAt != null)
+          Text(
+            label('collections.line.collected.at', {
+              'date': formatDayTime(line.collectedAt!, locale),
+            }),
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        // ⚠️ Affichée seulement quand rien n'a été déclaré : sur une ligne qui
+        // porte déjà « déclaré le … », deux dates voisines se confondent.
+        if (line.completedAt != null && line.collectedAt == null)
+          Text(
+            label('collections.line.completed', {
+              'date': formatDayTime(line.completedAt!, locale),
+            }),
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        if (line.hasDiscrepancy) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            line.collectedAmount == 0
+                ? label('collections.line.nothing_collected', {'reason': _reason()})
+                : label('collections.line.discrepancy', {
+                    'amount': _amount(line.expectedAmount! - line.collectedAmount!),
+                    'reason': _reason(),
+                  }),
+            style: theme.textTheme.bodySmall?.copyWith(color: context.semantic.warning),
+          ),
         ],
-      ),
+      ],
     );
+
+    return AppSectionCard.dense(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: line.orderId == null
+          ? ligne
+          : InkWell(
+              onTap: () => context.push('/commercant/commandes/${line.orderId}'),
+              child: ligne,
+            ),
+    );
+  }
+
+  /// Lance l'appel, ou dit pourquoi il n'a pas pu partir.
+  ///
+  /// ⚠️ Jamais en silence : un bouton qui ne fait rien se lit comme une panne
+  /// de l'application, et le commerçant n'a alors ni appel ni explication.
+  Future<void> _appeler(BuildContext context, String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone.replaceAll(RegExp(r'[^0-9+]'), ''));
+    final locale = context.read<LocaleState>().locale;
+    if (!await launchUrl(uri)) {
+      if (!context.mounted) return;
+      // `showAppSnackBar` et non `showAppOutcome` : il n'y a pas de succès à
+      // annoncer ici — l'appel qui part quitte l'application.
+      showAppSnackBar(
+        context,
+        collectionsLabel('collections.line.call_failed', locale),
+        tone: SnackTone.failure,
+      );
+    }
   }
 
   /// Le motif, traduit depuis son code.

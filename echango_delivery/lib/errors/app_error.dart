@@ -70,10 +70,7 @@ class AppError {
   static const String orderCancelNotAllowed = 'order.cancel_not_allowed';
   static const String orderAlreadyTerminal = 'order.already_terminal';
   static const String orderAlreadyStarted = 'order.already_started';
-  static const String orderAlreadyAccepted = 'order.already_accepted';
-  static const String orderAlreadyDeclined = 'order.already_declined';
   static const String orderNotAssignedToDriver = 'order.not_assigned_to_driver';
-  static const String orderDeclineReasonRequired = 'order.decline_reason_required';
   /// Le refus n'a pas pu être écrit sur la commande : la course reviendrait
   /// au rafraîchissement suivant, il faut réessayer.
   static const String orderDeclineNotRecorded = 'order.decline_not_recorded';
@@ -81,10 +78,8 @@ class AppError {
   /// Le signalement d'échec n'a pas pu être écrit sur la commande : le
   /// commerçant n'a pas été prévenu, il faut réessayer.
   static const String orderFailureNotRecorded = 'order.failure_not_recorded';
-  static const String orderProofRequired = 'order.proof_required';
   static const String orderProofNotFound = 'order.proof_not_found';
   static const String orderTrackingFailed = 'order.tracking_failed';
-  static const String orderTemplateFailed = 'order.template_failed';
   static const String orderMissingPublicId = 'order.missing_public_id';
   static const String orderReleaseFailed = 'order.release_failed';
   static const String orderAlreadyTaken = 'order.already_taken';
@@ -136,7 +131,6 @@ class AppError {
   static const String merchantInactive = 'merchant.inactive';
   static const String merchantAddressNotFound = 'merchant.address_not_found';
   static const String merchantFavouriteNotFound = 'merchant.favourite_not_found';
-  static const String merchantFavouriteAlreadyExists = 'merchant.favourite_already_exists';
   static const String merchantDriverNotInNetwork = 'merchant.driver_not_in_network';
   static const String merchantFavouriteAddUnavailable = 'merchant.favourite_add_unavailable';
   static const String merchantAddressSaveFailed = 'merchant.address_save_failed';

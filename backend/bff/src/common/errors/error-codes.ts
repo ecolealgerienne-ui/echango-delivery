@@ -115,14 +115,9 @@ export const ErrorCode = {
   ORDER_CANCEL_NOT_ALLOWED: 'order.cancel_not_allowed',
   ORDER_ALREADY_TERMINAL: 'order.already_terminal',
   ORDER_ALREADY_STARTED: 'order.already_started',
-  ORDER_ALREADY_ACCEPTED: 'order.already_accepted',
-  ORDER_ALREADY_DECLINED: 'order.already_declined',
   ORDER_NOT_ASSIGNED_TO_DRIVER: 'order.not_assigned_to_driver',
-  ORDER_DECLINE_REASON_REQUIRED: 'order.decline_reason_required',
-  ORDER_PROOF_REQUIRED: 'order.proof_required',
   ORDER_PROOF_NOT_FOUND: 'order.proof_not_found',
   ORDER_TRACKING_FAILED: 'order.tracking_failed',
-  ORDER_TEMPLATE_FAILED: 'order.template_failed',
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
@@ -198,7 +193,6 @@ export const ErrorCode = {
   /** L'historique des transporteurs déjà employés n'a pas pu être lu. */
   MERCHANT_KNOWN_DRIVERS_UNAVAILABLE: 'merchant.known_drivers_unavailable',
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
-  MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
   /** L'entreprise visee n'a pas de compte actif chez nous : elle ne peut
    *  recevoir aucune course, la mettre en favori n'aurait pas de sens. */

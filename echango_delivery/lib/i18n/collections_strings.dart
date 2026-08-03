@@ -93,6 +93,10 @@ const Map<String, String> _fr = {
   'collections.line.discrepancy': 'Écart de {amount} — {reason}',
   'collections.line.nothing_collected': 'Rien n’a été perçu — {reason}',
   'collections.line.unknown_amount': '—',
+  'collections.line.completed': 'Livrée le {date}',
+  'collections.line.call': 'Appeler',
+  'collections.line.open': 'Voir la commande',
+  'collections.line.call_failed': 'Impossible de lancer l’appel',
 
   // Motifs d'écart : la liste fermée du serveur.
   'collections.reason.somme_incomplete': 'le client n’avait pas la totalité',
@@ -144,6 +148,10 @@ const Map<String, String> _ar = {
   'collections.line.discrepancy': 'فارق قدره {amount} — {reason}',
   'collections.line.nothing_collected': 'لم يُقبض أي شيء — {reason}',
   'collections.line.unknown_amount': '—',
+  'collections.line.completed': 'سُلّمت في {date}',
+  'collections.line.call': 'اتصال',
+  'collections.line.open': 'عرض الطلبية',
+  'collections.line.call_failed': 'تعذّر إجراء المكالمة',
 
   'collections.reason.somme_incomplete': 'لم يكن لدى الزبون المبلغ كاملاً',
   'collections.reason.refus_de_payer': 'رفض الزبون الدفع',
