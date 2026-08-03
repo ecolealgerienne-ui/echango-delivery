@@ -463,6 +463,76 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 > Ce qui reste ici : **ce qui n'est pas fait**. Une case cochée n'a plus rien à
 > apprendre à qui écrit du code aujourd'hui ; une case vide, si.
 
+- [ ] **Vider le BFF de ce que Fleetbase peut porter — 3 déplacements faits sur 4 (03/08/2026)**
+
+  **Le critère est la console.** Elle est utilisée en exploitation : une donnée
+  qui n'existe que côté BFF est **absente de l'endroit où un opérateur la
+  cherche**. Un refus de course, un échec de livraison, un favori expliquent
+  chacun un blocage — les garder chez nous, c'est obliger l'opérateur à nous
+  appeler.
+
+  | | où c'est maintenant | fait |
+  |---|---|---|
+  | `Order.specMeta` | champs personnalisés déjà en place | ✅ |
+  | `OrderDecline` | `declines` sur la commande | ✅ |
+  | `DriverFavourite` | `favourites` sur le `Vendor` du commerçant | ✅ |
+  | `DeliveryFailure` | `delivery_failures` sur la commande | **reste** |
+
+  **Tables : 16 → 11.** Donnée métier de commande en base : **zéro**.
+
+  ✅ **La reprise de données est un script du dépôt, pas un geste manuel** :
+  `scripts/backfill-order-custom-fields.sh`, idempotent, **prouvé par un second
+  passage** à chaque fois. Il refuse de bénir un passage incomplet — et il a
+  fallu trois mensonges pour qu'il l'apprenne, tous des `continue` muets :
+  546 commandes illisibles suivies d'un « ✅ », 11 refus lus et 0 repris sans un
+  mot, et une non-idempotence que seule la seconde exécution a montrée. Le garde
+  qui compte : **un script de reprise qui lit des lignes et n'en traite aucune
+  n'a pas « rien à faire », il a échoué sans le dire.**
+
+  ⚠️ **Ce qui ne peut PAS monter, et le dire évite de le retenter** :
+
+  | | motif |
+  |---|---|
+  | les 3 tables de **comptes** | un hash de mot de passe en champ personnalisé serait lisible par tout utilisateur de la console. Aggravation, pas nettoyage |
+  | `DriverMembership` | interrogé **dans les deux sens** avec un statut. En champ personnalisé, « les conducteurs de l'entreprise X » impose de balayer tous les conducteurs — le défaut de pagination corrigé le 02/08, réintroduit. ⚠️ Fleetbase a un `FleetDriver` natif, mais il lie `Driver` à `Fleet` quand nos entreprises sont des `Vendor` : c'est un remodelage, pas un déplacement |
+  | `DriverInvitation` | cherché **par jeton** — même balayage |
+  | jetons push, `MerchantNotification` | le commerçant n'est pas un `User` Fleetbase ; et un historique à croissance non bornée n'est pas un champ personnalisé |
+  | `AuditLog` | ce ne sont pas des données métier mais des refus d'accès, qu'aucun opérateur n'a à voir |
+  | `Order.merchantId` | racine de **toute** l'autorisation. La déplacer est une décision de sécurité, pas un rangement |
+
+  **Ce qui reste — `DeliveryFailure`, et sa conception est réglée.** Le motif,
+  les précisions et l'horodatage vont en `delivery_failures` sur la commande ;
+  la photo est **déjà** chez Fleetbase (`Proof`). L'obstacle est
+  `GET preuves/:id`, qui cherche par identifiant local : la forme juste est
+  `GET commandes/:id/preuves/:n`, l'appartenance étant alors celle de la
+  commande, déjà éprouvée. ✅ **Vérifié que l'application suit sans changement** :
+  elle stocke `photo_url` comme une **chaîne opaque** servie par le BFF, donc
+  changer la forme de la route lui est transparent.
+
+  ⚠️ **Ce chemin porte une discipline anti-IDOR explicite** — c'est le seul du
+  lot dans ce cas, et c'est pourquoi il n'a pas été fait à la va-vite en fin de
+  session.
+
+  ⚠️ **Deux mesures faites avant d'écrire, à ne pas refaire** : `Vendor` accepte
+  bien des champs personnalisés (`PUT /int/v1/vendors/{public_id}`, enveloppe
+  `{vendor: …}`), et **la définition est portée par le vendor lui-même** —
+  chaque commerçant a la sienne, donc tout cache doit être **par vendor**. Un
+  cache global écrirait les favoris de l'un sur la fiche de l'autre.
+
+  ⚠️ **Et le piège qui a coûté deux fois** : une valeur de champ `array` revient
+  **déjà désérialisée** en liste, pas en chaîne JSON. Un `JSON.parse`
+  inconditionnel échoue et fait passer une liste pleine pour une liste vide.
+
+  ⚠️ **Un défaut trouvé en chemin, et il est instructif** : les trois champs
+  d'encaissement ajoutés le matin même n'atteignaient **aucune application** —
+  ajoutés au catalogue, oubliés dans la liste d'autorisation des projections. La
+  fiche affichait « pas encore encaissé » sur une livraison déclarée, sans une
+  erreur ni un journal. La liste refuse par défaut, ce qui est la bonne polarité
+  et rend l'oubli silencieux plutôt que dangereux. Un test tient désormais les
+  deux listes ensemble, avec une liste d'exceptions **nommées** — `declines` et
+  `delivery_failures` en sont, parce qu'un transporteur n'a pas à savoir qui
+  d'autre a refusé la course ni à quel prix.
+
 - [x] ✅ **Le registre de caisse est RETIRÉ — 03/08/2026, décision produit**
 
   **Tenir des soldes est de la trésorerie, pas de la logistique**, et détenir des
@@ -566,7 +636,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Mon premier banc comparait le NOMBRE DE LIGNES et non les totaux.** Plafonné à `limit=100`, il rendait 100 des deux côtés et concluait « filtre ignoré » sur un filtre qui marchait. C'est le défaut que ce banc existe pour détecter, commis dans le banc. ⚠️ Et un `0` contre un témoin à `0` ne prouve rien non plus : `status=completed` rendait 0, ce qui pouvait aussi bien dire « filtre cassé » — il a fallu la répartition réelle (24 `dispatched`, 2 `created`) pour savoir que le zéro était vrai.
 
-  ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables d'alors étaient justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. ⚠️ **Elles sont treize depuis le 03/08/2026** : le registre COD — qui était *l'*exception nommée — est retiré. `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
+  ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables d'alors étaient justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. ⚠️ **Elles sont onze depuis le 03/08/2026** : le registre COD — qui était *l'*exception nommée — est retiré, et trois autres tables sont remontées chez Fleetbase (voir la ligne « Vider le BFF » en Prochaines étapes). `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
 
 - [ ] **Le transporteur choisit ce qu'il voit : wilaya d'abord, rayon autour (décidé ET branché le 02/08/2026 — sauf les notifications)**
 
