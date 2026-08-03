@@ -678,11 +678,20 @@ export class CommerçantService {
       // vocabulaire. `party_type` s'ajoute à côté — un écran qui l'ignore
       // continue de fonctionner exactement comme avant, ce qui est la seule
       // façon d'étendre un contrat sans coordonner un déploiement.
-      data: favourites.map((f: any) => ({
-        id: f.id,
-        party_type: f.partyType,
-        driver_uuid: f.fleetbasePartyUuid,
-        name: f.partyName,
+      // ⚠️ **`(f: any)` a coûté un défaut réel le 03/08/2026.** La source est
+      // passée de Prisma aux champs personnalisés du vendor, les noms de
+      // champs ont changé (`partyType` → `party_type`), et le `any` a fait
+      // taire le compilateur : la route rendait une liste de lignes dont
+      // TOUTES les valeurs étaient `undefined`, avec un HTTP 200. Le banc
+      // d'appartenance l'a vue comme « aucune ressource », ce qui accusait le
+      // décor. Typé, maintenant.
+      data: favourites.map((f) => ({
+        // L'identifiant EST l'uuid de la partie : c'est ce que la route de
+        // suppression attend, et l'application le renvoie tel quel.
+        id: f.party_uuid,
+        party_type: f.party_type,
+        driver_uuid: f.party_uuid,
+        name: f.party_name ?? null,
       })),
     };
   }
