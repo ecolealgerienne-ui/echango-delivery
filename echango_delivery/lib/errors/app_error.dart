@@ -77,6 +77,10 @@ class AppError {
   /// Le refus n'a pas pu être écrit sur la commande : la course reviendrait
   /// au rafraîchissement suivant, il faut réessayer.
   static const String orderDeclineNotRecorded = 'order.decline_not_recorded';
+
+  /// Le signalement d'échec n'a pas pu être écrit sur la commande : le
+  /// commerçant n'a pas été prévenu, il faut réessayer.
+  static const String orderFailureNotRecorded = 'order.failure_not_recorded';
   static const String orderProofRequired = 'order.proof_required';
   static const String orderProofNotFound = 'order.proof_not_found';
   static const String orderTrackingFailed = 'order.tracking_failed';

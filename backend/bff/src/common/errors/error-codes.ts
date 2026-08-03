@@ -99,6 +99,13 @@ export const ErrorCode = {
    * précisément pour empêcher.
    */
   ORDER_DECLINE_NOT_RECORDED: 'order.decline_not_recorded',
+  /**
+   * Le signalement d'échec n'a pas pu être écrit sur la commande.
+   *
+   * Même motif que le refus : un succès muet laisserait le transporteur croire
+   * que le commerçant a été prévenu, alors que rien n'est parti.
+   */
+  ORDER_FAILURE_NOT_RECORDED: 'order.failure_not_recorded',
   ORDER_NOT_FOUND: 'order.not_found',
   ORDER_FORBIDDEN: 'order.forbidden',
   ORDER_FETCH_FAILED: 'order.fetch_failed',

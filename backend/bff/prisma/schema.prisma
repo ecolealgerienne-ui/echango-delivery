@@ -187,7 +187,6 @@ model DriverAccount {
 
   // Relations
   deviceTokens          DriverDeviceToken[]
-  deliveryFailures      DeliveryFailure[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -263,55 +262,18 @@ model DriverInvitation {
   @@index([expiresAt])
 }
 
-// Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
-//
-// Stocké ici et pas chez Fleetbase parce que **son flux n'a aucun état
-// d'échec** — ce que ce commentaire donnait pour « à confirmer » jusqu'au
-// 02/08/2026, et qui est désormais mesuré : le `flow` de l'`OrderConfig` est
-// une chaîne linéaire stricte,
-//
-//     created → dispatched → started → enroute → completed
-//
-// où chaque étape ne déclare qu'un seul suivant et où rien ne contient
-// `fail`/`attempt`/`unsuccess`. Une tentative de livraison ratée — client
-// absent, adresse fausse — n'a donc littéralement pas où s'écrire : ce n'est
-// pas une annulation, et le flux ne bifurque pas.
-//
-// C'est le cas nommé par la règle 1 : ce que Fleetbase ne peut
-// **structurellement** pas porter. Ce qu'on y pousse quand même est la trace
-// visible par l'opérateur (preuve photo + remarques), pour qu'un dispatcher
-// qui ouvre la commande voie quelque chose plutôt que du silence.
-model DeliveryFailure {
-  id                String   @id @default(cuid())
-  driverId          String
-  driver            DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
-
-  fleetbaseOrderUuid String
-  waypointUuid      String?  // which stop failed, when the order has several
-
-  reason            String   // see DeliveryFailureReason in the DTO
-  notes             String?
-
-  // Référence de la Proof créée dans Fleetbase quand une photo est jointe.
-  // Null si le signalement était sans photo, ou si l'upload a échoué.
-  //
-  // ⚠️ Malgré son nom, ce n'est PAS toujours un uuid : la ressource Proof
-  // masque `uuid` hors requête interne, et l'upload passe par l'API publique
-  // `v1`, qui n'expose que `id` — le public_id. Référence opaque, jamais
-  // utilisée pour adresser une route.
-  fleetbaseProofUuid String?
-
-  // URL du fichier, telle que Fleetbase la renvoie à la capture (`url` sur la
-  // ressource Proof). Conservée à l'écriture plutôt que relue à chaque
-  // affichage : la retrouver ensuite imposerait un appel par signalement, et
-  // Fleetbase n'offre pas de lecture de Proof par uuid sur `int/v1`.
-  proofUrl          String?
-
-  reportedAt        DateTime @default(now())
-
-  @@index([driverId])
-  @@index([fleetbaseOrderUuid])
-}
+/// ⚠️ `DeliveryFailure` a été SUPPRIMÉ le 03/08/2026 — les échecs vivent sur la
+/// commande, en champ personnalisé `delivery_failures`.
+///
+/// Motif : c'est la donnée qui explique le mieux pourquoi une livraison
+/// n'aboutit pas — « destinataire absent », avec sa photo. Un opérateur en
+/// console devait nous appeler pour l'obtenir.
+///
+/// ⚠️ La route de preuve porte désormais l'uuid de la **commande** :
+/// `GET commandes/:orderId/preuves/:id`. L'appartenance devient **structurelle**
+/// — servir la preuve exige de résoudre la commande, donc de traverser le
+/// contrôle qui existe déjà. Elle reposait avant sur un filtre qu'il fallait
+/// penser à écrire, sur un chemin explicitement décrit comme anti-IDOR.
 
 // Device Token for Push Notifications
 model DeviceToken {

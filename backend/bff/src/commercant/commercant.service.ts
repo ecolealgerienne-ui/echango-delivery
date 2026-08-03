@@ -55,6 +55,7 @@ const asFleetPick = (fleet: any): PickedFavourite => ({
 });
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
+import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { platformCurrency } from '../common/money/currency';
 import { isTerminalOrderStatus } from '../common/orders/order-status';
 import {
@@ -1066,9 +1067,12 @@ export class CommerçantService {
     // arrive déjà dans `meta` (`collected_amount`, `collected_at`,
     // `collection_reason`). Une seconde lecture serait une seconde source pour
     // la même donnée — exactement ce que la règle 1 interdit.
+    // ⚠️ Les échecs se lisent sur la commande FUSIONNÉE, pas sur le cache : ils
+    // vivent dans ses champs personnalisés depuis le 03/08/2026, et `merged`
+    // est ce qui les porte.
     return {
       ...(merged as any),
-      ...(await this.failuresFor(order.fleetbaseOrderId)),
+      ...this.failuresFor(merged),
     };
   }
 
@@ -1185,95 +1189,53 @@ export class CommerçantService {
   }
 
   /**
-   * Signalements d'échec attachés à une commande, du plus récent au plus
-   * ancien.
+   * Les signalements d'échec d'une commande, tels que le commerçant les voit.
    *
-   * ── Pourquoi le commerçant doit les voir ────────────────────────────────────
-   *
-   * Il recevait « Échec de livraison : client absent » en notification, et rien
-   * de plus : ni la précision écrite par le transporteur, ni la photo. Or c'est
-   * lui qui devra répondre à son propre client, et éventuellement le
-   * rembourser. Le seul destinataire du justificatif était jusqu'ici celui qui
-   * l'avait produit.
-   *
-   * Le filtre porte sur la commande et non sur un transporteur : plusieurs
-   * peuvent s'y être succédé, et le commerçant a droit à la série complète —
-   * une livraison tentée trois fois n'est pas celle tentée une fois.
-   *
-   * La photo n'est jamais servie par son URL Fleetbase : celle-ci n'est
-   * protégée par rien. Le chemin renvoyé pointe sur le BFF, qui vérifie
-   * l'appartenance avant de relayer les octets.
+   * ⚠️ **Ne fait plus aucune requête depuis le 03/08/2026** : les échecs vivent
+   * sur la commande, donc ils arrivent avec `meta`. Le format servi ne change
+   * pas — `delivery_failure` et `delivery_failures`, les clés que l'application
+   * lit déjà.
    */
-  private async failuresFor(fleetbaseOrderUuid: string) {
-    const failures = await this.prisma.deliveryFailure.findMany({
-      where: { fleetbaseOrderUuid },
-      orderBy: { reportedAt: 'desc' },
-    });
-
-    if (!failures.length) return {};
-
-    const project = (f: any) => ({
-      id: f.id,
-      reason: f.reason,
-      notes: f.notes,
-      photo_url: f.proofUrl ? `/commercant/preuves/${f.id}` : null,
-      created_at: f.reportedAt.toISOString(),
-    });
-
-    return {
-      delivery_failure: project(failures[0]),
-      delivery_failures: failures.map(project),
-    };
+  private failuresFor(live: any): Record<string, any> {
+    return projectFailures(live, 'commercant');
   }
 
   /**
    * Photo d'un signalement d'échec, servie au commerçant propriétaire.
    *
-   * L'appartenance se vérifie en deux temps — le signalement porte l'uuid de la
-   * commande, et c'est le cache local qui dit à quel commerçant elle est.
-   * L'appartenance ne se demande jamais à Fleetbase — non parce qu'il ne
-   * saurait pas répondre (l'affirmation §2.8 est corrigée depuis le
-   * 29/07/2026), mais parce qu'un contrôle d'accès ne se délègue pas à un
-   * paramètre de requête.
+   * ── L'appartenance est STRUCTURELLE depuis le 03/08/2026 ─────────────────
+   *
+   * La route porte l'uuid de la **commande** : servir la preuve exige de la
+   * résoudre, donc de traverser `resolveOwnedOrder()`, qui vérifie déjà qu'elle
+   * est à ce commerçant. La version précédente cherchait le signalement par son
+   * identifiant seul, puis vérifiait le propriétaire en deux temps — un contrôle
+   * qui reposait sur le fait que son auteur y avait pensé.
    */
-  async getFailureProof(merchantId: string, failureId: string) {
-    await this.getMerchantWithValidation(merchantId);
+  async getFailureProof(merchantId: string, orderId: string, failureId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const order = await this.resolveOwnedOrder(merchantId, orderId);
+    const live = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
 
-    const failure = await this.prisma.deliveryFailure.findUnique({
-      where: { id: failureId },
-    });
+    const failure = findFailure(live, failureId);
 
-    const owned = failure
-      ? await this.prisma.order.findFirst({
-          where: { fleetbaseOrderId: failure.fleetbaseOrderUuid, merchantId },
-          select: { id: true },
-        })
-      : null;
-
-    if (!failure || !owned) {
-      // Un signalement inexistant et celui d'un autre commerçant donnent la
-      // même réponse ; seul le second est journalisé.
-      if (failure) {
-        this.audit.denied({
-          actorType: 'merchant',
-          actorId: merchantId,
-          action: 'proof.access',
-          resourceType: 'DeliveryFailure',
-          resourceId: failureId,
-          reason: 'Signalement portant sur la commande d\'un autre commerçant',
-        });
-      }
-      notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
-    }
-
-    if (!failure.proofUrl) {
+    if (!failure?.proof_url) {
+      this.audit.denied({
+        actorType: 'merchant',
+        actorId: merchantId,
+        action: 'proof.access',
+        resourceType: 'DeliveryFailure',
+        resourceId: failureId,
+        reason: 'Signalement inexistant sur cette commande, ou sans preuve',
+      });
       notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     try {
-      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
-    } catch (error) {
-      this.logger.warn(`Preuve ${failureId} illisible : ${error.message}`);
+      return await this.fleetbaseClient.fetchStoredFile(failure.proof_url);
+    } catch (error: any) {
+      this.logger.warn(
+        `Lecture de la preuve ${failureId} impossible (${failure.proof_url}) : ${error.message}`,
+      );
       notFound('order.proof_not_found', 'Preuve indisponible');
     }
   }

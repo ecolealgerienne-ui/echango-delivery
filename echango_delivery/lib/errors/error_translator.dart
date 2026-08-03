@@ -87,6 +87,8 @@ const Map<String, String> _fr = {
   'order.decline_reason_required': 'Indiquez un motif de refus.',
   'order.decline_not_recorded':
       'Votre refus n’a pas pu être enregistré. Réessayez dans un instant.',
+  'order.failure_not_recorded':
+      'Votre signalement n’a pas pu être enregistré. Réessayez dans un instant.',
   'order.proof_required': 'Une preuve de livraison est requise.',
   'order.proof_not_found': 'Aucune preuve disponible pour cette commande.',
   'order.tracking_failed': 'Suivi de la commande indisponible.',
@@ -244,6 +246,8 @@ const Map<String, String> _ar = {
   'order.decline_reason_required': 'يرجى تحديد سبب الرفض.',
   'order.decline_not_recorded':
       'تعذّر تسجيل رفضك. أعد المحاولة بعد لحظات.',
+  'order.failure_not_recorded':
+      'تعذّر تسجيل بلاغك. أعد المحاولة بعد لحظات.',
   'order.proof_required': 'إثبات التسليم مطلوب.',
   'order.proof_not_found': 'لا يوجد إثبات متاح لهذه الطلبية.',
   'order.tracking_failed': 'تتبع الطلبية غير متاح.',

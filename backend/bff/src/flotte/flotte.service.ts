@@ -12,6 +12,7 @@ import {
 } from '../common/projections/order.projection';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { effectiveOrderMeta } from '../common/projections/order.projection';
+import { hasFailure } from '../common/orders/delivery-failures';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import {
   phoneContains,
@@ -484,15 +485,10 @@ export class FlotteService {
       // entreprises, sans message ni issue applicative — le déblocage aurait
       // demandé un passage d'opérateur en console.
       //
-      // C'est le prix du statut manquant en amont : le fait vit chez nous, donc
-      // c'est chez nous qu'il faut le lire.
-      const failed = await this.prisma.deliveryFailure.findMany({
-        where: { fleetbaseOrderUuid: { in: candidates.map((o: any) => o.uuid) } },
-        select: { fleetbaseOrderUuid: true },
-      });
-      const reported = new Set(failed.map((f: any) => f.fleetbaseOrderUuid));
-
-      return candidates.some((o: any) => !reported.has(o.uuid));
+      // ⚠️ Le fait vivait chez nous jusqu'au 03/08/2026 ; il vit désormais sur
+      // la commande, en champ personnalisé. Une requête en base disparaît donc
+      // de ce chemin — l'échec arrive avec la course.
+      return candidates.some((o: any) => !hasFailure(this.withEffectiveMeta(o)));
     } catch (error: any) {
       // ⚠️ Injoignable ⇒ on **laisse passer**.
       //

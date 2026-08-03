@@ -4,6 +4,7 @@
 #   `Order.specMeta`  → prix, montant à encaisser, colis…  (03/08/2026)
 #   `OrderDecline`    → `declines`                          (03/08/2026)
 #   `DriverFavourite` → `favourites` (sur le Vendor)        (03/08/2026)
+#   `DeliveryFailure` → `delivery_failures`                 (03/08/2026)
 #
 # ── Pourquoi ce script existe ───────────────────────────────────────────────
 #
@@ -43,6 +44,17 @@ PGC="${BFF_PG_CONTAINER:-echango_bff_postgres}"
 PGU=$(docker exec "$PGC" printenv POSTGRES_USER)
 PGD=$(docker exec "$PGC" printenv POSTGRES_DB)
 
+echo "── Lecture des echecs de livraison locaux ──"
+docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select f."fleetbaseOrderUuid" || chr(9) || f.id || chr(9)
+          || coalesce(a."fleetbaseDriverUuid", '"'"''"'"') || chr(9)
+          || coalesce(f."waypointUuid", '"'"''"'"') || chr(9) || f.reason || chr(9)
+          || coalesce(replace(f.notes, chr(9), '"'"' '"'"'), '"'"''"'"') || chr(9)
+          || coalesce(f."proofUrl", '"'"''"'"') || chr(9)
+          || coalesce(f."fleetbaseProofUuid", '"'"''"'"') || chr(9) || f."reportedAt"
+     from "DeliveryFailure" f
+     join "DriverAccount" a on a.id = f."driverId";'   > /tmp/failures.tsv 2>/dev/null || : > /tmp/failures.tsv
+echo "   $(wc -l < /tmp/failures.tsv) echecs a reprendre"
+
 echo "── Lecture des favoris locaux ──"
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select m."fleetbaseVendorUuid" || chr(9) || f."partyType" || chr(9)
           || f."fleetbaseDriverUuid" || chr(9) || coalesce(f."driverName", '"'"''"'"')
@@ -69,7 +81,7 @@ docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc \
   > /tmp/specmeta.tsv
 echo "   $(wc -l < /tmp/specmeta.tsv) commandes portent un specMeta"
 
-FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" python3 - <<'PY'
+FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" NB_FAILS="$(wc -l < /tmp/failures.tsv)" python3 - <<'PY'
 import json, os, sys, urllib.request, urllib.error
 
 API = os.environ.get('FLEETBASE_API_URL', 'http://localhost:8000') + '/int/v1'
@@ -311,6 +323,92 @@ for uuid, elements in par_commande.items():
     else:
         refus_repris += 1
 
+# ── Les echecs de livraison ────────────────────────────────────────────────
+#
+# Meme forme que les refus : une liste par commande, ecrite d'un coup.
+attendu_fails = int(os.environ.get('NB_FAILS') or 0)
+try:
+    lignes_fails = list(open('/tmp/failures.tsv', encoding='utf-8'))
+except OSError:
+    lignes_fails = []
+
+fails_par_commande = {}
+fails_illisibles = []
+for ligne in lignes_fails:
+    ch = ligne.rstrip('\n').split('\t')
+    if len(ch) < 9 or not ch[0]:
+        fails_illisibles.append(ligne[:120])
+        continue
+    uuid, fid, duuid, wp, motif, notes, purl, pref, quand = ch[:9]
+    fails_par_commande.setdefault(uuid, []).append({
+        'id': fid, 'driver_uuid': duuid or None, 'waypoint_uuid': wp or None,
+        'reason': motif, 'notes': notes or None,
+        'proof_url': purl or None, 'proof_ref': pref or None,
+        'reported_at': quand.replace(' ', 'T')})
+
+fails_repris = fails_deja = 0
+for uuid, elements in fails_par_commande.items():
+    o = appel('GET', '/orders/%s?with[]=customFieldValues.customField' % uuid)
+    if '_erreur' in o:
+        introuvable += 1
+        continue
+    o = o.get('order') or o
+    cfg = o.get('order_config_uuid')
+    if not cfg:
+        introuvable += 1
+        continue
+    defs = definitions(cfg)
+    uid = defs.get('delivery-failures')
+    if not uid:
+        cree = appel('POST', '/custom-fields', {
+            'subject_uuid': cfg, 'subject_type': 'order-config',
+            'name': 'delivery-failures', 'label': 'delivery_failures',
+            'type': 'text', 'description': 'Echecs de livraison signales a la porte.'})
+        r = cree.get('custom_field') or cree.get('custom_field_value') or cree
+        uid = r.get('uuid') if isinstance(r, dict) else None
+        if not uid:
+            print('   ECHEC creation de `delivery-failures` : %s' % str(cree)[:140])
+            echec += 1
+            continue
+        defs['delivery-failures'] = uid
+
+    existants = []
+    for v in (o.get('custom_field_values') or []):
+        if (v.get('custom_field') or {}).get('name') != 'delivery-failures':
+            continue
+        bv = v.get('value')
+        if isinstance(bv, list):
+            existants = bv
+        elif isinstance(bv, str) and bv.strip():
+            try:
+                lu = json.loads(bv)
+                existants = lu if isinstance(lu, list) else []
+            except Exception:
+                existants = []
+
+    deja_la = {e.get('id') for e in existants if isinstance(e, dict)}
+    neufs = [e for e in elements if e['id'] not in deja_la]
+    if not neufs:
+        fails_deja += 1
+        continue
+    if DRY:
+        print('   [essai] echecs %s — %d' % (uuid[:8], len(neufs)))
+        fails_repris += 1
+        continue
+
+    r = appel('PUT', '/orders/%s' % (o.get('public_id') or uuid),
+              {'order': {'custom_field_values': [
+                  {'custom_field_uuid': uid,
+                   'value': json.dumps(existants + neufs),
+                   'value_type': 'array'}]}})
+    if '_erreur' in r:
+        echec += 1
+        print('   ECHEC echecs %s : %s' % (uuid[:8], r['_erreur']))
+    else:
+        fails_repris += 1
+
+bilan_fails_vide = attendu_fails > 0 and (fails_repris + fails_deja) == 0
+
 # ── Les favoris ────────────────────────────────────────────────────────────
 #
 # Portés par le VENDOR du commerçant, avec une definition par vendor : chaque
@@ -402,6 +500,7 @@ bilan_favs_vide = attendu_favs > 0 and (favs_repris + favs_deja) == 0
 print()
 print('   reprises          : %d' % repris)
 print('   favoris repris    : %d (%d vendors deja a jour)' % (favs_repris, favs_deja))
+print('   echecs repris     : %d (%d commandes deja a jour)' % (fails_repris, fails_deja))
 print('   refus repris      : %d (%d commandes déjà à jour)' % (refus_repris, refus_deja))
 print('   déjà complètes    : %d' % deja)
 print('   commande absente  : %d' % introuvable)
@@ -429,12 +528,17 @@ print()
 # « rien a faire » : il a echoue sans le dire.
 bilan_refus_vide = attendu > 0 and (refus_repris + refus_deja) == 0
 
-if (echec or introuvable or illisibles or favs_illisibles or bilan_refus_vide
+if (echec or introuvable or illisibles or favs_illisibles or fails_illisibles
+        or bilan_fails_vide or bilan_refus_vide
         or bilan_favs_vide or len(brut_declines) != attendu
         or len(lignes_favs) != attendu_favs):
     print('   ⚠️ NE RIEN SUPPRIMER.')
     if echec:
         print('      %d écriture(s) ont échoué.' % echec)
+    if bilan_fails_vide:
+        print('      %d echecs lus, AUCUN repris ni deja present.' % attendu_fails)
+    if fails_illisibles:
+        print('      %d ligne(s) d echecs illisibles.' % len(fails_illisibles))
     if bilan_favs_vide:
         print('      %d favoris lus, AUCUN repris ni deja present.' % attendu_favs)
     if favs_illisibles:
@@ -449,5 +553,5 @@ if (echec or introuvable or illisibles or favs_illisibles or bilan_refus_vide
         print('      %d commande(s) n\'ont pas pu etre lues : Fleetbase' % introuvable)
         print('      indisponible, ou commandes supprimees en amont. Relancer.')
     sys.exit(1)
-print('   ✅ Reprise terminée. specMeta, OrderDecline et DriverFavourite peuvent partir.')
+print('   ✅ Reprise terminée. Les quatre tables peuvent partir.')
 PY

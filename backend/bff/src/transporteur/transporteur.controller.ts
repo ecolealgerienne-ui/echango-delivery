@@ -123,14 +123,24 @@ export class TransporteurController {
    * joignable que depuis le serveur, et ces URL de stockage ne sont protégées
    * par aucune authentification.
    */
-  @Get('preuves/:id')
+  // ⚠️ La route porte l'uuid de la COMMANDE depuis le 03/08/2026. Ce n'est pas
+  // cosmétique : servir la preuve exige désormais de résoudre la commande, donc
+  // de traverser le contrôle d'assignation qui existe déjà. L'appartenance
+  // devient structurelle au lieu de reposer sur un filtre qu'il fallait penser
+  // à écrire.
+  //
+  // L'application suit sans changement : elle reçoit `photo_url` du serveur et
+  // le traite comme une chaîne opaque.
+  @Get('commandes/:orderId/preuves/:id')
   async getProof(
     @Request() req: any,
+    @Param('orderId', FleetbaseIdPipe) orderId: string,
     @Param('id', FleetbaseIdPipe) id: string,
     @Res() res: Response,
   ) {
     const { data, contentType } = await this.transporteurService.getProofImage(
       this.driverId(req),
+      orderId,
       id,
     );
     res.set({

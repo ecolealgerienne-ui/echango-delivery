@@ -463,7 +463,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 > Ce qui reste ici : **ce qui n'est pas fait**. Une case cochée n'a plus rien à
 > apprendre à qui écrit du code aujourd'hui ; une case vide, si.
 
-- [ ] **Vider le BFF de ce que Fleetbase peut porter — 3 déplacements faits sur 4 (03/08/2026)**
+- [x] ✅ **Vider le BFF de ce que Fleetbase peut porter — les 4 déplacements faits (03/08/2026)**
 
   **Le critère est la console.** Elle est utilisée en exploitation : une donnée
   qui n'existe que côté BFF est **absente de l'endroit où un opérateur la
@@ -476,9 +476,17 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   | `Order.specMeta` | champs personnalisés déjà en place | ✅ |
   | `OrderDecline` | `declines` sur la commande | ✅ |
   | `DriverFavourite` | `favourites` sur le `Vendor` du commerçant | ✅ |
-  | `DeliveryFailure` | `delivery_failures` sur la commande | **reste** |
+  | `DeliveryFailure` | `delivery_failures` sur la commande | ✅ |
 
-  **Tables : 16 → 11.** Donnée métier de commande en base : **zéro**.
+  **Tables : 16 → 10.** Donnée métier de commande en base : **zéro**.
+
+  ⚠️ **Et une propriété gagnée, pas seulement une table perdue** : la route de
+  preuve porte désormais l'uuid de la **commande**
+  (`GET commandes/:orderId/preuves/:id`). Servir une preuve exige donc de
+  résoudre la commande, donc de traverser le contrôle d'appartenance qui existe
+  déjà. Elle reposait avant sur un filtre qu'il fallait **penser** à écrire, sur
+  un chemin que le code décrivait lui-même comme anti-IDOR. L'application suit
+  sans changement : elle traite `photo_url` comme une chaîne opaque.
 
   ✅ **La reprise de données est un script du dépôt, pas un geste manuel** :
   `scripts/backfill-order-custom-fields.sh`, idempotent, **prouvé par un second
@@ -499,19 +507,6 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   | jetons push, `MerchantNotification` | le commerçant n'est pas un `User` Fleetbase ; et un historique à croissance non bornée n'est pas un champ personnalisé |
   | `AuditLog` | ce ne sont pas des données métier mais des refus d'accès, qu'aucun opérateur n'a à voir |
   | `Order.merchantId` | racine de **toute** l'autorisation. La déplacer est une décision de sécurité, pas un rangement |
-
-  **Ce qui reste — `DeliveryFailure`, et sa conception est réglée.** Le motif,
-  les précisions et l'horodatage vont en `delivery_failures` sur la commande ;
-  la photo est **déjà** chez Fleetbase (`Proof`). L'obstacle est
-  `GET preuves/:id`, qui cherche par identifiant local : la forme juste est
-  `GET commandes/:id/preuves/:n`, l'appartenance étant alors celle de la
-  commande, déjà éprouvée. ✅ **Vérifié que l'application suit sans changement** :
-  elle stocke `photo_url` comme une **chaîne opaque** servie par le BFF, donc
-  changer la forme de la route lui est transparent.
-
-  ⚠️ **Ce chemin porte une discipline anti-IDOR explicite** — c'est le seul du
-  lot dans ce cas, et c'est pourquoi il n'a pas été fait à la va-vite en fin de
-  session.
 
   ⚠️ **Deux mesures faites avant d'écrire, à ne pas refaire** : `Vendor` accepte
   bien des champs personnalisés (`PUT /int/v1/vendors/{public_id}`, enveloppe

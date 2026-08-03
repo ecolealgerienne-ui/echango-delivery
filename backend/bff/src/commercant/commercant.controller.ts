@@ -198,15 +198,24 @@ export class CommerçantController {
     this.sendImage(res, data, contentType);
   }
 
-  /** Photo jointe à un signalement d'échec de livraison. */
-  @Get('preuves/:id')
+  /**
+   * Photo jointe à un signalement d'échec de livraison.
+   *
+   * ⚠️ La route porte l'uuid de la COMMANDE depuis le 03/08/2026 : servir la
+   * preuve exige de la résoudre, donc de traverser le contrôle d'appartenance
+   * qui existe déjà. L'application suit sans changement — elle reçoit
+   * `photo_url` du serveur et le traite comme une chaîne opaque.
+   */
+  @Get('commandes/:orderId/preuves/:id')
   async getFailureProof(
     @Request() req: any,
+    @Param('orderId', FleetbaseIdPipe) orderId: string,
     @Param('id', FleetbaseIdPipe) id: string,
     @Res() res: Response,
   ) {
     const { data, contentType } = await this.commercantService.getFailureProof(
       req.user.id,
+      orderId,
       id,
     );
     this.sendImage(res, data, contentType);

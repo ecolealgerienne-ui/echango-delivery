@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+
 import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
+import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -136,137 +139,80 @@ export class TransporteurService {
   }
 
   /**
-   * Attach this driver's reported failures to the orders being returned.
-   *
-   * Without this a reported failure is invisible: it lives only in the BFF
-   * (§6.5 — no confirmed native per-waypoint failed status), and the Fleetbase
-   * order keeps its own status, so the app has no way to show that anything
-   * was reported. The driver files a report and the screen looks unchanged,
-   * which is indistinguishable from the feature being broken.
-   *
-   * Exposed as `delivery_failure` because that is the key the app's model
-   * already reads.
-   */
-  /**
    * Recompose `meta` depuis les champs personnalisés de la commande.
    *
    * ⚠️ Nécessaire parce qu'une affectation de transporteur **depuis la console
-   * Fleetbase efface `meta`** (constaté le 30/07/2026 : il ne restait que
-   * `{_index_resource: true}`). Pour le transporteur, ce n'est pas un affichage
-   * dégradé — `cod_amount` disparu signifie qu'aucun montant ne lui est
-   * annoncé, et `price` disparu qu'il ne sait pas ce que la course rapporte. Il
-   * accepterait à l'aveugle une course encaissée.
+   * Fleetbase efface `meta`** (constaté le 30/07/2026). Pour le transporteur,
+   * ce n'est pas un affichage dégradé — `cod_amount` disparu signifie qu'aucun
+   * montant ne lui est annoncé, et `price` disparu qu'il ne sait pas ce que la
+   * course rapporte. Il accepterait à l'aveugle une course encaissée.
    *
-   * ⚠️ **Cette fonction interrogeait la base locale jusqu'au 03/08/2026**, pour
-   * y lire `Order.specMeta` — une requête supplémentaire par liste, sur un
-   * chemin chaud. `specMeta` est retiré : tout vient désormais de la commande
-   * elle-même, donc c'est une projection pure, sans entrée/sortie et sans
-   * possibilité d'échouer. Le repli « si la lecture échoue, servir ce que
-   * Fleetbase a donné » n'a plus d'objet.
+   * ⚠️ **Interrogeait la base locale jusqu'au 03/08/2026**, pour y lire
+   * `Order.specMeta`. C'est désormais une projection pure, sans entrée/sortie
+   * et sans possibilité d'échouer.
    */
   private withEffectiveMeta(orders: any[]): any[] {
     return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o) }));
   }
 
-  private async attachFailures(driverId: string, orders: any[]) {
+  /**
+   * Attache les signalements d'échec aux courses servies au transporteur.
+   *
+   * ⚠️ **Ne fait plus aucune requête depuis le 03/08/2026** : les échecs vivent
+   * sur la commande, donc ils arrivent avec elle. La version précédente
+   * interrogeait la base une fois par liste servie.
+   */
+  private attachFailures(orders: any[]): any[] {
     if (!orders.length) return orders;
 
-    orders = this.withEffectiveMeta(orders);
-
-    const failures = await this.prisma.deliveryFailure.findMany({
-      where: {
-        driverId,
-        fleetbaseOrderUuid: { in: orders.map((o) => o?.uuid).filter(Boolean) },
-      },
-      orderBy: { reportedAt: 'desc' },
-    });
-
-    // Projeter même sans signalement : cette méthode est le seul point de
-    // passage des commandes assignées, et un retour anticipé laisserait sortir
-    // les objets Fleetbase bruts.
-    if (!failures.length) return orders.map((o) => projectOrderForDriver(o));
-
-    // Tous les rapports d'une commande, du plus récent au plus ancien.
-    //
-    // Une version précédente ne gardait que le dernier, au motif que « seul le
-    // dernier décrit l'état courant ». C'est vrai d'un badge de statut, faux
-    // d'un signalement : une livraison qui a échoué trois fois n'est pas celle
-    // qui a échoué une fois, et l'opérateur qui décide de la suite a besoin de
-    // la série. Chaque rapport porte de surcroît sa propre photo — n'en
-    // exposer qu'une revenait à effacer les preuves précédentes.
-    const byOrder = new Map<string, any[]>();
-    for (const f of failures) {
-      const list = byOrder.get(f.fleetbaseOrderUuid) ?? [];
-      list.push(f);
-      byOrder.set(f.fleetbaseOrderUuid, list);
-    }
-
-    const project = (failure: any) => ({
-      id: failure.id,
-      reason: failure.reason,
-      notes: failure.notes,
-      // Chemin sur le BFF, jamais l'URL Fleetbase. Celle-ci pointe sur
-      // l'hôte tel que Fleetbase se connaît — injoignable depuis un
-      // téléphone — et surtout elle n'est protégée par rien : la donner à
-      // l'app reviendrait à publier les preuves de livraison à qui
-      // devinerait l'adresse. Ici, le jeton du transporteur fait foi.
-      photo_url: failure.proofUrl ? `/transporteur/preuves/${failure.id}` : null,
-      created_at: failure.reportedAt.toISOString(),
-    });
-
-    return orders.map((order) => {
-      const list = byOrder.get(order?.uuid);
-      return projectOrderForDriver(order, {
-        extra: list?.length
-          ? {
-              // `delivery_failure` reste le plus récent : c'est ce qu'affichent
-              // les vues résumées, et le retirer casserait la liste sans rien
-              // apporter.
-              delivery_failure: project(list[0]),
-              delivery_failures: list.map(project),
-            }
-          : {},
-      });
+    return this.withEffectiveMeta(orders).map((o) => {
+      const projected = projectFailures(o, 'transporteur');
+      return Object.keys(projected).length ? { ...o, ...projected } : o;
     });
   }
 
   /**
    * Sert la photo d'un signalement, après contrôle d'appartenance.
    *
-   * Le filtre porte sur `driverId` en plus de l'identifiant : sans lui, un
-   * transporteur lirait les preuves d'un autre en changeant un cuid — même
-   * discipline anti-IDOR que partout ailleurs, appliquée ici à un fichier.
+   * ── L'appartenance est STRUCTURELLE depuis le 03/08/2026 ─────────────────
+   *
+   * La route porte l'uuid de la **commande**, plus un identifiant global de
+   * signalement. Servir la preuve exige donc de résoudre la commande — donc de
+   * traverser `getOrder()`, qui vérifie déjà qu'elle est assignée à ce
+   * transporteur. La version précédente cherchait le signalement par son seul
+   * identifiant et devait re-vérifier le propriétaire à la main : la discipline
+   * anti-IDOR reposait sur le fait que son auteur y avait pensé.
+   *
+   * ⚠️ On ne distingue toujours PAS « pas de preuve » de « preuve d'un autre » :
+   * même réponse, et seul le second cas est journalisé. Distinguer serait un
+   * oracle.
    */
-  async getProofImage(driverId: string, failureId: string) {
-    const driver = await this.getDriverOrFail(driverId);
-
-    const failure = await this.prisma.deliveryFailure.findFirst({
-      where: { id: failureId, driverId: driver.id },
-    });
+  async getProofImage(driverId: string, orderId: string, failureId: string) {
+    const order = await this.getOrder(driverId, orderId);
+    const [hydrated] = this.withEffectiveMeta([order]);
+    const failure = findFailure(hydrated ?? order, failureId);
 
     if (!failure) {
-      // Distinguer « pas de preuve » de « preuve d'un autre » serait un oracle :
-      // même réponse, mais seul le second cas est journalisé.
       this.audit.denied({
         actorType: 'transporteur',
         actorId: driverId,
         action: 'proof.access',
         resourceType: 'DeliveryFailure',
         resourceId: failureId,
-        reason: 'Signalement inexistant ou appartenant à un autre transporteur',
+        reason: 'Signalement inexistant sur cette course',
       });
       notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
-    if (!failure.proofUrl) {
+    if (!failure.proof_url) {
       notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     try {
-      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
+      return await this.fleetbaseClient.fetchStoredFile(failure.proof_url);
     } catch (error) {
       this.logger.warn(
-        `Lecture de la preuve ${failureId} impossible (${failure.proofUrl}) : ${error.message}. ` +
+        `Lecture de la preuve ${failureId} impossible (${failure.proof_url}) : ${error.message}. ` +
           'Si Fleetbase répond « There is nothing to see here », le fichier existe mais ' +
           'aucune route ne le sert : vérifier FLEETBASE_PROOF_DISK=public et que ' +
           '`php artisan storage:link` a bien été exécuté côté Fleetbase.',
@@ -756,16 +702,16 @@ export class TransporteurService {
 
     if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
-      return { orders: await this.attachFailures(driver.id, assigned.filter(isFinished)) };
+      return { orders: this.attachFailures(assigned.filter(isFinished)) };
     }
     if (query.type === 'assigned') {
-      return { orders: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))) };
+      return { orders: this.attachFailures(assigned.filter((o) => !isFinished(o))) };
     }
 
     return {
-      active: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))),
+      active: this.attachFailures(assigned.filter((o) => !isFinished(o))),
       adhoc: publicAdhoc,
-      history: await this.attachFailures(driver.id, assigned.filter(isFinished)),
+      history: this.attachFailures(assigned.filter(isFinished)),
     };
   }
 
@@ -843,7 +789,7 @@ export class TransporteurService {
       return projectOrderForDriver(hydrated ?? order, { unclaimed: true });
     }
 
-    const [withFailure] = await this.attachFailures(driver.id, [order]);
+    const [withFailure] = this.attachFailures([order]);
     return withFailure;
   }
 
@@ -1375,6 +1321,10 @@ export class TransporteurService {
   async reportDeliveryFailure(driverId: string, orderId: string, dto: ReportDeliveryFailureDto) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.getOrder(driverId, orderId);
+    // Recompose avant l'ecriture : `appendToOrderList` lit la liste actuelle
+    // dans `meta` ; la lire sur un `meta` efface par la console repartirait
+    // d'une liste vide, et les signalements precedents disparaitraient.
+    const [hydrated] = this.withEffectiveMeta([order]);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1435,17 +1385,37 @@ export class TransporteurService {
       }
     }
 
-    const failure = await this.prisma.deliveryFailure.create({
-      data: {
-        driverId: driver.id,
-        fleetbaseOrderUuid: order.uuid || orderId,
-        waypointUuid: dto.waypointUuid,
+    // ⚠️ Écrit SUR LA COMMANDE depuis le 03/08/2026, plus dans une table du
+    // BFF : c'est la donnée qui explique le mieux pourquoi une livraison
+    // n'aboutit pas, et un opérateur en console devait nous appeler pour
+    // l'obtenir (`docs/registre_caisse_precis.md` pour le motif général).
+    const failureId = randomUUID();
+    const reportedAt = new Date().toISOString();
+    const written = await this.orderCustomFields.appendToOrderList(
+      this.orderPublicId(order),
+      hydrated ?? order,
+      'delivery_failures',
+      {
+        id: failureId,
+        driver_uuid: driver.fleetbaseDriverUuid,
+        waypoint_uuid: dto.waypointUuid ?? null,
         reason: dto.reason,
-        notes: dto.notes,
-        fleetbaseProofUuid,
-        proofUrl,
+        notes: dto.notes ?? null,
+        proof_url: proofUrl,
+        proof_ref: fleetbaseProofUuid,
+        reported_at: reportedAt,
       },
-    });
+      // Chaque signalement est un fait distinct — trois échecs successifs sur
+      // la même course sont trois lignes. Rien à dédoublonner, donc.
+      () => false,
+    );
+
+    if (!written) {
+      badRequest(
+        'order.failure_not_recorded',
+        'Le signalement n\'a pas pu être enregistré. Réessayez dans un instant.',
+      );
+    }
 
     this.logger.log(`Delivery failure reported: order ${orderId}, reason ${dto.reason}`);
 
@@ -1461,14 +1431,14 @@ export class TransporteurService {
     });
 
     return {
-      id: failure.id,
-      reason: failure.reason,
+      id: failureId,
+      reason: dto.reason,
       // Ce qui compte pour l'appelant est que Fleetbase ait bien stocké la
       // photo, pas qu'on ait su en relire tel identifiant : l'URL est le
       // signal fiable, l'identifiant dépend de l'API empruntée.
       photoUploaded: Boolean(proofUrl || fleetbaseProofUuid),
-      photoUrl: proofUrl ? `/transporteur/preuves/${failure.id}` : null,
-      reportedAt: failure.reportedAt,
+      photoUrl: proofUrl ? `/transporteur/commandes/${order.uuid}/preuves/${failureId}` : null,
+      reportedAt,
     };
   }
 }
