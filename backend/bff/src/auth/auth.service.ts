@@ -919,9 +919,14 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          phone: dto.phone,
+          // ⚠️ **Nom et téléphone ne sont plus copiés ici** (03/08/2026). Le
+          // conducteur EXISTE déjà chez Fleetbase — l'invitation porte son
+          // uuid — donc son identité y est, et la recopier créait une seconde
+          // copie qui se figeait à l'inscription. Mesurée le même jour : elle
+          // divergeait sur **trois conducteurs sur trois**.
+          //
+          // `dto.firstName`/`lastName`/`phone` restent acceptés par le DTO :
+          // ils servent au formulaire, pas au stockage.
           fleetbaseDriverUuid: invitation.fleetbaseDriverUuid,
           fleetbaseUserUuid: fleetbaseDriver.user_uuid || null,
           fleetbaseDriverPublicId: fleetbaseDriver.public_id || null,
@@ -941,12 +946,12 @@ export class AuthService {
 
       return {
         token,
-        user: {
-          id: driver.id,
-          email: driver.email,
-          firstName: driver.firstName,
-          lastName: driver.lastName,
-        },
+        // ⚠️ **Sans nom depuis le 03/08/2026**, et c'est vérifié plutôt que
+        // supposé : l'application ne lit `user.firstName` nulle part, et
+        // `authState.displayName` ne sert qu'au titre de l'écran COMMERÇANT.
+        // Les servir aurait imposé un appel Fleetbase sur le chemin de
+        // connexion pour un champ que personne n'affiche.
+        user: { id: driver.id, email: driver.email },
       };
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof ConflictException) {
@@ -999,12 +1004,8 @@ export class AuthService {
 
     return {
       token,
-      user: {
-        id: driver.id,
-        email: driver.email,
-        firstName: driver.firstName,
-        lastName: driver.lastName,
-      },
+      // Même motif qu'à l'inscription : aucun lecteur côté application.
+      user: { id: driver.id, email: driver.email },
     };
   }
 

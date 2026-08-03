@@ -464,14 +464,27 @@ export class TransporteurService {
       this.logger.warn(`Could not read online status for driver ${driverId}: ${error.message}`);
     }
 
+    // ⚠️ **Nom, téléphone et véhicule viennent de Fleetbase**, plus d'une copie
+    // locale figée à l'inscription. Mesuré le 03/08/2026 : les deux divergeaient
+    // sur **trois conducteurs sur trois** — l'application affichait « Test
+    // Transporteur » là où la console affichait « Amar BENGHARBI ». Deux copies,
+    // et personne ne les comparait.
+    //
+    // ⚠️ `name` est un seul champ chez Fleetbase ; le contrat servi garde
+    // `firstName`/`lastName` pour ne pas casser l'écran, en découpant au
+    // premier espace. Le découpage est une **présentation**, pas une donnée :
+    // il ne repart jamais en écriture.
+    const profil = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    const [prenom, ...reste] = (profil.name ?? '').trim().split(/\s+/);
+
     return {
       id: driver.id,
       email: driver.email,
-      firstName: driver.firstName,
-      lastName: driver.lastName,
-      phone: driver.phone,
+      firstName: prenom || null,
+      lastName: reste.length ? reste.join(' ') : null,
+      phone: profil.phone,
       fleetbaseDriverUuid: driver.fleetbaseDriverUuid,
-      vehicleType: driver.vehicleType,
+      vehicleType: profil.vehicleType,
       online,
     };
   }
@@ -523,10 +536,15 @@ export class TransporteurService {
 
   async updateVehicleType(driverId: string, vehicleType?: string) {
     const driver = await this.getDriverOrFail(driverId);
-    await this.prisma.driverAccount.update({
-      where: { id: driver.id },
-      data: { vehicleType: vehicleType ?? null },
-    });
+    const publicId = await this.getDriverPublicId(driver);
+    // ⚠️ Écrit chez Fleetbase depuis le 03/08/2026, plus dans une colonne du
+    // BFF : un opérateur en console peut désormais lire et corriger la
+    // catégorie d'un transporteur venu s'en plaindre.
+    await this.driverZone.writeVehicleType(
+      driver.fleetbaseDriverUuid,
+      publicId,
+      vehicleType ?? null,
+    );
     return { vehicleType: vehicleType ?? null };
   }
 
@@ -665,7 +683,17 @@ export class TransporteurService {
     // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
     // champ non rempli serait le pire des défauts silencieux.
     const ladder = ['moto', 'voiture', 'utilitaire'];
-    const mine = ladder.indexOf(driver.vehicleType ?? '');
+    // ⚠️ **Une seule lecture Fleetbase pour les trois critères.** Catégorie de
+    // véhicule, zone déclarée et position sortent de la même réponse : les
+    // séparer coûterait trois appels par affichage de liste, sur un
+    // environnement où chacun prend ~3 s.
+    //
+    // ⚠️ La catégorie vivait dans `DriverAccount.vehicleType` jusqu'au
+    // 03/08/2026 — une colonne du BFF, donc invisible d'un opérateur.
+    const { zone, point, vehicleType } = await this.driverZone.read(
+      driver.fleetbaseDriverUuid,
+    );
+    const mine = ladder.indexOf(vehicleType ?? '');
     // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
     // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
     // passerait pour « sans exigence » : un transporteur en moto se verrait
@@ -713,7 +741,6 @@ export class TransporteurService {
     // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
     // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
     // sans que personne ne puisse constater ce qui manque.
-    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
     const adhoc = adhocHydrated
       .filter(suits)
       .filter((o) => zoneAllows(o, zone, point));

@@ -135,9 +135,6 @@ model DriverAccount {
   id                    String   @id @default(cuid())
   email                 String   @unique
   password              String   // bcrypted
-  firstName             String?
-  lastName              String?
-  phone                 String?
 
   // Link to Fleetbase
   fleetbaseDriverUuid   String   @unique // Driver UUID in Fleetbase
@@ -183,7 +180,6 @@ model DriverAccount {
   ///
   /// `null` = non déclaré : le transporteur voit alors toutes les courses,
   /// plutôt que d'être exclu du réseau par un champ qu'il n'a pas rempli.
-  vehicleType           String?
 
   // Relations
   deviceTokens          DriverDeviceToken[]
@@ -195,6 +191,22 @@ model DriverAccount {
 
   @@index([fleetbaseDriverUuid])
   @@index([active])
+  // ⚠️ `firstName`, `lastName`, `phone` et `vehicleType` ont été SUPPRIMÉS le
+  // 03/08/2026 — c'était du profil dupliqué, et il avait déjà divergé.
+  //
+  // Mesuré ce jour-là sur les trois conducteurs de la base : les trois
+  // affichaient un nom différent selon qu'on regardait l'application ou la
+  // console — « Test Transporteur » ici, « Amar BENGHARBI » chez Fleetbase — et
+  // le téléphone était vide d'un côté, renseigné de l'autre. Deux copies,
+  // personne pour les comparer, aucune erreur levée.
+  //
+  // L'identité vient désormais du `Driver` Fleetbase, et la catégorie de
+  // véhicule de ses champs personnalisés — donc lisible ET corrigeable par un
+  // opérateur en console, ce qu'une colonne du BFF n'a jamais permis.
+  //
+  // Ce qui reste ici est le **secret de connexion** : email, mot de passe,
+  // `tokenVersion`, `active`. C'est le seul contenu qu'un opérateur ne doit
+  // justement PAS voir.
 }
 
 // Push Token for a Driver's device. Mirrored to a Fleetbase UserDevice record

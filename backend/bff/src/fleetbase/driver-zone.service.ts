@@ -4,6 +4,7 @@ import { DriverPoint, DriverZone } from '../common/orders/driver-zone';
 import { readDriverPosition } from '../common/geo/driver-position';
 import {
   DRIVER_ZONE_FIELDS,
+  readOptionalText,
   DriverZoneFieldName,
   readRadiusKm,
   readWilaya,
@@ -17,6 +18,22 @@ import {
 export interface DriverZoneReading {
   zone: DriverZone | null;
   point: DriverPoint | null;
+  /**
+   * Catégorie de véhicule déclarée — `null` si rien n'est réglé, ou si la
+   * lecture a échoué.
+   *
+   * ⚠️ **Sort de la MÊME réponse que la zone et la position**, et c'est tout
+   * l'intérêt : le filtre des opportunités a besoin des trois, et les séparer
+   * coûterait trois appels Fleetbase par affichage de liste.
+   *
+   * ⚠️ Vivait dans `DriverAccount.vehicleType` jusqu'au 03/08/2026 — une
+   * colonne du BFF, donc invisible d'un opérateur en console, qui ne pouvait
+   * pas corriger la catégorie d'un transporteur venu s'en plaindre.
+   */
+  vehicleType: string | null;
+  /** Nom et téléphone tels que Fleetbase les porte — la seule source. */
+  name: string | null;
+  phone: string | null;
 }
 
 /**
@@ -75,8 +92,19 @@ export class DriverZoneService {
         ? { latitude: position.latitude, longitude: position.longitude }
         : null;
 
+      // L'identité vient de Fleetbase et de nulle part ailleurs. Le BFF en
+      // gardait une copie figée à l'inscription ; mesurées le 03/08/2026, les
+      // deux divergeaient sur **trois conducteurs sur trois** — « Test
+      // Transporteur » côté BFF contre « Amar BENGHARBI » en amont.
+      const identity = {
+        name: typeof driver?.name === 'string' ? driver.name : null,
+        phone: typeof driver?.phone === 'string' ? driver.phone : null,
+      };
+
       const values = driver?.custom_field_values;
-      if (!Array.isArray(values) || !values.length) return { zone: null, point };
+      if (!Array.isArray(values) || !values.length) {
+        return { zone: null, point, vehicleType: null, ...identity };
+      }
 
       const byName = new Map<string, any>();
       for (const entry of values) {
@@ -84,17 +112,50 @@ export class DriverZoneService {
         if (typeof name === 'string') byName.set(name, entry?.value);
       }
 
+      const vehicleType = readOptionalText(byName.get('vehicle_type'));
       const wilaya = readWilaya(byName.get('zone_wilaya'));
       const radiusKm = readRadiusKm(byName.get('zone_radius_km'));
-      if (!wilaya && radiusKm == null) return { zone: null, point };
-      return { zone: { wilaya, radiusKm }, point };
+      if (!wilaya && radiusKm == null) {
+        return { zone: null, point, vehicleType, ...identity };
+      }
+      return { zone: { wilaya, radiusKm }, point, vehicleType, ...identity };
     } catch (error) {
       this.logger.warn(
         `Zone du conducteur ${driverUuid} illisible (${error?.message}) — `
           + 'aucun filtrage appliqué, plutôt qu’une liste vide',
       );
-      return { zone: null, point: null };
+      // ⚠️ Tout à `null` — « je n'ai pas pu savoir », pas « rien de déclaré ».
+      // L'appelant du filtre traite l'absence comme « aucun filtrage », ce qui
+      // montre trop de courses plutôt que d'en cacher (règle 10).
+      return { zone: null, point: null, vehicleType: null, name: null, phone: null };
     }
+  }
+
+  /**
+   * Enregistre la catégorie de véhicule. Une valeur vide efface la préférence.
+   *
+   * Même mécanique que la zone, et même piège : la mise à jour n'accepte que le
+   * `public_id`, les définitions se cherchent par uuid.
+   */
+  async writeVehicleType(
+    driverUuid: string,
+    driverPublicId: string,
+    vehicleType: string | null,
+  ): Promise<void> {
+    const definitions = await this.definitionsFor(driverUuid);
+    const uuid = definitions.get('vehicle_type');
+    if (!uuid) {
+      this.logger.warn(
+        `Définition « vehicle_type » absente pour ${driverUuid} — valeur non écrite`,
+      );
+      return;
+    }
+
+    await this.fleetbase.setDriverCustomFieldValues(driverPublicId, [
+      // ⚠️ Jamais de chaîne vide : Fleetbase la refuse sur tout champ
+      // personnalisé. `ZONE_UNSET` porte l'absence.
+      { custom_field_uuid: uuid, value: vehicleType || ZONE_UNSET, value_type: 'text' },
+    ]);
   }
 
   /**

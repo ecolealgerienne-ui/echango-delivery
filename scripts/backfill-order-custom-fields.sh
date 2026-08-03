@@ -5,6 +5,7 @@
 #   `OrderDecline`    → `declines`                          (03/08/2026)
 #   `DriverFavourite` → `favourites` (sur le Vendor)        (03/08/2026)
 #   `DeliveryFailure` → `delivery_failures`                 (03/08/2026)
+#   `DriverAccount.vehicleType` → champ perso du Driver     (03/08/2026)
 #
 # ── Pourquoi ce script existe ───────────────────────────────────────────────
 #
@@ -44,6 +45,12 @@ PGC="${BFF_PG_CONTAINER:-echango_bff_postgres}"
 PGU=$(docker exec "$PGC" printenv POSTGRES_USER)
 PGD=$(docker exec "$PGC" printenv POSTGRES_DB)
 
+echo "── Lecture des categories de vehicule locales ──"
+docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select "fleetbaseDriverUuid" || chr(9) || coalesce("fleetbaseDriverPublicId", '"'"''"'"')
+          || chr(9) || "vehicleType"
+     from "DriverAccount" where "vehicleType" is not null;'   > /tmp/vehicles.tsv 2>/dev/null || : > /tmp/vehicles.tsv
+echo "   $(wc -l < /tmp/vehicles.tsv) categorie(s) a reprendre"
+
 echo "── Lecture des echecs de livraison locaux ──"
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select f."fleetbaseOrderUuid" || chr(9) || f.id || chr(9)
           || coalesce(a."fleetbaseDriverUuid", '"'"''"'"') || chr(9)
@@ -81,7 +88,7 @@ docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc \
   > /tmp/specmeta.tsv
 echo "   $(wc -l < /tmp/specmeta.tsv) commandes portent un specMeta"
 
-FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" NB_FAILS="$(wc -l < /tmp/failures.tsv)" python3 - <<'PY'
+FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" NB_FAILS="$(wc -l < /tmp/failures.tsv)" NB_VEH="$(wc -l < /tmp/vehicles.tsv)" python3 - <<'PY'
 import json, os, sys, urllib.request, urllib.error
 
 API = os.environ.get('FLEETBASE_API_URL', 'http://localhost:8000') + '/int/v1'
@@ -323,6 +330,73 @@ for uuid, elements in par_commande.items():
     else:
         refus_repris += 1
 
+# ── Les categories de vehicule ─────────────────────────────────────────────
+#
+# ⚠️ Les definitions sont attachees AU CONDUCTEUR (`subject_uuid` = son uuid),
+# pas a une configuration partagee. Il y en a donc une par conducteur.
+#
+# ⚠️ Et l'ecriture n'accepte QUE le `public_id` : l'uuid rend un 400 dont le
+# message ne nomme pas la cause. Les definitions, elles, se cherchent par uuid.
+attendu_veh = int(os.environ.get('NB_VEH') or 0)
+try:
+    lignes_veh = list(open('/tmp/vehicles.tsv', encoding='utf-8'))
+except OSError:
+    lignes_veh = []
+
+veh_repris = veh_deja = 0
+veh_illisibles = []
+for ligne in lignes_veh:
+    ch = ligne.rstrip('\n').split('\t')
+    if len(ch) < 3 or not ch[0] or not ch[1]:
+        veh_illisibles.append(ligne[:120])
+        continue
+    duuid, dpid, categorie = ch[0], ch[1], ch[2].strip()
+    if not categorie:
+        continue
+
+    d = appel('GET', '/custom-fields?subject_uuid=%s&limit=50' % duuid)
+    rows = d.get('custom_fields') or []
+    uid = next((r['uuid'] for r in rows if r.get('name') == 'vehicle_type'), None)
+    deja = next((r for r in rows if r.get('name') == 'vehicle_type'), None)
+
+    if not uid:
+        cree = appel('POST', '/custom-fields', {
+            'subject_uuid': duuid, 'subject_type': 'driver',
+            'name': 'vehicle_type', 'label': 'Categorie de vehicule',
+            'type': 'text', 'editable': True, 'required': False})
+        r = cree.get('custom_field') or cree.get('custom_field_value') or cree
+        uid = r.get('uuid') if isinstance(r, dict) else None
+    if not uid:
+        print('   ECHEC definition vehicle_type sur %s' % duuid[:8])
+        echec += 1
+        continue
+
+    # Deja renseigne en amont ? On ne recrase pas : l'amont fait foi.
+    lu = appel('GET', '/drivers/%s' % duuid)
+    dd = lu.get('driver') or lu
+    existant = None
+    for v in (dd.get('custom_field_values') or []):
+        if (v.get('custom_field') or {}).get('name') == 'vehicle_type':
+            existant = v.get('value')
+    if existant and str(existant).strip() not in ('', '-'):
+        veh_deja += 1
+        continue
+
+    if DRY:
+        print('   [essai] vehicule %s = %s' % (duuid[:8], categorie))
+        veh_repris += 1
+        continue
+
+    r = appel('PUT', '/drivers/%s' % dpid, {'driver': {'custom_field_values': [
+        {'custom_field_uuid': uid, 'value': categorie, 'value_type': 'text'}]}})
+    if '_erreur' in r:
+        echec += 1
+        print('   ECHEC vehicule %s : %s' % (duuid[:8], r['_erreur']))
+    else:
+        veh_repris += 1
+
+bilan_veh_vide = attendu_veh > 0 and (veh_repris + veh_deja) == 0
+
 # ── Les echecs de livraison ────────────────────────────────────────────────
 #
 # Meme forme que les refus : une liste par commande, ecrite d'un coup.
@@ -501,6 +575,7 @@ print()
 print('   reprises          : %d' % repris)
 print('   favoris repris    : %d (%d vendors deja a jour)' % (favs_repris, favs_deja))
 print('   echecs repris     : %d (%d commandes deja a jour)' % (fails_repris, fails_deja))
+print('   vehicules repris  : %d (%d deja renseignes)' % (veh_repris, veh_deja))
 print('   refus repris      : %d (%d commandes déjà à jour)' % (refus_repris, refus_deja))
 print('   déjà complètes    : %d' % deja)
 print('   commande absente  : %d' % introuvable)
@@ -529,12 +604,15 @@ print()
 bilan_refus_vide = attendu > 0 and (refus_repris + refus_deja) == 0
 
 if (echec or introuvable or illisibles or favs_illisibles or fails_illisibles
+        or veh_illisibles or bilan_veh_vide
         or bilan_fails_vide or bilan_refus_vide
         or bilan_favs_vide or len(brut_declines) != attendu
         or len(lignes_favs) != attendu_favs):
     print('   ⚠️ NE RIEN SUPPRIMER.')
     if echec:
         print('      %d écriture(s) ont échoué.' % echec)
+    if bilan_veh_vide:
+        print('      %d categorie(s) lues, AUCUNE reprise.' % attendu_veh)
     if bilan_fails_vide:
         print('      %d echecs lus, AUCUN repris ni deja present.' % attendu_fails)
     if fails_illisibles:
@@ -553,5 +631,5 @@ if (echec or introuvable or illisibles or favs_illisibles or fails_illisibles
         print('      %d commande(s) n\'ont pas pu etre lues : Fleetbase' % introuvable)
         print('      indisponible, ou commandes supprimees en amont. Relancer.')
     sys.exit(1)
-print('   ✅ Reprise terminée. Les quatre tables peuvent partir.')
+print('   ✅ Reprise terminée. Tables et colonnes peuvent partir.')
 PY

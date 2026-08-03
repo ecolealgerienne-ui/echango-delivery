@@ -446,18 +446,42 @@ export class CommerçantService {
    * rend « aucune préférence » sur n'importe quel échec, et cette fonction s'en
    * remet à lui : une panne Fleetbase doit coûter un filtre, jamais un favori.
    */
-  private async favouritesAllowingPickup(accounts: any[], pickup: OrderPickup) {
+  private async favouritesAllowingPickup(
+    accounts: any[],
+    pickup: OrderPickup,
+    /** Catégorie exigée par la course, si elle en exige une. */
+    vehicleType?: string,
+  ) {
     if (!accounts.length) return accounts;
-    // Rien de connu sur le départ : il n'y a rien à comparer, donc rien à
-    // retirer. Éviter l'appel plutôt que le faire pour n'en rien tirer.
-    if (!pickup.wilaya && !pickup.point) return accounts;
 
+    // Rien de connu sur le départ ET aucune exigence de véhicule : il n'y a
+    // rien à comparer, donc rien à retirer. Éviter l'appel plutôt que le faire
+    // pour n'en rien tirer.
+    if (!pickup.wilaya && !pickup.point && !vehicleType) return accounts;
+
+    // ⚠️ **Une seule lecture par favori pour les DEUX filtres.** La catégorie
+    // de véhicule vivait dans `DriverAccount.vehicleType` — donc dans le
+    // `where` d'une requête Prisma — jusqu'au 03/08/2026. Elle est chez
+    // Fleetbase maintenant, et elle sort de la lecture qui portait déjà la
+    // zone et la position. Deux passes auraient doublé le coût pour la même
+    // réponse.
     const readings = await Promise.all(
       accounts.map((a: any) => this.driverZone.read(a.fleetbaseDriverUuid)),
     );
 
-    return accounts.filter((_: any, i: number) =>
-      zoneAllowsPickup(pickup, readings[i].zone, readings[i].point),
+    // ⚠️ **Non déclaré = compatible**, et c'est le même biais que partout :
+    // un transporteur ne doit pas être écarté du réseau par un champ qu'il n'a
+    // pas rempli. Une course proposée à tort se remarque ; une course jamais
+    // proposée est un manque à gagner que personne ne peut constater.
+    const suits = (declared: string | null) => {
+      if (!vehicleType || !declared) return true;
+      return this.compatibleVehicleTypes(vehicleType).in.includes(declared);
+    };
+
+    return accounts.filter(
+      (_: any, i: number) =>
+        suits(readings[i].vehicleType)
+        && zoneAllowsPickup(pickup, readings[i].zone, readings[i].point),
     );
   }
 
@@ -517,21 +541,12 @@ export class CommerçantService {
     // Le compte Echango porte la catégorie de véhicule et sert de garde : un
     // favori sans compte applicatif ne peut de toute façon pas recevoir la
     // course, faute de jeton push et d'application.
+    // ⚠️ Le filtre de véhicule n'est plus ici : il a rejoint
+    // `favouritesAllowingPickup`, où la lecture Fleetbase se fait déjà. Le
+    // compte applicatif ne sert plus qu'à une chose — savoir qui a une
+    // application capable de recevoir la course.
     const accounts = await this.prisma.driverAccount.findMany({
-      where: {
-        fleetbaseDriverUuid: { in: uuids },
-        active: true,
-        // Non déclaré = compatible : un transporteur ne doit pas être écarté
-        // du réseau par un champ qu'il n'a pas rempli.
-        ...(vehicleType
-          ? {
-              OR: [
-                { vehicleType: null },
-                { vehicleType: this.compatibleVehicleTypes(vehicleType) },
-              ],
-            }
-          : {}),
-      },
+      where: { fleetbaseDriverUuid: { in: uuids }, active: true },
     });
     if (!accounts.length) return null;
 
@@ -575,7 +590,7 @@ export class CommerçantService {
     // Même biais qu'ailleurs : `zoneAllowsPickup` laisse passer tout ce qu'il
     // ignore — zone illisible, course sans wilaya, conducteur sans position.
     // Un favori n'est jamais écarté par une préférence qu'on n'a pas su lire.
-    const available = await this.favouritesAllowingPickup(onlineAccounts, pickup);
+    const available = await this.favouritesAllowingPickup(onlineAccounts, pickup, vehicleType);
 
     // ⚠️ Un plafond de dette écartait ici les favoris qui détenaient déjà trop
     // d'espèces. Retiré le 03/08/2026 avec le registre de caisse : sans
@@ -879,7 +894,7 @@ export class CommerçantService {
     // un geste sans effet.
     const accounts = await this.prisma.driverAccount.findMany({
       where: { fleetbaseDriverUuid: { in: matches.map((d: any) => d.uuid) } },
-      select: { fleetbaseDriverUuid: true, vehicleType: true, active: true },
+      select: { fleetbaseDriverUuid: true, active: true },
     });
     const byUuid = new Map<string, any>(
       accounts.map((a: any) => [a.fleetbaseDriverUuid, a]),
@@ -897,7 +912,16 @@ export class CommerçantService {
             party_type: 'driver',
             driver_uuid: d.uuid,
             name: d.name ?? null,
-            vehicle_type: account?.vehicleType ?? null,
+            // ⚠️ **Plus servi depuis le 03/08/2026**, et le retirer est un
+            // choix, pas un oubli. La catégorie vit maintenant dans les champs
+            // personnalisés du conducteur chez Fleetbase : la servir ici
+            // demanderait **un appel par résultat de recherche**, pour un
+            // champ que l'écran de recherche n'affiche pas.
+            //
+            // Le compte applicatif reste interrogé — son absence, elle, est une
+            // information : un transporteur sans compte ne recevra aucune
+            // course, et le taire ferait d'une mise en favori un geste sans
+            // effet.
             // Le téléphone n'est jamais renvoyé : celui qui cherche le connaît
             // déjà, c'est par là qu'il cherche.
             has_account: Boolean(account?.active),
