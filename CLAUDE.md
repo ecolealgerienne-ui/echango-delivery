@@ -212,6 +212,30 @@ Le critère n'est pas « est-ce un littéral » — `maxLines: 1` décrit la nat
 - **Un repli qui affiche un identifiant technique est un repli qui ment poliment.** Dire « — » est plus honnête que dire `order_1sn4fzn6e2`.
 - ⚠️ **Le pire endroit pour un repli est un test.** Il y produit ce qu'on redoute le plus : un contrôle qui rassure.
 
+⚠️ **Cinq défauts en une session, tous une ABSENCE et jamais une erreur (03/08/2026).**
+Le chantier « rien sur le BFF » en a produit cinq, de cinq formes différentes.
+Aucun n'a levé, aucun n'a été journalisé, aucun n'a été trouvé en relisant :
+
+| ce que j'ai écrit | ce que ça a produit |
+|---|---|
+| `(f: any)` sur un objet dont les champs avaient été renommés | une liste de lignes toutes à `undefined`, **HTTP 200** |
+| `specMeta` retiré après avoir prouvé le stockage | prix et montants absents — la **liste** Fleetbase ne sert pas les champs personnalisés |
+| cinq champs laissés dans deux `create()` Prisma | `tsc` **vert** — le client n'était pas régénéré |
+| `limit=30` recopié d'un contexte où il valait 11 | une intersection **vide** au lieu de « moins de résultats » |
+| `extractCollection(response)` au lieu de `response.data` | une liste **vide**, sans un mot |
+
+**Ce qu'il faut en retenir n'est pas la liste, c'est la forme commune** : une
+donnée mal câblée ne casse presque jamais — elle **disparaît**. Et une
+disparition n'a pas de trace, donc pas de pile d'appels, donc rien à lire.
+C'est pour ça que ce dépôt vérifie par des bancs qui **comparent à un témoin**
+plutôt que par des tests qui vérifient qu'on n'a pas planté.
+
+⚠️ **Et une valeur juste dans un contexte devient fausse dans un autre.**
+`limit=30` était `take: 11` sur un ensemble déjà filtré ; « 535 commandes sur
+535 complètes » était vrai du stockage et faux de la lecture. Le nombre voyage,
+le contexte non — c'est la même faute que la borne du `pubspec` (règle 10) et
+que « le graphe ne sert à rien » (règle 11).
+
 ⚠️ **Une API n'existe pas parce qu'on s'en souvient — la borne du `pubspec` fait foi. Mais la borne elle-même est une donnée, pas un oracle : elle se vérifie aussi (corrigé le 01/08/2026).**
 
 La règle est née d'un vrai défaut : `CameraFit` et `Color.withValues` ont été écartés parce qu'une API ne s'emploie pas de mémoire, et c'était juste. Son **exemple fondateur était faux**, lui, et il a tenu deux jours : `surfaceContainerHighest` (Flutter 3.22) était présenté comme indisponible parce que le projet déclarait `flutter: '>=3.20.0'`. Or cette borne mentait deux fois — la ligne `sdk: '>=3.5.0'` du **même fichier** exigeait déjà Dart 3.5, donc Flutter ≥ 3.24 (c'est elle que `pub` applique), et **Flutter 3.20 n'a jamais existé en stable**, le canal passant de 3.19 à 3.22. L'API était disponible depuis le début. Borne portée à `>=3.24.0`, **déduite** de la contrainte Dart et non choisie.
