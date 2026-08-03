@@ -1782,6 +1782,37 @@ export class FleetbaseApiClient {
    * **poser** le témoin : lire une commande qui ne porte qu'un champ ne
    * distingue pas « les autres ont été détruits » de « elle n'en avait pas ».
    */
+  // ── Champs personnalisés d'un commerçant (Vendor) ─────────────────────────
+  //
+  // ⚠️ **La définition est portée par le VENDOR lui-même**, pas par une
+  // configuration partagée : `subject_uuid` vaut l'uuid du vendor. Chaque
+  // commerçant a donc sa propre définition `favourites`. C'est la mécanique de
+  // Fleetbase pour les sujets qui ne sont pas des `OrderConfig`, et ça décide
+  // de la forme du service qui s'en sert — un cache par vendor, pas un global.
+  //
+  // ⚠️ **Mesuré le 03/08/2026, pas déduit.** Le trait `HasCustomFields` sur
+  // `Vendor.php` dit que le modèle les accepte ; il ne dit rien de la route.
+  // Constaté en réel : `PUT /int/v1/vendors/{public_id}` avec le corps
+  // enveloppé sous `vendor` rend 200, et la valeur se relit — **déjà
+  // désérialisée en liste**, pas en chaîne JSON.
+
+  async getVendorWithCustomFields(vendorId: string) {
+    const response = await this.callFleetOps('GET', `/vendors/${this.seg(vendorId)}`, undefined, {
+      'with[]': 'customFieldValues.customField',
+    });
+    return response.data?.vendor ?? response.data;
+  }
+
+  async setVendorCustomFieldValues(
+    vendorId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/vendors/${this.seg(vendorId)}`, {
+      vendor: { custom_field_values: values },
+    });
+    return response.data;
+  }
+
   async setOrderCustomFieldValues(
     orderId: string,
     values: { custom_field_uuid: string; value: any; value_type: string }[],

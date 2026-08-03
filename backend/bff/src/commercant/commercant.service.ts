@@ -8,6 +8,7 @@ import { AuditService } from '../common/audit/audit.service';
 // recopier ici serait la deuxième copie d'un fait vérifié une fois (règle 5).
 import { FACILITATOR_TYPE_VENDOR, FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
+import { MerchantFavouritesService } from '../fleetbase/merchant-favourites.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { OrderPickup, orderPickup, zoneAllowsPickup } from '../common/orders/driver-zone';
 import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
@@ -69,6 +70,7 @@ export class CommerçantService {
   constructor(
     private prisma: PrismaService,
     private fleetbaseClient: FleetbaseApiClient,
+    private favourites: MerchantFavouritesService,
     private configService: ConfigService,
     private audit: AuditService,
     private pricing: PricingService,
@@ -454,7 +456,11 @@ export class CommerçantService {
    * l'option en production.
    */
   private async pickAvailableFavourite(
-    merchantId: string,
+    // ⚠️ L'uuid du VENDOR, plus l'identifiant de compte : les favoris vivent
+    // désormais sur le vendor Fleetbase du commerçant (03/08/2026), donc c'est
+    // lui la clé de lecture. Le passer explicitement évite une relecture du
+    // compte sur un chemin appelé à chaque création de commande.
+    vendorUuid: string,
     vehicleType?: string,
     /**
      * D'où part la course. ⚠️ **Optionnel, et son absence n'écarte personne** :
@@ -476,12 +482,15 @@ export class CommerçantService {
     // écrit, les favoris entreprise se **stockent et s'affichent** sans être
     // sollicités : le commerçant peut préparer sa liste, rien ne se route de
     // travers.
-    const favourites = await this.prisma.driverFavourite.findMany({
-      where: { merchantId, partyType: 'driver' },
-    });
+    // ⚠️ `readOrNone` et non `read` : sur CE chemin, ne pas trouver de favori
+    // envoie la course au pool, ce que le commerçant a accepté en cochant
+    // l'option. Le repli est donc sûr dans ce sens précis — l'inverse
+    // (assigner à un favori qu'on croit avoir lu) ne le serait pas.
+    const favourites = (await this.favourites.readOrNone(vendorUuid))
+      .filter((f) => f.party_type === 'driver');
     if (!favourites.length) return null;
 
-    const uuids = favourites.map((f: any) => f.fleetbasePartyUuid);
+    const uuids = favourites.map((f) => f.party_uuid);
 
     // Le compte Echango porte la catégorie de véhicule et sert de garde : un
     // favori sans compte applicatif ne peut de toute façon pas recevoir la
@@ -555,7 +564,7 @@ export class CommerçantService {
     // Ce qui reste ici — en ligne, et la zone déclarée — est de la logistique :
     // qui peut effectivement aller chercher ce colis.
     if (available[0]) return asDriverPick(available[0]);
-    return this.pickFleetFavourite(merchantId);
+    return this.pickFleetFavourite(vendorUuid);
   }
 
   /**
@@ -583,16 +592,14 @@ export class CommerçantService {
    * dire décider à sa place, ce que le §6.1 de `specs_facilitateur.md` écarte
    * explicitement.
    */
-  private async pickFleetFavourite(merchantId: string): Promise<PickedFavourite | null> {
-    const favourites = await this.prisma.driverFavourite.findMany({
-      where: { merchantId, partyType: 'fleet' },
-      orderBy: { createdAt: 'desc' },
-    });
+  private async pickFleetFavourite(vendorUuid: string): Promise<PickedFavourite | null> {
+    const favourites = (await this.favourites.readOrNone(vendorUuid))
+      .filter((f) => f.party_type === 'fleet');
     if (!favourites.length) return null;
 
     const fleets = await this.prisma.fleetAccount.findMany({
       where: {
-        fleetbaseVendorUuid: { in: favourites.map((f: any) => f.fleetbasePartyUuid) },
+        fleetbaseVendorUuid: { in: favourites.map((f) => f.party_uuid) },
         active: true,
       },
       select: { id: true, fleetbaseVendorUuid: true },
@@ -659,11 +666,11 @@ export class CommerçantService {
   // ── Transporteurs favoris ─────────────────────────────────────────────────
 
   async listFavourites(merchantId: string) {
-    await this.getMerchantWithValidation(merchantId);
-    const favourites = await this.prisma.driverFavourite.findMany({
-      where: { merchantId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    // ⚠️ `read` et non `readOrNone` : ici une liste vide est une INFORMATION
+    // affichée (« aucun transporteur favori »). Un défaut de lecture déguisé en
+    // absence ferait croire au commerçant qu'il a perdu sa liste (règle 10).
+    const favourites = await this.favourites.read(merchant.fleetbaseVendorUuid);
     return {
       // ⚠️ `driver_uuid` garde son nom : c'est le contrat que l'application lit
       // déjà, et le renommer casserait l'écran des favoris pour un gain de
@@ -894,7 +901,7 @@ export class CommerçantService {
     driverName?: string,
     partyType: 'driver' | 'fleet' = 'driver',
   ) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
     // ── Une entreprise se vérifie chez NOUS, pas dans l'annuaire Fleetbase ──
     //
@@ -926,22 +933,12 @@ export class CommerçantService {
 
       // Le nom vient du serveur, comme pour un conducteur : une liste de favoris
       // doit décrire des entités réelles, pas les étiquettes de son auteur.
-      return this.prisma.driverFavourite.upsert({
-        where: {
-          merchantId_partyType_fleetbasePartyUuid: {
-            merchantId,
-            partyType: 'fleet',
-            fleetbasePartyUuid: fleetbaseDriverUuid,
-          },
-        },
-        create: {
-          merchantId,
-          partyType: 'fleet',
-          fleetbasePartyUuid: fleetbaseDriverUuid,
-          partyName: fleet.businessName ?? driverName,
-        },
-        update: { partyName: fleet.businessName ?? driverName },
+      await this.favourites.add(merchant.fleetbaseVendorUuid, {
+        party_type: 'fleet',
+        party_uuid: fleetbaseDriverUuid,
+        party_name: fleet.businessName ?? driverName,
       });
+      return { added: true };
     }
 
     // Le transporteur doit exister dans le réseau et y être actif.
@@ -987,34 +984,28 @@ export class CommerçantService {
     // liste de favoris cesserait de décrire des personnes réelles.
     const resolvedName = driver.name ?? driverName;
 
-    return this.prisma.driverFavourite.upsert({
-      where: {
-        merchantId_partyType_fleetbasePartyUuid: {
-          merchantId,
-          partyType: 'driver',
-          fleetbasePartyUuid: fleetbaseDriverUuid,
-        },
-      },
-      create: {
-        merchantId,
-        partyType: 'driver',
-        fleetbasePartyUuid: fleetbaseDriverUuid,
-        partyName: resolvedName,
-      },
-      update: { partyName: resolvedName },
+    await this.favourites.add(merchant.fleetbaseVendorUuid, {
+      party_type: 'driver',
+      party_uuid: fleetbaseDriverUuid,
+      party_name: resolvedName,
     });
+    return { added: true };
   }
 
   async removeFavourite(merchantId: string, favouriteId: string) {
-    await this.getMerchantWithValidation(merchantId);
+    const merchant = await this.getMerchantWithValidation(merchantId);
 
-    // `deleteMany` avec le merchantId dans le filtre : un `delete` par id seul
-    // permettrait de supprimer le favori d'un autre commerçant.
-    const { count } = await this.prisma.driverFavourite.deleteMany({
-      where: { id: favouriteId, merchantId },
-    });
+    // ⚠️ L'appartenance est **structurelle** depuis que les favoris vivent sur
+    // le vendor : on ne lit et n'écrit que la liste de CE commerçant, donc il
+    // n'y a plus d'identifiant global qui puisse désigner le favori d'un
+    // autre. La version précédente devait filtrer sur `merchantId` pour ça.
+    //
+    // ⚠️ Et `favouriteId` est désormais l'**uuid de la partie**, plus un cuid
+    // local — c'est ce que `listFavourites` sert sous la clé `id`, donc
+    // l'application renvoie ce qu'on lui a donné et le contrat ne bouge pas.
+    const removed = await this.favourites.remove(merchant.fleetbaseVendorUuid, favouriteId);
 
-    if (count === 0) {
+    if (!removed) {
       notFound('merchant.favourite_not_found', 'Favori introuvable');
     }
     return { removed: true };
@@ -1584,7 +1575,7 @@ export class CommerçantService {
       // la même course selon qu'elle passe ou non par un brouillon.
       const favourite = dto.preferFavourites && !dto.draft
         ? await this.pickAvailableFavourite(
-            merchantId,
+            merchant.fleetbaseVendorUuid,
             dto.vehicleType,
             // ⚠️ Ici la commande n'existe PAS encore : le depart vient du
             // formulaire, pas d'une lecture. C'est la raison d'etre de
@@ -1798,7 +1789,7 @@ export class CommerçantService {
     const preferFavourites = meta.prefer_favourites !== false;
     const favourite = preferFavourites
       ? await this.pickAvailableFavourite(
-          merchantId,
+          merchant.fleetbaseVendorUuid,
           meta.vehicle_type,
           // La commande existe : son depart se lit sur elle.
           orderPickup(live),

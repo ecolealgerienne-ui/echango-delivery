@@ -3,6 +3,7 @@
 #
 #   `Order.specMeta`  → prix, montant à encaisser, colis…  (03/08/2026)
 #   `OrderDecline`    → `declines`                          (03/08/2026)
+#   `DriverFavourite` → `favourites` (sur le Vendor)        (03/08/2026)
 #
 # ── Pourquoi ce script existe ───────────────────────────────────────────────
 #
@@ -42,6 +43,14 @@ PGC="${BFF_PG_CONTAINER:-echango_bff_postgres}"
 PGU=$(docker exec "$PGC" printenv POSTGRES_USER)
 PGD=$(docker exec "$PGC" printenv POSTGRES_DB)
 
+echo "── Lecture des favoris locaux ──"
+docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select m."fleetbaseVendorUuid" || chr(9) || f."partyType" || chr(9)
+          || f."fleetbaseDriverUuid" || chr(9) || coalesce(f."driverName", '"'"''"'"')
+     from "DriverFavourite" f
+     join "MerchantAccount" m on m.id = f."merchantId"
+    where m."fleetbaseVendorUuid" is not null;'   > /tmp/favourites.tsv 2>/dev/null || : > /tmp/favourites.tsv
+echo "   $(wc -l < /tmp/favourites.tsv) favoris à reprendre"
+
 echo "── Lecture des refus locaux ──"
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select d."fleetbaseOrderUuid" || E'"'"'	'"'"' || coalesce(a."fleetbaseDriverUuid", '"'"''"'"')
           || E'"'"'	'"'"' || d.reason
@@ -60,7 +69,7 @@ docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc \
   > /tmp/specmeta.tsv
 echo "   $(wc -l < /tmp/specmeta.tsv) commandes portent un specMeta"
 
-FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" python3 - <<'PY'
+FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" python3 - <<'PY'
 import json, os, sys, urllib.request, urllib.error
 
 API = os.environ.get('FLEETBASE_API_URL', 'http://localhost:8000') + '/int/v1'
@@ -302,8 +311,97 @@ for uuid, elements in par_commande.items():
     else:
         refus_repris += 1
 
+# ── Les favoris ────────────────────────────────────────────────────────────
+#
+# Portés par le VENDOR du commerçant, avec une definition par vendor : chaque
+# commercant a la sienne (`subject_uuid` = uuid du vendor). Un cache global
+# rendrait la definition d'un commercant a un autre.
+attendu_favs = int(os.environ.get('NB_FAVS') or 0)
+try:
+    lignes_favs = list(open('/tmp/favourites.tsv', encoding='utf-8'))
+except OSError:
+    lignes_favs = []
+
+par_vendor = {}
+favs_illisibles = []
+for ligne in lignes_favs:
+    ch = ligne.rstrip('\n').split('\t')
+    if len(ch) < 4 or not ch[0] or not ch[2]:
+        favs_illisibles.append(ligne[:120])
+        continue
+    vuuid, ptype, puuid, pname = ch[:4]
+    par_vendor.setdefault(vuuid, []).append({
+        'party_type': ptype, 'party_uuid': puuid,
+        'party_name': pname or None, 'added_at': None})
+
+favs_repris = favs_deja = 0
+for vuuid, elements in par_vendor.items():
+    v = appel('GET', '/vendors/%s?with[]=customFieldValues.customField' % vuuid)
+    if '_erreur' in v:
+        introuvable += 1
+        continue
+    v = v.get('vendor') or v
+
+    uid = None
+    existants = []
+    for row in (v.get('custom_field_values') or []):
+        if (row.get('custom_field') or {}).get('name') != 'favourites':
+            continue
+        uid = (row.get('custom_field') or {}).get('uuid')
+        brut_val = row.get('value')
+        if isinstance(brut_val, list):
+            existants = brut_val
+        elif isinstance(brut_val, str) and brut_val.strip():
+            try:
+                lu = json.loads(brut_val)
+                existants = lu if isinstance(lu, list) else []
+            except Exception:
+                existants = []
+
+    if not uid:
+        d = appel('GET', '/custom-fields?subject_uuid=%s&limit=200' % vuuid)
+        uid = next((r['uuid'] for r in (d.get('custom_fields') or [])
+                    if r.get('name') == 'favourites'), None)
+    if not uid:
+        cree = appel('POST', '/custom-fields', {
+            'subject_uuid': vuuid, 'subject_type': 'vendor',
+            'name': 'favourites', 'label': 'favourites', 'type': 'text',
+            'description': 'Transporteurs et entreprises mis en favori.'})
+        r = cree.get('custom_field') or cree.get('custom_field_value') or cree
+        uid = r.get('uuid') if isinstance(r, dict) else None
+    if not uid:
+        print('   ECHEC creation de la definition `favourites` sur %s' % vuuid[:8])
+        echec += 1
+        continue
+
+    deja_la = {(e.get('party_type'), e.get('party_uuid'))
+               for e in existants if isinstance(e, dict)}
+    neufs = [e for e in elements
+             if (e['party_type'], e['party_uuid']) not in deja_la]
+    if not neufs:
+        favs_deja += 1
+        continue
+    if DRY:
+        print('   [essai] favoris %s — %d' % (vuuid[:8], len(neufs)))
+        favs_repris += 1
+        continue
+
+    r = appel('PUT', '/vendors/%s' % (v.get('public_id') or vuuid),
+              {'vendor': {'custom_field_values': [
+                  {'custom_field_uuid': uid,
+                   'value': json.dumps(existants + neufs),
+                   'value_type': 'array'}]}})
+    if '_erreur' in r:
+        echec += 1
+        print('   ECHEC favoris %s : %s' % (vuuid[:8], r['_erreur']))
+    else:
+        favs_repris += 1
+
+bilan_favs_vide = attendu_favs > 0 and (favs_repris + favs_deja) == 0
+
 print()
 print('   reprises          : %d' % repris)
+print('   favoris repris    : %d (%d vendors deja a jour)' % (favs_repris, favs_deja))
 print('   refus repris      : %d (%d commandes déjà à jour)' % (refus_repris, refus_deja))
 print('   déjà complètes    : %d' % deja)
 print('   commande absente  : %d' % introuvable)
@@ -331,10 +429,16 @@ print()
 # « rien a faire » : il a echoue sans le dire.
 bilan_refus_vide = attendu > 0 and (refus_repris + refus_deja) == 0
 
-if echec or introuvable or illisibles or bilan_refus_vide or len(brut_declines) != attendu:
+if (echec or introuvable or illisibles or favs_illisibles or bilan_refus_vide
+        or bilan_favs_vide or len(brut_declines) != attendu
+        or len(lignes_favs) != attendu_favs):
     print('   ⚠️ NE RIEN SUPPRIMER.')
     if echec:
         print('      %d écriture(s) ont échoué.' % echec)
+    if bilan_favs_vide:
+        print('      %d favoris lus, AUCUN repris ni deja present.' % attendu_favs)
+    if favs_illisibles:
+        print('      %d ligne(s) de favoris illisibles.' % len(favs_illisibles))
     if bilan_refus_vide:
         print('      %d refus lus, AUCUN repris ni deja present.' % attendu)
     if illisibles:
@@ -345,5 +449,5 @@ if echec or introuvable or illisibles or bilan_refus_vide or len(brut_declines) 
         print('      %d commande(s) n\'ont pas pu etre lues : Fleetbase' % introuvable)
         print('      indisponible, ou commandes supprimees en amont. Relancer.')
     sys.exit(1)
-print('   ✅ Reprise terminée. `Order.specMeta` et `OrderDecline` peuvent être supprimés.')
+print('   ✅ Reprise terminée. specMeta, OrderDecline et DriverFavourite peuvent partir.')
 PY
