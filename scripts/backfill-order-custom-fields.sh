@@ -45,13 +45,52 @@ PGC="${BFF_PG_CONTAINER:-echango_bff_postgres}"
 PGU=$(docker exec "$PGC" printenv POSTGRES_USER)
 PGD=$(docker exec "$PGC" printenv POSTGRES_DB)
 
+
+# ── Lire une source qui a PEUT-ÊTRE déjà été migrée ─────────────────────────
+#
+# ⚠️ Une table ou une colonne absente veut dire « migration déjà appliquée »,
+# pas « échec ». Confondre les deux faisait sortir le script en erreur sur un
+# état parfaitement sain — et un script de reprise qui échoue quand tout va
+# bien finit par être lancé avec `|| true`, ce qui le rend inutile.
+#
+# ⚠️ Mais l'inverse est pire : avaler TOUTE erreur ferait passer un problème de
+# connexion pour un « rien à reprendre ». On teste donc l'existence, puis on
+# lit — et une lecture qui échoue alors que la source existe reste fatale.
+source_absente() {   # $1 = table, $2 = colonne (optionnelle)
+  local q
+  if [ -n "${2:-}" ]; then
+    q="select 1 from information_schema.columns where table_name='$1' and column_name='$2';"
+  else
+    q="select 1 from information_schema.tables where table_name='$1';"
+  fi
+  [ -z "$(docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc "$q" 2>/dev/null | tr -d '[:space:]')" ]
+}
+
+lire_source() {   # $1 = fichier, $2 = table, $3 = colonne|"" , $4 = requête
+  : > "$1"
+  if source_absente "$2" "${3:-}"; then
+    echo "   (déjà migré : ${3:+$2.$3}${3:-$2} n'existe plus)"
+    return 0
+  fi
+  docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc "$4" > "$1"
+}
+
 echo "── Lecture des categories de vehicule locales ──"
+  if source_absente "DriverAccount" "vehicleType"; then
+    : > /tmp/vehicles.tsv
+    echo "   (déjà migré)"
+  else
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select "fleetbaseDriverUuid" || chr(9) || coalesce("fleetbaseDriverPublicId", '"'"''"'"')
           || chr(9) || "vehicleType"
      from "DriverAccount" where "vehicleType" is not null;'   > /tmp/vehicles.tsv 2>/dev/null || : > /tmp/vehicles.tsv
+  fi
 echo "   $(wc -l < /tmp/vehicles.tsv) categorie(s) a reprendre"
 
 echo "── Lecture des echecs de livraison locaux ──"
+  if source_absente "DeliveryFailure" ""; then
+    : > /tmp/failures.tsv
+    echo "   (déjà migré)"
+  else
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select f."fleetbaseOrderUuid" || chr(9) || f.id || chr(9)
           || coalesce(a."fleetbaseDriverUuid", '"'"''"'"') || chr(9)
           || coalesce(f."waypointUuid", '"'"''"'"') || chr(9) || f.reason || chr(9)
@@ -60,17 +99,27 @@ docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select f."fleetbaseOrderUuid
           || coalesce(f."fleetbaseProofUuid", '"'"''"'"') || chr(9) || f."reportedAt"
      from "DeliveryFailure" f
      join "DriverAccount" a on a.id = f."driverId";'   > /tmp/failures.tsv 2>/dev/null || : > /tmp/failures.tsv
+  fi
 echo "   $(wc -l < /tmp/failures.tsv) echecs a reprendre"
 
 echo "── Lecture des favoris locaux ──"
+  if source_absente "DriverFavourite" ""; then
+    : > /tmp/favourites.tsv
+    echo "   (déjà migré)"
+  else
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select m."fleetbaseVendorUuid" || chr(9) || f."partyType" || chr(9)
           || f."fleetbaseDriverUuid" || chr(9) || coalesce(f."driverName", '"'"''"'"')
      from "DriverFavourite" f
      join "MerchantAccount" m on m.id = f."merchantId"
     where m."fleetbaseVendorUuid" is not null;'   > /tmp/favourites.tsv 2>/dev/null || : > /tmp/favourites.tsv
+  fi
 echo "   $(wc -l < /tmp/favourites.tsv) favoris à reprendre"
 
 echo "── Lecture des refus locaux ──"
+  if source_absente "OrderDecline" ""; then
+    : > /tmp/declines.tsv
+    echo "   (déjà migré)"
+  else
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select d."fleetbaseOrderUuid" || E'"'"'	'"'"' || coalesce(a."fleetbaseDriverUuid", '"'"''"'"')
           || E'"'"'	'"'"' || d.reason
           || E'"'"'	'"'"' || coalesce(d.notes, '"'"''"'"')
@@ -80,12 +129,18 @@ docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc   'select d."fleetbaseOrderUuid
           || E'"'"'	'"'"' || d."declinedAt"
      from "OrderDecline" d
      join "DriverAccount" a on a.id = d."driverId";'   > /tmp/declines.tsv 2>/dev/null || : > /tmp/declines.tsv
+  fi
 echo "   $(wc -l < /tmp/declines.tsv) refus à reprendre"
 
 echo "── Lecture des specMeta locaux ──"
+  if source_absente "Order" "specMeta"; then
+    : > /tmp/specmeta.tsv
+    echo "   (déjà migré)"
+  else
 docker exec "$PGC" psql -U "$PGU" -d "$PGD" -tAc \
   'select "fleetbaseOrderId" || E'"'"'\t'"'"' || coalesce("specMeta"::text, '"'"''"'"') from "Order" where "specMeta" is not null;' \
   > /tmp/specmeta.tsv
+  fi
 echo "   $(wc -l < /tmp/specmeta.tsv) commandes portent un specMeta"
 
 FLEETBASE_API_KEY="$KEY" DRY="$DRY" NB_DECLINES="$(wc -l < /tmp/declines.tsv)" NB_FAVS="$(wc -l < /tmp/favourites.tsv)" NB_FAILS="$(wc -l < /tmp/failures.tsv)" NB_VEH="$(wc -l < /tmp/vehicles.tsv)" python3 - <<'PY'
@@ -357,7 +412,6 @@ for ligne in lignes_veh:
     d = appel('GET', '/custom-fields?subject_uuid=%s&limit=50' % duuid)
     rows = d.get('custom_fields') or []
     uid = next((r['uuid'] for r in rows if r.get('name') == 'vehicle_type'), None)
-    deja = next((r for r in rows if r.get('name') == 'vehicle_type'), None)
 
     if not uid:
         cree = appel('POST', '/custom-fields', {
