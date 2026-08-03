@@ -150,7 +150,7 @@ GET /int/v1/orders/{uuid}
 la liste sait porter. Sinon le champ est **toujours vide** et rien ne le
 signale.
 
-### 3.2 Les enveloppes d'écriture
+### 3.2 Les enveloppes — d'écriture **et de lecture**
 
 | ressource | corps attendu | identifiant accepté |
 |---|---|---|
@@ -160,6 +160,23 @@ signale.
 
 À plat, Laravel rend un **500** dont le message nomme un fichier du framework et
 ne dit rien du contrat.
+
+⚠️ **La LECTURE unitaire est enveloppée elle aussi, et ce paragraphe ne le
+disait pas (03/08/2026).**
+
+```
+GET /int/v1/orders/{uuid}   → {"order": { … 55 clés … }}     ← PAS {"data": …}
+GET /int/v1/orders?limit=N  → {"meta": …, "orders": [ … ]}   ← PAS {"data": …}
+```
+
+Ce qui rend l'omission coûteuse : un déballage `.data // .` **ne lève pas**. Il
+rend l'enveloppe entière, c'est-à-dire un objet à **une seule clé**, où
+`custom_field_values` est donc absent. Le banc de projection en a conclu que
+**les 40 commandes les plus récentes n'étaient pas migrées** — alors que la
+toute dernière en portait **huit**.
+
+Encore une absence prise pour une réponse (règle 10) : rien ne distingue
+« ce champ est vide » de « je regarde au mauvais niveau ».
 
 ### 3.3 Le `PUT` FUSIONNE, il ne remplace pas
 

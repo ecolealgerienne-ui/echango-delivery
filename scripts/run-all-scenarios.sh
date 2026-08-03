@@ -67,6 +67,12 @@ SCENARIOS=(
   test-wilaya
   test-multi-appartenance
   test-sorties-de-course
+  # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
+  # d'un décor RICHE — une course portant des champs personnalisés. Les courses
+  # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
+  # que d'annoncer « aucune fuite » sur une commande qui n'avait rien à cacher.
+  # Le placer après les autres lui donne les courses qu'ils viennent de créer.
+  test-frontiere-projection
 )
 
 names=(); codes=(); notes=()
