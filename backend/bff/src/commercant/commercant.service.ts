@@ -878,7 +878,7 @@ export class CommerçantService {
     // silence aurait rendu les 456 comme si c'était la réponse.
     let fleets: { fleetbaseVendorUuid: string; businessName: string | null }[] = [];
     if (q.length >= 2) {
-      const vendors = await this.fleetbaseClient.searchVendors(q, 30);
+      const vendors = await this.fleetbaseClient.searchVendors(q);
       const parUuid = new Map<string, string | null>(
         vendors.map((v: any) => [v?.uuid, typeof v?.name === 'string' ? v.name : null]),
       );

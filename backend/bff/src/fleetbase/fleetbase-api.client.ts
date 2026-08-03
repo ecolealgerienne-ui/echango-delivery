@@ -1888,16 +1888,38 @@ export class FleetbaseApiClient {
    * doit intersecter avec ce que le BFF sait — c'est lui qui distingue les
    * deux populations.
    */
-  async searchVendors(query: string, limit = 25): Promise<any[]> {
+  async searchVendors(query: string, maxPages = 6, pageSize = 100): Promise<any[]> {
+    const all: any[] = [];
+
     try {
-      const response = await this.callFleetOps('GET', '/vendors', undefined, {
-        query,
-        limit,
-      });
-      return this.extractCollection(response, 'vendors');
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.callFleetOps('GET', '/vendors', undefined, {
+          query,
+          page,
+          limit: pageSize,
+        });
+        const rows = this.extractCollection(response, 'vendors');
+        all.push(...rows);
+
+        if (rows.length < pageSize) return all;
+
+        if (page === maxPages) {
+          // ⚠️ **Jamais de troncature muette.** L'appelant intersecte ensuite
+          // avec ce que le BFF connaît : une page manquante ne rend pas « moins
+          // de résultats », elle rend **aucun** quand l'entreprise cherchée
+          // était au-delà. C'est le défaut mesuré le 03/08/2026 — un vendor
+          // existant, une recherche qui le trouve, et une liste vide à l'écran
+          // parce que le plafond était à 30.
+          this.logger.warn(
+            `Recherche d'entreprises « ${query} » tronquée à ${maxPages * pageSize} — `
+              + 'une entreprise existante peut manquer à la liste',
+          );
+        }
+      }
+      return all;
     } catch (error: any) {
       this.logger.warn(`Recherche d'entreprises impossible (${query}) : ${error.message}`);
-      return [];
+      return all;
     }
   }
 
