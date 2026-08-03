@@ -137,7 +137,7 @@ for c in $candidats; do
   [ -n "$c" ] || continue
   examines=$((examines + 1))
   b="$(fb_get "/int/v1/orders/$c" 2>/dev/null)" || continue
-  n="$(echo "$b" | jq -r '(.data // .) | (.custom_field_values // []) | length')"
+  n="$(echo "$b" | jq -r '(.order // .data // .) | (.custom_field_values // []) | length')"
   if [ "${n:-0}" -gt 0 ]; then
     uuid="$c"; nb_cfv="$n"; brut="$b"
     break
@@ -161,7 +161,17 @@ step "Témoin — ce que Fleetbase porte sur cette commande"
 #
 # `brut` a déjà été lue par la boucle de sélection ci-dessus, qui n'a retenu
 # cette course QUE parce qu'elle porte des champs personnalisés.
-brut_data="$(echo "$brut" | jq -c '.data // .')"
+#
+# ⚠️ **L'enveloppe de LECTURE est `{order: …}`, pas `{data: …}`** — mesuré le
+# 03/08/2026, et ce n'était écrit nulle part : `docs/ou_vit_quoi.md` §3.2
+# documente l'enveloppe d'ÉCRITURE et laisse croire que la lecture est plate.
+# Le déballage fautif rendait un objet à **une seule clé**, donc
+# `custom_field_values` absent, donc « aucune commande migrée » sur les 40 plus
+# récentes — alors que la toute dernière en portait **huit**.
+#
+# Encore une absence prise pour une réponse : le banc concluait au lieu de
+# constater qu'il regardait au mauvais endroit.
+brut_data="$(echo "$brut" | jq -c '.order // .data // .')"
 
 pass "Fleetbase porte $nb_cfv champ(s) personnalisé(s) sur cette commande"
 
