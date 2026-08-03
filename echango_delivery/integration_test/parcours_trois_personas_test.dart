@@ -542,13 +542,27 @@ void parcoursEcartALaPorte() {
         reason: 'le tiroir se referme — l’écart est déclaré',
         onTimeout: 'écran : ${visibleTexts(40)}');
 
-    // La somme réellement perçue, pas celle annoncée : c'est tout l'objet.
-    await goBack(tester);
-    await pumpUntil(tester, find.byType(Tab), reason: 'retour au tableau de bord');
-    // Le net de la somme RÉELLEMENT perçue — c'est tout l'objet d'un écart :
-    // la caisse suit ce qui a été encaissé, pas ce qui était annoncé.
-    final netShort = (int.parse(short) - int.parse(codGapFee)).toString();
-    await expectCaisseShows(tester, netShort);
+    // ⚠️ Le montant PERÇU (short), pas un net : le registre qui retranchait la
+    // rémunération du transporteur est parti le 03/08/2026. C'est ce nombre
+    // exact — la somme réellement encaissée à la porte, pas celle annoncée —
+    // qui doit reparaître côté commerçant. La lecture se fait dans un test
+    // SÉPARÉ (persona commerçant) : on ne change pas de profil dans un même
+    // `app.main()` (le jeton vit en mémoire, voir parcoursArgentDeuxMaillons).
+    _montantEcart = short;
+  });
+
+  testWidgets('argent — le commerçant voit la somme perçue à la porte, pas celle annoncée',
+      (tester) async {
+    requireCredentials({'TEST_MERCHANT_EMAIL': merchantEmail});
+    expect(_montantEcart, isNotNull,
+        reason: 'le parcours d’écart n’a rien déclaré — ce test n’a rien à vérifier');
+
+    app.main();
+    await loginAs(tester, email: merchantEmail, home: Home.merchant);
+
+    // C'est tout l'objet d'un écart : la caisse du commerçant suit ce qui a été
+    // RÉELLEMENT encaissé (short), jamais le montant annoncé.
+    await expectCaisseShows(tester, _montantEcart!);
   });
 }
 
@@ -677,6 +691,10 @@ void parcoursSortiesDeCourse() {
 /// qui doit apparaître des deux côtés, et le recalculer des deux côtés
 /// laisserait passer une divergence au lieu de la révéler.
 String? _montantEncaisse;
+// La somme réellement perçue lors d'un écart à la porte (< annoncée) : posée par
+// le parcours transporteur, relue par le commerçant. Même mécanique que
+// [_montantEncaisse] — c'est le MÊME nombre qui doit apparaître des deux côtés.
+String? _montantEcart;
 
 /// La fiche a-t-elle fini de recharger ses actions ?
 ///
