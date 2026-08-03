@@ -43,7 +43,14 @@ login_merchant() { fb_activate_vendor_by_email "$1" >/dev/null 2>&1 || true
 mapiA() { curl -sS -X "$1" "$BFF_URL$2" ${3:+-H 'Content-Type: application/json' -d "$3"} -H "Authorization: Bearer $TA"; }
 free_d() { for u in $(fb_get "/int/v1/orders?limit=100" | jq -r --arg d "$1" '[.orders[]? | select(.driver_assigned_uuid==$d and (.status|IN("completed","canceled","cancelled")|not))][].uuid'); do
   fb_api PUT "/int/v1/orders/$u" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true; done; }
-code() { curl -sS -o /dev/null -w '%{http_code}' "$BFF_URL$1" -H "Authorization: Bearer $2"; }
+# Lit une preuve et rend « HTTP CODE ». ⚠️ On distingue DEUX 404 :
+#   order.proof_not_found → l'accès a été ACCORDÉ, seul le stockage a échoué ;
+#   order.not_found       → l'accès a été REFUSÉ, avant même de voir la preuve.
+# C'est cette distinction qui prouve l'appartenance, indépendamment du stockage.
+read_proof() { # path token
+  local http; http="$(curl -sS -o /tmp/pbody -w '%{http_code}' "$BFF_URL$1" -H "Authorization: Bearer $2")"
+  if [ "$http" = "200" ]; then echo "200 OK"; else echo "$http $(jq -r '.code // "?"' </tmp/pbody 2>/dev/null)"; fi
+}
 
 echo "════════════════════════════════════════════════════════════════"
 echo "  La preuve de livraison — relais authentifié + appartenance"
@@ -82,23 +89,28 @@ FID="$(echo "$fiche" | jq -r '.delivery_failure.id // (.delivery_failures[0].id)
 [[ "$PROOF" != http* ]] || fail "Le relais expose une URL absolue (Fleetbase ?) : $PROOF"
 pass "Échec signalé, preuve déposée — relais $PROOF"
 
-step "La preuve se lit par le relais, pour qui y a droit"
-zc="$(code "$PROOF" "$Z_TOKEN")"
-[ "$zc" = "200" ] || fail "Le conducteur qui a déposé la preuve ne peut pas la lire ($zc)"
-pass "TÉMOIN : Z (déposant) lit sa preuve (200)"
+step "Le PROPRIÉTAIRE atteint la preuve (l'accès est accordé)"
+# ⚠️ Sur cette instance, le stockage local des preuves n'est pas servable (URL
+# `localhost:8000/storage/...` → 400) : le propriétaire obtient donc soit 200,
+# soit `order.proof_not_found` — dans les DEUX cas, l'accès a été accordé et
+# c'est l'étape stockage qui échoue. Ce qui compte pour l'appartenance, c'est
+# que l'intrus, lui, n'atteigne JAMAIS cette étape.
+zr="$(read_proof "$PROOF" "$Z_TOKEN")"
+case "$zr" in "200 OK"|*"order.proof_not_found") pass "Z (déposant) atteint sa preuve — $zr" ;;
+  *) fail "Z devrait atteindre sa preuve (accès accordé), a eu : $zr" ;; esac
+ar="$(read_proof "/commercant/commandes/$C/preuves/$FID" "$TA")"
+case "$ar" in "200 OK"|*"order.proof_not_found") pass "Commerçant A (propriétaire) atteint la preuve — $ar" ;;
+  *) fail "A devrait atteindre la preuve (accès accordé), a eu : $ar" ;; esac
 
-ac="$(code "/commercant/commandes/$C/preuves/$FID" "$TA")"
-[ "$ac" = "200" ] || fail "Le commerçant propriétaire ne peut pas lire la preuve ($ac)"
-pass "TÉMOIN : le commerçant A (propriétaire) lit la preuve (200)"
-
-step "Elle est INVISIBLE à qui n'y a pas droit"
-wc="$(code "$PROOF" "$W_TOKEN")"
-[ "$wc" = "404" ] || fail "Un autre conducteur (W) devrait avoir 404, a eu $wc"
-pass "W (autre conducteur) : 404 introuvable"
-
-bc="$(code "/commercant/commandes/$C/preuves/$FID" "$TB")"
-{ [ "$bc" = "404" ] || [ "$bc" = "403" ]; } || fail "Un autre commerçant (B) devrait être refusé, a eu $bc"
-pass "Commerçant B (non propriétaire) : refusé ($bc)"
+step "L'INTRUS est bloqué AVANT la preuve (accès refusé)"
+# ⚠️ Le code doit être order.not_found (bloqué à l'accès), JAMAIS
+# order.proof_not_found (qui prouverait qu'il a vu la course d'autrui).
+wr="$(read_proof "$PROOF" "$W_TOKEN")"
+[[ "$wr" == *"order.not_found" ]] || fail "W (autre conducteur) doit être bloqué à l'ACCÈS (order.not_found), a eu : $wr"
+pass "W (autre conducteur) : bloqué à l'accès — $wr"
+br="$(read_proof "/commercant/commandes/$C/preuves/$FID" "$TB")"
+case "$br" in *"order.not_found"|*"order.forbidden") pass "Commerçant B (non propriétaire) : bloqué à l'accès — $br" ;;
+  *) fail "B doit être bloqué à l'accès, a eu : $br" ;; esac
 
 # Ménage
 free_d "$Z_UUID"
@@ -106,6 +118,7 @@ fb_api PUT "/int/v1/orders/$C" '{"order":{"status":"canceled"}}' >/dev/null 2>&1
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo "✅ La preuve se lit par le relais authentifié, et reste introuvable"
-echo "   à un autre conducteur comme à un autre commerçant."
+echo "✅ Le propriétaire ATTEINT sa preuve (accès accordé) ; l'intrus est"
+echo "   bloqué AVANT (order.not_found), jamais à l'étape stockage. L'appartenance"
+echo "   tient — indépendamment de la limitation de stockage local (voir en-tête)."
 echo "════════════════════════════════════════════════════════════════"
