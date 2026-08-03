@@ -556,11 +556,33 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   titre de l'écran **commerçant**. Les servir à la connexion aurait imposé un
   appel Fleetbase sur ce chemin pour un champ que personne n'affiche.
 
-  **Reste `businessName`/`businessPhone`** du commerçant et de l'entreprise —
-  eux ont un lecteur (le titre d'écran). Leur duplication est bénigne : **303
-  sur 304 identiques**, là où le conducteur divergeait sur 3 sur 3. À traiter
-  quand on acceptera un appel Fleetbase à la connexion, ou que l'écran ira
-  chercher son titre ailleurs.
+  ✅ **Le profil du COMMERÇANT et de l'ENTREPRISE est descendu aussi** —
+  `firstName`, `lastName`, `phone`, `businessName`, `businessPhone`. Le nom
+  vient du `Vendor` (`getVendorIdentity`), la recherche d'entreprises de
+  `searchVendors`.
+
+  ⚠️ **`query=` est mesuré honoré, avec témoin** : 456 vendors, un fragment
+  réel en rend 1, un fragment inventé **0**, et `name=` **0** — c'est une
+  égalité, pas un « contient ». Sans témoin, un filtre abandonné en silence
+  aurait rendu les 456 comme si c'était la réponse.
+
+  ⚠️ **La recherche rend TOUS les vendors, commerçants compris** : chez
+  Fleetbase les deux populations sont le même objet. L'appartenance reste
+  décidée par le BFF, seul à savoir lesquels sont des entreprises de transport.
+
+  ⚠️ **Le coût, dit plutôt que caché** : un appel Fleetbase de plus sur le
+  chemin de **connexion**, pour le titre de l'écran commerçant. Assumé — la
+  route est plafonnée à 5/min, et `getVendorIdentity` rend `null` sans lever :
+  un nom illisible n'empêche pas de se connecter.
+
+  ⚠️ **Contrôle PRÉALABLE avant de supprimer**, pas après : les 452 comptes ont
+  été vérifiés porteurs d'un `Vendor` **nommé** en amont. Sans lui, supprimer
+  la colonne aurait perdu le nom au lieu de le déplacer — la migration
+  s'annulait d'elle-même si un seul manquait.
+
+  **Les trois tables de comptes ne portent plus que le secret de connexion et
+  les liens Fleetbase.** C'est le seul contenu qu'un opérateur en console ne
+  doit justement pas voir.
 
   ⚠️ **Ce qui ne peut PAS monter, et le dire évite de le retenter** :
 
