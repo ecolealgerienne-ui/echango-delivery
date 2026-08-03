@@ -86,21 +86,30 @@ pass "Conducteur : ${DRIVER_LABEL:-$DRIVER_UUID}"
 # un saut annoncé comme un décor insuffisant : le banc accusait le décor alors
 # que c'était la session qui avait échoué. C'est le défaut que ce dépôt corrige
 # depuis cinq fois (règle 10), reproduit dans l'outil censé le débusquer.
-lire_liste() { # mode -> liste sur stdout, échoue bruyamment sur un refus
-  local mode="$1" r
-  r="$(dapi "/transporteur/commandes?mode=$mode")"
-  if echo "$r" | jq -e '(.statusCode | type) == "number"' >/dev/null 2>&1; then
+#
+# ⚠️ **Et elle renseigne une variable au lieu d'écrire sur stdout.** Une
+# première version rendait la liste par `printf` et s'appelait dans un
+# `$( )` : le `fail` s'exécutait alors dans un SOUS-SHELL, son `exit 1` ne
+# quittait que lui, et son message partait **dans la variable** au lieu de
+# l'écran. Le banc s'arrêtait sans une ligne d'explication. C'est exactement le
+# défaut du banc de `require_free_driver` (règle 8) — refait ici trois jours
+# plus tard, dans un fichier écrit pour le dénoncer.
+lire_liste() { # mode -> renseigne LISTE
+  local mode="$1"
+  LISTE="$(dapi "/transporteur/commandes?mode=$mode")"
+  if echo "$LISTE" | jq -e '(.statusCode | type) == "number"' >/dev/null 2>&1; then
     fail "La liste ($mode) a été REFUSÉE — ce n'est pas un décor vide" \
-      "$(echo "$r" | jq -c '{statusCode, code, message}')"
+      "$(echo "$LISTE" | jq -c '{statusCode, code, message}')"
   fi
-  printf '%s' "$r"
 }
 
-liste="$(lire_liste history)"
+lire_liste history
+liste="$LISTE"
 uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
 
 if [ -z "$uuid" ]; then
-  liste="$(lire_liste assigned)"
+  lire_liste assigned
+  liste="$LISTE"
   uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
 fi
 
