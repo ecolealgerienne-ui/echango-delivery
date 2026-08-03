@@ -253,9 +253,13 @@ const FLEETBASE_INTERNAL_META_KEYS = ['_index_resource'];
  *    depuis la console, il ne restait que `{_index_resource: true}`. Il reste lu
  *    pour les commandes d'avant la migration.
  *
- * 3. **`Order.specMeta`** — la copie locale de ce qui a été demandé, figée à la
- *    création. Dernier recours, pour les commandes créées avant que les champs
- *    personnalisés existent et dont le `meta` a déjà été effacé.
+ * ⚠️ **Il y en avait TROIS jusqu'au 03/08/2026.** `Order.specMeta` — une copie
+ * locale de ce qui avait été demandé — servait de dernier recours pour les
+ * commandes d'avant les champs personnalisés. Elle est partie : la reprise de
+ * données a constaté que **535 commandes sur 535 avaient déjà leurs champs
+ * personnalisés complets** (`scripts/backfill-order-custom-fields.sh`), donc
+ * le filet ne rattrapait plus rien. C'était la dernière donnée métier stockée
+ * côté BFF.
  *
  * ── L'ordre de préséance, et pourquoi il est dans ce sens ───────────────────
  *
@@ -269,15 +273,15 @@ const FLEETBASE_INTERNAL_META_KEYS = ['_index_resource'];
  * correction amont invisible : exactement le second vocabulaire que la règle 1
  * interdit.
  */
-export function effectiveOrderMeta(order: any, specMeta: any): Record<string, any> | undefined {
-  const merged = mergeMetaLayers(order?.meta, specMeta);
+export function effectiveOrderMeta(order: any): Record<string, any> | undefined {
+  const merged = mergeMetaLayers(order?.meta);
   const custom = readOrderCustomFields(order);
 
   if (!Object.keys(custom).length) return merged;
   return { ...(merged ?? {}), ...custom };
 }
 
-function mergeMetaLayers(liveMeta: any, specMeta: any): Record<string, any> | undefined {
+function mergeMetaLayers(liveMeta: any): Record<string, any> | undefined {
   const parse = (value: any): Record<string, any> | undefined => {
     let source = value;
     if (typeof source === 'string') {
@@ -291,7 +295,6 @@ function mergeMetaLayers(liveMeta: any, specMeta: any): Record<string, any> | un
   };
 
   const live = parse(liveMeta);
-  const spec = parse(specMeta);
 
   // ⚠️ Les clés internes de Fleetbase sont retirées **avant tout**, y compris
   // quand il n'y a pas de spécification locale à fusionner.
@@ -308,9 +311,7 @@ function mergeMetaLayers(liveMeta: any, specMeta: any): Record<string, any> | un
     if (!FLEETBASE_INTERNAL_META_KEYS.includes(key)) meaningful[key] = value;
   }
 
-  if (!spec) return live ? meaningful : undefined;
-
-  return { ...spec, ...meaningful };
+  return live ? meaningful : undefined;
 }
 
 /**
@@ -320,7 +321,7 @@ function mergeMetaLayers(liveMeta: any, specMeta: any): Record<string, any> | un
  * qu'un intégrateur y déposerait un jour, sans que personne ne le décide —
  * exactement le défaut que cette projection corrige au niveau de la commande.
  */
-const META_FIELDS = [
+export const PROJECTED_META_FIELDS = [
   'instructions',
   'vehicle_type',
   'items',
@@ -340,10 +341,10 @@ const META_FIELDS = [
   // des espèces n'engage pas comme porter un colis — et l'avoir sous les yeux
   // au moment de la remise, qui est là où se produit l'erreur de montant.
   //
-  // Un seul sens, et tous ses lecteurs l'ont déjà : montant annoncé avant
-  // acceptation, `expectedAmount` figé au registre, refus de percevoir plus
-  // que dû, plafond de dette. Il est tenu au point d'écriture
-  // (`buildOrderMeta`) plutôt que réinterprété par chaque lecteur.
+  // Un seul sens, et tous ses lecteurs l'ont déjà. Il est tenu au point
+  // d'écriture (`buildOrderMeta`) plutôt que réinterprété par chaque lecteur.
+  // ⚠️ La liste de ses lecteurs a raccourci le 03/08/2026 : le montant figé au
+  // registre et le plafond de dette sont partis avec le registre de caisse.
   'cod_amount',
   // Le prix de la marchandise, tel que le commerçant l'a saisi. Sert à
   // reproduire la commande à l'identique et à lui montrer la décomposition du
@@ -355,6 +356,22 @@ const META_FIELDS = [
   // Sert à reproduire la commande et à expliquer la décomposition ; le
   // règlement avec le transporteur, lui, ne change pas (journal §17).
   'cod_includes_delivery',
+  // ── Ce qui s'est passé à la porte ────────────────────────────────────────
+  //
+  // ⚠️ **Ces trois-là ont été ajoutés aux champs personnalisés le 03/08/2026
+  // sans être ajoutés ICI, et ils n'atteignaient donc AUCUNE application.** La
+  // fiche du commerçant affichait « pas encore encaissé » sur une livraison
+  // déclarée. Aucune erreur, aucun journal : la liste d'autorisation fait
+  // exactement ce pour quoi elle existe — elle refuse par défaut —, et c'est ce
+  // qui rend l'oubli silencieux plutôt que dangereux. C'est la contrepartie
+  // assumée de la polarité choisie (règle 12).
+  //
+  // Les trois personas les reçoivent : le transporteur parce que c'est **sa**
+  // déclaration, le commerçant parce qu'il en est le destinataire, l'entreprise
+  // parce qu'elle facilite la course.
+  'collected_amount',
+  'collected_at',
+  'collection_reason',
   // Choix du commerçant à la création. Écrit depuis le début (il sert à
   // reproduire une commande dupliquée) mais jamais projeté : la fiche ne
   // pouvait donc pas lui rappeler s'il avait sollicité ses favoris.
@@ -413,7 +430,7 @@ function projectMeta(meta: any): Record<string, any> | undefined {
 
   if (!source || typeof source !== 'object') return undefined;
 
-  const projected = pick(source, META_FIELDS);
+  const projected = pick(source, PROJECTED_META_FIELDS);
   normaliseCurrencies(projected);
   return Object.keys(projected).length ? projected : undefined;
 }

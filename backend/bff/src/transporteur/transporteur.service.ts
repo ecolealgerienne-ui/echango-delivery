@@ -148,47 +148,30 @@ export class TransporteurService {
    * already reads.
    */
   /**
-   * Recomplète `meta` depuis la spécification figée à la création.
+   * Recompose `meta` depuis les champs personnalisés de la commande.
    *
    * ⚠️ Nécessaire parce qu'une affectation de transporteur **depuis la console
    * Fleetbase efface `meta`** (constaté le 30/07/2026 : il ne restait que
-   * `{_index_resource: true}`). Pour le transporteur, ce n'est pas un
-   * affichage dégradé — `cod_amount` disparu signifie qu'aucun montant ne lui
-   * est annoncé, et `price` disparu qu'il ne sait pas ce que la course
-   * rapporte. Il accepterait à l'aveugle une course encaissée.
+   * `{_index_resource: true}`). Pour le transporteur, ce n'est pas un affichage
+   * dégradé — `cod_amount` disparu signifie qu'aucun montant ne lui est
+   * annoncé, et `price` disparu qu'il ne sait pas ce que la course rapporte. Il
+   * accepterait à l'aveugle une course encaissée.
    *
-   * Une seule requête pour toute la liste : la fusion doit être invisible en
-   * coût, sans quoi elle finirait par être retirée d'un chemin « chaud ».
+   * ⚠️ **Cette fonction interrogeait la base locale jusqu'au 03/08/2026**, pour
+   * y lire `Order.specMeta` — une requête supplémentaire par liste, sur un
+   * chemin chaud. `specMeta` est retiré : tout vient désormais de la commande
+   * elle-même, donc c'est une projection pure, sans entrée/sortie et sans
+   * possibilité d'échouer. Le repli « si la lecture échoue, servir ce que
+   * Fleetbase a donné » n'a plus d'objet.
    */
-  private async withSpecMeta(orders: any[]): Promise<any[]> {
-    if (!orders.length) return orders;
-
-    const uuids = orders.map((o) => o?.uuid).filter(Boolean);
-    if (!uuids.length) return orders;
-
-    const rows = await this.prisma.order
-      .findMany({
-        where: { fleetbaseOrderId: { in: uuids } },
-        select: { fleetbaseOrderId: true, specMeta: true },
-      })
-      // La spécification est un filet, pas une dépendance : si la lecture
-      // échoue, on sert ce que Fleetbase a donné plutôt que de faire échouer
-      // la liste entière.
-      .catch((error: any) => {
-        this.logger.warn(`Spécifications de commande illisibles : ${error.message}`);
-        return [] as { fleetbaseOrderId: string; specMeta: any }[];
-      });
-
-    if (!rows.length) return orders;
-
-    const spec = new Map(rows.map((r: any) => [r.fleetbaseOrderId, r.specMeta]));
-    return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o, spec.get(o?.uuid)) }));
+  private withEffectiveMeta(orders: any[]): any[] {
+    return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o) }));
   }
 
   private async attachFailures(driverId: string, orders: any[]) {
     if (!orders.length) return orders;
 
-    orders = await this.withSpecMeta(orders);
+    orders = this.withEffectiveMeta(orders);
 
     const failures = await this.prisma.deliveryFailure.findMany({
       where: {
@@ -740,7 +723,7 @@ export class TransporteurService {
     // Recomplété AVANT le filtre, pas après : `suits()` lit
     // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
     // traiter la course comme sans exigence.
-    const adhocHydrated = await this.withSpecMeta(
+    const adhocHydrated = this.withEffectiveMeta(
       adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
     );
 
@@ -858,7 +841,7 @@ export class TransporteurService {
     // seconde : il suffirait d'ouvrir la fiche pour obtenir le nom, l'adresse
     // exacte et le téléphone que la liste venait de retirer.
     if (!mine) {
-      const [hydrated] = await this.withSpecMeta([order]);
+      const [hydrated] = this.withEffectiveMeta([order]);
       return projectOrderForDriver(hydrated ?? order, { unclaimed: true });
     }
 
@@ -936,7 +919,7 @@ export class TransporteurService {
     // Recomplété d'abord : sans ça, un refus sur une commande dont `meta` a été
     // écrasé enregistrerait un motif sans le prix qui l'explique — c'est-à-dire
     // précisément la moitié inutile de la paire.
-    const [hydratedForDecline] = await this.withSpecMeta([order]);
+    const [hydratedForDecline] = this.withEffectiveMeta([order]);
     const meta = hydratedForDecline?.meta ?? order?.meta ?? {};
 
     const decline = await this.prisma.orderDecline.upsert({
@@ -1172,7 +1155,7 @@ export class TransporteurService {
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
     // `codAmount = 0` : la course se clôturerait sans déclaration, alors que
     // le transporteur tient l'argent.
-    const [hydrated] = await this.withSpecMeta([order]);
+    const [hydrated] = this.withEffectiveMeta([order]);
     const meta = hydrated?.meta ?? order?.meta;
 
     const codAmount = Number(meta?.cod_amount) || 0;

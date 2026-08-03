@@ -118,34 +118,58 @@ describe('champs personnalisés de commande', () => {
       meta: { _index_resource: true },
     };
 
-    const effective = effectiveOrderMeta(order, null);
+    const effective = effectiveOrderMeta(order);
 
     expect(effective?.cod_amount).toBe(1950);
     expect(effective?.price).toBe(650);
   });
 
   it('ne relaie jamais le drapeau interne `_index_resource`', () => {
-    // Même sans spécification locale : la version initiale ne nettoyait que la
-    // branche de fusion, et le drapeau ressortait sur toute commande ancienne.
-    expect(effectiveOrderMeta({ meta: { _index_resource: true } }, null)).toEqual({});
-    expect(effectiveOrderMeta({ meta: { _index_resource: true } }, { price: 1 })?.price).toBe(1);
+    // La version initiale ne nettoyait que la branche de fusion, et le drapeau
+    // ressortait sur toute commande ancienne.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })).toEqual({});
   });
 
-  it('laisse une correction faite en console primer sur la copie locale', () => {
-    const effective = effectiveOrderMeta(
-      { custom_field_values: [{ custom_field: { name: 'price' }, value: '900' }], meta: {} },
-      { price: 650, pricing_inputs: { distance: 3200 } },
-    );
+  it('laisse une correction faite en console primer sur `meta`', () => {
+    // Les champs personnalisés sont fusionnés EN DERNIER : une valeur corrigée
+    // par un admin l'emporte sur ce que `meta` porte encore.
+    const effective = effectiveOrderMeta({
+      custom_field_values: [{ custom_field: { name: 'price' }, value: '900' }],
+      meta: { price: 650, pricing_inputs: { distance: 3200 } },
+    });
 
     expect(effective?.price).toBe(900);
-    // Hors catalogue : reste servi par la copie locale.
+    // Hors catalogue : `pricing_inputs` n'a pas de champ personnalisé et reste
+    // servi par `meta`.
     expect(effective?.pricing_inputs?.distance).toBe(3200);
   });
 
-  it('retombe sur la copie locale quand rien n\'a survécu en amont', () => {
-    const effective = effectiveOrderMeta({ meta: { _index_resource: true } }, { cod_amount: 1200 });
+  it('⚠️ NE RATTRAPE PLUS un `meta` effacé sans champs personnalisés', () => {
+    // ── Ce cas documente une PERTE, et c'est pour ça qu'il existe ───────────
+    //
+    // Une troisième couche existait jusqu'au 03/08/2026 : `Order.specMeta`, la
+    // copie locale figée à la création, qui rendait ses montants quand tout le
+    // reste avait été effacé. Elle est retirée — la reprise a constaté 535
+    // commandes sur 535 déjà complètes en amont, donc elle ne rattrapait plus
+    // rien (`scripts/backfill-order-custom-fields.sh`).
+    //
+    // Ce qui reste vrai : une commande dont la console a effacé `meta` ET qui
+    // n'a aucun champ personnalisé ne rend plus rien. Une création neuve est
+    // **refusée** si le catalogue est incomplet (`assertCustomFieldsComplete`),
+    // donc le cas ne peut plus naître. L'écrire noir sur blanc plutôt que de
+    // laisser quelqu'un le découvrir sur une fiche vide.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })).toEqual({});
+  });
 
-    expect(effective?.cod_amount).toBe(1200);
+  it('⚠️ `pricing_inputs` ne survit plus à un effacement de `meta`', () => {
+    // Conséquence assumée : il n'a délibérément PAS de champ personnalisé (une
+    // donnée de calibration encombrerait la fiche de la console pour un admin
+    // qui n'en a rien à faire), et `specMeta` était son dernier abri.
+    //
+    // Sa perte n'empêche aucune livraison — c'est le critère qui avait justifié
+    // de le laisser hors catalogue, et il tient toujours.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })?.pricing_inputs)
+      .toBeUndefined();
   });
 
   it('survit à un double encodage, si l\'amont corrige son ordre d\'affectation', () => {

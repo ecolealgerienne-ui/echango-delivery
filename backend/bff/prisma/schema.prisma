@@ -390,31 +390,18 @@ model Order {
   // appelé depuis `acceptOrder()`, qui interroge Fleetbase de toute façon. Tous
   // les consommateurs réels lisaient déjà `meta.cod_amount` en direct.
 
-  /// **Ce que le commerçant a demandé**, figé à la création.
-  ///
-  /// ── Pourquoi ce miroir-ci est légitime ─────────────────────────────────
-  ///
-  /// Constaté le 30/07/2026 sur une commande réelle : après l'affectation d'un
-  /// transporteur **depuis la console Fleetbase**, `meta` valait
-  /// `{_index_resource: true}` — une clé interne à Fleetbase, que notre code
-  /// n'écrit jamais. Prix, montant à encaisser, colis, précisions d'adresse :
-  /// tout avait disparu. Ce n'est pas un défaut d'affichage, c'est la perte des
-  /// champs qui décident de l'argent réclamé à la porte.
-  ///
-  /// La règle du projet dit que le BFF ne conserve que ce que Fleetbase ne peut
-  /// **structurellement** pas porter. C'est exactement le cas : Fleetbase peut
-  /// stocker `meta`, mais ne peut pas le protéger de sa propre console, qui est
-  /// une interface d'admin légitime et non un outil de dépannage.
-  ///
-  /// ── Ce que ce champ est, et ce qu'il n'est pas ─────────────────────────
-  ///
-  /// C'est une **spécification**, pas un état : ce qui a été commandé, écrit
-  /// une fois, jamais recalculé.
-  ///
-  /// Il ne décide de rien à lui seul : à la lecture, `meta` de Fleetbase
-  /// l'emporte clé par clé, et celui-ci ne comble que les manques. Une valeur
-  /// modifiée en amont reste donc autoritaire — seul l'effacement est réparé.
-  specMeta          Json?
+  // ⚠️ `specMeta` a été SUPPRIMÉ le 03/08/2026 — c'était la dernière donnée
+  // métier stockée côté BFF.
+  //
+  // Il conservait, figée à la création, une copie de ce que le commerçant avait
+  // demandé : un filet contre l'effacement de `meta` par la console. Les champs
+  // personnalisés le rendent inutile — ils vivent dans une table séparée, et il
+  // est **mesuré** qu'une écriture partielle ne détruit pas les autres.
+  //
+  // La reprise de données (`scripts/backfill-order-custom-fields.sh`) a
+  // constaté **535 commandes sur 535 déjà complètes en amont** : le filet ne
+  // rattrapait plus rien. Le script reste au dépôt — tout autre déploiement
+  // doit le passer avant d'appliquer cette migration.
 
   // Le motif d'échec vit dans `DeliveryFailure`, jamais ici : `failureReason`
   // et `failureNotes` ont existé sans être écrites ni lues une seule fois

@@ -15,7 +15,12 @@
  * qui a donné huit lignes titrées « Destinataire » sans critère de décision.
  */
 
-import { projectOrderForDriver, projectOrderForFleet } from './order.projection';
+import {
+  PROJECTED_META_FIELDS,
+  projectOrderForDriver,
+  projectOrderForFleet,
+} from './order.projection';
+import { ORDER_CUSTOM_FIELD_KEYS } from '../../fleetbase/order-custom-fields';
 
 const order = (): any => ({
   uuid: 'ord-1',
@@ -182,5 +187,60 @@ describe('les deux populations voient la même chose', () => {
     expect(driver.payload).toEqual(fleet.payload);
     expect(driver.meta).toEqual(fleet.meta);
     expect(driver.redacted).toBe(fleet.redacted);
+  });
+});
+
+/**
+ * Le catalogue des champs personnalisés et la liste d'autorisation des
+ * projections **doivent bouger ensemble**.
+ *
+ * ── Le défaut que ces cas ferment, commis le jour même ────────────────────
+ *
+ * `collected_amount`, `collected_at` et `collection_reason` ont été ajoutés au
+ * catalogue le 03/08/2026 et **oubliés dans `META_FIELDS`**. Ils étaient donc
+ * écrits sur la commande, relus par le serveur, et **retirés au dernier
+ * moment** : la fiche du commerçant affichait « pas encore encaissé » sur une
+ * livraison pourtant déclarée. Aucune erreur, aucun journal — la liste refuse
+ * par défaut, ce qui est la bonne polarité et rend l'oubli silencieux.
+ *
+ * Un commentaire ne peut pas échouer ; ce test, si (règle 5).
+ *
+ * ⚠️ **Ce n'est PAS « tout le catalogue doit être projeté ».** Certaines clés
+ * doivent rester invisibles aux applications — un refus nommant un autre
+ * transporteur en est l'exemple. La liste ci-dessous les nomme, une par une,
+ * avec son motif : c'est une décision qui s'écrit, pas un oubli qui se tolère.
+ */
+describe('catalogue et projection ne divergent pas', () => {
+  /** Clés du catalogue délibérément NON servies aux applications. */
+  const JAMAIS_PROJETE: Record<string, string> = {
+    // Aucune pour l'instant. Une entrée ici est une décision de
+    // confidentialité, et son motif s'écrit en face.
+  };
+
+  it('toute clé du catalogue est projetée, ou nommée comme ne devant pas l’être', () => {
+    const oubliees = ORDER_CUSTOM_FIELD_KEYS
+      .filter((k) => !PROJECTED_META_FIELDS.includes(k))
+      .filter((k) => !(k in JAMAIS_PROJETE));
+
+    expect(oubliees).toEqual([]);
+  });
+
+  it('la liste de projection ne contient rien d’inconnu du catalogue', () => {
+    // L'autre sens : une clé projetée que plus personne n'écrit est un champ
+    // mort qui laisse croire à une donnée disponible.
+    const orphelines = PROJECTED_META_FIELDS.filter(
+      (k) => !ORDER_CUSTOM_FIELD_KEYS.includes(k),
+    );
+
+    expect(orphelines).toEqual([]);
+  });
+
+  it('le témoin : retirer une clé de la projection DOIT être détecté', () => {
+    // Sans ce cas, une liste `PROJECTED_META_FIELDS` accidentellement vidée
+    // rendrait les deux précédents verts pour la mauvaise raison.
+    const ampute = PROJECTED_META_FIELDS.filter((k) => k !== 'collected_amount');
+    expect(ORDER_CUSTOM_FIELD_KEYS.filter((k) => !ampute.includes(k))).toEqual([
+      'collected_amount',
+    ]);
   });
 });

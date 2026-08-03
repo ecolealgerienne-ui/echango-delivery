@@ -1220,10 +1220,7 @@ export class FlotteService {
    */
   private withEffectiveMeta(order: any): any {
     if (!order) return order;
-    // Pas de `specMeta` ici : ce module n'a pas de cache local des commandes.
-    // La spécification est un filet posé sur les commandes créées PAR un
-    // commerçant d'Echango ; une entreprise lit ce que Fleetbase porte.
-    return { ...order, meta: effectiveOrderMeta(order, null) };
+    return { ...order, meta: effectiveOrderMeta(order) };
   }
 
   /**
