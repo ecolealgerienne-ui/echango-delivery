@@ -80,9 +80,6 @@ export class CommerçantService {
   ) {}
 
   /**
-   * Get merchant's orders from Fleetbase via customer-portal-api
-   */
-  /**
    * Merge the merchant's cached order rows with their live Fleetbase state.
    *
    * The cache alone is not enough to show anything useful: it stores an id, a

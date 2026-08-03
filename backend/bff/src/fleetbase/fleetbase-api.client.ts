@@ -124,20 +124,13 @@ export class FleetbaseApiClient {
     );
   }
 
-  /**
-   * Call Fleetbase customer-portal-api endpoint
-   * Used for merchant operations (read/write orders, etc.)
-   */
-  async callCustomerPortal(method: string, path: string, data?: any, token?: string, params?: any) {
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-    return this.apiClient({
-      method,
-      url: `/customer-portal/int/v1${path}`,
-      data,
-      params,
-      headers,
-    });
-  }
+  // ⚠️ `callCustomerPortal()` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
+  //
+  // Vestige de l'époque où le module commerçant passait par
+  // `customer-portal-api` ; il est passé au cache local et à l'API interne
+  // depuis. Une méthode qui construit une URL vers un chemin qu'on n'emprunte
+  // plus laisse croire que ce chemin est encore une option.
+
 
 
   /**

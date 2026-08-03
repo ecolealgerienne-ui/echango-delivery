@@ -1198,16 +1198,13 @@ export class AuthService {
     });
   }
 
-  /**
-   * Verify JWT token and return payload
-   */
-  verifyToken(token: string) {
-    try {
-      return this.jwtService.verify(token);
-    } catch (error) {
-      unauthorized('auth.token_invalid', 'Invalid or expired token');
-    }
-  }
+  // ⚠️ `verifyToken(token)` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
+  //
+  // `POST /auth/verify` porte le même nom dans le contrôleur, ce qui l'a fait
+  // passer pour employé : elle rend `{valid: true, user: req.user}`, le garde
+  // global ayant déjà validé le jeton. La vérification réelle vit dans
+  // `JwtAuthGuard`, et c'est le bon endroit — une seconde implémentation aurait
+  // pu diverger de celle qui protège réellement les routes.
 
   /**
    * Generate JWT token
