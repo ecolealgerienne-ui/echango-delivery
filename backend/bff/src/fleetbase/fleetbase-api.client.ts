@@ -1898,7 +1898,14 @@ export class FleetbaseApiClient {
           page,
           limit: pageSize,
         });
-        const rows = this.extractCollection(response, 'vendors');
+        // ⚠️ **`response.data`, jamais `response`.** `callFleetOps` rend la
+        // réponse axios ; `extractCollection` attend le CORPS. Lui passer la
+        // réponse ne lève pas — elle rend simplement une liste **vide**, et la
+        // recherche affichait « aucune entreprise » sur un vendor qui existait,
+        // que Fleetbase trouvait, et dont l'uuid correspondait bien à un compte
+        // (mesuré le 03/08/2026). Un déballage raté ne fait pas de bruit : il
+        // fait disparaître des résultats.
+        const rows = this.extractCollection(response.data, 'vendors');
         all.push(...rows);
 
         if (rows.length < pageSize) return all;
