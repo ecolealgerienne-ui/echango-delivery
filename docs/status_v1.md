@@ -29,6 +29,34 @@ Cette section est en tête parce que c'est celle qu'on oublie : elle ne décrit
 pas un travail à faire, elle décrit **ce qu'on ne sait pas**. Un banc vert sur
 dix sujets ne dit rien du onzième.
 
+### ✅ Le parcours Flutter d'intégration diverge après la suppression du registre (03/08/2026)
+
+Trouvé en **rejouant le parcours 3 personas sur émulateur** — ni les scénarios
+`curl`, ni `flutter test` (unitaire) ne pouvaient le voir. Après la suppression
+du registre de caisse, `parcoursEcartALaPorte` vérifiait encore un **net**
+(`short − codGapFee`) sur une **caisse conducteur qui n'existe plus**, en restant
+connecté au mauvais persona. `openCaisse` échouait « 3 onglets ».
+
+**Corrigé** : aligné sur le motif +2/+3 déjà migré — le conducteur déclare
+l'écart (le cœur, « le tiroir refuse sans motif », intact), la somme **perçue**
+se relit côté commerçant sur le nouvel écran collections. Parcours **11/11**.
+
+⚠️ **La leçon** : le chantier de suppression du registre avait mis à jour le
+backend, les docs, les scénarios `curl` **et** deux des trois tests d'argent
+Flutter — mais pas le troisième, et **le parcours d'intégration n'avait pas été
+rejoué** (il exige un émulateur). Il était cassé en silence depuis ce matin.
+C'est l'angle mort nommé dans `CLAUDE.md` : les scénarios ne touchent jamais
+l'application.
+
+⚠️ **Observation, PAS un bug** : le run révèle un `notifyListeners()` après
+`dispose` dans `CollectionsState.load()`. C'est un **artefact de teardown de
+test** — le provider est app-scoped (`main.dart:241`), jamais disposé à la
+navigation, donc l'erreur n'apparaît qu'entre deux `app.main()` du test. Toutes
+les classes d'état partagent ce motif latent ; aucune ne se déclenche en
+production. Non corrigé : le corriger ici seul serait du cargo-cult et une
+divergence de convention (règle 5). Si un jour on veut des logs de test
+propres, ce serait un mixin de garde partagé, pas un rustine locale.
+
 ### ✅ La frontière de sortie — comblée le 03/08/2026, et voici ce qu'elle cachait
 
 Ce manque-ci n'était pas listé, et c'est justement pourquoi il mérite d'ouvrir
