@@ -5,8 +5,10 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService, driverParty, merchantParty } from '../cash/cash.service';
+import { assertCollectedAmount } from '../common/money/collection';
+import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
@@ -34,7 +36,7 @@ export class TransporteurService {
     private readonly fleetbaseClient: FleetbaseApiClient,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
-    private readonly cash: CashService,
+    private readonly orderCustomFields: OrderCustomFieldsService,
     private readonly configService: ConfigService,
     private readonly driverZone: DriverZoneService,
   ) {}
@@ -839,68 +841,6 @@ export class TransporteurService {
     return { mine, claimableAdhoc };
   }
 
-  /**
-   * Confirme un encaissement que le commerçant a déclaré à la place du
-   * transporteur, après une clôture faite hors application.
-   *
-   * ── D'où vient l'autorisation ───────────────────────────────────────────────
-   *
-   * De la ligne de registre elle-même, dont `driverId` est ce transporteur —
-   * `CashService` le vérifie. Passer par `getOrder()` aurait été le réflexe, et
-   * il aurait **échoué précisément dans le cas visé** : ces livraisons peuvent
-   * ne porter aucun `driver_assigned_uuid` chez Fleetbase (observé en réel), et
-   * `getOrder()` refuse tout ce qui n'est ni assigné ni adhoc réclamable.
-   *
-   * ── Pourquoi la rémunération est relue ici ──────────────────────────────────
-   *
-   * Elle vient de la **commande**, jamais du corps de la requête : la faire
-   * saisir par celui qui confirme sa propre dette lui laisserait fixer ce qu'il
-   * retient dessus. Si la commande est illisible, on confirme quand même avec
-   * une rémunération nulle — bloquer laisserait la dette hors du registre, ce
-   * qui est le défaut qu'on répare, et une rémunération manquante se rattrape.
-   */
-  async confirmDeclaredCollection(driverId: string, collectionId: string) {
-    const collection = await this.prisma.cashCollection.findFirst({
-      where: { id: collectionId, driverId },
-      select: { fleetbaseOrderUuid: true },
-    });
-
-    if (!collection) {
-      notFound('cash.collection_not_found', 'Encaissement introuvable');
-    }
-
-    let price = 0;
-    try {
-      // Lecture unitaire, et non `resolveOrder()` : celle-ci télécharge toutes
-      // les commandes de l'organisation pour en retrouver une dont on connaît
-      // déjà l'uuid.
-      const response = await this.fleetbaseClient.getOrderWithRelations(
-        collection.fleetbaseOrderUuid,
-      );
-      const order = response?.order ?? response;
-
-      // L'uuid renvoyé est comparé à celui demandé, comme partout ailleurs sur
-      // les lectures unitaires : lire la rémunération d'une AUTRE course
-      // fixerait ici ce que le transporteur retient sur son encaissement.
-      if (order?.uuid === collection.fleetbaseOrderUuid) {
-        const [hydrated] = await this.withSpecMeta([order]);
-        price = Number(hydrated?.meta?.price ?? order?.meta?.price) || 0;
-      } else {
-        this.logger.warn(
-          `Lecture unitaire inexploitable pour ${collection.fleetbaseOrderUuid} — `
-            + 'confirmation sans rémunération',
-        );
-      }
-    } catch (error: any) {
-      this.logger.warn(
-        `Rémunération illisible pour ${collection.fleetbaseOrderUuid} lors de la `
-          + `confirmation d'encaissement : ${error.message} — confirmée sans rémunération`,
-      );
-    }
-
-    return this.cash.confirmCollection(driverId, collectionId, price);
-  }
-
   async getOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
@@ -1089,15 +1029,16 @@ export class TransporteurService {
       badRequest('order.already_taken', 'This order has already been taken by another driver');
     }
 
-    // Le plafond de dette est vérifié ICI, et pas seulement à la création.
+    // ⚠️ Un plafond de dette était vérifié ici, et il a été retiré le
+    // 03/08/2026 avec le registre de caisse — pas par négligence, par
+    // impossibilité : ce qu'un transporteur détient, c'est l'argent encaissé
+    // **et pas encore remis**, et sans registre des remises nous ne savons pas
+    // ce qui a été rendu. Un plafond calculé sur autre chose aurait borné une
+    // exposition qui n'est pas celle qui compte.
     //
-    // Depuis que les courses encaissées peuvent partir au pool commun, c'est
-    // l'acceptation qui décide qui les prend — le contrôle posé à la création
-    // ne couvre que les favoris sollicités d'avance. Sans cette vérification,
-    // le plafond serait décoratif sur exactement le chemin le plus fréquent :
-    // la même erreur que la garde de clôture posée sur la route que
-    // l'application n'emprunte pas.
-    await this.assertCashCeiling(driver.id, order);
+    // Le risque n'a pas disparu, il a changé de porteur : l'entreprise pour
+    // ses conducteurs, le commerçant pour un indépendant (décision produit du
+    // 03/08/2026, `docs/registre_caisse_precis.md`).
 
     const publicId = await this.getDriverPublicId(driver);
 
@@ -1120,18 +1061,8 @@ export class TransporteurService {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
-    // ⚠️ Le plafond se vérifie AUSSI ici, et pas seulement à l'acceptation.
-    //
-    // Une course pré-assignée — favori sollicité à la création, ou affectation
-    // par une entreprise — n'a jamais traversé `acceptOrder()`. Son plafond
-    // avait été vérifié à la création, contre la dette d'alors ; entre-temps le
-    // conducteur a pu encaisser dix autres courses. Sur un brouillon, le délai
-    // est arbitrairement long.
-    //
-    // C'est la leçon du §16 appliquée : **une garde se pose sur le fait, pas
-    // sur le chemin auquel on pense en premier**. Le fait est ici « ce
-    // conducteur devient porteur d'espèces ».
-    await this.assertCashCeiling(driver.id, order);
+    // ⚠️ Second point de vérification du plafond de dette, retiré avec le
+    // premier le 03/08/2026 — même motif (`docs/registre_caisse_precis.md`).
 
     try {
       return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
@@ -1166,7 +1097,7 @@ export class TransporteurService {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
-    await this.settleCashIfDue(driver.id, order, cash);
+    await this.recordCollectionIfDue(order, cash);
 
     try {
       return await this.fleetbaseClient.completeOrder(this.orderPublicId(order));
@@ -1202,107 +1133,91 @@ export class TransporteurService {
 
 
   /**
-   * Solde une livraison qu'on s'apprête à clôturer : encaissement s'il y en a
-   * un, rémunération dans tous les cas.
+   * Consigne ce qui s'est passé à la porte, avant de clôturer la livraison.
    *
-   * ── Appelé depuis les DEUX chemins de clôture, et c'est essentiel ───────────
+   * ── Appelée depuis les DEUX chemins de clôture, et c'est essentiel ─────────
    *
    * `POST /terminer` n'est pas le seul moyen de clore une livraison :
    * l'application suit en réalité les transitions que le serveur lui propose
    * (`next-activity`), et la transition terminale passe par `update-activity`.
    * Poser la garde sur le seul `terminer` l'aurait rendue décorative — le
    * chemin réellement emprunté par l'app l'aurait contournée, et une livraison
-   * encaissée se serait close sans que l'argent figure nulle part.
+   * encaissée se serait close sans que le montant perçu figure nulle part.
    *
-   * ── L'ordre n'est pas indifférent ───────────────────────────────────────────
+   * ── L'ordre n'est pas indifférent ─────────────────────────────────────────
    *
-   * Le registre s'écrit **avant** la clôture Fleetbase. Si l'écriture échoue,
-   * la commande reste ouverte et le transporteur peut réessayer ; dans l'ordre
-   * inverse, on obtiendrait une livraison close et un encaissement fantôme.
+   * La déclaration s'écrit **avant** la clôture Fleetbase. Si l'écriture
+   * échoue, la commande reste ouverte et le transporteur peut réessayer ; dans
+   * l'ordre inverse, on obtiendrait une livraison close et un encaissement
+   * dont rien ne garde trace. C'est la règle 2 : sans transaction entre les
+   * deux systèmes, la plus réversible d'abord.
    *
-   * ── Comment l'argent se répartit ────────────────────────────────────────────
+   * ── Ce que cette fonction ne fait plus, et pourquoi ────────────────────────
    *
-   * Le transporteur retient sa rémunération sur les espèces qu'il tient, et ne
-   * doit au commerçant que la différence. La formule vaut que les frais de
-   * livraison soient inclus ou non dans le montant à encaisser — c'est ce qui
-   * rend ce choix purement informatif pour le commerçant.
+   * Elle écrivait dans un registre de caisse — dette du conducteur, part du
+   * facilitateur, rémunération, commission. Ce registre est retiré depuis le
+   * 03/08/2026 : tenir des soldes est de la trésorerie, pas de la logistique
+   * (`docs/registre_caisse_precis.md`). Ce qui reste est le **fait** : combien
+   * a été perçu, quand, et pourquoi ça diffère de ce qui était annoncé.
+   *
+   * ⚠️ **La reprise devient sûre sans garde d'idempotence, et c'est un gain.**
+   * Le registre accumulait des lignes, donc un réessai après échec réseau
+   * exigeait une logique explicite pour ne pas compter deux fois — celle des
+   * remises manquait, et trois déclarations pour une même dette étaient
+   * acceptées (mesuré le 03/08/2026). Ici la même valeur écrite deux fois
+   * donne le même état : il n'y a rien à garder.
    */
-  private async settleCashIfDue(
-    driverId: string,
-    order: any,
-    cash?: CashCollectionDto,
-  ): Promise<void> {
+  private async recordCollectionIfDue(order: any, cash?: CashCollectionDto): Promise<void> {
     // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
-    // `codAmount = 0` : la course se clôturerait sans qu'aucun encaissement
-    // ne soit enregistré, alors que le transporteur tient l'argent. La dette
-    // n'existerait nulle part.
+    // `codAmount = 0` : la course se clôturerait sans déclaration, alors que
+    // le transporteur tient l'argent.
     const [hydrated] = await this.withSpecMeta([order]);
     const meta = hydrated?.meta ?? order?.meta;
 
     const codAmount = Number(meta?.cod_amount) || 0;
-    const price = Number(meta?.price) || 0;
 
-    // Rien à enregistrer : ni encaissement, ni rémunération annoncée.
-    if (codAmount <= 0 && price <= 0) return;
+    // Rien n'était à percevoir à la porte : rien à consigner.
+    if (codAmount <= 0) return;
 
-    if (codAmount > 0 && !cash) {
+    const currency = platformCurrency(this.configService.get('CURRENCY'));
+
+    if (!cash) {
       badRequest(
         'cash.cod_declaration_required',
-        `Cette livraison est payée à la réception (${codAmount} ${this.cash.currency}) : ` +
+        `Cette livraison est payée à la réception (${codAmount} ${currency}) : ` +
           'déclarez le montant encaissé pour la clôturer.',
       );
     }
 
-    // Le commerçant vient du cache local, jamais de Fleetbase : c'est lui qui
-    // fait autorité sur « à qui appartient cette commande » (§2.8).
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order.uuid },
-      select: { merchantId: true },
+    const collected = assertCollectedAmount(
+      cash.collectedAmount,
+      codAmount,
+      cash.discrepancyReason,
+      currency,
+    );
+
+    const written = await this.orderCustomFields.writeToOrder(this.orderPublicId(order), {
+      collected_amount: collected,
+      collected_at: new Date().toISOString(),
+      // Absent quand les deux montants coïncident : poser un motif sur une
+      // déclaration sans écart rendrait illisible celle qui en a un.
+      ...(collected !== codAmount ? { collection_reason: cash.discrepancyReason } : {}),
     });
 
-    if (!cached) {
-      // Commande créée hors d'Echango — depuis la console opérateur. Il n'y a
-      // pas de commerçant à qui rendre des comptes, donc pas de registre : mais
-      // on refuse quand même l'encaissement, faute de savoir à qui l'imputer.
-      if (codAmount > 0) {
-        badRequest(
-          'cash.order_unknown_to_registry',
-          "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
-        );
-      }
-      return;
-    }
-
-    // Résolu UNE fois, puis figé dans les deux écritures : la partie ne doit
-    // pas pouvoir différer entre l'encaissement et la rémunération de la même
-    // course (exception §3.3 d'`architecture_bff_fleetbase.md`).
-    const facilitator = await this.resolveFacilitator(order);
-
-    let collected = 0;
-    if (codAmount > 0 && cash) {
-      const result = await this.cash.declareCollection(
-        driverId,
-        cached.merchantId,
-        order.uuid,
-        codAmount,
-        cash,
-        facilitator?.id ?? null,
+    if (!written) {
+      // ⚠️ Le pire des deux mondes serait un succès muet : la livraison se
+      // clôture, le transporteur repart avec l'argent, et rien n'en garde
+      // trace. Refuser laisse la course reprenable — c'est la règle 10, un
+      // défaut n'a pas de valeur par défaut.
+      badRequest(
+        'cash.collection_not_recorded',
+        "L'encaissement n'a pas pu être enregistré. Ne clôturez pas cette livraison : réessayez.",
       );
-      collected = result.collectedAmount;
     }
 
-    // La rémunération est enregistrée sur TOUTE course, encaissée ou non :
-    // c'est elle qui porte la commission d'Echango, et une course prépayée en
-    // produit une tout autant. `collected` borne ce que le transporteur peut
-    // retenir — on ne se paie pas sur de l'argent qu'on n'a pas.
-    await this.cash.recordEarning(
-      driverId,
-      cached.merchantId,
-      order.uuid,
-      price,
-      collected,
-      facilitator,
+    this.logger.log(
+      `Encaissement ${order.uuid} : ${collected} ${currency} perçus sur ${codAmount} annoncés`,
     );
   }
 
@@ -1331,99 +1246,6 @@ export class TransporteurService {
   }
 
   /**
-   * Le facilitateur de cette course — **délégué au registre**.
-   *
-   * ── Pourquoi ce n'est plus écrit ici (revue du 01/08/2026, C2) ───────────
-   *
-   * Ces quatre-vingt-dix lignes existaient **en double**, une copie par module,
-   * et l'ancien commentaire de celle-ci affirmait que le repli plateforme était
-   * « ici et nulle part ailleurs ». Il était aussi dans `commercant.service.ts`,
-   * en sens inverse : un `return null` là où celle-ci rendait Echango.
-   *
-   * Les deux alimentent le même registre, et `legScope()` construit une jambe
-   * différente selon que le facilitateur est nul — donc **deux contreparties
-   * pour deux courses identiques**, selon le chemin de clôture. Un commentaire
-   * ne peut pas échouer ; `CashService` le tient désormais pour les deux.
-   */
-  private resolveFacilitator(
-    order: any,
-  ): Promise<{ id: string; isPlatform: boolean } | null> {
-    return this.cash.resolveFacilitator(order);
-  }
-
-  /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
-  private resolveFacilitatorId(order: any): Promise<string | null> {
-    return this.cash.resolveFacilitatorId(order);
-  }
-
-  /**
-   * Refuse la course si l'encaissement ferait franchir le plafond de dette.
-   *
-   * Ce plafond est le garde-fou principal du paiement à la livraison : sans
-   * agences ni dépôts, cesser de confier des espèces à qui en doit déjà trop
-   * est le seul instrument de limitation du risque dont nous disposions.
-   *
-   * Le message dit le montant et la somme due : « refusé » sans chiffre laisse
-   * le transporteur sans moyen de savoir combien remettre pour repartir.
-   */
-  private async assertCashCeiling(driverId: string, order: any): Promise<void> {
-    // Même raison que dans `settleCashIfDue` : sur un `meta` effacé, le plafond
-    // de dette serait vérifié contre 0 et laisserait passer n'importe quel
-    // montant — le seul garde-fou du paiement à la livraison, désarmé
-    // silencieusement.
-    const [hydrated] = await this.withSpecMeta([order]);
-    const codAmount = Number(hydrated?.meta?.cod_amount ?? order?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return;
-
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order.uuid },
-      select: { merchantId: true },
-    });
-    if (!cached) return;
-
-    // La contrepartie du conducteur est son facilitateur quand la course en
-    // porte un — c'est LUI qui borne son exposition, et non plus le commerçant
-    // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
-    // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
-    const facilitatorId = await this.resolveFacilitatorId(order);
-    const counterparty = this.cash.driverCounterparty(facilitatorId, cached.merchantId);
-
-    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
-      driverParty(driverId),
-      counterparty,
-      codAmount,
-    );
-
-    if (!allowed) {
-      // ⚠️ Le message nomme la contrepartie RÉELLE, et il y en a trois.
-      //
-      // « pour ce commerçant » est faux dans deux cas sur trois, et chacun
-      // envoie le conducteur remettre au mauvais endroit — donc ne pas se
-      // débloquer, et conclure à un défaut de l'application :
-      //
-      //   · plafond par personne  → le total, toutes contreparties confondues ;
-      //   · contrepartie `fleet`  → une entreprise, ou **Echango** depuis que le
-      //     pool a un facilitateur (01/08/2026). C'est le cas le plus courant, et
-      //     le total y est agrégé sur TOUS les commerçants du pool : « pour ce
-      //     commerçant » y désignait un montant qui n'est pas le sien.
-      badRequest(
-        'cash.ceiling_exceeded',
-        scope === 'person'
-          ? `Vous détenez déjà ${held} ${this.cash.currency} au total, toutes entreprises et ` +
-              `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
-              `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
-          : counterparty.type === 'fleet'
-            ? `Vous détenez déjà ${held} ${this.cash.currency} pour le compte de votre ` +
-                `donneur d'ordre, et cette course en ajouterait ${codAmount} — au-delà du ` +
-                `plafond de ${ceiling}. Remettez les espèces avant de reprendre une course encaissée.`
-            : `Vous détenez déjà ${held} ${this.cash.currency} pour ce commerçant, et cette ` +
-                `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-                'Remettez les espèces avant de reprendre une course encaissée pour lui.',
-      );
-    }
-  }
-
-  /**
    * Cette transition clôt-elle la livraison ?
    *
    * ── Pourquoi ce n'est plus un littéral (revue du 01/08/2026, S4) ──────────
@@ -1433,7 +1255,7 @@ export class TransporteurService {
    * l'`OrderConfig` — **modifiable depuis la console**, et choisie par
    * `configs.find(key === 'transport') || configs[0]`. Le jour où l'activité
    * terminale d'une configuration porte un autre code, une livraison encaissée
-   * se clôturait sans que `settleCashIfDue()` ne s'exécute : livraison close,
+   * se clôturait sans que `recordCollectionIfDue()` ne s'exécute : livraison close,
    * argent dans la poche du conducteur, aucune `CashCollection`, aucune dette,
    * et rien pour le dire. C'est le mode d'échec exact du §16, où la même garde
    * était décorative pour une autre raison.
@@ -1471,7 +1293,7 @@ export class TransporteurService {
     // La transition terminale exige la déclaration d'encaissement au même titre
     // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.
     if (this.isTerminalActivity(dto.activity)) {
-      await this.settleCashIfDue(driver.id, order, dto.cash);
+      await this.recordCollectionIfDue(order, dto.cash);
     }
 
     try {

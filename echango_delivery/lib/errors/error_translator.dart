@@ -52,59 +52,23 @@ const Map<String, String> _fr = {
   'auth.missing_token': 'Session invalide, reconnectez-vous.',
   'auth.session_revoked': 'Session révoquée, reconnectez-vous.',
 
-  // ── Caisse (encaissements, remises) ─────────────────────────────────────
+  // ── Encaissement à la porte ─────────────────────────────────────────────
+  //
+  // ⚠️ Vingt-cinq entrées ont disparu le 03/08/2026 avec le registre de caisse
+  // (`docs/registre_caisse_precis.md`). Les cinq restantes portent sur le seul
+  // geste qui subsiste : déclarer ce qui a été perçu en clôturant.
   'merchant.fleet_not_in_network':
       'Cette entreprise ne fait pas partie du réseau Echango.',
-  'cash.platform_ambiguous':
-      'Configuration incomplète côté Echango. Contactez le support.',
-  'cash.amount_negative': 'Le montant ne peut pas être négatif.',
-  'cash.amount_exceeds_expected': 'Le montant dépasse celui attendu.',
-  'cash.discrepancy_reason_required':
-      'Précisez le motif de l\'écart avec le montant attendu.',
-  'cash.collection_conflict': 'Cet encaissement a déjà été déclaré.',
-  'cash.remittance_amount_must_be_positive':
-      'Le montant de la remise doit être positif.',
-  'cash.no_debt': 'Aucune dette envers ce commerçant.',
-  'cash.remittance_exceeds_debt': 'Le montant dépasse la dette actuelle.',
-  'cash.remittance_already_confirmed': 'Cette remise a déjà été confirmée.',
-  'cash.remittance_disputed': 'Cette remise a été contestée.',
-  'cash.remittance_must_be_confirmed_by_other_party':
-      'Cette remise doit être confirmée par l\'autre partie.',
-  'cash.remittance_self_dispute_forbidden':
-      'Vous ne pouvez pas contester votre propre déclaration.',
-  'cash.remittance_not_found': 'Remise introuvable.',
-  'cash.ceiling_exceeded':
-      'Plafond de dette atteint pour ce commerçant : remettez les espèces '
-          'avant de reprendre une course encaissée.',
   'cash.cod_declaration_required':
       'Cette livraison est payée à la réception : déclarez le montant '
           'encaissé pour la clôturer.',
-  'cash.order_unknown_to_registry':
-      'Commande inconnue du registre : encaissement impossible.',
-  'cash.collection_already_declared':
-      'Un encaissement est déjà enregistré pour cette livraison.',
-  'cash.collection_not_found':
-      'Encaissement introuvable.',
-  'cash.collection_not_confirmable':
-      'Cet encaissement est le vôtre : rien à confirmer.',
-  'cash.collection_already_confirmed':
-      'Cet encaissement a déjà été confirmé.',
-  'cash.collection_disputed':
-      'Cet encaissement a été contesté.',
-  'cash.order_not_delivered':
-      'Seule une livraison terminée peut être régularisée.',
-  'cash.order_has_no_cod':
-      'Cette livraison n\'était pas payée à la réception.',
-  'cash.driver_required':
-      'Indiquez quel transporteur a effectué cette livraison.',
-  'cash.driver_not_in_network':
-      'Transporteur inconnu du réseau.',
-  'cash.counterparty_not_found': 'Contrepartie introuvable.',
-  'cash.driver_no_account':
-      'Ce transporteur n\'a pas de compte dans l\'application : il ne peut rien confirmer.',
-  'cash.driver_unknown_to_merchant':
-      'Ce transporteur n’a jamais livré pour vous et n’est pas dans vos favoris : '
-          'ajoutez-le d’abord à vos transporteurs.',
+  'cash.amount_negative': 'Le montant ne peut pas être négatif.',
+  'cash.amount_exceeds_expected': 'Le montant dépasse celui attendu.',
+  'cash.discrepancy_reason_required':
+      'Indiquez la raison de l’écart avec le montant attendu.',
+  'cash.collection_not_recorded':
+      'L’encaissement n’a pas pu être enregistré. Ne clôturez pas cette '
+          'livraison : réessayez dans un instant.',
 
   // ── Commandes ────────────────────────────────────────────────────────────
   'order.not_found': 'Commande introuvable.',
@@ -251,52 +215,15 @@ const Map<String, String> _ar = {
   'auth.missing_token': 'جلسة غير صالحة، يرجى تسجيل الدخول مجدداً.',
   'auth.session_revoked': 'تم إلغاء الجلسة، يرجى تسجيل الدخول مجدداً.',
 
-  // ── الصندوق (التحصيل والتسليم) ───────────────────────────────────────────
+  // ── التحصيل عند الباب ────────────────────────────────────────────────────
   'merchant.fleet_not_in_network': 'هذه الشركة ليست ضمن شبكة Echango.',
-  'cash.platform_ambiguous': 'إعداد غير مكتمل لدى Echango. اتصل بالدعم.',
+  'cash.cod_declaration_required':
+      'هذه الطلبية تُدفع عند الاستلام: يرجى تصريح المبلغ المحصّل لإغلاقها.',
   'cash.amount_negative': 'لا يمكن أن يكون المبلغ سالباً.',
   'cash.amount_exceeds_expected': 'المبلغ يتجاوز المبلغ المتوقع.',
   'cash.discrepancy_reason_required': 'يرجى توضيح سبب الفرق في المبلغ المتوقع.',
-  'cash.collection_conflict': 'تم تسجيل هذا التحصيل مسبقاً.',
-  'cash.remittance_amount_must_be_positive': 'يجب أن يكون مبلغ التسليم موجباً.',
-  'cash.no_debt': 'لا يوجد دين تجاه هذا التاجر.',
-  'cash.remittance_exceeds_debt': 'المبلغ يتجاوز الدين الحالي.',
-  'cash.remittance_already_confirmed': 'تم تأكيد هذا التسليم بالفعل.',
-  'cash.remittance_disputed': 'تم الاعتراض على هذا التسليم.',
-  'cash.remittance_must_be_confirmed_by_other_party':
-      'يجب تأكيد هذا التسليم من الطرف الآخر.',
-  'cash.remittance_self_dispute_forbidden':
-      'لا يمكنك الاعتراض على تصريحك الخاص.',
-  'cash.remittance_not_found': 'التسليم غير موجود.',
-  'cash.ceiling_exceeded':
-      'تم بلوغ سقف الدين لهذا التاجر: يرجى تسليم النقد قبل استلام طلبية '
-          'أخرى بالدفع عند الاستلام.',
-  'cash.cod_declaration_required':
-      'هذه الطلبية تُدفع عند الاستلام: يرجى تصريح المبلغ المحصّل لإغلاقها.',
-  'cash.order_unknown_to_registry': 'الطلبية غير معروفة في السجل: التحصيل غير ممكن.',
-  'cash.collection_already_declared':
-      'تم بالفعل تسجيل تحصيل لهذا التوصيل.',
-  'cash.collection_not_found':
-      'التحصيل غير موجود.',
-  'cash.collection_not_confirmable':
-      'هذا التحصيل خاص بك: لا شيء لتأكيده.',
-  'cash.collection_already_confirmed':
-      'تم تأكيد هذا التحصيل مسبقًا.',
-  'cash.collection_disputed':
-      'هذا التحصيل محل نزاع.',
-  'cash.order_not_delivered':
-      'لا يمكن تسوية سوى توصيل مكتمل.',
-  'cash.order_has_no_cod':
-      'هذا التوصيل لم يكن بالدفع عند الاستلام.',
-  'cash.driver_required':
-      'حدّد الناقل الذي قام بهذا التوصيل.',
-  'cash.driver_not_in_network':
-      'ناقل غير معروف في الشبكة.',
-  'cash.counterparty_not_found': 'الطرف المقابل غير موجود.',
-  'cash.driver_no_account':
-      'هذا الناقل ليس لديه حساب في التطبيق: لا يمكنه تأكيد أي شيء.',
-  'cash.driver_unknown_to_merchant':
-      'لم يقم هذا الناقل بأي توصيل لك وليس ضمن مفضّليك: أضفه أولاً إلى ناقليك.',
+  'cash.collection_not_recorded':
+      'تعذّر تسجيل التحصيل. لا تُغلق عملية التسليم هذه: أعد المحاولة بعد لحظات.',
 
   // ── الطلبيات ──────────────────────────────────────────────────────────────
   'order.not_found': 'الطلبية غير موجودة.',

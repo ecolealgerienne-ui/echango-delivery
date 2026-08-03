@@ -1742,4 +1742,53 @@ export class FleetbaseApiClient {
     });
     return response.data;
   }
+
+  /**
+   * Écrit des valeurs de champs personnalisés sur une **commande existante**.
+   *
+   * Sert à consigner ce qui s'est passé à la porte — montant perçu, écart,
+   * horodatage — au moment de la clôture. La création, elle, les passe dans le
+   * corps de `createOrder`.
+   *
+   * ⚠️ **Le corps ne porte QUE `custom_field_values`, et c'est essentiel.** Le
+   * chemin de mise à jour de Fleetbase est un `$record->update($input)`
+   * générique : toute clé présente est écrite telle quelle, et `meta` — qui est
+   * dans le `$fillable` et n'a aucun mutateur — serait **remplacé en entier**.
+   * C'est exactement ce que fait la console en affectant un transporteur, et ce
+   * qui a détruit prix et montants sur une commande réelle le 30/07/2026. En
+   * n'envoyant pas la clé, on ne peut pas commettre la même faute.
+   *
+   * ⚠️ **Enveloppe sous `order`**, comme `setDriverCustomFieldValues` sous
+   * `driver` : envoyé à plat, Laravel rend un 500 dont le message nomme un
+   * fichier du framework et ne dit rien du contrat.
+   *
+   * ── Mesuré en réel le 03/08/2026, contre le Fleetbase de développement ─────
+   *
+   * Trois choses, chacune avec son témoin, parce qu'aucune ne se déduit de la
+   * lecture du source :
+   *
+   *  1. **L'appel passe** — `PUT` sur le `public_id`, HTTP 200, et la valeur
+   *     est **relue**. Le code HTTP seul ne prouve rien : Fleetbase abandonne
+   *     un champ inconnu sans rien dire.
+   *  2. **`meta` est intact** après l'écriture, à l'octet près.
+   *  3. ⚠️ **Le `PUT` FUSIONNE, il ne remplace pas** — et c'était la question
+   *     qui décidait de tout. Trois champs posés (`price`, `cod_amount`,
+   *     `collected_amount`), puis un `PUT` n'en portant **qu'un seul** : les
+   *     trois sont toujours là, seul celui envoyé a changé.
+   *
+   * Sans ce troisième témoin, cette méthode aurait effacé prix et montant à
+   * encaisser **au moment précis de la clôture** — le défaut `meta` du
+   * 30/07/2026, reproduit sur le mécanisme censé le corriger. Et il fallait
+   * **poser** le témoin : lire une commande qui ne porte qu'un champ ne
+   * distingue pas « les autres ont été détruits » de « elle n'en avait pas ».
+   */
+  async setOrderCustomFieldValues(
+    orderId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderId)}`, {
+      order: { custom_field_values: values },
+    });
+    return response.data;
+  }
 }

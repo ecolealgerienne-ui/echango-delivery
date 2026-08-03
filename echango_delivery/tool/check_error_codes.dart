@@ -265,7 +265,7 @@ void main(List<String> args) {
   // vérifié en silence, alors qu'ici il fait échouer le contrôle.
   const tables = {
     'lib/i18n/fleet_strings.dart': 'Libellés flotte',
-    'lib/i18n/cash_strings.dart': 'Libellés caisse',
+    'lib/i18n/collections_strings.dart': 'Libellés encaissements',
     'lib/i18n/order_strings.dart': 'Libellés des livraisons',
     'lib/i18n/driver_strings.dart': 'Libellés espace transporteur',
     'lib/i18n/auth_strings.dart': 'Libellés connexion',

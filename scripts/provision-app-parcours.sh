@@ -3,13 +3,6 @@
 # personas, puis rend les identifiants à passer à `flutter drive`.
 #
 #   ./scripts/provision-app-parcours.sh [conducteur]
-#   RESET_LEDGER=1 ./scripts/provision-app-parcours.sh [conducteur]
-#
-# ⚠️ `RESET_LEDGER=1` **solde le registre du conducteur de parcours** — les
-# parcours d'argent déclarent un encaissement à chaque exécution, et sans
-# soldage le plafond de dette finit par refuser la course. Développement
-# uniquement : sur une base réelle, une dette constatée se solde par une remise
-# confirmée, elle ne s'efface pas.
 #
 # ── Pourquoi un script à part, et pourquoi en shell ─────────────────────────
 #
@@ -411,27 +404,15 @@ dapi() { # méthode chemin [corps]
 # `UNBLOCK=1` libère, comme pour les scénarios.
 require_free_driver
 
-# ── Le registre du conducteur de parcours ───────────────────────────────────
+# ⚠️ **Le soldage du registre a disparu le 03/08/2026 avec le registre
+# lui-même** (`docs/registre_caisse_precis.md`). Il existait parce que les
+# parcours d'argent déclaraient un encaissement à chaque exécution sans que
+# rien ne le solde : l'encours montait d'environ 2800 par passage et, au
+# septième, le plafond de dette refusait toute course encaissée.
 #
-# ⚠️ **Les parcours d'argent déclarent un encaissement à CHAQUE exécution, et
-# rien ne le solde.** L'encours du conducteur monte donc d'environ 2800 par
-# passage ; au septième, `COD_DEBT_CEILING_PER_PERSON` (20000) est atteint et
-# l'acceptation d'une course encaissée est refusée — mesuré à 18900 le
-# 02/08/2026, sur un refus parfaitement juste.
-#
-# ⚠️ **Le réflexe serait de desserrer le plafond pour « faire passer les
-# tests »** : ce serait désactiver la seule chose qui borne notre exposition,
-# pour une raison qui n'a rien à voir avec le produit. Ce qui se nettoie, c'est
-# la donnée de test — même parti pris que `reset-test-ledger.sh`, et même
-# garde-fou explicite.
-#
-# Un test qui se dégrade avec son propre usage n'est pas un test : sans ce
-# soldage, la suite ne passe qu'un nombre fini de fois.
-if [ "${RESET_LEDGER:-0}" = "1" ]; then
-  step "Registre du conducteur"
-  I_KNOW_THIS_IS_DEV=1 "$(dirname "${BASH_SOURCE[0]}")/reset-test-ledger.sh" \
-    "$DRIVER_EMAIL" 2>&1 | sed 's/^/   /'
-fi
+# La déclaration à la porte s'écrit désormais **sur la commande**, donc chaque
+# parcours écrit sur la sienne : rien ne s'accumule, il n'y a plus rien à
+# remettre à zéro. `RESET_LEDGER` n'a plus d'effet et n'est plus lu.
 
 # ── 5. Des courses libres à prendre ─────────────────────────────────────────
 #

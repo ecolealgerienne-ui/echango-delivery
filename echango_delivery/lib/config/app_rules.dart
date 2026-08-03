@@ -107,14 +107,6 @@ class AppRules {
   /// chiffré, la valeur passerait dans `ServerRules` avec son vérificateur.
   static const Duration searchDebounce = Duration(milliseconds: 600);
 
-  /// Nombre d'encaissements détaillés sur l'écran de caisse.
-  ///
-  /// ⚠️ La valeur apparaissait **trois fois dans le même bloc** : `take(20)`,
-  /// `length > 20`, et « 20 dernières livraisons » **dans le texte affiché**.
-  /// En changer une seule aurait fait mentir l'écran — vingt-cinq lignes sous un
-  /// titre en annonçant vingt.
-  static const int cashCollectionsPreview = 20;
-
   /// Taille d'une page de liste, pour toutes les listes paginées de l'app.
   ///
   /// ⚠️ **Une décision locale, malgré l'apparence.** Le BFF a bien un défaut de

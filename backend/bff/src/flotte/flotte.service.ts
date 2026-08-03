@@ -12,7 +12,6 @@ import {
 } from '../common/projections/order.projection';
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { effectiveOrderMeta } from '../common/projections/order.projection';
-import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import {
   phoneContains,
@@ -29,7 +28,6 @@ export class FlotteService {
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
     private audit: AuditService,
-    private cash: CashService,
   ) {}
 
   /**
@@ -213,10 +211,10 @@ export class FlotteService {
       );
     }
 
-    // Le plafond avant l'écriture : une entreprise qui doit déjà trop ne prend
-    // pas une course encaissée de plus. Vérifié ici plutôt qu'après, pour ne pas
-    // avoir à défaire un rattachement.
-    await this.assertClaimCashCeiling(fleetId, this.withEffectiveMeta(order));
+    // ⚠️ Un plafond de dette de l'entreprise était vérifié ici, et retiré le
+    // 03/08/2026 avec le registre de caisse (`docs/registre_caisse_precis.md`).
+    // Le risque qu'il bornait n'a pas disparu : il est porté par l'entreprise
+    // elle-même, qui répond des espèces de ses conducteurs.
 
     try {
       await this.fleetbaseClient.attachFacilitator(order.uuid, fleet.fleetbaseVendorUuid);
@@ -262,76 +260,6 @@ export class FlotteService {
 
     this.logger.log(`Course ${orderId} prise par la flotte ${fleetId}`);
     return projectOrderForFleet(this.withEffectiveMeta(after));
-  }
-
-  /**
-   * Plafond de dette avant de prendre une course encaissée.
-   *
-   * La contrepartie est le commerçant, et le débiteur l'entreprise : c'est son
-   * exposition à elle qu'on borne, tous conducteurs confondus.
-   */
-  /**
-   * Le plafond de dette de l'ENTREPRISE, vérifié et refusé.
-   *
-   * ⚠️ **Ces dix-neuf lignes existaient en deux copies** (détecteur de corps
-   * similaires, 01/08/2026, 100 %) — une sur la prise d'une course libre, une
-   * sur l'affectation à un conducteur. Le critère de la règle 5 ne laisse
-   * aucun doute : si le plafond change de portée, de message ou de code
-   * d'erreur, les deux DOIVENT changer. Et ici une divergence ne se voit
-   * pas — elle produit un refus qui annonce un montant faux, ou pire, un refus
-   * d'un côté et un passage de l'autre pour la même course.
-   *
-   * Rend `false` quand il n'y a rien à vérifier (course sans encaissement,
-   * commande absente du cache) : l'appelant sait alors qu'aucun montant n'est
-   * en jeu. Les deux appelants en profitent pour s'arrêter là.
-   */
-  private async assertFleetCeiling(
-    fleetId: string,
-    order: any,
-  ): Promise<{ codAmount: number; merchantId: string } | null> {
-    // ⚠️ Hydrate **lui-même**, plutôt que d'espérer que l'appelant l'ait fait.
-    //
-    // Depuis la migration du 30/07, `cod_amount` vit dans `custom_field_values`
-    // et non dans `meta`. Lire `order?.meta?.cod_amount` brut donnait `0` sur
-    // toute commande non recomposée — donc un `return null` silencieux, et le
-    // seul garde-fou du paiement à la livraison **désarmé sans un mot**. Son
-    // jumeau du module transporteur hydratait déjà, avec un commentaire disant
-    // exactement pourquoi ; la garde ne doit pas dépendre de la discipline de
-    // ses quatre appelants (règle 5).
-    const codAmount = Number(this.withEffectiveMeta(order)?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return null;
-
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order?.uuid },
-      select: { merchantId: true },
-    });
-    if (!cached) return null;
-
-    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
-      fleetParty(fleetId),
-      merchantParty(cached.merchantId),
-      codAmount,
-    );
-
-    if (!allowed) {
-      // ⚠️ Le message suit le plafond qui a refusé. Dire « pour ce commerçant »
-      // quand c'est le plafond global qui a mordu enverrait chercher une remise
-      // auprès de quelqu'un qui n'est pour rien dans le blocage.
-      badRequest(
-        'cash.ceiling_exceeded',
-        scope === 'person'
-          ? `Votre entreprise détient déjà ${held} ${this.cash.currency} au total, et cette ` +
-              `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`
-          : `Votre entreprise détient déjà ${held} ${this.cash.currency} pour ce commerçant, et ` +
-              `cette course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}.`,
-      );
-    }
-
-    return { codAmount, merchantId: cached.merchantId };
-  }
-
-  private async assertClaimCashCeiling(fleetId: string, order: any): Promise<void> {
-    await this.assertFleetCeiling(fleetId, order);
   }
 
   /**
@@ -1129,14 +1057,8 @@ export class FlotteService {
       );
     }
 
-    // Le plafond de dette, sur un chemin qui ne le traversait pas (défaut D8).
-    //
-    // `assertCashCeiling()` du module transporteur n'est appelé que depuis
-    // `acceptOrder()` — qu'une affectation par l'entreprise ne franchit jamais.
-    // Une société pouvait donc s'affecter des courses encaissées sans aucune
-    // borne, ce qui vide de son sens le seul garde-fou du paiement à la
-    // livraison.
-    await this.assertDriverCashCeiling(fleetId, driverId, orderId);
+    // ⚠️ Le pendant du plafond conducteur sur le chemin de l'affectation,
+    // retiré le 03/08/2026 pour le même motif.
 
     try {
       const response = await this.fleetbaseClient.assignOrderToDriver(driverId, orderId);
@@ -1148,82 +1070,6 @@ export class FlotteService {
     }
   }
 
-
-  /**
-   * Refuse l'affectation si elle ferait franchir le plafond de dette.
-   *
-   * La contrepartie est **l'entreprise elle-même** dès qu'elle facilite la
-   * course : c'est son exposition qu'on borne, tous conducteurs confondus, et
-   * c'est précisément le défaut que ce chantier corrige — dix conducteurs
-   * accumulaient dix plafonds chez le même commerçant.
-   *
-   * Un conducteur sans compte Echango ne peut pas porter de dette dans le
-   * registre : on laisse passer plutôt que de bloquer une affectation
-   * légitime sur une donnée qui n'existe pas.
-   */
-  private async assertDriverCashCeiling(
-    fleetId: string,
-    driverUuid: string,
-    orderId: string,
-  ): Promise<void> {
-    let order: any;
-    try {
-      order = this.withEffectiveMeta(await this.readOrder(orderId));
-    } catch (error: any) {
-      this.logger.warn(`Plafond non vérifié pour ${orderId} : ${error.message}`);
-      return;
-    }
-
-    const fleetSide = await this.assertFleetCeiling(fleetId, order);
-    if (!fleetSide) return;
-    const { codAmount, merchantId } = fleetSide;
-
-    // ⚠️ **Le plafond du CONDUCTEUR, vérifié ici et pas seulement au démarrage.**
-    //
-    // Le contrôle ci-dessus porte sur l'entreprise. Celui du conducteur
-    // n'existait que sur `acceptOrder`/`startOrder`, c'est-à-dire **après** que
-    // l'entreprise lui a confié la course : elle affectait donc une course qu'il
-    // ne pourrait pas démarrer, sans aucun signal de son côté — et la course
-    // restait assignée à quelqu'un de bloqué.
-    //
-    // Le message ne nomme pas ce que le conducteur détient ailleurs : ce sont
-    // les affaires d'une autre entreprise.
-    const driverAccount = await this.prisma.driverAccount.findUnique({
-      where: { fleetbaseDriverUuid: driverUuid },
-      select: { id: true },
-    });
-
-    // Pas de compte applicatif ⇒ aucune dette possible dans le registre : rien à
-    // vérifier, et bloquer ici ferait échouer une affectation légitime sur une
-    // donnée qui n'existe pas.
-    if (!driverAccount) return;
-
-    const forDriver = await this.cash.canTakeCashOrder(
-      driverParty(driverAccount.id),
-      this.cash.driverCounterparty(fleetId, merchantId),
-      codAmount,
-    );
-
-    if (!forDriver.allowed) {
-      // ⚠️ **Avec les chiffres, et en `badRequest` comme partout ailleurs.**
-      //
-      // Cette copie levait un `conflict` (409) sans aucun montant, là où les deux
-      // autres lèvent un `badRequest` (400) en disant la somme détenue, celle de
-      // la course et le plafond. Deux défauts pour le même code d'erreur : un
-      // client qui distingue 400 et 409 traitait le même refus de deux façons
-      // selon le persona, et « refusé » sans chiffre laisse sans moyen de savoir
-      // combien faire remettre — le motif exact écrit dans le jumeau transporteur.
-      //
-      // Le message ne nomme toujours pas ce que le conducteur détient ailleurs :
-      // ce sont les affaires d'une autre entreprise (voir plus haut).
-      badRequest(
-        'cash.ceiling_exceeded',
-        `Ce conducteur détient déjà ${forDriver.held} ${this.cash.currency} non remis, et cette ` +
-          `course en ajouterait ${codAmount} — au-delà du plafond de ${forDriver.ceiling}. ` +
-          'Faites-lui remettre les espèces avant de la lui confier.',
-      );
-    }
-  }
 
   /**
    * Commandes de cette flotte, paginées jusqu'au bout.
@@ -1344,12 +1190,10 @@ export class FlotteService {
    * `loadMissing()` de la ressource amont) décrit le chemin de **liste**, et n'a
    * jamais été éprouvé sur la lecture unitaire.
    *
-   * Ce n'est pas un problème d'affichage. `assertClaimCashCeiling()` et
-   * `assertDriverCashCeiling()` lisent `meta.cod_amount` par ce chemin : si la
-   * relation manque, le montant vaut `0`, la garde ne se déclenche **jamais**, et
-   * une entreprise accumule des espèces sans plafond — en silence, sans erreur,
-   * avec un plafond qui a l'air de fonctionner. Un défaut d'argent déguisé en
-   * détail de sérialisation.
+   * Ce n'est pas un problème d'affichage : le montant à encaisser est ce que
+   * l'entreprise regarde pour décider si elle prend la course, et une relation
+   * manquante le rendrait à `0` — sans erreur, sans trace, avec une fiche qui a
+   * l'air complète. Un défaut d'argent déguisé en détail de sérialisation.
    *
    * Un seul point d'entrée pour que la question ne se repose pas quatre fois.
    */

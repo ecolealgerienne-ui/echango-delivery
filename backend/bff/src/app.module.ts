@@ -10,7 +10,6 @@ import { PrismaModule } from './database/prisma.module';
 import { AuditModule } from './common/audit/audit.module';
 import { FleetbaseModule } from './fleetbase/fleetbase.module';
 import { NotificationsModule } from './notifications/notifications.module';
-import { CashModule } from './cash/cash.module';
 import { AuthModule } from './auth/auth.module';
 import { CommerçantModule } from './commercant/commercant.module';
 import { FlotteModule } from './flotte/flotte.module';
@@ -58,7 +57,6 @@ import { CommonModule } from './common/common.module';
     AuditModule,
     FleetbaseModule,
     NotificationsModule,
-    CashModule,
     HealthModule,
     CommonModule,
     AuthModule,

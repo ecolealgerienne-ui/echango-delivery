@@ -13,7 +13,7 @@ import 'services/bff_api_client.dart';
 import 'services/location_service.dart';
 import 'state/auth_state.dart';
 import 'state/driver_presence_state.dart';
-import 'state/cash_state.dart';
+import 'state/collections_state.dart';
 import 'state/fleet_state.dart';
 import 'state/locale_state.dart';
 import 'state/merchant_order_state.dart';
@@ -99,7 +99,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     with WidgetsBindingObserver {
   late final OrderState _orderState;
   late final MerchantOrderState _merchantOrderState;
-  late final CashState _cashState;
+  late final CollectionsState _collectionsState;
   late final FleetState _fleetState;
   late final DriverPresenceState _presence;
   final NotificationService _merchantNotifications = NotificationService();
@@ -117,8 +117,8 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
       apiClient: widget.apiClient,
       localeState: widget.localeState,
     );
-    _cashState =
-        CashState(apiClient: widget.apiClient, localeState: widget.localeState);
+    _collectionsState = CollectionsState(
+        apiClient: widget.apiClient, localeState: widget.localeState);
     _fleetState =
         FleetState(apiClient: widget.apiClient, localeState: widget.localeState);
     _presence = DriverPresenceState(
@@ -223,7 +223,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
     _presence.dispose();
     _orderState.dispose();
     _merchantOrderState.dispose();
-    _cashState.dispose();
+    _collectionsState.dispose();
     super.dispose();
   }
 
@@ -238,7 +238,7 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
         // Un seul registre pour les deux profils : ce que le transporteur doit
         // est ce que le commerçant attend. Deux états auraient divergé sur la
         // seule chose qui doit rester commune.
-        ChangeNotifierProvider<CashState>.value(value: _cashState),
+        ChangeNotifierProvider<CollectionsState>.value(value: _collectionsState),
         ChangeNotifierProvider<FleetState>.value(value: _fleetState),
         ChangeNotifierProvider<DriverPresenceState>.value(value: _presence),
         ChangeNotifierProvider<LocaleState>.value(value: widget.localeState),

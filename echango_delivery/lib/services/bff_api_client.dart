@@ -11,7 +11,7 @@ import '../models/order.dart';
 import '../models/merchant_order.dart';
 import '../models/driver_zone.dart';
 import '../models/fleet_driver_position.dart';
-import '../models/cash.dart';
+import '../models/collections.dart';
 
 const _tokenKey = 'echango_session_token';
 
@@ -608,145 +608,20 @@ class BffApiClient {
     );
   }
 
-  // ── Caisse (transporteur) ──────────────────────────────────────────────
-  //
-  // Le transporteur conserve les espèces qu'il encaisse ; ces routes servent le
-  // compte de ce qu'il doit, commerçant par commerçant. Echango ne détient
-  // jamais ces sommes.
-
-  Future<CashLedger> getDriverCashLedger() async {
-    final data = await _get('/transporteur/caisse');
-    return _ledgerFrom(data, CashBalance.fromDriverJson);
-  }
-
-  Future<List<CashRemittance>> getDriverRemittances() async {
-    return _listOf(await _get('/transporteur/caisse/remises'), 'data', CashRemittance.fromJson);
-  }
-
-  Future<void> declareDriverRemittance({
-    required String merchantId,
-    required double amount,
-  }) async {
-    await _post('/transporteur/caisse/remises', {'merchantId': merchantId, 'amount': amount});
-  }
-
-  Future<void> confirmDriverRemittance(String id) async {
-    await _post('/transporteur/caisse/remises/$id/confirmer');
-  }
-
-  Future<void> disputeDriverRemittance(String id, {String? reason}) async {
-    await _post('/transporteur/caisse/remises/$id/contester', {if (reason != null) 'reason': reason});
-  }
-
   // ── Encaissements (commerçant) ─────────────────────────────────────────
+  //
+  // ⚠️ Vingt-quatre méthodes vivaient ici, pour les trois profils : soldes,
+  // remises, confirmations, contestations, régularisations. Elles sont parties
+  // le 03/08/2026 avec le registre de caisse
+  // (`docs/registre_caisse_precis.md`).
+  //
+  // Il en reste **une**, et c'est une lecture. Ce que le transporteur a déclaré
+  // percevoir se dit désormais **en clôturant la livraison** — voir le
+  // paramètre `cash` de la clôture, plus haut — et se lit sur la commande.
 
-  Future<CashLedger> getMerchantCashLedger() async {
-    final data = await _get('/commercant/encaissements');
-    return _ledgerFrom(data, CashBalance.fromMerchantJson);
-  }
-
-  /// Le détail des encaissements, livraison par livraison.
-  ///
-  /// Le total dû est une somme de différences : sans ce détail, un commerçant
-  /// ne peut pas vérifier d'où viennent les espèces qu'on lui doit — et c'est
-  /// pourtant ce qu'il contrôle avant de confirmer une remise, geste qui éteint
-  /// une dette.
-  Future<List<CashCollectionEntry>> getMerchantCollections() async {
-    return _listOf(await _get('/commercant/encaissements/details'), 'data', CashCollectionEntry.fromJson);
-  }
-
-  /// Ce qui sera réclamé aux portes, et n'est encore dans la poche de personne.
-  ///
-  /// Sert une question que le registre ne sait pas poser : il n'enregistre que
-  /// le perçu, donc un commerçant dont les courses sont en route lisait « 0 DZD
-  /// / aucune somme en attente » pendant qu'on réclamait son argent ailleurs.
-  /// Deux listes servies ensemble : ce qui est en route, et ce qui est livré
-  /// **sans encaissement enregistré** — un cas qui n'aurait pas dû exister et
-  /// qui existe, parce qu'une clôture depuis la console Fleetbase ne passe par
-  /// aucune de nos gardes.
-  Future<PendingCollections> getMerchantPendingCollections() async {
-    return PendingCollections.fromJson(await _get('/commercant/encaissements/attendus'));
-  }
-
-  /// « Ce transporteur a bien encaissé X sur cette livraison. »
-  ///
-  /// Régularise une course clôturée hors application, dont le registre ne sait
-  /// rien. La déclaration n'établit rien seule : elle attend la confirmation du
-  /// transporteur — ici le déclarant engage quelqu'un d'autre.
-  ///
-  /// [fleetbaseDriverUuid] n'est requis que si la livraison ne porte aucun
-  /// transporteur, cas réel sur une course close depuis la console. Ignoré
-  /// sinon : la course fait foi.
-  Future<void> declareMissingCollection({
-    required String orderId,
-    required double collectedAmount,
-    String? fleetbaseDriverUuid,
-    String? discrepancyReason,
-    String? notes,
-  }) async {
-    await _post(
-      '/commercant/commandes/$orderId/encaissement',
-      {
-        'collectedAmount': collectedAmount,
-        if (fleetbaseDriverUuid != null) 'fleetbaseDriverUuid': fleetbaseDriverUuid,
-        if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
-        if (notes != null && notes.isNotEmpty) 'notes': notes,
-      },
-    );
-  }
-
-  /// Le transporteur confirme un encaissement déclaré par le commerçant.
-  ///
-  /// Aucun corps : la rémunération vient de la commande, jamais de lui — la
-  /// saisir au moment où il confirme sa propre dette lui laisserait fixer ce
-  /// qu'il retient dessus.
-  Future<void> confirmDeclaredCollection(String collectionId) async {
-    await _post('/transporteur/caisse/encaissements/$collectionId/confirmer');
-  }
-
-  Future<void> disputeDeclaredCollection(String collectionId, {String? reason}) async {
-    await _post('/transporteur/caisse/encaissements/$collectionId/contester', {if (reason != null && reason.isNotEmpty) 'reason': reason});
-  }
-
-  /// Idem côté transporteur : ce qu'il détient, course par course.
-  Future<List<CashCollectionEntry>> getDriverCollections() async {
-    return _listOf(await _get('/transporteur/caisse/encaissements'), 'data', CashCollectionEntry.fromJson);
-  }
-
-  Future<List<CashRemittance>> getMerchantRemittances() async {
-    return _listOf(await _get('/commercant/encaissements/remises'), 'data', CashRemittance.fromJson);
-  }
-
-  Future<void> declareMerchantRemittance({
-    required String driverId,
-    required double amount,
-  }) async {
-    await _post('/commercant/encaissements/remises', {'driverId': driverId, 'amount': amount});
-  }
-
-  Future<void> confirmMerchantRemittance(String id) async {
-    await _post('/commercant/encaissements/remises/$id/confirmer');
-  }
-
-  Future<void> disputeMerchantRemittance(String id, {String? reason}) async {
-    await _post('/commercant/encaissements/remises/$id/contester', {if (reason != null) 'reason': reason});
-  }
-
-  /// Désérialisation commune aux deux profils : même forme, seule la clé
-  /// d'identifiant de la contrepartie change.
-  CashLedger _ledgerFrom(
-    dynamic data,
-    CashBalance Function(Map<String, dynamic>) build,
-  ) {
-    final raw = (data is Map) ? data['balances'] : null;
-    return CashLedger(
-      balances: raw is List
-          ? raw.whereType<Map<String, dynamic>>().map(build).toList()
-          : const [],
-      currency: (data is Map ? data['currency'] as String? : null) ?? '',
-      ceiling: (data is Map ? (data['ceiling'] as num?) : null)?.toDouble(),
-      platformCommission:
-          (data is Map ? (data['platform_commission'] as num?) : null)?.toDouble(),
+  Future<MerchantCollections> getMerchantCollections() async {
+    return MerchantCollections.fromJson(
+      await _get('/commercant/encaissements') as Map<String, dynamic>,
     );
   }
 
@@ -998,49 +873,6 @@ class BffApiClient {
     final data = await _get('/commercant/commandes/$id');
     final map = (data is Map && data['order'] is Map) ? data['order'] : data;
     return MerchantOrder.fromJson(map as Map<String, dynamic>);
-  }
-
-  // ── Caisse de l'entreprise ───────────────────────────────────────────────
-  //
-  // ⚠️ Ces routes ne sont pas un supplément d'agrément : sans elles, une dette
-  // envers une entreprise n'est **confirmable par personne**, et elle reste
-  // ouverte jusqu'à ce que le plafond bloque le conducteur.
-
-  Future<CashLedger> getFleetCashLedger() async {
-    // ⚠️ `fromMerchantJson` et non un désérialiseur dédié : le champ qui compte
-    // est `counterparty_*`, servi identiquement aux trois personas depuis la
-    // généralisation du registre. Les deux fabriques ne diffèrent que par leur
-    // repli sur les anciens noms — et l'entreprise n'en a aucun à replier.
-    return _ledgerFrom(await _get('/flotte/caisse'), CashBalance.fromMerchantJson);
-  }
-
-  Future<List<CashRemittance>> getFleetRemittances() async {
-    return _listOf(await _get('/flotte/caisse/remises'), 'data', CashRemittance.fromJson);
-  }
-
-  Future<List<CashCollectionEntry>> getFleetCollections() async {
-    return _listOf(await _get('/flotte/caisse/encaissements'), 'data', CashCollectionEntry.fromJson);
-  }
-
-  Future<void> declareFleetRemittance({
-    required String counterpartyId,
-    required double amount,
-  }) async {
-    await _post('/flotte/caisse/remises', {'counterpartyId': counterpartyId, 'amount': amount});
-  }
-
-  Future<void> confirmFleetRemittance(String id) async {
-    await _post('/flotte/caisse/remises/$id/confirmer');
-  }
-
-  Future<void> disputeFleetRemittance(String id, {String? reason}) async {
-    // La clé est OMISE quand il n'y a pas de motif, comme dans les deux
-    // variantes persona voisines. Cette ligne envoyait `{"reason": null}`,
-    // seule divergence de surface des trois — et c'est en la remarquant
-    // qu'on a trouvé que la route flotte n'avait aucun DTO, donc aucune
-    // validation.
-    await _post('/flotte/caisse/remises/$id/contester',
-        {if (reason != null) 'reason': reason});
   }
 
   // ── Profil entreprise de transport (« flotte ») ─────────────────────────

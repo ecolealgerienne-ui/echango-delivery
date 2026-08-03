@@ -20,7 +20,6 @@ import {
   projectPlace,
 } from '../common/projections/order.projection';
 import { PricingService } from '../common/pricing/pricing.service';
-import { CashService, driverParty, fleetParty, merchantParty } from '../cash/cash.service';
 
 /**
  * Le favori retenu pour une course — **un conducteur ou une entreprise**.
@@ -55,6 +54,7 @@ const asFleetPick = (fleet: any): PickedFavourite => ({
 });
 import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-position';
 import { EXPECTS_CASH_AT_DOOR } from './cash-expectation';
+import { platformCurrency } from '../common/money/currency';
 import { isTerminalOrderStatus } from '../common/orders/order-status';
 import {
   phoneContains,
@@ -72,7 +72,6 @@ export class CommerçantService {
     private configService: ConfigService,
     private audit: AuditService,
     private pricing: PricingService,
-    private cash: CashService,
     private orderCustomFields: OrderCustomFieldsService,
     private driverZone: DriverZoneService,
   ) {}
@@ -407,28 +406,6 @@ export class CommerçantService {
   }
 
 
-  /**
-   * Identifiant du compte Echango du facilitateur d'une course — **délégué**.
-   *
-   * ── Le défaut que cette délégation répare (revue du 01/08/2026, C2) ──────
-   *
-   * Cette méthode rendait `null` sur une course du pool, pendant que son
-   * homonyme du module transporteur y rendait **Echango**. Les deux alimentent
-   * le même registre, et `legScope()` construit une jambe différente selon que
-   * `facilitatorId` est nul.
-   *
-   * Concrètement : la même livraison du pool créait une dette portée par Echango
-   * si elle était clôturée par l'application, et une dette portée par le
-   * conducteur si elle était clôturée en console puis régularisée ici. Le
-   * commerçant voyait deux contreparties pour deux courses identiques, et une
-   * remise n'en éteignait qu'une. Aucune erreur, deux nombres plausibles.
-   *
-   * La résolution vit désormais dans `CashService`, seul endroit que les deux
-   * modules partagent — et le seul qui puisse tenir l'invariant à leur place.
-   */
-  private resolveFacilitatorId(live: any): Promise<string | null> {
-    return this.cash.resolveFacilitatorId(live);
-  }
 
   /**
    * Parmi ces favoris, ceux dont la zone déclarée accepte ce départ.
@@ -479,7 +456,6 @@ export class CommerçantService {
   private async pickAvailableFavourite(
     merchantId: string,
     vehicleType?: string,
-    codAmount?: number,
     /**
      * D'où part la course. ⚠️ **Optionnel, et son absence n'écarte personne** :
      * les deux appelants la connaissent, mais un troisième qui l'oublierait
@@ -570,45 +546,16 @@ export class CommerçantService {
     // Un favori n'est jamais écarté par une préférence qu'on n'a pas su lire.
     const available = await this.favouritesAllowingPickup(onlineAccounts, pickup);
 
-    if (!codAmount) {
-      if (available[0]) return asDriverPick(available[0]);
-      return this.pickFleetFavourite(merchantId, codAmount);
-    }
-
-    // Course encaissée : on écarte en plus ceux dont la dette atteindrait le
-    // plafond. Le premier garde-fou du modèle — sans dépôt physique, cesser de
-    // confier des espèces à qui en doit déjà trop est le seul instrument de
-    // limitation du risque dont nous disposions.
-    // ⚠️ La contrepartie est celle que la course **portera**, pas le commerçant.
+    // ⚠️ Un plafond de dette écartait ici les favoris qui détenaient déjà trop
+    // d'espèces. Retiré le 03/08/2026 avec le registre de caisse : sans
+    // registre des remises, « ce qu'il détient encore » n'est pas calculable,
+    // et un plafond assis sur autre chose aurait borné la mauvaise exposition
+    // (`docs/registre_caisse_precis.md`).
     //
-    // Sollicité, un conducteur favori reçoit une course sans `facilitator_uuid` —
-    // c'est-à-dire une course du **pool**, dont le facilitateur est Echango
-    // depuis le 01/08/2026. Interroger la jambe conducteur ↔ commerçant y lisait
-    // `facilitatorId: null` (`legScope`), une jambe **structurellement vide** :
-    // le plafond rendait 0 quelle que soit la dette réelle et ne pouvait plus
-    // refuser personne.
-    //
-    // Le défaut ne se voyait pas ici : le favori recevait la course, puis
-    // `startOrder` la lui refusait contre la bonne jambe. La course restait
-    // assignée à quelqu'un qui ne pouvait pas la démarrer — le défaut même que
-    // `assertDriverCashCeiling` a fermé côté entreprise, resté ouvert ici.
-    const poolFacilitatorId = (await this.cash.platformFacilitator())?.id ?? null;
-    const driverCounterparty = this.cash.driverCounterparty(poolFacilitatorId, merchantId);
-
-    for (const account of available) {
-      const { allowed, held, ceiling } = await this.cash.canTakeCashOrder(
-        driverParty(account.id),
-        driverCounterparty,
-        codAmount,
-      );
-      if (allowed) return asDriverPick(account);
-      this.logger.log(
-        `Favori ${account.id} écarté d'une course encaissée : ` +
-          `détenu ${held} + ${codAmount} > ${ceiling}`,
-      );
-    }
-
-    return this.pickFleetFavourite(merchantId, codAmount);
+    // Ce qui reste ici — en ligne, et la zone déclarée — est de la logistique :
+    // qui peut effectivement aller chercher ce colis.
+    if (available[0]) return asDriverPick(available[0]);
+    return this.pickFleetFavourite(merchantId);
   }
 
   /**
@@ -636,10 +583,7 @@ export class CommerçantService {
    * dire décider à sa place, ce que le §6.1 de `specs_facilitateur.md` écarte
    * explicitement.
    */
-  private async pickFleetFavourite(
-    merchantId: string,
-    codAmount?: number,
-  ): Promise<PickedFavourite | null> {
+  private async pickFleetFavourite(merchantId: string): Promise<PickedFavourite | null> {
     const favourites = await this.prisma.driverFavourite.findMany({
       where: { merchantId, partyType: 'fleet' },
       orderBy: { createdAt: 'desc' },
@@ -655,26 +599,10 @@ export class CommerçantService {
     });
     if (!fleets.length) return null;
 
-    for (const fleet of fleets) {
-      if (!codAmount) return asFleetPick(fleet);
-
-      // Même garde-fou que pour un conducteur, et **contre la bonne partie** :
-      // sur une course confiée à une entreprise, c'est elle qui doit au
-      // commerçant. Vérifier le plafond du conducteur ici mesurerait une
-      // exposition qui n'existe pas encore — personne n'est désigné.
-      const { allowed, held, ceiling } = await this.cash.canTakeCashOrder(
-        fleetParty(fleet.id),
-        merchantParty(merchantId),
-        codAmount,
-      );
-      if (allowed) return asFleetPick(fleet);
-      this.logger.log(
-        `Entreprise favorite ${fleet.id} écartée d'une course encaissée : ` +
-          `détenu ${held} + ${codAmount} > ${ceiling}`,
-      );
-    }
-
-    return null;
+    // ⚠️ Le pendant du plafond conducteur, retiré le 03/08/2026 pour le même
+    // motif. Une entreprise active est éligible ; ce qu'elle détient en
+    // espèces ne nous regarde plus.
+    return fleets[0] ? asFleetPick(fleets[0]) : null;
   }
 
   /**
@@ -1142,13 +1070,14 @@ export class CommerçantService {
 
     const merged = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
 
-    // Aucune donnée de facturation interne ne sort ici : la rémunération du
-    // transporteur et la commission Echango vivent dans `DriverEarning`, et
-    // n'ont pas d'usage dans l'app commerçant.
+    // ⚠️ L'encaissement déclaré à la porte n'est plus lu à part : depuis le
+    // 03/08/2026 il vit dans les champs personnalisés de la commande, donc il
+    // arrive déjà dans `meta` (`collected_amount`, `collected_at`,
+    // `collection_reason`). Une seconde lecture serait une seconde source pour
+    // la même donnée — exactement ce que la règle 1 interdit.
     return {
       ...(merged as any),
       ...(await this.failuresFor(order.fleetbaseOrderId)),
-      ...(await this.collectionFor(order.fleetbaseOrderId)),
     };
   }
 
@@ -1257,35 +1186,6 @@ export class CommerçantService {
     return this.liveOrderFor(vendorUuid, order)
       .then((live) => this.withSpecMeta(live, order))
       .catch((): any => null);
-  }
-
-  /**
-   * Encaissement enregistré sur cette livraison, s'il y en a un.
-   *
-   * Sans lui, le commerçant voit ce qu'il a *demandé* d'encaisser et jamais ce
-   * qui l'a réellement été : le montant annoncé resterait affiché sur une
-   * livraison où le client n'a payé que la moitié. C'est exactement l'écart que
-   * le registre existe pour rendre visible, et le cacher sur la fiche de la
-   * commande concernée le rendrait introuvable là où on le cherche.
-   */
-  private async collectionFor(fleetbaseOrderUuid: string) {
-    const collection = await this.prisma.cashCollection.findUnique({
-      where: { fleetbaseOrderUuid },
-    });
-
-    if (!collection) return {};
-
-    return {
-      cash_collection: {
-        id: collection.id,
-        expected_amount: collection.expectedAmount,
-        collected_amount: collection.collectedAmount,
-        discrepancy_reason: collection.discrepancyReason,
-        notes: collection.notes,
-        currency: collection.currency,
-        collected_at: collection.collectedAt.toISOString(),
-      },
-    };
   }
 
   /**
@@ -1681,7 +1581,6 @@ export class CommerçantService {
         ? await this.pickAvailableFavourite(
             merchantId,
             dto.vehicleType,
-            meta?.cod_amount,
             // ⚠️ Ici la commande n'existe PAS encore : le depart vient du
             // formulaire, pas d'une lecture. C'est la raison d'etre de
             // `OrderPickup` — meme regle, deux origines.
@@ -1908,7 +1807,6 @@ export class CommerçantService {
       ? await this.pickAvailableFavourite(
           merchantId,
           meta.vehicle_type,
-          meta.cod_amount,
           // La commande existe : son depart se lit sur elle.
           orderPickup(live),
         )
@@ -2183,53 +2081,48 @@ export class CommerçantService {
    * Cancel an order
    */
   /**
-   * L'argent qui n'est pas encore encaissé mais qui est attendu à une porte.
+   * L'argent des commandes de ce commerçant : attendu, perçu, ou muet.
    *
-   * ── Pourquoi cette lecture existe ───────────────────────────────────────────
+   * ── Ce que cette route est devenue le 03/08/2026 ───────────────────────────
    *
-   * Le registre de caisse ne connaît que les espèces **déjà perçues** : une
-   * `CashCollection` naît à la clôture d'une livraison. Un commerçant dont les
-   * courses sont en route lisait donc « 0 DZD » et « aucune somme en attente »
-   * alors que 1950 DZD étaient réclamés à des portes ce jour-là.
+   * Elle lisait Fleetbase **et** un registre de caisse local. Le registre est
+   * retiré (`docs/registre_caisse_precis.md`) : tenir des soldes est de la
+   * trésorerie, et détenir des fonds pour compte de tiers est une activité
+   * réglementée qu'un agrégateur n'exerce pas. La source est désormais unique —
+   * la commande elle-même, chez Fleetbase — ce qui est aussi la règle 1
+   * appliquée pour de bon.
    *
-   * Ce n'était pas un écran vide, c'était un écran **faux dans le sens qui
-   * rassure** — le mode d'échec dont ce projet a déjà payé le prix plusieurs
-   * fois. Le registre restait juste : il répondait exactement à la question
-   * qu'on lui posait, et personne ne posait l'autre.
+   * ── Ce qu'elle sert, et pourquoi trois listes et non une ───────────────────
    *
-   * ── Ce que ça n'est pas ─────────────────────────────────────────────────────
+   * `attendus` — un montant est annoncé, la livraison est en route. Personne ne
+   * tient encore cet argent : ce n'est dû par personne, c'est un prévisionnel.
    *
-   * Aucun état n'est stocké, aucune écriture comptable n'est créée : c'est une
-   * lecture, recalculée à chaque appel depuis Fleetbase et le registre. Une
-   * somme *attendue* n'est due par personne — le transporteur ne tient pas
-   * encore l'argent — et l'inscrire au registre créerait une dette pour une
-   * livraison qui peut encore échouer.
+   * `perçus` — le transporteur a déclaré à la porte ce qu'il a réellement pris.
+   * C'est un **fait daté**, avec son écart et son motif quand il y en a un.
+   * ⚠️ La plateforme s'arrête ici : elle dit ce qui s'est passé, elle ne dit
+   * pas qui doit quoi à qui. Le rapprochement se fait entre le commerçant et
+   * son transporteur, avec cette liste pour matière.
    *
-   * ── La troisième catégorie : livrée, et pourtant absente du registre ────────
+   * `non déclarés` — livrée, un montant était annoncé, et **rien n'a été
+   * déclaré**. Le cas normal est une clôture faite depuis la console Fleetbase,
+   * qui est une interface de production légitime et ne connaît pas nos gardes.
    *
-   * `CashCollection` n'a **qu'un seul chemin d'écriture** : `settleCashIfDue()`,
-   * appelée par les deux routes de clôture du transporteur. Une commande qui
-   * atteint `completed` autrement — et le cas normal est *un admin qui la
-   * clôture depuis la console Fleetbase* — n'en laisse aucune trace.
-   *
-   * Ce n'est pas un défaut du registre : la console est une interface de
-   * production légitime (règle 1 du projet), et elle ne connaît pas nos gardes.
-   * Mais le résultat, lui, est inacceptable — deux colis livrés à plus de 5000
-   * DZD, et un écran qui affiche 0 sans rien signaler.
-   *
-   * On ne peut pas **inventer** l'encaissement : personne ne nous a dit ce qui
-   * a été perçu, et écrire un montant supposé au registre serait bien pire que
-   * de n'en écrire aucun. Ce qu'on peut faire, et qu'on doit, c'est **montrer
-   * le trou** : ces livraisons sont listées à part, avec le montant qui était
-   * annoncé, pour que le commerçant sache quoi réclamer à qui.
+   * ⚠️ **Le trou doit rester visible, et le montant affiché est celui qui était
+   * ANNONCÉ.** Nous ignorons ce qui a changé de mains ; présenter le montant
+   * attendu comme une somme perçue serait inventer un fait. Deux colis livrés à
+   * plus de 5 000 DZD et un écran affichant 0 sans rien signaler : c'est le
+   * défaut que cette troisième liste existe pour empêcher (règle 10).
    */
-  async pendingCollections(merchantId: string) {
+  async collectionsOnMyOrders(merchantId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
+    const currency = platformCurrency(this.configService.get('CURRENCY'));
 
     const empty = {
-      currency: this.cash.currency,
+      currency,
       expected_total: 0,
       orders: [] as any[],
+      collected_total: 0,
+      collected: [] as any[],
       unrecorded_total: 0,
       unrecorded: [] as any[],
     };
@@ -2241,27 +2134,6 @@ export class CommerçantService {
     if (!cached.length) return empty;
 
     const live = await this.mergeWithFleetbase(cached, merchant.fleetbaseVendorUuid);
-
-    // Déjà au registre : leur montant est un fait enregistré, il n'appartient
-    // ni à l'attente ni au trou.
-    //
-    // ⚠️ **Une déclaration contestée n'est PAS un enregistrement.** Elle ne
-    // compte dans aucune dette (`collectionsBetween` exige `confirmedAt`) — la
-    // retirer d'ici aussi la faisait disparaître des deux côtés à la fois : la
-    // livraison sortait de « non enregistré » sans être entrée au registre, et
-    // la somme quittait le système sans laisser d'écran où la voir.
-    //
-    // Le trou doit rester visible tant qu'il n'est pas comblé. C'est toute la
-    // raison d'être de cette liste (journal §30) : montrer ce qu'on ne peut pas
-    // deviner, plutôt que d'inventer un montant.
-    const collected = new Set(
-      (
-        await this.prisma.cashCollection.findMany({
-          where: { merchantId, disputedAt: null },
-          select: { fleetbaseOrderUuid: true },
-        })
-      ).map((c: { fleetbaseOrderUuid: string }) => c.fleetbaseOrderUuid),
-    );
 
     const describe = (o: any) => ({
       uuid: o.uuid,
@@ -2275,32 +2147,39 @@ export class CommerçantService {
       completed_at: o.updated_at ?? null,
     });
 
-    // Candidates communes aux deux listes : un montant à encaisser était
-    // annoncé, et le registre n'en sait rien.
-    //
-    // `stale`/`missing` écartés : Fleetbase injoignable ou commande disparue.
-    // On ne parle pas d'argent sur une commande dont on ignore l'état —
-    // s'appuyer sur le cache serait annoncer un montant sans savoir s'il est
-    // encore d'actualité.
+    // ⚠️ `stale`/`missing` écartés : Fleetbase injoignable, ou commande
+    // disparue. On ne parle pas d'argent sur une commande dont on ignore
+    // l'état — s'appuyer sur le cache local serait annoncer un montant sans
+    // savoir s'il est encore d'actualité.
     const candidates = live.filter(
       (o: any) =>
-        o?.uuid
-        && !collected.has(o.uuid)
-        && !o.stale
-        && !o.missing
-        && Number(o.meta?.cod_amount) > 0,
+        o?.uuid && !o.stale && !o.missing && Number(o.meta?.cod_amount) > 0,
     );
 
+    // ── Perçu : la déclaration faite à la porte ───────────────────────────
+    //
+    // ⚠️ Le test porte sur `!== undefined`, jamais sur la vérité du nombre :
+    // **zéro est une déclaration**, et c'en est même la plus importante — un
+    // destinataire qui refuse de payer. `if (collected_amount)` l'aurait rangée
+    // avec les livraisons muettes, c'est-à-dire aurait effacé le seul cas où le
+    // commerçant a besoin d'être prévenu.
+    const declared = (o: any) => o.meta?.collected_amount !== undefined;
+
+    const collected = candidates.filter(declared).map((o: any) => ({
+      ...describe(o),
+      collected_amount: Number(o.meta.collected_amount),
+      collected_at: o.meta.collected_at ?? null,
+      // Servi tel quel : c'est un code d'une liste fermée, l'application le
+      // traduit. Un motif en français ici serait illisible en arabe (règle 4).
+      collection_reason: o.meta.collection_reason ?? null,
+    }));
+
     const orders = candidates
-      .filter((o: any) => EXPECTS_CASH_AT_DOOR.includes(o.status))
+      .filter((o: any) => !declared(o) && EXPECTS_CASH_AT_DOOR.includes(o.status))
       .map(describe);
 
-    // Livrées sans qu'aucun encaissement n'ait été déclaré. Le montant affiché
-    // est celui qui était **annoncé**, jamais un montant perçu : nous ignorons
-    // ce qui a réellement changé de mains, et le présenter comme une somme due
-    // serait inventer une dette.
     const unrecorded = candidates
-      .filter((o: any) => o.status === 'completed')
+      .filter((o: any) => !declared(o) && o.status === 'completed')
       .map(describe);
 
     if (unrecorded.length) {
@@ -2308,241 +2187,23 @@ export class CommerçantService {
       // l'écran seul ne le dirait qu'au commerçant qui regarde.
       this.logger.warn(
         `${unrecorded.length} livraison(s) du commerçant ${merchantId} sont terminées `
-          + 'avec un montant à encaisser et sans encaissement enregistré — '
+          + 'avec un montant à encaisser et sans déclaration — '
           + 'clôture probablement faite hors application (console Fleetbase).',
       );
     }
 
+    const sum = (rows: any[], key: string) =>
+      rows.reduce((total, row) => total + (Number(row[key]) || 0), 0);
+
     return {
-      currency: this.cash.currency,
-      expected_total: orders.reduce((sum, o) => sum + o.expected_amount, 0),
+      currency,
+      expected_total: sum(orders, 'expected_amount'),
       orders,
-      unrecorded_total: unrecorded.reduce((sum, o) => sum + o.expected_amount, 0),
+      collected_total: sum(collected, 'collected_amount'),
+      collected,
+      unrecorded_total: sum(unrecorded, 'expected_amount'),
       unrecorded,
     };
-  }
-
-  /**
-   * Le commerçant régularise une livraison close hors application.
-   *
-   * ── Ce que ce geste peut et ne peut pas faire ───────────────────────────────
-   *
-   * Il **enregistre une affirmation**, pas un fait : le montant déclaré ne
-   * compte dans aucune dette tant que le transporteur ne l'a pas confirmé
-   * (`CashCollection.confirmedAt`). C'est la même règle que les remises, et
-   * pour la même raison — ici le déclarant engage quelqu'un d'autre.
-   *
-   * ── Pourquoi le transporteur peut devoir être nommé à la main ───────────────
-   *
-   * Une livraison close depuis la console peut n'avoir **aucun**
-   * `driver_assigned_uuid` : observé en réel le 30/07/2026 sur une course
-   * livrée de 3750 DZD. Le commerçant sait qui est venu ; Fleetbase l'ignore.
-   * Refuser la régularisation dans ce cas laisserait sans recours précisément
-   * la livraison la plus mal enregistrée des deux.
-   */
-  async declareMissingCollection(
-    merchantId: string,
-    orderId: string,
-    input: {
-      collectedAmount: number;
-      fleetbaseDriverUuid?: string;
-      discrepancyReason?: string;
-      notes?: string;
-    },
-  ) {
-    const merchant = await this.getMerchantWithValidation(merchantId);
-    const order = await this.resolveOwnedOrder(merchantId, orderId);
-
-    const live = await this.liveOrderDetailed(order, merchant.fleetbaseVendorUuid);
-    if (!live) {
-      notFound('order.not_found', 'Livraison introuvable');
-    }
-
-    // ⚠️ Résolus AVANT toute écriture, et les refus levés hors de tout `try` :
-    // un refus attrapé par un filet d'erreur ressortirait en « opération
-    // impossible », sans le code qui dit quoi corriger (règle 3).
-    if (live.status !== 'completed') {
-      badRequest(
-        'cash.order_not_delivered',
-        'Seule une livraison terminée peut être régularisée',
-      );
-    }
-
-    const expected = Number(live.meta?.cod_amount) || 0;
-    if (expected <= 0) {
-      badRequest(
-        'cash.order_has_no_cod',
-        'Cette livraison n\'était pas payée à la réception',
-      );
-    }
-
-    const driverAccount = await this.resolveDriverForRegularisation(
-      merchantId,
-      live,
-      input.fleetbaseDriverUuid,
-    );
-
-    const result = await this.cash.declareCollectionByMerchant(
-      merchantId,
-      driverAccount.id,
-      order.fleetbaseOrderId,
-      expected,
-      {
-        collectedAmount: input.collectedAmount,
-        discrepancyReason: input.discrepancyReason,
-        notes: input.notes,
-      },
-      // Le facilitateur de la course, résolu depuis Fleetbase et figé avec
-      // l'écriture. Sans lui, une course d'entreprise régularisée imputait la
-      // dette au conducteur et lui laissait retenir la rémunération de son
-      // employeur — sur le chemin qui existe précisément pour les courses
-      // closes hors application.
-      await this.resolveFacilitatorId(live),
-    );
-
-    // ⚠️ **Le transporteur n'est pas notifié**, et c'est une limite, pas un
-    // oubli : `MerchantNotification` est la seule table de notification du
-    // projet, et elle vise le commerçant. La déclaration apparaît dans sa
-    // caisse à sa prochaine ouverture — donc la régularisation aboutit quand il
-    // regarde, pas quand elle est faite.
-    //
-    // En inventer une ici donnerait l'illusion d'un signal qui n'existe pas.
-    // Le push driver est possible (FCM via `UserDevice`, validé §5.1), c'est un
-    // lot à part.
-    this.logger.log(
-      `Régularisation déclarée par ${merchant.businessName} pour le transporteur `
-        + `${driverAccount.id} — en attente de sa confirmation (aucune notification poussée)`,
-    );
-
-    return { ...result, driver_name: driverAccount.name };
-  }
-
-  /**
-   * Qui est le transporteur d'une livraison qu'on régularise.
-   *
-   * Fleetbase d'abord, saisie du commerçant ensuite — et jamais l'inverse : si
-   * la course porte un transporteur, c'est lui qui fait foi, et accepter une
-   * autre désignation permettrait d'imputer un encaissement à un tiers.
-   */
-  private async resolveDriverForRegularisation(
-    merchantId: string,
-    live: any,
-    suppliedUuid?: string,
-  ): Promise<{ id: string; name: string }> {
-    const assignedUuid = live?.driver_assigned_uuid ?? live?.driver_assigned?.uuid ?? null;
-    const assignedName = live?.driver_assigned?.name ?? null;
-
-    // Fleetbase d'abord, saisie ensuite — jamais l'inverse. Si la course
-    // désigne un transporteur, accepter une autre désignation permettrait
-    // d'imputer un encaissement à un tiers.
-    const uuid = assignedUuid ?? suppliedUuid;
-
-    // ── Et la saisie libre est bornée aux transporteurs QU'IL CONNAÎT ────────
-    //
-    // ⚠️ La branche `?? suppliedUuid` n'était gardée par rien, alors que
-    // `GET /commercant/transporteurs/recherche` rend l'uuid de n'importe qui
-    // dans le réseau (revue du 01/08/2026, M2). Un commerçant pouvait donc, sur
-    // une de ses propres livraisons close en console, poster
-    // `{collectedAmount: 40000, fleetbaseDriverUuid: <un inconnu>}` :
-    //
-    //   · la ligne apparaissait chez la victime comme une réclamation
-    //     légitime, et s'il confirmait, la dette devenait réelle sur une course
-    //     qu'il n'a jamais faite ;
-    //   · sans confirmation, `fleetbaseOrderUuid` étant `@unique`, l'entrée de
-    //     registre de cette course était **empoisonnée** — les deux chemins de
-    //     redéclaration la refusaient.
-    //
-    // La borne est celle que l'écran propose déjà : ceux qui ont livré pour lui,
-    // et ses favoris. Elle n'empêche pas la fraude entre gens qui se
-    // connaissent — rien ne le peut, et ce n'est pas ce qu'on protège ici —,
-    // mais elle interdit de désigner un inconnu, qui est le seul cas où la
-    // victime n'a aucun moyen de comprendre ce qui lui arrive.
-    if (!assignedUuid && suppliedUuid) {
-      await this.assertKnownToMerchant(merchantId, suppliedUuid);
-    }
-
-    if (!uuid) {
-      badRequest(
-        'cash.driver_required',
-        'Cette livraison ne porte aucun transporteur : indiquez qui l\'a effectuée',
-      );
-    }
-
-    const account = await this.prisma.driverAccount.findFirst({
-      where: { fleetbaseDriverUuid: uuid },
-      select: { id: true, firstName: true, lastName: true },
-    });
-
-    if (account) {
-      return {
-        id: account.id,
-        name:
-          [account.firstName, account.lastName].filter(Boolean).join(' ')
-          || assignedName
-          || 'Transporteur',
-      };
-    }
-
-    // ⚠️ Deux situations, deux messages — la version précédente les confondait
-    // et affirmait « aucun transporteur » sur une course qui en portait un,
-    // constaté en réel.
-    //
-    // Un transporteur existe dans l'annuaire Fleetbase (créé par un opérateur
-    // en console) **sans avoir de compte Echango** tant qu'il ne s'est pas
-    // inscrit sur invitation. La régularisation lui est alors impossible, et
-    // ce n'est pas au commerçant de la contourner en désignant quelqu'un
-    // d'autre : sans compte, personne ne peut confirmer, et l'encaissement
-    // resterait une affirmation pour toujours.
-    //
-    // Le message nomme donc l'obstacle réel et l'action qui le lève —
-    // provisionner l'accès — qui est un geste d'opérateur, pas de commerçant.
-    badRequest(
-      'cash.driver_no_account',
-      `${assignedName ?? 'Ce transporteur'} n'a pas encore de compte dans l'application : `
-        + 'il ne peut donc rien confirmer. Demandez à Echango de lui créer un accès.',
-    );
-  }
-
-  /**
-   * Ce transporteur a-t-il un lien avec ce commerçant ?
-   *
-   * Deux sources, exactement celles que l'écran propose : ceux qui ont **déjà
-   * livré** pour lui, et ses **favoris**. Un transporteur qu'il n'a jamais vu
-   * n'a rien à faire dans une écriture qui l'engage.
-   *
-   * ⚠️ Le refus est **fail-closed** : si l'historique est illisible
-   * (`listKnownDrivers` rend une liste vide quand Fleetbase est injoignable),
-   * seuls les favoris passent. C'est le bon défaut ici — une régularisation
-   * peut attendre, une imputation à un inconnu ne se défait pas.
-   */
-  private async assertKnownToMerchant(
-    merchantId: string,
-    driverUuid: string,
-  ): Promise<void> {
-    const favourite = await this.prisma.driverFavourite.findFirst({
-      where: { merchantId, partyType: 'driver', fleetbasePartyUuid: driverUuid },
-      select: { id: true },
-    });
-    if (favourite) return;
-
-    const known = await this.listKnownDrivers(merchantId);
-    if (known.data.some((d: any) => d.driver_uuid === driverUuid)) return;
-
-    this.audit.denied({
-      actorType: 'merchant',
-      actorId: merchantId,
-      action: 'cash.collection.declare',
-      resourceType: 'DriverAccount',
-      resourceId: driverUuid,
-      reason: 'Désignation d’un transporteur sans lien avec ce commerçant',
-    });
-
-    badRequest(
-      'cash.driver_unknown_to_merchant',
-      'Ce transporteur n’a jamais effectué de livraison pour vous et ne fait pas '
-        + 'partie de vos favoris : vous ne pouvez pas lui imputer un encaissement. '
-        + 'Si c’est bien lui qui a livré, ajoutez-le d’abord à vos transporteurs.',
-    );
   }
 
   async cancelOrder(merchantId: string, orderId: string) {

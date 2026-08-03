@@ -11,12 +11,6 @@ import { DriverSearchDto } from './dto/driver-search.dto';
 import { QuoteRequestDto } from './dto/quote.dto';
 import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService, driverParty, merchantParty } from '../cash/cash.service';
-import {
-  MerchantRemittanceDto,
-  DeclareMissingCollectionDto,
-} from './dto/cash.dto';
-import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 // Seul des trois contrôleurs à ne pas vérifier le persona jusqu'ici (revue
 // E4) : un jeton transporteur ou flotte y était structurellement valide.
@@ -27,79 +21,27 @@ export class CommerçantController {
     private commercantService: CommerçantService,
     private geocoding: GeocodingService,
     private notifications: NotificationsService,
-    private cash: CashService,
   ) {}
 
   // ── Encaissements ────────────────────────────────────────────────────────
   //
-  // Ce que les transporteurs ont perçu pour ce commerçant et ne lui ont pas
-  // encore remis. Echango ne détient jamais ces sommes : la remise est physique
-  // entre les deux parties, et l'application n'en tient que le registre
-  // (docs/specs_paiement_livraison.md §6, Voie B).
-
+  // Sept routes vivaient ici : soldes, remises, confirmations, contestations,
+  // et la régularisation d'une livraison close hors application. Retirées le
+  // 03/08/2026 avec le registre de caisse — tenir des soldes est de la
+  // trésorerie, pas de la logistique (`docs/registre_caisse_precis.md`).
+  //
+  // Il en reste **une**, et c'est une lecture. Elle sert ce que les commandes
+  // de ce commerçant disent de l'argent : attendu à la porte, déclaré perçu par
+  // le transporteur, ou terminé sans qu'aucune déclaration n'existe. Aucun
+  // solde, aucune dette, aucune confirmation : la matière du rapprochement,
+  // que le commerçant fait avec son transporteur.
+  //
+  // ⚠️ La source est Fleetbase seule. C'est la règle 1 tenue pour de bon — la
+  // version précédente croisait Fleetbase et une base locale, donc pouvait
+  // servir deux réponses pour la même course.
   @Get('encaissements')
-  async cashBalances(@Request() req: any) {
-    return this.cash.merchantBalances(req.user.id);
-  }
-
-  @Get('encaissements/details')
-  async cashCollections(@Request() req: any) {
-    return this.cash.listCollections('merchant', req.user.id);
-  }
-
-  /**
-   * Ce qui sera réclamé aux portes, et qui n'est encore dans la poche de
-   * personne.
-   *
-   * Servi par le module commerçant et non par `CashService` : la source est
-   * Fleetbase, pas le registre. Le registre ne connaît que le perçu — c'est
-   * précisément ce qui rendait l'écran muet sur l'argent en route.
-   */
-  @Get('encaissements/attendus')
-  async pendingCollections(@Request() req: any) {
-    return this.commercantService.pendingCollections(req.user.id);
-  }
-
-  /**
-   * « Ce transporteur a bien encaissé X sur cette livraison. »
-   *
-   * Ferme le trou laissé par une clôture faite hors application. La déclaration
-   * n'établit rien seule : elle attend la confirmation du transporteur, comme
-   * une remise — ici le déclarant engage quelqu'un d'autre.
-   */
-  @Post('commandes/:id/encaissement')
-  async declareMissingCollection(
-    @Request() req: any,
-    @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: DeclareMissingCollectionDto,
-  ) {
-    return this.commercantService.declareMissingCollection(req.user.id, id, dto);
-  }
-
-  @Get('encaissements/remises')
-  async remittances(@Request() req: any) {
-    return this.cash.listRemittances('merchant', req.user.id);
-  }
-
-  /** « J'ai reçu X de ce transporteur. » En attente de sa confirmation. */
-  @Post('encaissements/remises')
-  async declareRemittance(@Request() req: any, @Body() dto: MerchantRemittanceDto) {
-    return this.cash.declareRemittanceTo(merchantParty(req.user.id), dto.driverId, dto.amount);
-  }
-
-  /** Confirme une remise déclarée par le transporteur — jamais une des siennes. */
-  @Post('encaissements/remises/:id/confirmer')
-  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
-    return this.cash.confirmRemittance('merchant', req.user.id, id);
-  }
-
-  @Post('encaissements/remises/:id/contester')
-  async disputeRemittance(
-    @Request() req: any,
-    @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: DisputeRemittanceDto,
-  ) {
-    return this.cash.disputeRemittance('merchant', req.user.id, id, dto.reason);
+  async collections(@Request() req: any) {
+    return this.commercantService.collectionsOnMyOrders(req.user.id);
   }
 
   // ── Notifications ────────────────────────────────────────────────────────

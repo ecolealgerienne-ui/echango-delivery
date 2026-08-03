@@ -65,12 +65,7 @@ SCENARIOS=(
   # dépend d'aucun des autres et n'en dérange aucun. Son email est stable, il
   # ne consomme donc une inscription qu'à sa toute première exécution.
   test-wilaya
-  test-parcours-argent
-  test-parcours-argent-flotte
   test-multi-appartenance
-  test-regularisation-commercant
-  test-ecart-et-dette-negative
-  test-plafonds-dette
   test-sorties-de-course
 )
 

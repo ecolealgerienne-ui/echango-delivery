@@ -110,8 +110,6 @@ PERSONAS = [
                     ('GET', '/commercant/commandes/{id}/preuve'),
                     ('POST', '/commercant/commandes/{id}/annuler'),
                     ('POST', '/commercant/commandes/{id}/publier'),
-                    ('POST', '/commercant/commandes/{id}/encaissement',
-                     {'collectedAmount': 0}),
                 ],
             },
             {
@@ -246,30 +244,11 @@ PERSONAS = [
                     ('POST', '/transporteur/entreprises/{id}/quitter'),
                 ],
             },
-            {
-                'quoi': 'encaissement',
-                'list': '/transporteur/caisse/encaissements',
-                'witness': None,
-                # ⚠️ **Absence NOTÉE, pas fatale — et c'est un arbitrage.**
-                #
-                # Un encaissement n'existe qu'après une livraison payée à la
-                # porte. En poser un demanderait d'écrire dans le **registre de
-                # caisse**, et un banc de sécurité n'a pas à créer des écritures
-                # comptables pour prouver un refus — la remise à zéro d'un
-                # registre est déjà réservée au développement, avec un aveu
-                # explicite.
-                #
-                # Faire échouer le banc quand la base n'en porte pas le rendrait
-                # **durablement rouge**, donc ignoré — et un banc ignoré ne
-                # protège rien. Il le dit à chaque passage, dans le récapitulatif,
-                # plutôt que de se taire ou de crier.
-                'si_absent': 'noter',
-                'probes': [
-                    ('POST', '/transporteur/caisse/encaissements/{id}/confirmer'),
-                    ('POST', '/transporteur/caisse/encaissements/{id}/contester',
-                     {'reason': 'sonde d’appartenance'}),
-                ],
-            },
+            # ⚠️ La route d'appartenance des encaissements a été retirée le
+            # 03/08/2026 avec le registre de caisse : il n'existe plus de
+            # ressource « encaissement » à demander (`docs/registre_caisse_precis.md`).
+            # Ce qui a été perçu vit désormais sur la commande, dont
+            # l'appartenance est déjà éprouvée plus haut.
         ],
     },
 ]

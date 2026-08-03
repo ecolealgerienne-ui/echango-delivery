@@ -43,46 +43,22 @@ class AppError {
   static const String authMissingToken = 'auth.missing_token';
   static const String authSessionRevoked = 'auth.session_revoked';
 
-  // ── Caisse (encaissements, remises) ─────────────────────────────────────
-  /// Plusieurs prestataires « plateforme » configurés côté serveur : l'argent
-  /// des courses du pool ne peut plus être routé sans ambiguïté. Refus
-  /// délibéré du serveur, pas une panne — il faut un opérateur.
   /// L'entreprise visée n'a pas de compte actif dans le réseau Echango.
   static const String merchantFleetNotInNetwork = 'merchant.fleet_not_in_network';
 
-  static const String cashPlatformAmbiguous = 'cash.platform_ambiguous';
+  // ── Encaissement à la porte ─────────────────────────────────────────────
+  //
+  // ⚠️ Vingt-cinq codes vivaient ici — remises, confirmations, plafonds,
+  // contreparties. Retirés le 03/08/2026 avec le registre de caisse
+  // (`docs/registre_caisse_precis.md`). Les cinq qui restent portent tous sur
+  // un seul geste : ce que le transporteur déclare avoir perçu en clôturant.
+  static const String cashCodDeclarationRequired = 'cash.cod_declaration_required';
   static const String cashAmountNegative = 'cash.amount_negative';
   static const String cashAmountExceedsExpected = 'cash.amount_exceeds_expected';
   static const String cashDiscrepancyReasonRequired = 'cash.discrepancy_reason_required';
-  static const String cashCollectionConflict = 'cash.collection_conflict';
-  static const String cashRemittanceAmountMustBePositive =
-      'cash.remittance_amount_must_be_positive';
-  static const String cashNoDebt = 'cash.no_debt';
-  static const String cashRemittanceExceedsDebt = 'cash.remittance_exceeds_debt';
-  static const String cashRemittanceAlreadyConfirmed = 'cash.remittance_already_confirmed';
-  static const String cashRemittanceDisputed = 'cash.remittance_disputed';
-  static const String cashRemittanceMustBeConfirmedByOtherParty =
-      'cash.remittance_must_be_confirmed_by_other_party';
-  static const String cashRemittanceSelfDisputeForbidden =
-      'cash.remittance_self_dispute_forbidden';
-  static const String cashRemittanceNotFound = 'cash.remittance_not_found';
-  static const String cashCeilingExceeded = 'cash.ceiling_exceeded';
-  static const String cashCodDeclarationRequired = 'cash.cod_declaration_required';
-  static const String cashOrderUnknownToRegistry = 'cash.order_unknown_to_registry';
-
-  // Régularisation d'une livraison close hors application.
-  static const String cashCollectionAlreadyDeclared = 'cash.collection_already_declared';
-  static const String cashCollectionNotFound = 'cash.collection_not_found';
-  static const String cashCollectionNotConfirmable = 'cash.collection_not_confirmable';
-  static const String cashCollectionAlreadyConfirmed = 'cash.collection_already_confirmed';
-  static const String cashCollectionDisputed = 'cash.collection_disputed';
-  static const String cashOrderNotDelivered = 'cash.order_not_delivered';
-  static const String cashOrderHasNoCod = 'cash.order_has_no_cod';
-  static const String cashDriverRequired = 'cash.driver_required';
-  static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
-  static const String cashCounterpartyNotFound = 'cash.counterparty_not_found';
-  static const String cashDriverNoAccount = 'cash.driver_no_account';
-  static const String cashDriverUnknownToMerchant = 'cash.driver_unknown_to_merchant';
+  /// La déclaration n'a pas pu être écrite sur la commande : la livraison reste
+  /// ouverte, et le transporteur doit réessayer plutôt que continuer.
+  static const String cashCollectionNotRecorded = 'cash.collection_not_recorded';
 
   // ── Commandes ────────────────────────────────────────────────────────────
   static const String orderNotFound = 'order.not_found';

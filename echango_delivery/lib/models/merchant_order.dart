@@ -4,7 +4,6 @@ import 'package:equatable/equatable.dart';
 
 import '../i18n/order_strings.dart';
 import '../utils/dates.dart';
-import 'cash.dart';
 import 'fleetbase_json.dart';
 // `DeliveryFailure` est partagé avec le transporteur : c'est le même
 // signalement, vu des deux bouts. Une seconde classe pour le même JSON finirait
@@ -132,13 +131,30 @@ class MerchantOrder extends Equatable {
   /// marchandise = encaissé moins livraison, ou encaissé tout court.
   final bool codIncludesDelivery;
 
-  /// Ce qui a réellement été encaissé, une fois la livraison faite.
+  /// Ce qui a réellement été perçu à la porte, une fois la livraison faite.
   ///
   /// `null` tant que le transporteur n'a rien déclaré. Distinct de [codAmount],
   /// qui n'est que ce qui était **demandé** : afficher le second en croyant lire
   /// le premier ferait passer une livraison à moitié payée pour une livraison
   /// réglée.
-  final CashCollectionEntry? cashCollection;
+  ///
+  /// ⚠️ **Zéro est une valeur, pas une absence** — un destinataire qui refuse
+  /// de payer. Les confondre effacerait le seul cas où le commerçant doit être
+  /// prévenu.
+  ///
+  /// ⚠️ Lu dans `meta` et non dans un objet à part depuis le 03/08/2026 : le
+  /// registre de caisse est retiré, et la déclaration vit désormais dans les
+  /// champs personnalisés de la commande
+  /// (`docs/registre_caisse_precis.md`).
+  final num? collectedAmount;
+  final DateTime? collectedAt;
+
+  /// Code d'une liste fermée, traduit par l'application — jamais une phrase
+  /// venue du serveur, qui serait en français pour un arabophone (règle 4).
+  final String? collectionReason;
+
+  bool get hasCollectionDiscrepancy =>
+      collectedAmount != null && codAmount != null && collectedAmount != codAmount;
 
   /// Signalements d'échec, du plus récent au plus ancien.
   ///
@@ -173,7 +189,9 @@ class MerchantOrder extends Equatable {
     this.codAmount,
     this.codCurrency,
     this.codIncludesDelivery = false,
-    this.cashCollection,
+    this.collectedAmount,
+    this.collectedAt,
+    this.collectionReason,
     this.deliveryFailures = const [],
   });
 
@@ -271,10 +289,11 @@ class MerchantOrder extends Equatable {
       codAmount: meta?['cod_amount'] as num?,
       codCurrency: meta?['cod_currency'] as String?,
       codIncludesDelivery: meta?['cod_includes_delivery'] == true,
-      cashCollection: json['cash_collection'] is Map<String, dynamic>
-          ? CashCollectionEntry.fromJson(
-              json['cash_collection'] as Map<String, dynamic>)
+      collectedAmount: meta?['collected_amount'] as num?,
+      collectedAt: meta?['collected_at'] is String
+          ? DateTime.tryParse(meta!['collected_at'] as String)
           : null,
+      collectionReason: meta?['collection_reason'] as String?,
     );
   }
 

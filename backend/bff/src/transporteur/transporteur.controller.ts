@@ -2,7 +2,6 @@ import { Controller, Get, Post, Put, Body, Param, Query, Request, Res } from '@n
 import type { Response } from 'express';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { TransporteurService } from './transporteur.service';
-import { CashService, driverParty, merchantParty } from '../cash/cash.service';
 import {
   UpdatePositionDto,
   ToggleOnlineDto,
@@ -10,14 +9,12 @@ import {
   ReportDeliveryFailureDto,
   DeclineOrderDto,
   CashCollectionDto,
-  DeclareRemittanceDto,
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
   UpdateVehicleTypeDto,
   DriverZoneDto,
 } from './dto/transporteur.dto';
 import { Persona } from '../common/decorators/persona.decorator';
-import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 /**
  * Driver-facing API for the Flutter app (docs/specs_app_transporteur.md §3-5).
@@ -30,18 +27,18 @@ import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 @Persona('transporteur')
 @Controller('transporteur')
 export class TransporteurController {
-  constructor(
-    private readonly transporteurService: TransporteurService,
-    private readonly cash: CashService,
-  ) {}
+  constructor(private readonly transporteurService: TransporteurService) {}
 
-  // ── Caisse ───────────────────────────────────────────────────────────────
+  // ── Caisse : huit routes retirées le 03/08/2026 ──────────────────────────
   //
-  // Le transporteur conserve les espèces qu'il encaisse ; ces routes servent le
-  // compte de ce qu'il doit, commerçant par commerçant. La dette n'est pas une
-  // somme unique due à la plateforme mais une série de dettes bilatérales, et
-  // c'est ainsi qu'elle se règle — un commerçant à la fois, au prochain
-  // enlèvement (docs/specs_paiement_livraison.md §6, Voie B).
+  // Solde, encaissements, remises et leurs confirmations vivaient ici. Elles
+  // tenaient un registre de dettes bilatérales — de la trésorerie, pas de la
+  // logistique, et détenir des fonds pour compte de tiers est une activité
+  // réglementée qu'un agrégateur n'exerce pas.
+  //
+  // Ce qui reste du sujet : le montant perçu est déclaré **en clôturant la
+  // livraison** (`POST commandes/:id/terminer`) et consigné sur la commande
+  // elle-même. Motif complet : `docs/registre_caisse_precis.md`.
 
   /**
    * La zone de travail : ce que ce transporteur a déclaré vouloir voir.
@@ -60,78 +57,6 @@ export class TransporteurController {
   @Put('zone')
   async saveZone(@Request() req: any, @Body() dto: DriverZoneDto) {
     return this.transporteurService.saveZone(this.driverId(req), dto);
-  }
-
-  @Get('caisse')
-  async cashBalances(@Request() req: any) {
-    return this.cash.driverBalances(this.driverId(req));
-  }
-
-  @Get('caisse/encaissements')
-  async cashCollections(@Request() req: any) {
-    return this.cash.listCollections('driver', this.driverId(req));
-  }
-
-  /**
-   * Confirme un encaissement que le COMMERÇANT a déclaré à sa place.
-   *
-   * Ce cas naît d'une livraison close hors application : le registre n'a rien
-   * enregistré, le commerçant a signalé le montant, et c'est cette confirmation
-   * qui le rend comptable — avant elle, il ne compte dans aucune dette.
-   *
-   * La rémunération est écrite dans le même geste, côté service : la course
-   * n'en avait pas non plus, et les séparer laisserait entre les deux un état
-   * où la dette est fausse.
-   */
-  @Post('caisse/encaissements/:id/confirmer')
-  async confirmCollection(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
-    // Aucun corps : la rémunération vient de la COMMANDE, jamais du
-    // transporteur. La lui faire saisir au moment où il confirme une dette lui
-    // laisserait fixer ce qu'il retient dessus.
-    return this.transporteurService.confirmDeclaredCollection(this.driverId(req), id);
-  }
-
-  /** « Je n'ai pas encaissé cette livraison », ou « pas ce montant ». */
-  @Post('caisse/encaissements/:id/contester')
-  async disputeCollection(
-    @Request() req: any,
-    @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: DisputeRemittanceDto,
-  ) {
-    return this.cash.disputeCollection(this.driverId(req), id, dto.reason);
-  }
-
-  @Get('caisse/remises')
-  async cashRemittances(@Request() req: any) {
-    return this.cash.listRemittances('driver', this.driverId(req));
-  }
-
-  /** « J'ai remis X à ce commerçant. » Reste en attente jusqu'à sa confirmation. */
-  @Post('caisse/remises')
-  async declareRemittance(@Request() req: any, @Body() dto: DeclareRemittanceDto) {
-    // `dto.merchantId` garde son nom — il est gelé par le contrôle de
-    // référence — mais désigne désormais **la contrepartie**, que le serveur
-    // type lui-même : le commerçant, ou le facilitateur du conducteur.
-    return this.cash.declareRemittanceTo(
-      driverParty(this.driverId(req)),
-      dto.merchantId,
-      dto.amount,
-    );
-  }
-
-  /** Confirme une remise déclarée par le commerçant — jamais une des siennes. */
-  @Post('caisse/remises/:id/confirmer')
-  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
-    return this.cash.confirmRemittance('driver', this.driverId(req), id);
-  }
-
-  @Post('caisse/remises/:id/contester')
-  async disputeRemittance(
-    @Request() req: any,
-    @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: DisputeRemittanceDto,
-  ) {
-    return this.cash.disputeRemittance('driver', this.driverId(req), id, dto.reason);
   }
 
   // Le contrôle de type est porté par @Persona sur la classe ; il ne reste

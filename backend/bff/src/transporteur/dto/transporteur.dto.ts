@@ -15,7 +15,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { COLLECTION_DISCREPANCY_REASONS } from '../../cash/cash.constants';
+import { COLLECTION_DISCREPANCY_REASONS } from '../../common/money/collection';
 import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
 
 

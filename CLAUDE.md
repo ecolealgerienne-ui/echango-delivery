@@ -22,7 +22,9 @@ Treize règles qui gouvernent tout le code de ce dépôt. Chacune est née d'un 
 
 ### 1. Le statut Fleetbase fait foi — aucun état parallèle
 
-**Fleetbase est la source de vérité** (`docs/architecture_bff_fleetbase.md`). Le BFF ne conserve que ce que Fleetbase ne peut structurellement pas porter, et fait le lien par identifiant. Trois exceptions nommées, et seulement trois : un **cache éphémère** (jetable sans perte), un **curseur** (une date, pas la donnée), une **valeur figée dans une écriture comptable** (`CashCollection.expectedAmount` ne doit pas bouger si un admin corrige la commande demain).
+**Fleetbase est la source de vérité** (`docs/architecture_bff_fleetbase.md`). Le BFF ne conserve que ce que Fleetbase ne peut structurellement pas porter, et fait le lien par identifiant. **Deux** exceptions nommées, et seulement deux : un **cache éphémère** (jetable sans perte) et un **curseur** (une date, pas la donnée).
+
+⚠️ **Il y en avait trois, et la troisième a disparu le 03/08/2026** : une « valeur figée dans une écriture comptable » (`CashCollection.expectedAmount`, qui ne devait pas bouger si un admin corrigeait la commande le lendemain). Elle est partie avec le registre de caisse (`docs/registre_caisse_precis.md`). C'est le genre de simplification qu'on ne cherche pas et qu'on constate : retirer une capacité a **réduit d'un tiers la liste des états parallèles autorisés**.
 
 Corollaire, et c'est celui qu'on oublie : **ne pas dériver un état métier de plusieurs champs amont**. Un drapeau `is_draft` a été calculé côté BFF depuis `adhoc` + `dispatched` + `driver_assigned_uuid`, puis renvoyé à l'app comme un champ à part. Il a divergé au premier échec partiel : une publication dont la première écriture réussit et la seconde échoue laissait une commande **encore `created` chez Fleetbase** mais « déjà publiée » selon la dérivation — ni republiable, ni affichée pareil d'un écran à l'autre. Un seul champ arbitre, des deux côtés.
 
@@ -56,7 +58,7 @@ Conséquence obligatoire : **toute écriture multiple doit nommer sa fenêtre d'
 - **Ne pas bloquer** quand l'écriture qui échoue est un cache et que l'opération amont a réussi. Lever ferait réessayer l'utilisateur sur une opération déjà faite ; `OrderReconcilerService` remet le cache d'aplomb.
 - **Dire ce qui n'est pas garanti.** Une compensation est best-effort : si elle échoue à son tour, un log en `error` doit nommer la ressource à reprendre à la main. Le filet réduit la fenêtre, il ne la ferme pas.
 
-**Ordre des écritures** : la plus réversible d'abord. Le registre de caisse s'écrit **avant** la clôture Fleetbase, pour qu'un échec laisse la course reprenable plutôt qu'un encaissement fantôme.
+**Ordre des écritures** : la plus réversible d'abord. La déclaration d'encaissement s'écrit **avant** la clôture Fleetbase, pour qu'un échec laisse la course reprenable plutôt qu'une livraison close dont l'argent n'est nulle part.
 
 ### 3. Gestion d'erreur centralisée — un code, jamais un message nu
 
@@ -267,7 +269,7 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 | | |
 |---|---|
 | `@UseGuards` dans le dépôt | **aucun** — l'authentification est un `APP_GUARD` **global** |
-| routes | 95, dont **8 publiques** (7 `auth` + `health`), chacune sous un `@Throttle` plus serré |
+| routes | 74, dont **8 publiques** (7 `auth` + `health`), chacune sous un `@Throttle` plus serré |
 | rôle | `@Persona` posé **au niveau de la classe** sur les trois contrôleurs personas |
 | révocation | `tokenVersion` comparé au claim `tv`, plus `active`, à **chaque** requête |
 | secret | `JWT_SECRET` exigé au démarrage, 32 caractères minimum, **aucun repli** |
@@ -276,15 +278,15 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 - **La fermeture est par défaut, l'ouverture est explicite.** Un garde global plus `@Public` pour se retirer, jamais l'inverse : avec un `@UseGuards` par route, la route qu'on oublie est **ouverte**. Ici la route qu'on oublie est fermée, et l'oubli se voit à l'écran au lieu de se taire sur le réseau. Même polarité que la liste d'autorisation des projections (règle M10) — et c'est la même raison.
 - **`@Public` est une décision, pas une commodité.** Chaque ajout à ces huit routes se justifie par écrit et porte son `@Throttle` : une route publique est la seule surface qu'un inconnu peut marteler.
-- **Un identifiant venu de l'URL passe par un pipe.** Les 41 `@Param('id')` traversent `FleetbaseIdPipe`, parce qu'ils partent **interpolés dans une URL Fleetbase appelée avec le jeton de service**, qui a tous les droits sur l'organisation. Sans lui, un `../../` détourne la requête vers une ressource que le contrôle d'appartenance n'a jamais examinée.
+- **Un identifiant venu de l'URL passe par un pipe.** Les 32 `@Param('id')` traversent `FleetbaseIdPipe`, parce qu'ils partent **interpolés dans une URL Fleetbase appelée avec le jeton de service**, qui a tous les droits sur l'organisation. Sans lui, un `../../` détourne la requête vers une ressource que le contrôle d'appartenance n'a jamais examinée.
 
 ⚠️ **Authentifier n'est pas autoriser, et c'est la confusion qui coûte le plus cher.** Le garde prouve **qui** vous êtes ; il ne prouve pas que la commande, le conducteur ou l'adresse que vous nommez sont à vous. Cette seconde vérification vit **dans chaque service** (`getMerchantWithValidation`, `resolveOrder`, `getDriverOrFail`, `getFleetWithValidation`) — donc dans quatre-vingt-dix endroits, chacun reposant sur le fait que son auteur y a pensé. **Toute route qui accepte un identifiant doit vérifier l'appartenance avant de s'en servir**, et le pire cas doit être « introuvable », jamais « la ressource de quelqu'un d'autre ».
 
-✅ **Les deux refus sont désormais éprouvés** (02/08/2026) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **87** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **26** routes, sur les trois personas. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
+✅ **Les deux refus sont désormais éprouvés** (02/08/2026, recomptés le 03/08) : `scripts/test-frontiere-http.sh` constate les trois refus sur les **66** routes protégées, `scripts/test-appartenance.sh` constate le refus de la ressource d'autrui sur **25** routes, sur les trois personas. Les deux sont dans la suite des scénarios, les deux ont été **prouvés par mutation du vrai code**.
 
-⚠️ **La leçon, et elle vaut plus que les bancs** : la première version du banc de refus a **passé la mutation**. Ouvrir une route la faisait quitter l'ensemble testé, et le total tombait de 87 à 86 sans un mot. **Un contrôle qui prend sa cible dans la donnée qu'il examine ne contrôle rien** — d'où l'épinglage des routes ouvertes, chacune étant une décision qui doit s'écrire.
+⚠️ **La leçon, et elle vaut plus que les bancs** : la première version du banc de refus a **passé la mutation**. Ouvrir une route la faisait quitter l'ensemble testé, et le total tombait sans un mot. **Un contrôle qui prend sa cible dans la donnée qu'il examine ne contrôle rien** — d'où l'épinglage des routes ouvertes, chacune étant une décision qui doit s'écrire.
 
-⚠️ **Reste à couvrir** : 10 des 41 routes à identifiant — remises, encaissements et lecture des preuves, qui demandent un décor **comptable ou photographique** ; 5 autres sont exclues parce que l'appartenance n'y est pas la question. Décomposition complète en Prochaines étapes : un total sans sa décomposition ne se vérifie pas.
+⚠️ **Reste à couvrir** : **2 des 32** routes à identifiant — la lecture des preuves, qui demande un décor **photographique** ; 5 autres sont exclues parce que l'appartenance n'y est pas la question. Décomposition complète en Prochaines étapes : un total sans sa décomposition ne se vérifie pas.
 
 ⚠️ **Et un refus doit sortir avec son code.** `HttpExceptionFilter` est déclaré `@Catch(HttpException)` : une `TypeError` ou une erreur Prisma **ne passe pas par lui**, sort par le gestionnaire par défaut de Nest, donc **sans `code`** — et l'application retombe sur son message générique au moment précis où l'on comprend le moins ce qui s'est passé. C'est la règle 3 percée sur son chemin le plus obscur.
 
@@ -292,7 +294,7 @@ Le branchement vit dans `.claude/settings.local.json`, **gitignoré** — chacun
 
 **Le `ValidationPipe` ne valide que les classes décorées.** Un `@Body() dto: { reason?: string }` typé en ligne n'est pas validé du tout : le pipe n'a aucune métadonnée à lire et laisse passer le corps tel quel. Ce n'est pas une hypothèse — une entreprise de transport a pu contester une remise avec un motif de **longueur illimitée** là où les deux autres personas sont bornés à 500 caractères. Le plafond n'était pas contourné : **il n'existait pas sur ce chemin**.
 
-**L'état mesuré le 02/08/2026** : `whitelist` **et** `forbidNonWhitelisted` — un champ inconnu est *refusé*, pas silencieusement retiré ; **134 champs de DTO sur 14 fichiers, zéro sans décorateur** ; tous les `@Query` typés sauf trois chaînes brutes ; corps limité à 10 Mo ; appels Fleetbase bornés à 30 s.
+**L'état mesuré le 02/08/2026** : `whitelist` **et** `forbidNonWhitelisted` — un champ inconnu est *refusé*, pas silencieusement retiré ; **tous les champs de DTO décorés, aucun sans** ; tous les `@Query` typés sauf trois chaînes brutes ; corps limité à 10 Mo ; appels Fleetbase bornés à 30 s.
 
 **En pratique :**
 
@@ -308,7 +310,7 @@ export const IsFleetbaseId = (label: string) =>
   applyDecorators(IsString(), Matches(FLEETBASE_ID_PATTERN, { message: `${label} invalide` }));
 ```
 
-⚠️ **Ce qu'il ne faut PAS fusionner** : `Max(5000000)` sur une remise et `Max(500000)` sur un encaissement sont deux nombres pour deux raisons. Les rapprocher « parce que ce sont deux montants » ferait bouger l'un en corrigeant l'autre.
+⚠️ **Ce qu'il ne faut PAS fusionner** : deux bornes qui se ressemblent peuvent être deux nombres pour deux raisons. Les rapprocher « parce que ce sont deux montants » ferait bouger l'un en corrigeant l'autre. *(L'exemple d'origine — `Max(5000000)` sur une remise contre `Max(500000)` sur un encaissement — a disparu avec le registre de caisse le 03/08/2026 ; la règle, elle, tient.)*
 
 ⚠️ **Et le piège qui rend ce chantier dangereux, à connaître avant d'y toucher** : `echango_delivery/tool/check_server_rules.dart` lit les DTO serveur **textuellement** (`RegExp(r'@MinLength\(\s*(\d+)')`). C'est le seul mécanisme qui empêche l'application et le serveur de diverger sur ces bornes. Remplacer `@MinLength(8)` par un `@IsPassword()` composé le rendrait **aveugle** — et son mode de panne documenté est de **conclure à l'accord** quand il ne reconnaît pas une déclaration. On refermerait une duplication en cassant le garde qui en surveille une autre, **sans que rien ne passe au rouge**. Si l'on compose, le vérificateur se met à jour dans le même lot et s'éprouve sur une mutation.
 
@@ -335,10 +337,10 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # 10 scénarios — le BFF en curl
-./scripts/test-frontiere-http.sh                # 87 routes × 3 refus (jeton, rôle, révocation)
+./scripts/run-all-scenarios.sh [conducteur]     # 5 scénarios — le BFF en curl
+./scripts/test-frontiere-http.sh                # 66 routes × 3 refus (jeton, rôle, révocation)
 ./scripts/test-appartenance.sh                  # la ressource de A refusée à B
-flutter analyze && flutter test                 # 0 problème · 78 tests
+flutter analyze && flutter test                 # 0 problème · 60 tests
 dart tool/check_*.dart [--self-test]            # 5 contrôles · 76 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
 
@@ -348,7 +350,9 @@ flutter drive --driver=test_driver/integration_test.dart \
   --target=integration_test/parcours_trois_personas_test.dart -d <émulateur> --dart-define=…
 ```
 
-Les dix scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-appartenance, régularisation commerçant, écart à la porte et dette négative, les deux plafonds, les trois sorties d'une course, **le voyage de la wilaya**, et depuis le 02/08/2026 les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12.
+Les cinq scénarios couvrent : multi-appartenance, les trois sorties d'une course, **le voyage de la wilaya**, et les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12.
+
+⚠️ **Cinq et non dix depuis le 03/08/2026** : les scénarios d'argent — parcours à 2 et 3 maillons, régularisation, écart à la porte et dette négative, les deux plafonds — sont partis avec le registre de caisse qu'ils éprouvaient (`docs/registre_caisse_precis.md`). Ce qui reste du sujet — la déclaration à la porte et son refus sans motif — est éprouvé **dans l'application**, par les parcours joués à l'écran, qui est le seul endroit d'où ce geste part réellement.
 
 ⚠️ **`test-wilaya.sh` porte ses propres témoins, et c'est ce qui le rend utile.** La wilaya décide de ce qu'un transporteur voit ; une course qui ne la transporte pas est **invisible au filtre**, sans erreur ni journal — une liste simplement plus courte. Trois contrôles, chacun avec son cas négatif dans le même passage :
 
@@ -360,7 +364,7 @@ Les dix scénarios couvrent : parcours d'argent (2 et 3 maillons), multi-apparte
 
 ⚠️ **Et la mutation elle-même se vérifie.** La première tentative écrivait `null` nu dans un littéral à clé calculée — **TS7018**, le piège déjà documenté plus haut : la compilation échouait, l'ancien code restait en service, et le scénario passait. J'aurais pu en conclure qu'il ne vérifiait rien. Le banc dit désormais « la mutation n'a jamais pris effet — l'essai ne prouve RIEN » plutôt que de trancher : *« le contrôle est aveugle »* et *« la mutation n'est pas en service »* sont deux choses, et les confondre accuse le mauvais coupable.
 
-⚠️ **Les scénarios ne touchent jamais l'application, et c'est leur angle mort.** Ils composent leur corps de requête en `curl` : un écran peut être absent, muet ou fautif sans qu'aucun ne passe au rouge. Les parcours joués **dans** l'app ont trouvé **six défauts** qu'aucun des 87 tests Jest ni des 78 tests Flutter ne pouvait voir :
+⚠️ **Les scénarios ne touchent jamais l'application, et c'est leur angle mort.** Ils composent leur corps de requête en `curl` : un écran peut être absent, muet ou fautif sans qu'aucun ne passe au rouge. Les parcours joués **dans** l'app ont trouvé **six défauts** qu'aucun test Jest ni Flutter ne pouvait voir :
 
 - une création de course **refusée dès que le contenu du colis n'était pas décrit** ;
 - une fiche qui restait « Brouillon » après publication, un garde de relecture comparant des identifiants qui ne pouvaient **jamais** être égaux ;
@@ -375,9 +379,9 @@ Détail complet, et les cinq défauts trouvés dans les tests eux-mêmes, dans l
 
 ### Outils d'exploitation
 
-- `scripts/provision-platform.sh` — désigne le prestataire **plateforme**, ce qui fait passer les courses du pool de deux à trois maillons. `isPlatform` n'a **aucune route**, délibérément.
-- `scripts/reset-test-ledger.sh` — remet à zéro le registre d'un conducteur de test. ⚠️ Développement uniquement : une dette constatée se solde par une remise confirmée, elle ne s'efface pas.
-- ⚠️ **Le throttle d'inscription (10/h) est la vraie limite de la suite** : elle en consomme huit. Elle passe dans une heure fraîche, pas deux fois de suite.
+⚠️ **Les deux outils de registre ont disparu le 03/08/2026** avec le registre lui-même (`docs/registre_caisse_precis.md`) : `provision-platform.sh`, qui désignait le prestataire plateforme, et `reset-test-ledger.sh`, qui soldait la dette d'un conducteur de test. Le second existait parce que chaque passage de la suite ajoutait ~2 800 à l'encours et finissait par buter sur le plafond ; la déclaration s'écrivant désormais **sur la commande**, rien ne s'accumule et il n'y a plus rien à remettre à zéro.
+
+- ⚠️ **Le throttle d'inscription (10/h) reste la vraie limite de la suite.** Elle passe dans une heure fraîche, pas deux fois de suite.
 
 ## Architecture envisagée (hypothèse de travail — à valider en testant, pas encore tranchée)
 
@@ -459,6 +463,97 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 > Ce qui reste ici : **ce qui n'est pas fait**. Une case cochée n'a plus rien à
 > apprendre à qui écrit du code aujourd'hui ; une case vide, si.
 
+- [x] ✅ **Le registre de caisse est RETIRÉ — 03/08/2026, décision produit**
+
+  **Tenir des soldes est de la trésorerie, pas de la logistique**, et détenir des
+  fonds pour compte de tiers est une activité réglementée qu'un agrégateur
+  n'exerce pas. Motif complet, modélisation et défaut connu :
+  **`docs/registre_caisse_precis.md`**. Implémentation figée sous le tag
+  **`registre-caisse-v1`**.
+
+  ⚠️ **Ne pas argumenter par « Fleetbase ne le fait pas ».** C'est faux et ça
+  s'effondre à la première vérification : `Order` porte `cod_amount`, et le
+  vendor embarque une extension `ledger-api`. Le vrai argument est
+  réglementaire — les plateformes qui tiennent l'argent (Yalidine, ZR, Noest)
+  sont des transporteurs **à agences**, avec dépôts et agrément.
+
+  **Trois choses étaient confondues sous un seul mot, et c'est la séparation qui
+  décide de tout** :
+
+  | | nature | sort |
+  |---|---|---|
+  | le **montant à encaisser** | une donnée du colis, elle voyage avec lui | **gardé** |
+  | la **déclaration à la porte** | un **évènement** de la livraison, comme la photo | **gardé** |
+  | dette, remises, plafond, contrepartie, **commission** | des **soldes** | **retiré** |
+
+  **La frontière : la plateforme enregistre des faits, elle ne tient pas de
+  soldes.** Un fait est daté et un doublon se corrige ; un solde demande une
+  garde d'idempotence, une réconciliation et un avis juridique — et il ment en
+  silence quand il se trompe.
+
+  **Ce qui a remplacé quoi** : 3 tables Prisma → trois champs personnalisés
+  Fleetbase (`collected_amount`, `collected_at`, `collection_reason`) ;
+  23 routes → **1** en lecture ; 29 codes d'erreur → **5** ; un écran de
+  1 399 lignes à trois personas → un écran commerçant en lecture seule ;
+  `settleCashIfDue()` → `recordCollectionIfDue()`, même garde, écriture
+  différente. Environ **5 000 lignes** retirées.
+
+  ✅ **Gain non prévu, et c'est le plus intéressant : l'idempotence devient
+  gratuite.** La table accumulait des lignes, donc une reprise après échec
+  réseau exigeait une garde explicite — celle des remises manquait, et trois
+  déclarations pour une même dette étaient acceptées (7 300 de dette,
+  14 600 déclarés). Écrire la même valeur deux fois sur la même commande donne
+  le même état : il n'y a plus rien à garder.
+
+  ⚠️ **Le contrôle de collision est désormais exécuté, pas constaté une fois.**
+  Un champ personnalisé qui porte un nom déjà servi par Fleetbase ne produit
+  **aucune erreur**, seulement une valeur silencieusement fausse — c'est le
+  défaut `currency` du 02/08. Les 56 clés servies par `Order.php` et
+  `Index/Order.php` sont **épinglées** dans `order-custom-fields.spec.ts`, et un
+  test refuse toute collision non déclarée. Éprouvé par mutation du vrai
+  catalogue (un champ nommé `notes`) : il échoue, puis repasse une fois
+  restauré. ⚠️ **À reprendre à chaque montée de version de Fleetbase** — une clé
+  ajoutée en amont ne casse rien tant que personne ne lui donne le même nom.
+
+  ✅ **Le contrat d'écriture est prouvé en réel** (03/08/2026), et il fallait
+  le prouver : `PUT /int/v1/orders/{public_id}` avec `{order: {custom_field_values}}`
+  rend 200, la valeur est **relue**, `meta` est **intact** — et surtout **le
+  `PUT` fusionne, il ne remplace pas**. Trois champs posés, un `PUT` n'en
+  portant qu'un : les trois survivent.
+
+  ⚠️ **C'est ce troisième témoin qui décidait de tout.** Sans lui, l'écriture de
+  clôture aurait effacé prix et montant à encaisser **au moment précis où le
+  transporteur tient l'argent** — le défaut `meta` du 30/07, reproduit sur le
+  mécanisme censé le corriger. Et il fallait **poser** le témoin : lire une
+  commande qui ne porte qu'un champ ne distingue pas « les autres ont été
+  détruits » de « elle n'en avait pas ». Ma première sonde lisait exactement
+  cela, et concluait faussement au remplacement.
+
+  ⚠️ **Ce que le retrait DÉPLACE, et qu'il faut assumer.** Le plafond de dette
+  disparaît, et il ne pouvait pas survivre seul : ce qu'un transporteur détient,
+  c'est l'encaissé **et pas encore remis**, un nombre incalculable sans registre
+  des remises. Le risque change de porteur — **l'entreprise** pour ses
+  conducteurs, le **commerçant** pour un indépendant.
+
+  ⚠️ **Conséquence sur une décision de la veille** : « Echango répond des espèces
+  pour les indépendants » (02/08) devient **intenable** — répondre de l'argent
+  suppose de le suivre. Soit on l'abandonne, soit les courses encaissées sont
+  réservées aux conducteurs d'entreprise et aux favoris. **Arbitrage produit
+  ouvert.**
+
+  ⚠️ **La commission sort entièrement**, et elle se calcule désormais sur un
+  système externe. Elle était calculée, écrite en base, et **jamais perçue** :
+  sur une course du pool la dette allait droit au commerçant, donc il n'existait
+  aucun flux conducteur → Echango sur lequel retenir quoi que ce soit. Le volume
+  à facturer survit intégralement — courses, prix, dates de clôture.
+
+  ⚠️ **Une règle de règlement a disparu de l'écran aussi, et c'était voulu.** La
+  fiche commerçant annonçait « vous reviendra : 1 400 » — perçu moins la
+  rémunération. Ce n'est pas une lecture, c'est un **arbitrage** que la
+  plateforme faisait à la place des deux parties. Les deux nombres restent
+  affichés ; la soustraction leur appartient.
+
+
 - [x] ✅ **Paginer côté Fleetbase là où c'est possible — fait le 02/08/2026**, et l'énoncé de départ était trop large.
 
   **Un seul site était déplaçable, pas trois.** `FlotteService.getOrders` découpe désormais côté Fleetbase (`getOrderPage`), avec `facilitator` et `status` passés au serveur et `meta.total` relu. Les autres restent, et c'est justifié : `isClaimable` combine statut, `adhoc`, conducteur et facilitateur, `listOrders` (transporteur) applique ensuite véhicule, refus et **zone** — aucun filtre Fleetbase ne les exprime, il faut tout ramener. Le compte de « sept sites » venait d'un recensement, pas d'un examen de chacun.
@@ -471,7 +566,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Mon premier banc comparait le NOMBRE DE LIGNES et non les totaux.** Plafonné à `limit=100`, il rendait 100 des deux côtés et concluait « filtre ignoré » sur un filtre qui marchait. C'est le défaut que ce banc existe pour détecter, commis dans le banc. ⚠️ Et un `0` contre un témoin à `0` ne prouve rien non plus : `status=completed` rendait 0, ce qui pouvait aussi bien dire « filtre cassé » — il a fallu la répartition réelle (24 `dispatched`, 2 `created`) pour savoir que le zéro était vrai.
 
-  ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables sont justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. Le registre COD est l'exception nommée, `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
+  ⚠️ **Le reste de l'audit est sain, et le dire évite de le refaire** : les seize tables d'alors étaient justifiées, y compris les cinq dont je croyais un moment qu'elles ne l'étaient pas — mon filtre cherchait `///` là où elles emploient `//`. ⚠️ **Elles sont treize depuis le 03/08/2026** : le registre COD — qui était *l'*exception nommée — est retiré. `DriverMembership` est une relation n-n que `Driver.vendor_uuid` ne peut pas porter, `AuditLog` enregistre des refus que Fleetbase ne voit jamais, et la décision sur les comptes est tranchée dans `specs_bff.md` v2 (`customer-portal-api` ne couvre que le commerçant, rien n'existe pour la flotte ni pour le conducteur).
 
 - [ ] **Le transporteur choisit ce qu'il voit : wilaya d'abord, rayon autour (décidé ET branché le 02/08/2026 — sauf les notifications)**
 
@@ -536,12 +631,12 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   | conducteur rattaché à une **entreprise** | **l'entreprise** |
   | conducteur **indépendant** (pool) | **Echango** |
 
-  **Le code fait déjà cela** : sur une course du pool, Echango est le facilitateur (`isPlatform`), et le registre route la dette de l'indépendant vers Echango. Décision et implémentation s'accordent — pour une fois, il n'y a rien à brancher.
+  ⚠️ **RATTRAPÉE PAR LE RETRAIT DU REGISTRE (03/08/2026).** La ligne « le code fait déjà cela » était juste ce jour-là et ne l'est plus : il n'y a plus de registre pour router quoi que ce soit. **Echango ne peut plus répondre des espèces d'un indépendant** — répondre de l'argent suppose de le suivre. La colonne de droite du tableau ci-dessus est donc à retrancher : soit l'indépendant règle directement avec le commerçant, soit les courses encaissées lui sont fermées.
 
   ⚠️ **Deux conséquences qui changent des points ouverts ailleurs dans ce fichier** :
 
-  - **La commission redevient recouvrable.** `docs/specs_flux_argent_quatre_acteurs.md` la donnait comme perdue, « aucun flux conducteur → Echango sur lequel compenser ». Si Echango est la contrepartie de l'indépendant, **ce flux existe** : la retenue est possible.
-  - **Le plafond de dette cesse de protéger le commerçant pour devenir l'exposition d'Echango.** Son montant n'est donc plus un réglage de confort, c'est un appétit au risque — à fixer comme tel.
+  - ~~**La commission redevient recouvrable.**~~ **Annulé le 03/08/2026** : la commission sort du code et se calcule sur un système externe. Le flux sur lequel elle aurait été retenue n'existe pas.
+  - ~~**Le plafond de dette devient l'exposition d'Echango.**~~ **Annulé le 03/08/2026** : il n'y a plus de plafond, et il ne pouvait pas survivre au registre — ce qui est détenu n'est pas calculable sans les remises.
 
   **Ce que ça ne règle pas** : la question juridique demeure, mais elle se déplace. Elle n'est plus « qui est responsable » — c'est tranché — mais « le contrat Echango–transporteur suffit-il à couvrir la détention d'espèces pour compte de tiers ». À voir avec les transporteurs et les commerçants.
 
@@ -569,14 +664,15 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ✅ **(2) Le banc d'appartenance — fait le 02/08/2026** (`scripts/test-appartenance.sh`, 10ᵉ scénario). **26 routes éprouvées, 26 refus** sur les trois personas. La ressource de A demandée avec le jeton de B rend 403 ou 404, jamais la ressource.
 
-  **Le compte exact des 41 routes à identifiant**, parce qu'un total sans sa décomposition ne se vérifie pas :
+  **Le compte exact des 32 routes à identifiant** (recompté le 03/08/2026, après le retrait du registre de caisse), parce qu'un total sans sa décomposition ne se vérifie pas :
 
   | | routes | |
   |---|---|---|
-  | **éprouvées** | **26** | commandes, adresses, favoris, notifications (commerçant) · commandes, adhésions (entreprise) · course assignée, dépôt de preuve, rattachements (transporteur) |
+  | **éprouvées** | **25** | commandes, adresses, favoris, notifications (commerçant) · commandes, adhésions (entreprise) · course assignée, dépôt de preuve, rattachements (transporteur) |
   | exclues, l'appartenance n'y est pas la question | 5 | opportunités (visibles à toute entreprise), prendre une opportunité, inviter un conducteur, accepter/refuser une course libre |
-  | décor **comptable** | 8 | `remises/:id/confirmer\|contester` des trois personas et `encaissements/:id/confirmer\|contester` du transporteur — les poser demanderait d'**écrire dans le registre de caisse** |
   | décor **photographique** | 2 | `GET preuves/:id` (commerçant et transporteur) — il faut une preuve existante, donc une livraison achevée avec sa photo |
+
+  ⚠️ **Les 8 routes à décor comptable ont disparu, elles n'ont pas été couvertes.** `remises/:id/confirmer|contester` des trois personas et `encaissements/:id/confirmer|contester` du transporteur sont parties avec le registre — la couverture passe de 26/41 à 25/32 sans qu'aucune épreuve n'ait été ajoutée. Le dire évite de lire une amélioration là où il n'y a qu'une soustraction.
 
   ⚠️ **Une route avait été rangée sur son NOM plutôt que sur son besoin.** `POST /transporteur/commandes/:id/preuve` était comptée avec les preuves à décor parce qu'elle en porte le mot — alors qu'elle n'exige **aucune preuve existante** : une photo dans le corps (un PNG d'un pixel suffit) et une course de A, que le banc avait déjà. Le tri paresseux que ce fichier dénonce partout, commis dans son propre inventaire.
 
@@ -635,7 +731,7 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **Un refus amont sort en 400, pas en 503.** `order.fetch_failed` dit « votre requête est fautive » là où l'amont est en panne — un client peut en conclure qu'il est inutile de réessayer. Le code est juste, le statut ment.
 
-  **Reste entier** : la concurrence (deux clôtures simultanées, un double appui sur une remise), la charge, et le comportement quand Fleetbase répond **lentement** plutôt que pas du tout — le délai est à 30 s, ce qui est très long pour un écran.
+  **Reste entier** : la concurrence (deux clôtures simultanées), la charge, et le comportement quand Fleetbase répond **lentement** plutôt que pas du tout — le délai est à 30 s, ce qui est très long pour un écran.
 
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.
@@ -694,7 +790,11 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
 - [ ] **Publier les deux signalements amont** : `docs/signalements_amont.md` — rédigés en anglais, prêts à coller. (1) `fleetbase/fleetops`, `assignDriver()` qui écrase `meta` faute de recharger une ressource d'index — correctif de trois lignes, déjà présent quatre fois ailleurs dans leur dépôt. (2) `Graphify-Labs/graphify`, l'import relatif Dart non résolu qui crée un nœud fantôme au `source_file` vide et fabrique des chemins **plausibles et faux** — avec les mesures (2 % de nœuds fantômes, 3,83 arêtes/nœud en TS contre 1,61 en Dart) et le cas de reproduction.
 
-- [ ] ⚠️ **« Echango est toujours le facilitateur » est une DÉCISION, pas du code (constaté le 01/08/2026)** — et c'est la plus grosse pièce non écrite du projet, celle qui a le plus l'air faite.
+- [x] ⚠️ ~~**« Echango est toujours le facilitateur » est une DÉCISION, pas du code**~~ — **CLOS SANS ÊTRE FAIT, le 03/08/2026.**
+
+  L'écart entre la doc et le code était réel, et il ne sera jamais comblé : le registre qui aurait porté cette décision est retiré (`docs/registre_caisse_precis.md`). Conservé ci-dessous **pour la leçon de méthode**, qui vaut indépendamment du sujet.
+
+  *(Constat d'origine, 01/08/2026 :)* — et c'est la plus grosse pièce non écrite du projet, celle qui a le plus l'air faite.
 
   `docs/specs_facilitateur.md` §2.2 et §2.3 sont titrées « ✅ **Décisions prises** le 31/07/2026 ». Elles se lisent comme un état livré. **Le code dit autre chose**, et la vérification tient en deux lignes :
 
@@ -717,8 +817,8 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
 
   ⚠️ **La leçon de méthode, et c'est elle qui compte.** J'ai produit un résumé métier depuis les docs alors que **mes propres tests du jour montraient le contraire** — `test-parcours-argent.sh` écrit une dette `driver → merchant` avec `facilitatorId: null`, sous mes yeux. Un titre « ✅ Décision prise » se lit comme « fait » ; il faudrait qu'il se lise comme « à faire ». **Une décision consignée sans son état d'implémentation est une donnée d'appui fausse en puissance** — même famille que la borne du `pubspec` et que le commentaire de `dates.dart`, corrigés le matin même. À l'écriture d'une spec : dire ce qui est décidé **et** ce qui est branché, séparément.
 
-- [ ] **Flux d'argent à quatre acteurs — décisions produit à prendre avant tout code** : `docs/specs_flux_argent_quatre_acteurs.md` (30/07/2026). ⚠️ **Partiellement remplacé par `docs/specs_facilitateur.md`** (ci-dessus), qui tranche ses questions ouvertes et corrige son §3.4 : la base de commission est **déjà** ce que le commerçant paie (`recordEarning` reçoit `meta.price`) — le défaut porte sur le destinataire, pas sur la valeur. L'entreprise de transport qui gère sa propre flotte est le **seul acteur sans place dans le registre de caisse**, bâti sur un couple `driverId`/`merchantId`. Quatre défauts en découlent, dont deux graves : le **plafond de dette borne la mauvaise exposition** (une entreprise de dix conducteurs accumule dix fois le plafond chez le même commerçant sans qu'aucune garde ne se déclenche), et la **commission est assise sur la rémunération du conducteur**, un montant interne à l'entreprise que nous n'aurons jamais — la base doit être ce que le commerçant paie. Antérieur à tout ça : **le commerçant ne pose jamais `facilitator`**, donc une entreprise ne peut recevoir que ce qu'un opérateur lui rattache à la main en console. Recommandation centrale : **la contrepartie financière est l'entreprise quand il y en a une, le transporteur sinon** — ce qui demande de généraliser les trois tables du registre à un couple de parties typées, sans toucher à une seule règle métier, et rend le cas indépendant et le cas entreprise identiques au lieu d'ajouter une branche partout où il est question d'argent. **Trois décisions prises le 30/07/2026, qui ouvrent le développement** : (1) le commerçant choisit **une entreprise ou un transporteur du pool**, au même endroit — donc les **favoris doivent devenir polymorphes** eux aussi, et confier une course à une société ne doit PAS nommer son conducteur à sa place ; (2) une entreprise peut **prendre une course diffusée** et l'attribuer en interne — il faut lui donner l'équivalent d'`acceptOrder()`, et gérer les deux populations qui réclament la même course ; (3) **l'entreprise répond de ses conducteurs**, ce qui rend le modèle tenable : la perte d'un conducteur ne change rien au solde que voit le commerçant, elle bascule sur la chaîne interne où l'entreprise a des moyens que nous n'avons pas. Le client final reste hors plateforme. Restent ouvertes trois questions qui ne bloquent rien, sauf une : **un conducteur peut-il travailler pour deux entreprises** — elle décide si un simple couple de parties suffit.
-- [ ] **Paiement à la livraison — reste à trancher** : les points du §9 de `docs/specs_paiement_livraison.md` que l'implémentation n'a délibérément pas préemptés — qui supporte la perte, le montant réel du plafond, le retrait en agence, et la **vérification juridique** sur la détention de fonds pour compte de tiers (la Voie B est conçue pour l'éviter, cela reste à confirmer). : `docs/specs_paiement_livraison.md`. Le sujet n'est pas un champ « montant » mais une **chaîne de garde d'espèces** qui court à contresens du colis, par quelqu'un qui n'est ni l'expéditeur ni le destinataire. Trois modèles observés : transporteur intégré à agences (Yalidine, ZR, Noest en Algérie ; Bosta, Mylerz en Égypte — reversement en 3 à 7 jours, rapprochement manuel à 3-5 % d'erreurs et 15 % de trésorerie en suspens), plateforme à solde coursier (DoorDash — le coursier garde le liquide, déduit de ses gains, plus de courses encaissées si le solde passe négatif), et agrégateur qui ne touche jamais l'argent. **Notre position n'est aucune des trois** : ni agences ni dépôts, transporteurs indépendants, et pas encore de versement sur lequel compenser — mais nous avons les favoris, une relation répétée qui change le profil de risque et fournit l'occasion naturelle de la remise. **Recommandation : Voie B** — le transporteur conserve les espèces, l'application tient le registre de sa dette par commerçant, la remise se fait au prochain enlèvement et se confirme des deux côtés ; Echango ne touche jamais l'argent. Garde-fous logiciels : plafond de dette, courses encaissées réservées aux favoris au démarrage, trace horodatée. **L'apport de l'app** est entièrement informationnel : le bon montant au bon moment, « livré » et « encaissé X » en une seule déclaration prouvée, l'écart constaté à la porte et non cinq jours plus tard au dépôt, la réponse à « combien me doit-on et depuis quand », et le plafond de dette — seul instrument de contrôle disponible sans dépôt physique. **Rien n'est implémenté volontairement** : une mise en œuvre partielle serait pire que l'absence, un commerçant confierait de l'argent réel à une capacité qui n'existe pas. Six points à trancher (§9), dont qui supporte la perte et une **vérification juridique** sur la détention de fonds pour compte de tiers.
+- [x] ~~**Flux d'argent à quatre acteurs — décisions produit à prendre avant tout code**~~ — **CLOS le 03/08/2026** : le registre de caisse est retiré, ces décisions ne conditionnent plus aucun code de ce dépôt. L'analyse reste juste et redevient la spec d'un module externe s'il se construit un jour (`docs/registre_caisse_precis.md` §3). *(Énoncé d'origine :)* `docs/specs_flux_argent_quatre_acteurs.md` (30/07/2026). ⚠️ **Partiellement remplacé par `docs/specs_facilitateur.md`** (ci-dessus), qui tranche ses questions ouvertes et corrige son §3.4 : la base de commission est **déjà** ce que le commerçant paie (`recordEarning` reçoit `meta.price`) — le défaut porte sur le destinataire, pas sur la valeur. L'entreprise de transport qui gère sa propre flotte est le **seul acteur sans place dans le registre de caisse**, bâti sur un couple `driverId`/`merchantId`. Quatre défauts en découlent, dont deux graves : le **plafond de dette borne la mauvaise exposition** (une entreprise de dix conducteurs accumule dix fois le plafond chez le même commerçant sans qu'aucune garde ne se déclenche), et la **commission est assise sur la rémunération du conducteur**, un montant interne à l'entreprise que nous n'aurons jamais — la base doit être ce que le commerçant paie. Antérieur à tout ça : **le commerçant ne pose jamais `facilitator`**, donc une entreprise ne peut recevoir que ce qu'un opérateur lui rattache à la main en console. Recommandation centrale : **la contrepartie financière est l'entreprise quand il y en a une, le transporteur sinon** — ce qui demande de généraliser les trois tables du registre à un couple de parties typées, sans toucher à une seule règle métier, et rend le cas indépendant et le cas entreprise identiques au lieu d'ajouter une branche partout où il est question d'argent. **Trois décisions prises le 30/07/2026, qui ouvrent le développement** : (1) le commerçant choisit **une entreprise ou un transporteur du pool**, au même endroit — donc les **favoris doivent devenir polymorphes** eux aussi, et confier une course à une société ne doit PAS nommer son conducteur à sa place ; (2) une entreprise peut **prendre une course diffusée** et l'attribuer en interne — il faut lui donner l'équivalent d'`acceptOrder()`, et gérer les deux populations qui réclament la même course ; (3) **l'entreprise répond de ses conducteurs**, ce qui rend le modèle tenable : la perte d'un conducteur ne change rien au solde que voit le commerçant, elle bascule sur la chaîne interne où l'entreprise a des moyens que nous n'avons pas. Le client final reste hors plateforme. Restent ouvertes trois questions qui ne bloquent rien, sauf une : **un conducteur peut-il travailler pour deux entreprises** — elle décide si un simple couple de parties suffit.
+- [x] ~~**Paiement à la livraison — reste à trancher**~~ — **CLOS le 03/08/2026, et la conclusion est celle que ce texte redoutait**. Il disait déjà : *« une mise en œuvre partielle serait pire que l'absence, un commerçant confierait de l'argent réel à une capacité qui n'existe pas »*. La Voie B a été construite, puis retirée pour cette raison même. Ce qui reste est le geste informationnel qu'il décrivait comme l'apport réel de l'app : **le bon montant au bon moment, et l'écart constaté à la porte plutôt que cinq jours plus tard au dépôt**. *(Énoncé d'origine :)* les points du §9 de `docs/specs_paiement_livraison.md` que l'implémentation n'a délibérément pas préemptés — qui supporte la perte, le montant réel du plafond, le retrait en agence, et la **vérification juridique** sur la détention de fonds pour compte de tiers (la Voie B est conçue pour l'éviter, cela reste à confirmer). : `docs/specs_paiement_livraison.md`. Le sujet n'est pas un champ « montant » mais une **chaîne de garde d'espèces** qui court à contresens du colis, par quelqu'un qui n'est ni l'expéditeur ni le destinataire. Trois modèles observés : transporteur intégré à agences (Yalidine, ZR, Noest en Algérie ; Bosta, Mylerz en Égypte — reversement en 3 à 7 jours, rapprochement manuel à 3-5 % d'erreurs et 15 % de trésorerie en suspens), plateforme à solde coursier (DoorDash — le coursier garde le liquide, déduit de ses gains, plus de courses encaissées si le solde passe négatif), et agrégateur qui ne touche jamais l'argent. **Notre position n'est aucune des trois** : ni agences ni dépôts, transporteurs indépendants, et pas encore de versement sur lequel compenser — mais nous avons les favoris, une relation répétée qui change le profil de risque et fournit l'occasion naturelle de la remise. **Recommandation : Voie B** — le transporteur conserve les espèces, l'application tient le registre de sa dette par commerçant, la remise se fait au prochain enlèvement et se confirme des deux côtés ; Echango ne touche jamais l'argent. Garde-fous logiciels : plafond de dette, courses encaissées réservées aux favoris au démarrage, trace horodatée. **L'apport de l'app** est entièrement informationnel : le bon montant au bon moment, « livré » et « encaissé X » en une seule déclaration prouvée, l'écart constaté à la porte et non cinq jours plus tard au dépôt, la réponse à « combien me doit-on et depuis quand », et le plafond de dette — seul instrument de contrôle disponible sans dépôt physique. **Rien n'est implémenté volontairement** : une mise en œuvre partielle serait pire que l'absence, un commerçant confierait de l'argent réel à une capacité qui n'existe pas. Six points à trancher (§9), dont qui supporte la perte et une **vérification juridique** sur la détention de fonds pour compte de tiers.
 - [ ] **P1 restant — relu et corrigé le 31/07/2026** (`docs/rapports_revue_2026-07-28/00_synthese.md`). ⚠️ **Trois des quatre points étaient périmés, et deux étaient devenus faux** — les laisser écrits aurait fait « corriger » ce qui l'est déjà, ce qui est la même faute que décrire une protection qu'on n'a pas. Vérifié point par point dans le code, pas de mémoire :
 
   - ~~**prix et délai affichés**~~ — **faux depuis longtemps** : `price`, `currency`, `price_source` et `cod_amount` sont dans `META_FIELDS` de `projectOrderForDriver`, chacun sous un commentaire disant explicitement que le transporteur doit les avoir pour décider ; `scheduled_at` est dans `ORDER_FIELDS`.

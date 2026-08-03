@@ -409,23 +409,18 @@ void parcoursArgentDeuxMaillons() {
         reason: 'le tiroir se referme — la déclaration est partie',
         onTimeout: 'écran : ${visibleTexts()}');
 
-    // ── 3. Sa caisse porte la somme ────────────────────────────────────────
-    await goBack(tester);
-    await pumpUntil(tester, find.byType(Tab),
-        reason: 'retour au tableau de bord');
-
-    // ⚠️ **Le NET, pas la somme encaissée** : la caisse déduit la rémunération
-    // du transporteur, et l'écran le dit — « Votre rémunération est déjà
-    // déduite ». Ce qu'il veut savoir, c'est ce qu'il doit **remettre**.
-    // Vérifié côté serveur : /transporteur/caisse rend 1950 pour 2727 perçus
-    // sur une course à 777.
-    final net = (int.parse(expected) - int.parse(codFee)).toString();
-    await expectCaisseShows(tester, net);
-
-    // Le NET est repris par le test commerçant : c'est le même nombre qui doit
-    // apparaître des deux côtés, et le recalculer là-bas masquerait une
-    // divergence au lieu de la révéler.
-    _montantEncaisse = net;
+    // ── 3. Le transporteur n'a plus de caisse à consulter ──────────────────
+    //
+    // ⚠️ Cette étape vérifiait que sa caisse portait le NET — perçu moins sa
+    // rémunération. L'écran est parti le 03/08/2026 avec le registre : il
+    // déclare ce qu'il perçoit en clôturant, et ne tient plus de solde
+    // (`docs/registre_caisse_precis.md`).
+    //
+    // Ce qui est repris par le test commerçant est donc la somme **perçue**,
+    // et non plus un net. Le recalculer là-bas masquerait une divergence au
+    // lieu de la révéler : c'est le même nombre qui doit apparaître des deux
+    // côtés.
+    _montantEncaisse = expected;
   });
 
   // ⚠️ **Un test à part, et surtout PAS un second `app.main()` dans le
@@ -450,8 +445,10 @@ void parcoursArgentDeuxMaillons() {
     app.main();
     await loginAs(tester, email: merchantEmail, home: Home.merchant);
 
-    // C'est la moitié qui compte vraiment : une dette que seul le débiteur voit
-    // n'est pas une dette, c'est une note personnelle.
+    // C'est la moitié qui compte vraiment : une déclaration que seul son auteur
+    // voit n'apprend rien à personne. Le commerçant est le seul des deux à
+    // avoir encore un écran, et c'est là que se prouve la traversée complète —
+    // du tiroir du transporteur jusqu'à la commande, puis jusqu'à lui.
     await expectCaisseShows(tester, _montantEncaisse!);
   });
 }

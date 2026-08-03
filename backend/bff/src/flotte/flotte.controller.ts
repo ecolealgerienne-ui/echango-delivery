@@ -8,16 +8,12 @@ import { AddDriverDto } from './dto/driver.dto';
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
 // recherches au premier ajustement.
 import { DriverSearchDto } from '../commercant/dto/driver-search.dto';
-import { CashService, fleetParty } from '../cash/cash.service';
-import { FleetRemittanceDto } from './dto/cash.dto';
-import { DisputeRemittanceDto } from '../common/dto/dispute-remittance.dto';
 
 @Persona('fleet')
 @Controller('flotte')
 export class FlotteController {
   constructor(
     private flotteService: FlotteService,
-    private cash: CashService,
   ) {}
 
   // ── Caisse ────────────────────────────────────────────────────────────────
@@ -35,47 +31,17 @@ export class FlotteController {
   // Symétriquement, l'entreprise doit au commerçant, et c'est elle qui déclare
   // ce reversement.
 
-  /** Ce que l'entreprise doit, et ce que ses conducteurs lui doivent. */
-  @Get('caisse')
-  async cashBalances(@Request() req: any) {
-    return this.cash.fleetBalances(this.fleetId(req));
-  }
 
-  /** Les encaissements des courses qu'elle a facilitées. */
-  @Get('caisse/encaissements')
-  async cashCollections(@Request() req: any) {
-    return this.cash.listCollections('fleet', this.fleetId(req));
-  }
-
-  @Get('caisse/remises')
-  async listRemittances(@Request() req: any) {
-    return this.cash.listRemittances('fleet', this.fleetId(req));
-  }
-
-  /** « J'ai remis X au commerçant », ou « j'ai reçu X de mon conducteur ». */
-  @Post('caisse/remises')
-  async declareRemittance(@Request() req: any, @Body() dto: FleetRemittanceDto) {
-    return this.cash.declareRemittanceTo(
-      fleetParty(this.fleetId(req)),
-      dto.counterpartyId,
-      dto.amount,
-    );
-  }
-
-  /** Confirme une remise déclarée par l'autre partie — jamais une des siennes. */
-  @Post('caisse/remises/:id/confirmer')
-  async confirmRemittance(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
-    return this.cash.confirmRemittance('fleet', this.fleetId(req), id);
-  }
-
-  @Post('caisse/remises/:id/contester')
-  async disputeRemittance(
-    @Request() req: any,
-    @Param('id', FleetbaseIdPipe) id: string,
-    @Body() dto: DisputeRemittanceDto,
-  ) {
-    return this.cash.disputeRemittance('fleet', this.fleetId(req), id, dto?.reason);
-  }
+  // ── Caisse : sept routes retirées le 03/08/2026 ──────────────────────────
+  //
+  // Solde de l'entreprise, encaissements des courses qu'elle facilite, remises
+  // et leurs confirmations. Retirées avec le registre de caisse — tenir des
+  // soldes est de la trésorerie, pas de la logistique
+  // (`docs/registre_caisse_precis.md`).
+  //
+  // ⚠️ Conséquence assumée : l'entreprise **répond des espèces de ses
+  // conducteurs**, et elle en tient le compte chez elle. La plateforme lui dit
+  // ce qui a été déclaré à chaque porte, pas ce que chacun lui doit.
 
   @Get('commandes')
   async getOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {

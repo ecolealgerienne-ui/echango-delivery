@@ -4,8 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/cash.dart';
-import '../../i18n/cash_strings.dart';
+import '../../i18n/collections_strings.dart';
 import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
 import '../../i18n/order_strings.dart';
@@ -350,66 +349,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   ///
   /// Les deux montants sont affichés séparément dès qu'ils diffèrent. Ne
   /// montrer que le premier ferait passer une livraison à moitié payée pour une
-  /// livraison réglée — et c'est précisément l'écart que le registre existe
-  /// pour rendre visible.
+  /// livraison réglée — et c'est précisément l'écart que la déclaration à la
+  /// porte existe pour rendre visible.
+  ///
+  /// ── Ce que cette carte ne calcule plus, et pourquoi ────────────────────────
+  ///
+  /// Elle annonçait « vous reviendra : 1 400 » — le perçu moins la rémunération
+  /// du transporteur. C'est une **règle de règlement** (« le transporteur
+  /// retient sa course sur les espèces qu'il tient »), pas une lecture : la
+  /// plateforme l'arbitrait à la place des deux parties. Retirée le 03/08/2026
+  /// avec le registre de caisse (`docs/registre_caisse_precis.md`).
+  ///
+  /// Les deux nombres restent affichés — le montant perçu et le prix de la
+  /// course. Ce qu'ils donnent une fois soustraits dépend de l'arrangement
+  /// entre le commerçant et son transporteur, et c'est à eux de le tenir.
   Widget _cashCard(MerchantOrder order) {
-    final collection = order.cashCollection;
-    final currency = order.codCurrency ?? collection?.currency ?? '';
+    final currency = order.codCurrency ?? '';
     final theme = Theme.of(context);
+    final locale = context.watch<LocaleState>().locale;
 
-    // ── Ce qui revient réellement au commerçant ────────────────────────────
-    //
-    // L'écran donnait les deux nombres — « à encaisser 1200 », « rémunération
-    // 550 » — et laissait la soustraction au commerçant, au moment précis où
-    // il compte sa caisse. C'est pourtant le seul chiffre qui l'intéresse là.
-    //
-    // La formule est la même que les frais de livraison soient inclus ou non
-    // dans le montant encaissé (règlement net, journal §17) : le transporteur
-    // retient sa rémunération sur ce qu'il a perçu et remet la différence.
-    // `cod_includes_delivery` ne change donc pas ce calcul — il ne sert qu'à
-    // dire au commerçant ce que le destinataire croit payer.
-    //
-    // Calculé sur le montant **réellement perçu** dès qu'il est connu, et non
-    // sur celui qui était demandé : sur un écart constaté à la porte,
-    // annoncer la somme demandée promettrait de l'argent qui ne viendra pas.
     // Le montant et sa devise, en une seule forme. `currency` peut être vide
     // (commande d'avant que la devise soit projetée) : concaténer sans couper
     // laisserait « 650 » suivi d'une espace, visible entre parenthèses.
     String money(num amount) => '${amount.toStringAsFixed(0)} $currency'.trim();
 
-    final price = order.price;
-    final settlement = <Widget>[];
-
-    if (price != null) {
-      final base = collection?.collectedAmount ?? order.codAmount!;
-      final net = base - price;
-      // Le futur tant que rien n'est encaissé : c'est une projection, pas un
-      // solde. Les annoncer du même ton ferait compter sur une somme
-      // qu'aucun transporteur n'a encore perçue.
-      final tense = collection == null
-          ? _t('order.detail.cash.will_return')
-          : _t('order.detail.cash.returns');
-
-      settlement.addAll([
-        const Divider(height: 20),
-        Text(
-          net >= 0
-              ? _t('order.detail.cash.net',
-                  {'tense': tense, 'amount': money(net)})
-              // Cas réel et non théorique : la retenue du transporteur est
-              // plafonnée à ce qu'il a perçu, donc une course chère payée en
-              // partie laisse le commerçant débiteur. Le taire afficherait 0
-              // là où il doit de l'argent.
-              : _t('order.detail.cash.owed', {'amount': money(-net)}),
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          _t('order.detail.cash.settlement', {'fee': money(price)}),
-          style: theme.textTheme.bodySmall,
-        ),
-      ]);
-    }
+    // ⚠️ `!= null` et non une vérité : **zéro est une déclaration**, et c'en
+    // est la plus importante — un destinataire qui a refusé de payer. Un test
+    // sur la valeur l'aurait rangée avec « pas encore encaissé », c'est-à-dire
+    // aurait effacé le seul cas où le commerçant doit être prévenu.
+    final declared = order.collectedAmount != null;
 
     return AppSectionCard(
       // Même rôle des deux côtés : l'écart se signale par son libellé, pas par
@@ -427,10 +395,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
             const SizedBox(height: AppSpacing.md),
             Text(_t('order.detail.cash.requested', {
-              'amount':
-                  '${order.codAmount!.toStringAsFixed(0)} $currency'.trim(),
+              'amount': money(order.codAmount!),
             })),
-            if (collection == null)
+            if (!declared)
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs),
                 child: Text(
@@ -442,24 +409,20 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               const SizedBox(height: AppSpacing.xs),
               Text(
                 _t('order.detail.cash.collected', {
-                  'amount':
-                      '${collection.collectedAmount.toStringAsFixed(0)} $currency'
-                          .trim(),
+                  'amount': money(order.collectedAmount!),
                 }),
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              if (collection.hasDiscrepancy) ...[
+              if (order.hasCollectionDiscrepancy) ...[
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  cashDiscrepancyLabel(
-                    collection.discrepancyReason,
-                    context.watch<LocaleState>().locale,
-                    fallback: cashLabel('cash.discrepancy.default',
-                        context.watch<LocaleState>().locale),
+                  collectionReasonLabel(
+                    order.collectionReason,
+                    locale,
+                    fallback: collectionsLabel('collections.reason.autre', locale),
                   ),
                   style: TextStyle(color: context.semantic.onWarningContainer),
                 ),
-                if (collection.notes != null) Text(collection.notes!),
               ],
               const SizedBox(height: AppSpacing.sm),
               Text(
@@ -467,9 +430,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 style: theme.textTheme.bodySmall,
               ),
             ],
-            ...settlement,
-          ],
-        ),
+          ]),
     );
   }
 

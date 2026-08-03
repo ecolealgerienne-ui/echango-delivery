@@ -52,15 +52,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('Echango Delivery'),
         elevation: 0,
         actions: [
-          // La caisse est accessible depuis l'accueil : un transporteur qui
-          // détient des espèces doit pouvoir vérifier ce qu'il doit sans
-          // chercher, notamment au moment d'un enlèvement chez le commerçant
-          // concerné — c'est là que la remise se fait.
-          IconButton(
-            tooltip: _d('driver.home.cash'),
-            icon: const Icon(Icons.account_balance_wallet_outlined),
-            onPressed: () => context.push('/transporteur/caisse'),
-          ),
+          // ⚠️ L'accès à la caisse a été retiré le 03/08/2026 avec le
+          // registre : le transporteur déclare ce qu'il a perçu en clôturant
+          // chaque livraison, et il n'y a plus de solde à consulter
+          // (`docs/registre_caisse_precis.md`).
           // Les entreprises pour lesquelles il roule — et surtout **les demandes
           // en attente**. Sans accès depuis l'accueil, une demande de
           // rattachement resterait invisible : le conducteur ne la découvrirait

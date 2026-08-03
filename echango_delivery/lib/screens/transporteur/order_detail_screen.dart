@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/driver_strings.dart';
 import '../../i18n/order_strings.dart';
-import '../../models/cash.dart';
+import '../../i18n/collections_strings.dart';
 import '../../state/locale_state.dart';
 import '../../models/order.dart';
 import '../../services/navigation_launcher.dart';
@@ -1090,10 +1090,10 @@ class _CashSheetState extends State<_CashSheet> {
               const SizedBox(height: AppSpacing.xs),
               // Le code part au serveur, le libellé suit la langue : la table
               // mêlée figeait les deux dans le même objet.
-              for (final code in cashDiscrepancyReasons)
+              for (final code in collectionDiscrepancyReasons)
                 ListTile(
                   onTap: () => setState(() => _reason = code),
-                  title: Text(cashDiscrepancyLabel(
+                  title: Text(collectionReasonLabel(
                       code, context.watch<LocaleState>().locale,
                       fallback: code)),
                   trailing: _reason == code

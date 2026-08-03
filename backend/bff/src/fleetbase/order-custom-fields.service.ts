@@ -210,4 +210,29 @@ export class OrderCustomFieldsService {
     return values;
   }
 
+  /**
+   * Écrit des valeurs sur une commande **déjà créée**.
+   *
+   * Sert à consigner ce qui s'est passé à la porte au moment de la clôture.
+   * Rend le nombre de valeurs écrites, pour que l'appelant puisse refuser
+   * plutôt que de clôturer une livraison dont l'encaissement n'est nulle part.
+   *
+   * ⚠️ **Ne rend jamais un succès muet sur zéro valeur.** Si le catalogue est
+   * incomplet — définition absente, Fleetbase injoignable au provisionnement —
+   * `valuesFor` rend une liste vide, et écrire une liste vide serait un appel
+   * réussi qui n'enregistre rien. C'est précisément la forme de panne que la
+   * règle 10 interdit : un défaut sans valeur par défaut. L'appelant reçoit 0
+   * et doit en faire quelque chose.
+   */
+  async writeToOrder(
+    orderId: string,
+    patch: Record<string, any>,
+  ): Promise<number> {
+    const orderConfigUuid = await this.fleetbaseClient.getDefaultOrderConfigUuid();
+    const values = await this.valuesFor(orderConfigUuid, patch);
+    if (!values.length) return 0;
+
+    await this.fleetbaseClient.setOrderCustomFieldValues(orderId, values);
+    return values.length;
+  }
 }

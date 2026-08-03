@@ -46,9 +46,6 @@ model MerchantAccount {
   orders            Order[]
   favouriteDrivers  DriverFavourite[]
   notifications     MerchantNotification[]
-  cashCollections   CashCollection[]
-  cashRemittances   CashRemittance[]
-  driverEarnings    DriverEarning[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -118,8 +115,6 @@ model FleetAccount {
   tokenVersion      Int      @default(0)
 
   // Relations — le facilitateur est désormais une partie du registre de caisse.
-  cashCollections   CashCollection[]
-  driverEarnings    DriverEarning[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -195,9 +190,6 @@ model DriverAccount {
   deviceTokens          DriverDeviceToken[]
   deliveryFailures      DeliveryFailure[]
   declines              OrderDecline[]
-  cashCollections       CashCollection[]
-  cashRemittances       CashRemittance[]
-  earnings              DriverEarning[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -396,14 +388,7 @@ model Order {
   // part**. Le motif inscrit ici — « éviter un appel réseau, ne pas dépendre de
   // la disponibilité de Fleetbase » — ne tenait pas : `assertCashCeiling()` est
   // appelé depuis `acceptOrder()`, qui interroge Fleetbase de toute façon. Tous
-  // les consommateurs réels (`assertCashCeiling`, `settleCashIfDue`,
-  // `pickAvailableFavourite`, `getOrderTemplate`) lisaient déjà
-  // `meta.cod_amount` en direct.
-  //
-  // Le montant qui compte pour la comptabilité est figé ailleurs, et il le
-  // reste : `CashCollection.expectedAmount` conserve la valeur **au moment de
-  // l'encaissement**, pour qu'une correction ultérieure côté Fleetbase ne
-  // modifie pas rétroactivement une dette.
+  // les consommateurs réels lisaient déjà `meta.cod_amount` en direct.
 
   /// **Ce que le commerçant a demandé**, figé à la création.
   ///
@@ -424,9 +409,7 @@ model Order {
   /// ── Ce que ce champ est, et ce qu'il n'est pas ─────────────────────────
   ///
   /// C'est une **spécification**, pas un état : ce qui a été commandé, écrit
-  /// une fois, jamais recalculé. Même famille que
-  /// `CashCollection.expectedAmount`, qui fige un montant pour qu'une
-  /// correction ultérieure ne réécrive pas une dette d'hier.
+  /// une fois, jamais recalculé.
   ///
   /// Il ne décide de rien à lui seul : à la lecture, `meta` de Fleetbase
   /// l'emporte clé par clé, et celui-ci ne comble que les manques. Une valeur
@@ -440,8 +423,11 @@ model Order {
 
   // `totalAmount` et `commission` supprimés avec le modèle `Commission` :
   // jamais écrits, jamais lus. Deux colonnes de plus qui laissaient croire que
-  // la facturation existait quelque part. `DriverEarning` porte désormais le
-  // calcul, sur la course et non sur le cache de commande.
+  // la facturation existait quelque part.
+  //
+  // ⚠️ Et elle n'existe plus nulle part ici depuis le 03/08/2026 : la
+  // commission d'Echango se calcule sur un système externe, à partir du volume
+  // constaté — les courses, leurs prix, leurs clôtures — qui reste servi.
 
   // `fleetbaseCreatedAt`/`fleetbaseUpdatedAt` supprimés le 29/07/2026 (Lot 3) :
   // jamais écrits, jamais lus, et leur commentaire « synced from Fleetbase »
@@ -457,10 +443,12 @@ model Order {
 
 // `Commission` a été SUPPRIMÉ (29/07/2026). Le modèle existait depuis l'origine
 // et **aucune ligne n'y a jamais été écrite** : `include: { commissions: true }`
-// le lisait pour jeter le résultat, c'était tout. `DriverEarning` le remplace
-// et fait ce qu'il promettait — enregistrer ce qu'Echango prélève, sur qui, et
-// à quel taux. Garder les deux aurait laissé un modèle mort au nom évocateur,
-// exactement le piège relevé pour `lastUsedAt` lors du P2.
+// le lisait pour jeter le résultat, c'était tout. Un modèle mort au nom
+// évocateur, exactement le piège relevé pour `lastUsedAt` lors du P2.
+//
+// Son remplaçant `DriverEarning` a duré quatre jours, et il est parti le
+// 03/08/2026 avec le reste du registre : il calculait une commission qu'aucun
+// flux ne permettait de percevoir.
 
 // Audit Log (for security, traceability)
 // Piste d'audit des refus d'accès et des actions sensibles.
@@ -689,308 +677,27 @@ model OrderDecline {
 }
 
 
-/// Espèces encaissées par un transporteur à la livraison.
+/// ── Le registre de caisse a été retiré le 03/08/2026 ────────────────────────
 ///
-/// ── Un fait, jamais un solde ────────────────────────────────────────────────
+/// Trois modèles vivaient ici : `CashCollection`, `CashRemittance` et
+/// `DriverEarning` — encaissements, remises et rémunérations, d'où se
+/// déduisaient les dettes, les plafonds et la commission d'Echango.
 ///
-/// Cette table et `CashRemittance` enregistrent des **évènements** ; la dette
-/// courante s'en déduit par différence. Aucun solde n'est stocké nulle part, et
-/// c'est délibéré : un compteur incrémenté à chaque écriture dérive au premier
-/// échec partiel, et plus rien ne permet alors de savoir laquelle des deux
-/// valeurs — le compteur ou les faits — est la bonne. Recalculer coûte une
-/// agrégation ; se tromper coûte la confiance dans le registre, qui est le seul
-/// produit que nous vendons ici.
+/// Ils sont partis parce que **tenir des soldes est de la trésorerie, pas de la
+/// logistique**, et que détenir des fonds pour compte de tiers est une activité
+/// réglementée qu'un agrégateur n'exerce pas. Ce qui reste du sujet est un
+/// **fait de livraison** : combien a été perçu à la porte, quand, et pourquoi
+/// ça diffère de ce qui était annoncé. Ce fait vit désormais sur la commande
+/// elle-même, en champs personnalisés Fleetbase — donc dans la source de
+/// vérité, ce qui est la règle 1 tenue pour de bon.
 ///
-/// ── Ce que cette table ne décide pas ────────────────────────────────────────
-///
-/// Elle enregistre l'écart entre attendu et perçu, avec son motif. Elle ne dit
-/// **pas qui supporte la perte** — commerçant, transporteur, Echango ou
-/// partage. C'est une règle métier non tranchée (`specs_paiement_livraison.md`
-/// §9), et l'encoder ici reviendrait à la trancher par défaut. Le registre
-/// constate ; l'arbitrage viendra se poser dessus.
-model CashCollection {
-  id                  String   @id @default(cuid())
-
-  /// ⚠️ `Restrict` et non `Cascade` (défaut D14).
-  ///
-  /// En `Cascade`, supprimer un conducteur effaçait les lignes d'encaissement
-  /// qui le nomment — **y compris la dette que son facilitateur doit au
-  /// commerçant**, puisqu'elle se calcule sur ces mêmes lignes. C'est
-  /// exactement le scénario que §7.5 promet de tenir : « la perte d'un
-  /// conducteur ne change rien au solde que voit le commerçant ». Un compte
-  /// portant des écritures ne se supprime pas ; il se désactive.
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
-
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
-
-  fleetbaseOrderUuid  String   @unique
-
-  /// Facilitateur de la course, **figé à l'encaissement**.
-  ///
-  /// ── Ce que cette colonne rend possible ──────────────────────────────────
-  ///
-  /// Une même ligne d'encaissement porte **deux** obligations : le conducteur
-  /// doit à son facilitateur, le facilitateur doit au commerçant
-  /// (`docs/specs_facilitateur.md` §7.1). Les trois parties étant nommées ici —
-  /// `driverId`, `facilitatorId`, `merchantId` — les deux dettes se calculent
-  /// depuis les mêmes lignes, sans second registre et sans solde stocké.
-  ///
-  /// ── Pourquoi figée, et pourquoi nullable ────────────────────────────────
-  ///
-  /// Figée : c'est l'exception §3.3 d'`architecture_bff_fleetbase.md`, la même
-  /// que `expectedAmount`. Si un admin change `facilitator_uuid` demain, la
-  /// dette d'hier ne doit pas changer de débiteur.
-  ///
-  /// Nullable : une colonne obligatoire sur une table non vide fait échouer la
-  /// migration, et **`null` a ici un sens précis** — pas de facilitateur sur
-  /// cette course, donc le conducteur règle directement avec le commerçant.
-  /// C'est le comportement d'avant ce chantier, et c'est celui de toutes les
-  /// lignes existantes : la reprise de données n'a rien à écrire.
-  facilitatorId       String?
-  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
-  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
-  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
-  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
-  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
-  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
-  /// change rien au solde que voit le commerçant »).
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
-
-  /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
-  /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
-  /// pas sans savoir ce qui était annoncé au moment du geste.
-  expectedAmount      Float
-
-  /// Ce que le transporteur déclare avoir réellement perçu. Peut valoir 0 :
-  /// un client qui refuse de payer est un fait à enregistrer, pas une absence
-  /// d'évènement.
-  collectedAmount     Float
-
-  /// Obligatoire dès que les deux montants diffèrent — voir COLLECTION_DISCREPANCY_REASONS.
-  /// C'est ce motif, déclaré à la porte, qui remplace l'enquête au dépôt.
-  discrepancyReason   String?
-  notes               String?
-
-  currency            String
-
-  collectedAt         DateTime @default(now())
-
-  /// Qui affirme cet encaissement : `driver` ou `merchant`.
-  ///
-  /// ── Pourquoi deux origines, et pourquoi elles ne valent PAS pareil ─────────
-  ///
-  /// Le cas normal est `driver` : le transporteur tient l'argent et déclare ce
-  /// qu'il a perçu. Il s'attribue une dette à lui-même — personne ne ment pour
-  /// se rendre débiteur, et aucune confirmation n'est nécessaire.
-  ///
-  /// Le cas `merchant` existe parce qu'une clôture faite hors application (un
-  /// admin depuis la console Fleetbase) ne passe par aucune de nos gardes : la
-  /// livraison est faite, l'encaissement n'est enregistré nulle part, et le
-  /// commerçant se retrouve avec un trou qu'il est seul à voir. Il peut donc le
-  /// déclarer — mais il déclare alors la dette de QUELQU'UN D'AUTRE, ce qui
-  /// change tout : sans confirmation, n'importe quel commerçant pourrait
-  /// inventer une créance sur un transporteur.
-  declaredBy          String   @default("driver")
-
-  /// Quand l'autre partie a confirmé. Toujours renseigné d'office sur une
-  /// déclaration `driver` — c'est sa propre dette.
-  ///
-  /// ⚠️ `debtBetween()` ne compte que les encaissements confirmés : une
-  /// déclaration en attente est une affirmation, exactement comme une remise
-  /// non confirmée.
-  confirmedAt         DateTime?
-
-  /// Le transporteur conteste : « je n'ai pas encaissé cette livraison », ou
-  /// « pas ce montant ». La ligne reste, elle ne compte pas, et les deux
-  /// parties voient le désaccord — l'effacer laisserait le commerçant sans
-  /// trace de ce qu'il a affirmé.
-  disputedAt          DateTime?
-  disputeReason       String?
-
-  @@index([driverId, merchantId])
-  @@index([merchantId])
-  @@index([driverId, confirmedAt])
-}
+/// L'implémentation complète, éprouvée contre un vrai Fleetbase, est figée sous
+/// le tag `registre-caisse-v1`. Motif, modélisation et défaut connu :
+/// `docs/registre_caisse_precis.md`.
 
 
-/// Remise d'espèces d'un transporteur à un commerçant.
-///
-/// ── Pourquoi une confirmation des deux côtés ────────────────────────────────
-///
-/// Une remise déclarée d'un seul côté n'est pas une preuve, c'est une
-/// affirmation — et c'est précisément le moment où le registre doit être
-/// incontestable, puisqu'il éteint une dette. Tant que la seconde partie n'a
-/// pas confirmé, la remise n'existe pas pour le calcul du solde.
-///
-/// Déclarable **par l'un ou l'autre** : le transporteur qui remet, ou le
-/// commerçant qui reçoit. Imposer un sens unique bloquerait la moitié des cas
-/// réels — celui qui a le téléphone en main au moment de la remise n'est pas
-/// toujours le même.
-model CashRemittance {
-  id                  String   @id @default(cuid())
-
-  /// ── Les deux bouts sont typés, et il le fallait ─────────────────────────
-  ///
-  /// Une remise ne relie plus fatalement un conducteur à un commerçant : la
-  /// chaîne compte deux maillons (`docs/specs_facilitateur.md` §7.1), et le
-  /// premier — conducteur → facilitateur — **n'a aucun commerçant à nommer**.
-  /// Avec `merchantId` obligatoire, cette remise n'avait littéralement pas de
-  /// forme de ligne ; c'est ce qui rendait la chaîne interne impossible à
-  /// écrire, et non seulement pénible.
-  ///
-  /// `from` doit, `to` reçoit. Les combinaisons réelles :
-  ///   driver   → fleet     (le conducteur remet à son facilitateur)
-  ///   fleet    → merchant  (le facilitateur reverse au commerçant)
-  ///   driver   → merchant  (pas de facilitateur : le cas d'avant ce chantier)
-  ///   et les trois sens inverses, quand la position est négative.
-  fromType            String?  // 'driver' | 'fleet' | 'merchant'
-  fromId              String?
-  toType              String?
-  toId                String?
-
-  /// ⚠️ Devenues **nullables**, et jamais renommées ni supprimées.
-  ///
-  /// Les lignes écrites avant ce chantier les portent toutes les deux, et
-  /// c'est d'elles que se déduisent `from`/`to` quand ces derniers sont nuls —
-  /// une colonne ajoutée ne doit jamais changer le sens des lignes d'avant,
-  /// surtout quand ce sens est une somme d'argent (leçon du journal §30.4).
-  ///
-  /// Elles restent renseignées quand elles ont un sens : `driverId` sur toute
-  /// remise où un conducteur est partie, `merchantId` de même. Elles ne
-  /// décident de rien — ce sont `from`/`to` qui font foi dès qu'ils existent —
-  /// mais elles gardent les index et les jointures existants opérants.
-  driverId            String?
-  driver              DriverAccount? @relation(fields: [driverId], references: [id], onDelete: SetNull)
-
-  merchantId          String?
-  merchant            MerchantAccount? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
-
-  amount              Float
-  currency            String
-
-  /// Sens du versement.
-  ///
-  /// `driver_to_merchant` : le cas ordinaire, le transporteur rend les espèces
-  /// qu'il a encaissées. `merchant_to_driver` : le commerçant règle une
-  /// rémunération que l'encaissement n'a pas couverte — course sans
-  /// encaissement, ou montant perçu inférieur à la course. Sans ce second sens,
-  /// un transporteur qui a livré sans encaisser n'aurait aucun moyen d'être
-  /// payé dans l'application.
-  direction           String   @default("driver_to_merchant")
-
-  /// `driver` ou `merchant` — qui a déclaré. La confirmation revient
-  /// nécessairement à l'autre.
-  declaredBy          String
-  declaredAt          DateTime @default(now())
-
-  /// Tant que ce champ est nul, la remise ne réduit pas la dette.
-  confirmedAt         DateTime?
-
-  /// Refus explicite : « je n'ai jamais reçu cette somme ». Distinct d'une
-  /// remise simplement en attente — l'une appelle une vérification, l'autre
-  /// seulement de la patience.
-  disputedAt          DateTime?
-  disputeReason       String?
-
-  @@index([driverId, merchantId])
-  @@index([merchantId, confirmedAt])
-  @@index([driverId, confirmedAt])
-}
 
 
-/// Rémunération d'une course, et la commission qu'Echango y prélève.
-///
-/// ── Pourquoi enregistrer, dès maintenant, ce que personne ne facture encore ──
-///
-/// La commission est le revenu d'Echango. Son recouvrement — facture au
-/// transporteur, compensation sur un versement — n'est pas construit, et c'est
-/// assumé : c'est un acte de gestion, pas une fonctionnalité de l'application.
-/// Mais le **calcul** ne se rattrape pas après coup : le taux peut changer, le
-/// prix d'une course aussi, et une commission recalculée six mois plus tard sur
-/// des paramètres différents ne serait plus celle qui était due. On fige donc
-/// le montant et le taux au moment de la course, comme les entrées de
-/// tarification.
-///
-/// ── Comment l'argent se répartit ────────────────────────────────────────────
-///
-/// Sur une course à 500 dont la commission est de 20 %, encaissée 5 000 :
-///
-///     le transporteur détient          5 000
-///     il retient sa rémunération       −500   (`retainedFromCash`)
-///     il doit au commerçant             4 500
-///     il doit à Echango                   100  (`commissionAmount`)
-///     il lui reste                        400
-///
-/// La retenue est **plafonnée au montant réellement perçu** : sur une course
-/// sans encaissement, ou dont le client n'a payé que 300, il ne peut pas se
-/// payer sur de l'argent qu'il n'a pas. Le reliquat demeure dû par le
-/// commerçant, et c'est ce que `direction: merchant_to_driver` permet de
-/// régler.
-model DriverEarning {
-  id                  String   @id @default(cuid())
-
-  /// `Restrict` pour la même raison que sur `CashCollection` (défaut D14).
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
-
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
-
-  fleetbaseOrderUuid  String   @unique
-
-  /// Facilitateur de la course, figé — voir `CashCollection.facilitatorId`.
-  facilitatorId       String?
-  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
-  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
-  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
-  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
-  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
-  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
-  /// change rien au solde que voit le commerçant »).
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
-
-  /// Qui **encaisse** cette rémunération : `driver` ou `fleet`.
-  ///
-  /// ── Ce n'est pas une redite de `facilitatorId` ──────────────────────────
-  ///
-  /// La course rapporte `grossAmount`, et ce montant ne va pas toujours à la
-  /// même personne. Sur une course du pool, il revient au **conducteur** — sa
-  /// rémunération, un montant que nous connaissons puisque le commerçant l'a
-  /// saisi. Sur une course confiée à une entreprise, il revient à
-  /// **l'entreprise**, qui paie ensuite son conducteur selon un contrat interne
-  /// que nous ne verrons jamais.
-  ///
-  /// C'est exactement ce que décide `FleetAccount.isPlatform`, et c'est la
-  /// seule variation du modèle (`docs/specs_facilitateur.md` §7.2). Sans cette
-  /// colonne, `recordEarning` créditerait la course au conducteur d'une
-  /// entreprise : un salarié empocherait le chiffre d'affaires de son
-  /// employeur, et Echango facturerait l'employeur au salarié.
-  ///
-  /// `null` = ligne antérieure à ce chantier ⇒ le conducteur, comme alors.
-  earnerType          String?
-  earnerId            String?
-
-  /// Rémunération brute de la course, telle qu'annoncée au transporteur.
-  grossAmount         Float
-
-  /// Taux appliqué, figé ici : il changera, et une commission passée doit
-  /// rester explicable avec le taux qui était le sien.
-  commissionRate      Float
-  commissionAmount    Float
-
-  /// Part que le transporteur a pu prélever directement sur les espèces
-  /// encaissées. Plafonnée au montant perçu — on ne se paie pas sur de l'argent
-  /// qu'on n'a pas.
-  retainedFromCash    Float    @default(0)
-
-  currency            String
-  earnedAt            DateTime @default(now())
-
-  @@index([driverId, merchantId])
-  @@index([merchantId])
-}
 
 
 /// Évènement porté à la connaissance d'un commerçant.

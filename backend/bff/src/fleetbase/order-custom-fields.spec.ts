@@ -1,4 +1,5 @@
 import {
+  FLEETBASE_OWNED_ORDER_KEYS,
   ORDER_CUSTOM_FIELDS,
   customFieldName,
   encodeCustomFieldValue,
@@ -175,5 +176,83 @@ describe('champs personnalisés de commande', () => {
     });
 
     expect(read['marge_interne']).toBeUndefined();
+  });
+});
+
+/**
+ * Les noms que Fleetbase sert déjà sur une commande.
+ *
+ * ── Pourquoi cette liste est épinglée ici ──────────────────────────────────
+ *
+ * Un champ personnalisé qui porte un nom déjà utilisé par Fleetbase ne produit
+ * **aucune erreur** : le repli « à plat » de `readOrderCustomFields` lit la
+ * valeur de Fleetbase, et comme les champs personnalisés sont fusionnés en
+ * dernier, cette valeur **l'emporte** sur la nôtre.
+ *
+ * Constaté le 02/08/2026 sur `currency` : `Order` a une colonne du même nom,
+ * dont le défaut est `USD`. La fiche servait `DZD`, la liste servait `USD`,
+ * et chaque couche prise séparément disait `DZD`. Aucune relecture ne pouvait
+ * le montrer — il a fallu comparer deux routes pour la même commande.
+ *
+ * ── D'où viennent ces noms ─────────────────────────────────────────────────
+ *
+ * Relevés le 03/08/2026 dans le source de `fleetops-api` tel qu'il tourne dans
+ * le conteneur, pas de mémoire :
+ *
+ *   Http/Resources/v1/Order.php        (fiche)  — 52 clés
+ *   Http/Resources/v1/Index/Order.php  (liste)  — 38 clés
+ *
+ * ⚠️ **À reprendre à chaque montée de version de Fleetbase.** Une clé ajoutée
+ * en amont ne casse rien immédiatement : elle attend qu'on lui donne le même
+ * nom. La liste étant épinglée et non déduite de la donnée examinée, ce test
+ * ne peut pas se rendre vert tout seul en perdant sa cible — c'est le défaut
+ * qu'avait la première version du banc de refus HTTP.
+ */
+const FLEETBASE_ORDER_KEYS = [
+  'adhoc', 'adhoc_distance', 'barcode', 'comments', 'company_uuid', 'created_at',
+  'currency', 'customer', 'customer_type', 'customer_uuid', 'dispatched',
+  'dispatched_at', 'distance', 'driver_assigned', 'driver_assigned_uuid', 'eta',
+  'facilitator', 'facilitator_type', 'facilitator_uuid', 'files',
+  'has_driver_assigned', 'id', 'internal_id', 'is_scheduled', 'latest_status',
+  'latest_status_code', 'meta', 'notes', 'order_config', 'order_config_uuid',
+  'payload', 'payload_uuid', 'pod_method', 'pod_required', 'public_id',
+  'purchase_rate', 'purchase_rate_uuid', 'qr_code', 'route_uuid', 'scheduled_at',
+  'started', 'started_at', 'status', 'time', 'tracker_data', 'tracking',
+  'tracking_number', 'tracking_number_uuid', 'tracking_statuses',
+  'transaction_amount', 'transaction_uuid', 'type', 'updated_at', 'uuid',
+  'vehicle_assigned', 'vehicle_assigned_uuid',
+];
+
+describe('collision de noms avec Fleetbase', () => {
+  it('aucune clé du catalogue ne porte un nom que Fleetbase sert déjà', () => {
+    const collisions = ORDER_CUSTOM_FIELDS.map((f) => f.key)
+      .filter((key) => FLEETBASE_ORDER_KEYS.includes(key))
+      .filter((key) => !FLEETBASE_OWNED_ORDER_KEYS.includes(key));
+
+    expect(collisions).toEqual([]);
+  });
+
+  it('`currency` EST une collision — et elle est traitée, pas ignorée', () => {
+    // Le témoin. Sans lui, un jour où `FLEETBASE_ORDER_KEYS` se viderait par
+    // erreur, le cas précédent passerait au vert sans rien regarder.
+    expect(FLEETBASE_ORDER_KEYS).toContain('currency');
+    expect(ORDER_CUSTOM_FIELDS.map((f) => f.key)).toContain('currency');
+    expect(FLEETBASE_OWNED_ORDER_KEYS).toContain('currency');
+  });
+
+  it('le repli à plat ne lit PAS une clé que Fleetbase possède', () => {
+    // La reproduction exacte du défaut du 02/08/2026 : une commande de liste,
+    // sans valeurs de champs personnalisés, qui porte la devise de Fleetbase.
+    const read = readOrderCustomFields({ currency: 'USD', price: '650' });
+
+    expect(read.currency).toBeUndefined();
+    expect(read.price).toBe(650);
+  });
+
+  it('les trois champs de la déclaration à la porte sont libres', () => {
+    for (const key of ['collected_amount', 'collected_at', 'collection_reason']) {
+      expect(ORDER_CUSTOM_FIELDS.map((f) => f.key)).toContain(key);
+      expect(FLEETBASE_ORDER_KEYS).not.toContain(key);
+    }
   });
 });
