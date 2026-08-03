@@ -3,9 +3,25 @@
 **Date : 29 juillet 2026.** Document de décision, écrit après une discussion qui a
 produit une correction majeure d'une hypothèse fondatrice du projet.
 
-**Statut : décision prise, mise en œuvre non commencée.** Aucune ligne de code n'a
-été modifiée en conséquence. Trois vérifications restent à faire avant de toucher
-au schéma (§9).
+> ## ⚠️ Statut au 03/08/2026 — DÉCISION APPLIQUÉE, ET CE DOCUMENT EST DÉPASSÉ
+>
+> Il est conservé comme **document de décision** : le raisonnement du 29/07 vaut
+> toujours, et c'est lui qui explique *pourquoi* le partage est ce qu'il est.
+>
+> **Pour savoir OÙ VIT QUOI aujourd'hui, lire [`ou_vit_quoi.md`](ou_vit_quoi.md).**
+>
+> Ce qui a changé depuis, et qui rend plusieurs affirmations ci-dessous fausses :
+>
+> | ici | aujourd'hui |
+> |---|---|
+> | « 12 modèles Prisma sur 15 » (§1.1) | **10 modèles**, dont aucun ne porte de donnée métier de commande |
+> | « les trois exceptions nommées » (§3) | **deux** — l'écriture comptable est partie avec le registre de caisse |
+> | « les lectures passent par un cache Redis » (§6) | **faux, mesuré le 03/08** : trois lectures après une écriture voient la valeur |
+> | « mise en œuvre non commencée » | six tables retirées, cinq reprises de données jouées |
+>
+> ⚠️ Une documentation périmée est une donnée d'appui **fausse en puissance** —
+> c'est la leçon que ce dépôt paie régulièrement. D'où cet encadré plutôt qu'une
+> réécriture : le raisonnement se lit encore, les chiffres ne se citent plus.
 
 Ce document remplace, sur le sujet du partage des données, ce que disaient
 `docs/journal_implementation_bff.md` §2.8 et les commentaires de code qui s'y
@@ -78,6 +94,12 @@ un admin qui fait son travail, pas une altération.
 ---
 
 ## 3. Les trois exceptions nommées
+
+> ⚠️ **Elles sont DEUX depuis le 03/08/2026.** La troisième — « une écriture
+> comptable fige ses entrées », §3.3 — est partie avec le registre de caisse
+> (`registre_caisse_precis.md`). Retirer une capacité a réduit d'un tiers la
+> liste des états parallèles autorisés, ce qu'on ne cherchait pas et qu'on
+> constate.
 
 Une règle sans vocabulaire pour ses exceptions se réérode en quelques semaines :
 quelqu'un a besoin d'un cache, ne sait pas comment l'appeler autrement qu'un
@@ -288,6 +310,16 @@ amont si le dépôt rouvre la création d'issues ; le correctif tient en une lig
 ---
 
 ## 6. Découverte non résolue — les lectures passent par un cache Redis
+
+> ⚠️ **RÉSOLU le 03/08/2026, et dans l'autre sens.** Mesuré : après un `PUT` sur
+> un champ personnalisé, **trois lectures successives voient la nouvelle
+> valeur**, et une quatrième après trois secondes aussi. Il n'y a pas de cache
+> en travers de ce chemin.
+>
+> Ça compte : c'était l'hypothèse la plus naturelle pour expliquer un défaut de
+> lecture, et elle aurait condamné toute la mécanique **lire-modifier-écrire**
+> sur laquelle reposent les refus et les échecs de livraison. La vraie cause
+> était ailleurs — un déballage raté de réponse axios.
 
 En-têtes relevés sur les deux requêtes console :
 

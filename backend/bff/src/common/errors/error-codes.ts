@@ -69,58 +69,43 @@ export const ErrorCode = {
   AUTH_MISSING_TOKEN: 'auth.missing_token',
   AUTH_SESSION_REVOKED: 'auth.session_revoked',
 
-  // ── Caisse (encaissements, remises) ─────────────────────────────────────
-  /**
-   * Plusieurs prestataires « plateforme » actifs.
-   *
-   * Refus délibéré plutôt qu'un choix au hasard : c'est ce compte qui reçoit
-   * l'argent des courses du pool, donc en prendre un arbitrairement routerait
-   * une somme réelle vers la mauvaise partie, et le défaut ne se verrait qu'au
-   * règlement.
-   */
-  CASH_PLATFORM_AMBIGUOUS: 'cash.platform_ambiguous',
+  // ── Encaissement à la porte ─────────────────────────────────────────────
+  //
+  // ⚠️ Vingt-cinq codes vivaient ici : remises, confirmations, contestations,
+  // plafonds, contreparties. Ils sont partis le 03/08/2026 avec le registre de
+  // caisse (`docs/registre_caisse_precis.md`). Il en reste **cinq**, et tous
+  // portent sur un seul geste : ce que le transporteur déclare avoir perçu en
+  // clôturant la livraison.
+  CASH_COD_DECLARATION_REQUIRED: 'cash.cod_declaration_required',
   CASH_AMOUNT_NEGATIVE: 'cash.amount_negative',
   CASH_AMOUNT_EXCEEDS_EXPECTED: 'cash.amount_exceeds_expected',
   CASH_DISCREPANCY_REASON_REQUIRED: 'cash.discrepancy_reason_required',
-  CASH_COLLECTION_CONFLICT: 'cash.collection_conflict',
-  CASH_REMITTANCE_AMOUNT_MUST_BE_POSITIVE: 'cash.remittance_amount_must_be_positive',
-  CASH_NO_DEBT: 'cash.no_debt',
-  CASH_REMITTANCE_EXCEEDS_DEBT: 'cash.remittance_exceeds_debt',
-  CASH_REMITTANCE_ALREADY_CONFIRMED: 'cash.remittance_already_confirmed',
-  CASH_REMITTANCE_DISPUTED: 'cash.remittance_disputed',
-  CASH_REMITTANCE_MUST_BE_CONFIRMED_BY_OTHER_PARTY:
-    'cash.remittance_must_be_confirmed_by_other_party',
-  CASH_REMITTANCE_SELF_DISPUTE_FORBIDDEN: 'cash.remittance_self_dispute_forbidden',
-  CASH_REMITTANCE_NOT_FOUND: 'cash.remittance_not_found',
-  CASH_CEILING_EXCEEDED: 'cash.ceiling_exceeded',
-  CASH_COD_DECLARATION_REQUIRED: 'cash.cod_declaration_required',
-  CASH_ORDER_UNKNOWN_TO_REGISTRY: 'cash.order_unknown_to_registry',
-
-  // Régularisation d'une livraison close hors application : le commerçant
-  // déclare l'encaissement manquant, le transporteur confirme ou conteste.
-  CASH_COLLECTION_ALREADY_DECLARED: 'cash.collection_already_declared',
-  CASH_COLLECTION_NOT_FOUND: 'cash.collection_not_found',
-  CASH_COLLECTION_NOT_CONFIRMABLE: 'cash.collection_not_confirmable',
-  CASH_COLLECTION_ALREADY_CONFIRMED: 'cash.collection_already_confirmed',
-  CASH_COLLECTION_DISPUTED: 'cash.collection_disputed',
-  CASH_ORDER_NOT_DELIVERED: 'cash.order_not_delivered',
-  CASH_ORDER_HAS_NO_COD: 'cash.order_has_no_cod',
-  CASH_DRIVER_REQUIRED: 'cash.driver_required',
-  CASH_DRIVER_NOT_IN_NETWORK: 'cash.driver_not_in_network',
-  /// Le transporteur existe chez Fleetbase mais n'a pas de compte Echango :
-  /// personne ne peut confirmer l'encaissement tant qu'il n'est pas provisionné.
-  CASH_DRIVER_NO_ACCOUNT: 'cash.driver_no_account',
-  CASH_DRIVER_UNKNOWN_TO_MERCHANT: 'cash.driver_unknown_to_merchant',
   /**
-   * L'identifiant de contrepartie d'une remise ne correspond à aucun compte.
+   * La déclaration n'a pas pu être écrite sur la commande.
    *
-   * Le serveur type lui-même la contrepartie à partir de son identifiant (voir
-   * `declareRemittanceTo`) : ne rien trouver signifie que l'appelant a envoyé
-   * un identifiant qui n'existe dans aucune des trois tables.
+   * Refus délibéré au lieu d'une clôture silencieuse : sans ce code, la
+   * livraison se fermerait, le transporteur repartirait avec l'argent, et rien
+   * n'en garderait trace. Le transporteur doit réessayer, pas continuer.
    */
-  CASH_COUNTERPARTY_NOT_FOUND: 'cash.counterparty_not_found',
+  CASH_COLLECTION_NOT_RECORDED: 'cash.collection_not_recorded',
 
   // ── Commandes ────────────────────────────────────────────────────────────
+  /**
+   * Le refus n'a pas pu être écrit sur la commande.
+   *
+   * Refus délibéré au lieu d'un succès muet : un refus non enregistré fait
+   * revenir la course au rafraîchissement suivant, et l'écran devient
+   * indiscernable d'une fonctionnalité en panne — ce que ce chemin existe
+   * précisément pour empêcher.
+   */
+  ORDER_DECLINE_NOT_RECORDED: 'order.decline_not_recorded',
+  /**
+   * Le signalement d'échec n'a pas pu être écrit sur la commande.
+   *
+   * Même motif que le refus : un succès muet laisserait le transporteur croire
+   * que le commerçant a été prévenu, alors que rien n'est parti.
+   */
+  ORDER_FAILURE_NOT_RECORDED: 'order.failure_not_recorded',
   ORDER_NOT_FOUND: 'order.not_found',
   ORDER_FORBIDDEN: 'order.forbidden',
   ORDER_FETCH_FAILED: 'order.fetch_failed',
@@ -130,14 +115,9 @@ export const ErrorCode = {
   ORDER_CANCEL_NOT_ALLOWED: 'order.cancel_not_allowed',
   ORDER_ALREADY_TERMINAL: 'order.already_terminal',
   ORDER_ALREADY_STARTED: 'order.already_started',
-  ORDER_ALREADY_ACCEPTED: 'order.already_accepted',
-  ORDER_ALREADY_DECLINED: 'order.already_declined',
   ORDER_NOT_ASSIGNED_TO_DRIVER: 'order.not_assigned_to_driver',
-  ORDER_DECLINE_REASON_REQUIRED: 'order.decline_reason_required',
-  ORDER_PROOF_REQUIRED: 'order.proof_required',
   ORDER_PROOF_NOT_FOUND: 'order.proof_not_found',
   ORDER_TRACKING_FAILED: 'order.tracking_failed',
-  ORDER_TEMPLATE_FAILED: 'order.template_failed',
   ORDER_MISSING_PUBLIC_ID: 'order.missing_public_id',
   ORDER_RELEASE_FAILED: 'order.release_failed',
   ORDER_ALREADY_TAKEN: 'order.already_taken',
@@ -213,7 +193,6 @@ export const ErrorCode = {
   /** L'historique des transporteurs déjà employés n'a pas pu être lu. */
   MERCHANT_KNOWN_DRIVERS_UNAVAILABLE: 'merchant.known_drivers_unavailable',
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
-  MERCHANT_FAVOURITE_ALREADY_EXISTS: 'merchant.favourite_already_exists',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
   /** L'entreprise visee n'a pas de compte actif chez nous : elle ne peut
    *  recevoir aucune course, la mettre en favori n'aurait pas de sens. */

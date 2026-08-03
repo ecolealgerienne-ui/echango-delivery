@@ -30,7 +30,7 @@
  * la relation `customFields()` filtre sur `subject_uuid`. Coût assumé et connu.
  */
 
-export type DriverZoneFieldName = 'zone_wilaya' | 'zone_radius_km';
+export type DriverZoneFieldName = 'zone_wilaya' | 'zone_radius_km' | 'vehicle_type';
 
 export interface DriverZoneFieldDefinition {
   /** Clé stable, jamais affichée — c'est elle qui fait le rattachement. */
@@ -80,6 +80,17 @@ export const DRIVER_ZONE_FIELDS: DriverZoneFieldDefinition[] = [
       + 'connue, ce rayon ne s’applique pas — la wilaya reste seule à filtrer. '
       + 'Laisser vide pour ne pas limiter.',
   },
+  {
+    name: 'vehicle_type',
+    label: 'Catégorie de véhicule',
+    // ⚠️ `text` pour la même raison que le rayon : un champ `number` refuse la
+    // chaîne vide, et l'effacement doit rester possible.
+    type: 'text',
+    helpText:
+      'moto, voiture ou utilitaire. Décide des courses proposées : une course '
+      + 'exigeant un utilitaire n’est pas proposée à une moto. '
+      + 'Vide : il voit tout — ne rien déclarer est le réglage le plus ouvert.',
+  },
 ];
 
 /**
@@ -126,6 +137,19 @@ export function readRadiusKm(raw: unknown): number | null {
 
 /** La wilaya lue depuis une valeur de champ personnalisé. */
 export function readWilaya(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed && trimmed !== ZONE_UNSET ? trimmed : null;
+}
+
+/**
+ * Une valeur textuelle de champ personnalisé, ou `null`.
+ *
+ * ⚠️ `ZONE_UNSET` compte comme une absence : c'est la sentinelle d'effacement,
+ * imposée par le refus de la chaîne vide côté Fleetbase. La rendre telle quelle
+ * ferait apparaître « - » comme catégorie de véhicule.
+ */
+export function readOptionalText(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed && trimmed !== ZONE_UNSET ? trimmed : null;

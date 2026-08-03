@@ -110,15 +110,21 @@ Future<void> goBack(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 600));
 }
 
-/// Ouvre la caisse depuis un accueil, et **attend d'y être**.
+/// Ouvre les **encaissements du commerçant** depuis son accueil, et attend d'y
+/// être.
+///
+/// ⚠️ **Commerçant seulement depuis le 03/08/2026.** Le transporteur et
+/// l'entreprise avaient chacun leur écran de caisse ; ils sont partis avec le
+/// registre (`docs/registre_caisse_precis.md`). Le transporteur déclare ce
+/// qu'il perçoit en clôturant, et n'a plus de solde à consulter.
 ///
 /// ⚠️ Taper l'icône ne suffit pas : un bandeau peut la recouvrir, ou l'écran
 /// n'a pas fini de se reconstruire après le retour d'une fiche. Le tap partait
 /// alors dans le vide et l'assertion suivante lisait le tableau de bord pendant
-/// quarante secondes avant de conclure que la caisse ne montrait rien — un
+/// quarante secondes avant de conclure que l'écran ne montrait rien — un
 /// diagnostic qui accuse l'écran d'argent d'un défaut de navigation.
 ///
-/// La caisse ne porte **aucun onglet** : leur disparition dit qu'on a quitté
+/// L'écran ne porte **aucun onglet** : leur disparition dit qu'on a quitté
 /// l'accueil, et c'est le seul repère qui ne dépende ni de la langue ni du
 /// contenu.
 Future<void> openCaisse(WidgetTester tester) async {
@@ -135,21 +141,24 @@ Future<void> openCaisse(WidgetTester tester) async {
       if (find.byType(Tab).evaluate().isEmpty) return;
     }
   }
-  fail('La caisse ne s’est pas ouverte — écran : ${whatIsOnScreen()}');
+  fail('Les encaissements ne se sont pas ouverts — écran : ${whatIsOnScreen()}');
 }
 
-/// Ouvre la caisse et vérifie qu'elle porte [amount], en la rouvrant au besoin.
+/// Ouvre les encaissements et vérifie qu'ils portent [amount], en rouvrant au
+/// besoin.
 ///
-/// ⚠️ **C'est le NET qui s'affiche, pas la somme encaissée** — l'écran le dit
-/// lui-même : « Votre rémunération est déjà déduite ». Chercher le montant
-/// perçu revenait à exiger un nombre que la caisse n'a aucune raison de
-/// montrer ; le transporteur, lui, veut savoir ce qu'il **doit remettre**.
+/// ⚠️ **C'est le montant PERÇU qu'on cherche désormais, et c'est un
+/// changement.** L'écran affichait un net — perçu moins rémunération — parce
+/// que le registre arbitrait le règlement entre les deux parties. Il ne le fait
+/// plus : la plateforme montre ce qui a été déclaré à la porte, et la
+/// soustraction appartient au commerçant et à son transporteur
+/// (`docs/registre_caisse_precis.md`).
 ///
-/// ⚠️ Et la caisse charge **à l'ouverture**. Ouverte dans la seconde qui suit
-/// une déclaration, elle peut encore rendre l'état d'avant : elle affichait
-/// « Vous ne détenez aucune somme » quarante secondes durant, sur un
-/// encaissement que le serveur avait bien enregistré. On la referme et on la
-/// rouvre — une relecture, pas une attente passive.
+/// ⚠️ Et l'écran charge **à l'ouverture**. Ouvert dans la seconde qui suit une
+/// déclaration, il peut encore rendre l'état d'avant : il affichait « aucun
+/// encaissement » quarante secondes durant, sur une déclaration que le serveur
+/// avait bien enregistrée. On le referme et on le rouvre — une relecture, pas
+/// une attente passive.
 Future<void> expectCaisseShows(WidgetTester tester, String amount) async {
   for (var attempt = 0; attempt < 3; attempt++) {
     await openCaisse(tester);
@@ -162,7 +171,7 @@ Future<void> expectCaisseShows(WidgetTester tester, String amount) async {
     await goBack(tester);
     await tester.pump(const Duration(milliseconds: 800));
   }
-  fail('La caisse ne porte pas $amount — écran : ${visibleTexts(40)}');
+  fail('Les encaissements ne portent pas $amount — écran : ${visibleTexts(40)}');
 }
 
 /// Un texte de l'écran contient-il [needle] ?

@@ -16,9 +16,6 @@ model MerchantAccount {
   id                String   @id @default(cuid())
   email             String   @unique
   password          String   // bcrypted
-  firstName         String?
-  lastName          String?
-  phone             String?
   emailVerified     Boolean  @default(false)
 
   // Link to Fleetbase
@@ -32,8 +29,6 @@ model MerchantAccount {
   // d'abord comment le chiffrer.
 
   // Business
-  businessName      String
-  businessPhone     String?
 
   // Status
   active            Boolean  @default(true)
@@ -44,11 +39,7 @@ model MerchantAccount {
   // Relations
   deviceTokens      DeviceToken[]
   orders            Order[]
-  favouriteDrivers  DriverFavourite[]
   notifications     MerchantNotification[]
-  cashCollections   CashCollection[]
-  cashRemittances   CashRemittance[]
-  driverEarnings    DriverEarning[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -57,6 +48,21 @@ model MerchantAccount {
 
   @@index([fleetbaseVendorUuid])
   @@index([emailVerified])
+  // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
+  // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
+  // `Contact` Fleetbase, figé à l'inscription.
+  //
+  // Bénin ici (303 raisons sociales identiques sur 304 au moment du retrait),
+  // mais c'est le mécanisme qui avait fait diverger **trois conducteurs sur
+  // trois**. Une copie que personne ne compare finit par mentir ; la question
+  // n'est que quand.
+  //
+  // Le nom vient désormais de `getVendorIdentity`, la recherche d'entreprises
+  // de `searchVendors` — l'appartenance restant décidée ici, puisque chez
+  // Fleetbase un commerçant et une entreprise sont le même objet.
+  //
+  // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
+  // contenu qu'un opérateur en console ne doit justement PAS voir.
 }
 
 // Fleet Manager Account (not a Fleetbase User either)
@@ -64,16 +70,11 @@ model FleetAccount {
   id                String   @id @default(cuid())
   email             String   @unique
   password          String   // bcrypted
-  firstName         String?
-  lastName          String?
-  phone             String?
 
   // Link to Fleetbase
   fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
 
   // Business
-  businessName      String
-  businessPhone     String?
 
   /// Les conducteurs rattachés à cette entreprise **en plus** de ceux dont elle
   /// est l'origine (`Driver.vendor_uuid`). Voir `DriverMembership`.
@@ -118,8 +119,6 @@ model FleetAccount {
   tokenVersion      Int      @default(0)
 
   // Relations — le facilitateur est désormais une partie du registre de caisse.
-  cashCollections   CashCollection[]
-  driverEarnings    DriverEarning[]
 
   // Timestamps
   createdAt         DateTime @default(now())
@@ -129,6 +128,21 @@ model FleetAccount {
   @@index([fleetbaseVendorUuid])
   @@index([active])
   @@index([isPlatform])
+  // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
+  // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
+  // `Contact` Fleetbase, figé à l'inscription.
+  //
+  // Bénin ici (303 raisons sociales identiques sur 304 au moment du retrait),
+  // mais c'est le mécanisme qui avait fait diverger **trois conducteurs sur
+  // trois**. Une copie que personne ne compare finit par mentir ; la question
+  // n'est que quand.
+  //
+  // Le nom vient désormais de `getVendorIdentity`, la recherche d'entreprises
+  // de `searchVendors` — l'appartenance restant décidée ici, puisque chez
+  // Fleetbase un commerçant et une entreprise sont le même objet.
+  //
+  // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
+  // contenu qu'un opérateur en console ne doit justement PAS voir.
 }
 
 // Driver ("transporteur") Account - not a Fleetbase User either.
@@ -141,9 +155,6 @@ model DriverAccount {
   id                    String   @id @default(cuid())
   email                 String   @unique
   password              String   // bcrypted
-  firstName             String?
-  lastName              String?
-  phone                 String?
 
   // Link to Fleetbase
   fleetbaseDriverUuid   String   @unique // Driver UUID in Fleetbase
@@ -189,15 +200,9 @@ model DriverAccount {
   ///
   /// `null` = non déclaré : le transporteur voit alors toutes les courses,
   /// plutôt que d'être exclu du réseau par un champ qu'il n'a pas rempli.
-  vehicleType           String?
 
   // Relations
   deviceTokens          DriverDeviceToken[]
-  deliveryFailures      DeliveryFailure[]
-  declines              OrderDecline[]
-  cashCollections       CashCollection[]
-  cashRemittances       CashRemittance[]
-  earnings              DriverEarning[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -206,6 +211,22 @@ model DriverAccount {
 
   @@index([fleetbaseDriverUuid])
   @@index([active])
+  // ⚠️ `firstName`, `lastName`, `phone` et `vehicleType` ont été SUPPRIMÉS le
+  // 03/08/2026 — c'était du profil dupliqué, et il avait déjà divergé.
+  //
+  // Mesuré ce jour-là sur les trois conducteurs de la base : les trois
+  // affichaient un nom différent selon qu'on regardait l'application ou la
+  // console — « Test Transporteur » ici, « Amar BENGHARBI » chez Fleetbase — et
+  // le téléphone était vide d'un côté, renseigné de l'autre. Deux copies,
+  // personne pour les comparer, aucune erreur levée.
+  //
+  // L'identité vient désormais du `Driver` Fleetbase, et la catégorie de
+  // véhicule de ses champs personnalisés — donc lisible ET corrigeable par un
+  // opérateur en console, ce qu'une colonne du BFF n'a jamais permis.
+  //
+  // Ce qui reste ici est le **secret de connexion** : email, mot de passe,
+  // `tokenVersion`, `active`. C'est le seul contenu qu'un opérateur ne doit
+  // justement PAS voir.
 }
 
 // Push Token for a Driver's device. Mirrored to a Fleetbase UserDevice record
@@ -273,55 +294,18 @@ model DriverInvitation {
   @@index([expiresAt])
 }
 
-// Failed delivery reported by a driver (docs/specs_app_transporteur.md §4.3).
-//
-// Stocké ici et pas chez Fleetbase parce que **son flux n'a aucun état
-// d'échec** — ce que ce commentaire donnait pour « à confirmer » jusqu'au
-// 02/08/2026, et qui est désormais mesuré : le `flow` de l'`OrderConfig` est
-// une chaîne linéaire stricte,
-//
-//     created → dispatched → started → enroute → completed
-//
-// où chaque étape ne déclare qu'un seul suivant et où rien ne contient
-// `fail`/`attempt`/`unsuccess`. Une tentative de livraison ratée — client
-// absent, adresse fausse — n'a donc littéralement pas où s'écrire : ce n'est
-// pas une annulation, et le flux ne bifurque pas.
-//
-// C'est le cas nommé par la règle 1 : ce que Fleetbase ne peut
-// **structurellement** pas porter. Ce qu'on y pousse quand même est la trace
-// visible par l'opérateur (preuve photo + remarques), pour qu'un dispatcher
-// qui ouvre la commande voie quelque chose plutôt que du silence.
-model DeliveryFailure {
-  id                String   @id @default(cuid())
-  driverId          String
-  driver            DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
-
-  fleetbaseOrderUuid String
-  waypointUuid      String?  // which stop failed, when the order has several
-
-  reason            String   // see DeliveryFailureReason in the DTO
-  notes             String?
-
-  // Référence de la Proof créée dans Fleetbase quand une photo est jointe.
-  // Null si le signalement était sans photo, ou si l'upload a échoué.
-  //
-  // ⚠️ Malgré son nom, ce n'est PAS toujours un uuid : la ressource Proof
-  // masque `uuid` hors requête interne, et l'upload passe par l'API publique
-  // `v1`, qui n'expose que `id` — le public_id. Référence opaque, jamais
-  // utilisée pour adresser une route.
-  fleetbaseProofUuid String?
-
-  // URL du fichier, telle que Fleetbase la renvoie à la capture (`url` sur la
-  // ressource Proof). Conservée à l'écriture plutôt que relue à chaque
-  // affichage : la retrouver ensuite imposerait un appel par signalement, et
-  // Fleetbase n'offre pas de lecture de Proof par uuid sur `int/v1`.
-  proofUrl          String?
-
-  reportedAt        DateTime @default(now())
-
-  @@index([driverId])
-  @@index([fleetbaseOrderUuid])
-}
+/// ⚠️ `DeliveryFailure` a été SUPPRIMÉ le 03/08/2026 — les échecs vivent sur la
+/// commande, en champ personnalisé `delivery_failures`.
+///
+/// Motif : c'est la donnée qui explique le mieux pourquoi une livraison
+/// n'aboutit pas — « destinataire absent », avec sa photo. Un opérateur en
+/// console devait nous appeler pour l'obtenir.
+///
+/// ⚠️ La route de preuve porte désormais l'uuid de la **commande** :
+/// `GET commandes/:orderId/preuves/:id`. L'appartenance devient **structurelle**
+/// — servir la preuve exige de résoudre la commande, donc de traverser le
+/// contrôle qui existe déjà. Elle reposait avant sur un filtre qu'il fallait
+/// penser à écrire, sur un chemin explicitement décrit comme anti-IDOR.
 
 // Device Token for Push Notifications
 model DeviceToken {
@@ -396,42 +380,20 @@ model Order {
   // part**. Le motif inscrit ici — « éviter un appel réseau, ne pas dépendre de
   // la disponibilité de Fleetbase » — ne tenait pas : `assertCashCeiling()` est
   // appelé depuis `acceptOrder()`, qui interroge Fleetbase de toute façon. Tous
-  // les consommateurs réels (`assertCashCeiling`, `settleCashIfDue`,
-  // `pickAvailableFavourite`, `getOrderTemplate`) lisaient déjà
-  // `meta.cod_amount` en direct.
-  //
-  // Le montant qui compte pour la comptabilité est figé ailleurs, et il le
-  // reste : `CashCollection.expectedAmount` conserve la valeur **au moment de
-  // l'encaissement**, pour qu'une correction ultérieure côté Fleetbase ne
-  // modifie pas rétroactivement une dette.
+  // les consommateurs réels lisaient déjà `meta.cod_amount` en direct.
 
-  /// **Ce que le commerçant a demandé**, figé à la création.
-  ///
-  /// ── Pourquoi ce miroir-ci est légitime ─────────────────────────────────
-  ///
-  /// Constaté le 30/07/2026 sur une commande réelle : après l'affectation d'un
-  /// transporteur **depuis la console Fleetbase**, `meta` valait
-  /// `{_index_resource: true}` — une clé interne à Fleetbase, que notre code
-  /// n'écrit jamais. Prix, montant à encaisser, colis, précisions d'adresse :
-  /// tout avait disparu. Ce n'est pas un défaut d'affichage, c'est la perte des
-  /// champs qui décident de l'argent réclamé à la porte.
-  ///
-  /// La règle du projet dit que le BFF ne conserve que ce que Fleetbase ne peut
-  /// **structurellement** pas porter. C'est exactement le cas : Fleetbase peut
-  /// stocker `meta`, mais ne peut pas le protéger de sa propre console, qui est
-  /// une interface d'admin légitime et non un outil de dépannage.
-  ///
-  /// ── Ce que ce champ est, et ce qu'il n'est pas ─────────────────────────
-  ///
-  /// C'est une **spécification**, pas un état : ce qui a été commandé, écrit
-  /// une fois, jamais recalculé. Même famille que
-  /// `CashCollection.expectedAmount`, qui fige un montant pour qu'une
-  /// correction ultérieure ne réécrive pas une dette d'hier.
-  ///
-  /// Il ne décide de rien à lui seul : à la lecture, `meta` de Fleetbase
-  /// l'emporte clé par clé, et celui-ci ne comble que les manques. Une valeur
-  /// modifiée en amont reste donc autoritaire — seul l'effacement est réparé.
-  specMeta          Json?
+  // ⚠️ `specMeta` a été SUPPRIMÉ le 03/08/2026 — c'était la dernière donnée
+  // métier stockée côté BFF.
+  //
+  // Il conservait, figée à la création, une copie de ce que le commerçant avait
+  // demandé : un filet contre l'effacement de `meta` par la console. Les champs
+  // personnalisés le rendent inutile — ils vivent dans une table séparée, et il
+  // est **mesuré** qu'une écriture partielle ne détruit pas les autres.
+  //
+  // La reprise de données (`scripts/backfill-order-custom-fields.sh`) a
+  // constaté **535 commandes sur 535 déjà complètes en amont** : le filet ne
+  // rattrapait plus rien. Le script reste au dépôt — tout autre déploiement
+  // doit le passer avant d'appliquer cette migration.
 
   // Le motif d'échec vit dans `DeliveryFailure`, jamais ici : `failureReason`
   // et `failureNotes` ont existé sans être écrites ni lues une seule fois
@@ -440,8 +402,11 @@ model Order {
 
   // `totalAmount` et `commission` supprimés avec le modèle `Commission` :
   // jamais écrits, jamais lus. Deux colonnes de plus qui laissaient croire que
-  // la facturation existait quelque part. `DriverEarning` porte désormais le
-  // calcul, sur la course et non sur le cache de commande.
+  // la facturation existait quelque part.
+  //
+  // ⚠️ Et elle n'existe plus nulle part ici depuis le 03/08/2026 : la
+  // commission d'Echango se calcule sur un système externe, à partir du volume
+  // constaté — les courses, leurs prix, leurs clôtures — qui reste servi.
 
   // `fleetbaseCreatedAt`/`fleetbaseUpdatedAt` supprimés le 29/07/2026 (Lot 3) :
   // jamais écrits, jamais lus, et leur commentaire « synced from Fleetbase »
@@ -457,10 +422,12 @@ model Order {
 
 // `Commission` a été SUPPRIMÉ (29/07/2026). Le modèle existait depuis l'origine
 // et **aucune ligne n'y a jamais été écrite** : `include: { commissions: true }`
-// le lisait pour jeter le résultat, c'était tout. `DriverEarning` le remplace
-// et fait ce qu'il promettait — enregistrer ce qu'Echango prélève, sur qui, et
-// à quel taux. Garder les deux aurait laissé un modèle mort au nom évocateur,
-// exactement le piège relevé pour `lastUsedAt` lors du P2.
+// le lisait pour jeter le résultat, c'était tout. Un modèle mort au nom
+// évocateur, exactement le piège relevé pour `lastUsedAt` lors du P2.
+//
+// Son remplaçant `DriverEarning` a duré quatre jours, et il est parti le
+// 03/08/2026 avec le reste du registre : il calculait une commission qu'aucun
+// flux ne permettait de percevoir.
 
 // Audit Log (for security, traceability)
 // Piste d'audit des refus d'accès et des actions sensibles.
@@ -501,68 +468,18 @@ model AuditLog {
 }
 
 
-/// Transporteur mis en favori par un commerçant.
+/// ⚠️ `DriverFavourite` a été SUPPRIMÉ le 03/08/2026 — les favoris vivent sur
+/// le **`Vendor` Fleetbase du commerçant**, en champ personnalisé `favourites`.
 ///
-/// ── Pourquoi des favoris et non une assignation directe ─────────────────────
+/// Motif : la console est utilisée en exploitation, et un opérateur qui se
+/// demande pourquoi une course part toujours au même transporteur n'avait aucun
+/// moyen de voir que le commerçant l'avait mis en favori.
 ///
-/// La thèse du produit est l'effet réseau : un pool **mutualisé** de
-/// transporteurs (CLAUDE.md § Positionnement). Laisser un commerçant désigner
-/// nommément son transporteur ferait glisser la place de marché vers des
-/// relations bilatérales — et les nouveaux entrants ne démarreraient jamais,
-/// faute d'être choisis par quiconque.
-///
-/// Les favoris préservent la préférence sans casser le réseau : ils sont
-/// sollicités en premier, et la course retombe dans le pool commun si aucun
-/// n'est disponible. Le commerçant garde son habitude, le réseau garde sa
-/// liquidité.
-/// ── Un favori peut être un conducteur OU une entreprise ────────────────────
-///
-/// Décision du 30/07/2026 (`specs_flux_argent_quatre_acteurs.md` §6.1) : le
-/// commerçant choisit **au même endroit** un transporteur du pool ou une
-/// entreprise de transport. Deux tables auraient produit deux écrans, deux
-/// recherches et deux chemins de sollicitation pour une seule question — « à qui
-/// je confie mes livraisons ? ».
-///
-/// ⚠️ Le nom du modèle reste `DriverFavourite` et la colonne
-/// `fleetbaseDriverUuid` garde son nom **en base** (`@map`) : les renommer
-/// imposerait une migration de données sur une table qui porte des préférences
-/// réelles, pour un gain purement cosmétique. Le champ Prisma, lui, est
-/// renommé — c'est celui que le code lit, et un nom qui ment coûte plus cher
-/// dans le code que dans une colonne.
-model DriverFavourite {
-  id                  String   @id @default(cuid())
-
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-
-  /// `driver` ou `fleet`. **Défaut `driver`**, ce qui est exactement ce que
-  /// valent les lignes déjà en base : elles ont toutes été créées avant que les
-  /// entreprises soient éligibles. Aucune migration de données n'est donc
-  /// nécessaire, et aucune préférence existante ne change de sens.
-  partyType           String   @default("driver")
-
-  /// Uuid Fleetbase de la partie : un `Driver` quand `partyType = 'driver'`,
-  /// un `Vendor` quand `partyType = 'fleet'`.
-  ///
-  /// Fleetbase et non un compte Echango : un transporteur peut exister dans
-  /// l'annuaire sans avoir encore créé son compte applicatif — et c'est aussi
-  /// vrai d'une entreprise.
-  fleetbasePartyUuid  String   @map("fleetbaseDriverUuid")
-
-  /// Nom au moment de la mise en favori, pour l'afficher sans dépendre d'un
-  /// appel Fleetbase à chaque ouverture de l'écran.
-  partyName           String?  @map("driverName")
-
-  createdAt           DateTime @default(now())
-
-  /// ⚠️ L'unicité porte sur le **couple type + uuid**, pas sur l'uuid seul.
-  /// Un `Driver` et un `Vendor` peuvent porter le même uuid — ce sont deux
-  /// espaces d'identifiants distincts chez Fleetbase —, et sans le type dans
-  /// la clé, mettre une entreprise en favori pourrait être refusé au motif
-  /// qu'un conducteur homonyme y figure déjà.
-  @@unique([merchantId, partyType, fleetbasePartyUuid])
-  @@index([merchantId])
-}
+/// L'unicité `(merchantId, partyType, uuid)` était un `@@unique` ; elle est
+/// tenue par le dédoublonnage de `MerchantFavouritesService.add()`. Et
+/// l'appartenance devient **structurelle** : on ne lit que la liste d'un
+/// vendor, il n'existe plus d'identifiant global qui puisse désigner le favori
+/// de quelqu'un d'autre.
 
 
 /// L'appartenance d'un conducteur à une entreprise de transport.
@@ -635,362 +552,42 @@ model DriverMembership {
 }
 
 
-/// Refus motivé d'une course par un transporteur.
+/// ⚠️ `OrderDecline` a été SUPPRIMÉ le 03/08/2026 — les refus vivent désormais
+/// sur la commande, en champ personnalisé `declines`.
 ///
-/// ── Pourquoi enregistrer un refus, et pas seulement le subir ────────────────
+/// Motif : **la console Fleetbase est utilisée en exploitation**. Un opérateur
+/// qui ouvre une course immobile doit pouvoir lire « six refus, prix trop bas »
+/// sans nous appeler. Un refus enregistré ici n'était visible que du BFF, donc
+/// absent de l'endroit où on le cherche.
 ///
-/// Sans trace, un refus se manifeste par une absence : la course reste dans la
-/// liste, le transporteur la refait défiler à chaque rafraîchissement, et
-/// personne n'apprend rien. Deux besoins distincts sont servis ici.
+/// ⚠️ Ce que la table garantissait et que le champ ne garantit plus :
+/// l'unicité par (conducteur, course), qui était un `@@unique`. Elle est tenue
+/// par le dédoublonnage d'`appendToOrderList`, dont la fenêtre de concurrence
+/// est nommée là-bas — deux refus simultanés sur la même course diffusée
+/// peuvent en perdre un, et la course réapparaît alors une fois.
+
+
+/// ── Le registre de caisse a été retiré le 03/08/2026 ────────────────────────
 ///
-/// **Pour le transporteur** : une course écartée disparaît de sa liste. C'est
-/// la seule façon de rendre une liste d'opportunités exploitable — sans cela,
-/// les courses qu'il ne veut pas noient celles qu'il voudrait.
+/// Trois modèles vivaient ici : `CashCollection`, `CashRemittance` et
+/// `DriverEarning` — encaissements, remises et rémunérations, d'où se
+/// déduisaient les dettes, les plafonds et la commission d'Echango.
 ///
-/// **Pour la plateforme** : le motif est la donnée qui manque pour construire
-/// le barème. `PricingService` capture ce qu'une course *valait* (distance,
-/// horaire, véhicule) ; le refus dit ce que le marché en *pense*. Un « prix
-/// insuffisant » sur un trajet de 12 km à 22 h vaut mieux que n'importe quelle
-/// estimation faite au bureau — et il ne se reconstitue pas après coup, d'où
-/// la copie des entrées tarifaires ci-dessous plutôt qu'une simple référence
-/// à la commande, qui pourrait être modifiée ou supprimée.
-model OrderDecline {
-  id                  String   @id @default(cuid())
-
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
-
-  fleetbaseOrderUuid  String
-
-  /// Voir DECLINE_REASONS dans le DTO transporteur.
-  reason              String
-  notes               String?
-
-  /// La course était-elle assignée à ce transporteur (favori sollicité), ou
-  /// simplement diffusée ? Le premier cas la renvoie au pool et concerne le
-  /// commerçant ; le second n'engage que l'affichage.
-  wasAssigned         Boolean  @default(false)
-
-  /// Copie des entrées tarifaires de la commande refusée (`meta.pricing_inputs`)
-  /// et du montant proposé. Figées ici : c'est l'appariement « ce qui était
-  /// offert » / « refusé pour tel motif » qui a de la valeur, et il disparaît
-  /// dès que la commande change.
-  pricingInputs       Json?
-  offeredPrice        Float?
-  currency            String?
-
-  declinedAt          DateTime @default(now())
-
-  /// Un transporteur ne refuse une course qu'une fois — un second appel met à
-  /// jour le motif plutôt que d'empiler des lignes qui fausseraient les
-  /// statistiques de refus.
-  @@unique([driverId, fleetbaseOrderUuid])
-  @@index([fleetbaseOrderUuid])
-}
-
-
-/// Espèces encaissées par un transporteur à la livraison.
+/// Ils sont partis parce que **tenir des soldes est de la trésorerie, pas de la
+/// logistique**, et que détenir des fonds pour compte de tiers est une activité
+/// réglementée qu'un agrégateur n'exerce pas. Ce qui reste du sujet est un
+/// **fait de livraison** : combien a été perçu à la porte, quand, et pourquoi
+/// ça diffère de ce qui était annoncé. Ce fait vit désormais sur la commande
+/// elle-même, en champs personnalisés Fleetbase — donc dans la source de
+/// vérité, ce qui est la règle 1 tenue pour de bon.
 ///
-/// ── Un fait, jamais un solde ────────────────────────────────────────────────
-///
-/// Cette table et `CashRemittance` enregistrent des **évènements** ; la dette
-/// courante s'en déduit par différence. Aucun solde n'est stocké nulle part, et
-/// c'est délibéré : un compteur incrémenté à chaque écriture dérive au premier
-/// échec partiel, et plus rien ne permet alors de savoir laquelle des deux
-/// valeurs — le compteur ou les faits — est la bonne. Recalculer coûte une
-/// agrégation ; se tromper coûte la confiance dans le registre, qui est le seul
-/// produit que nous vendons ici.
-///
-/// ── Ce que cette table ne décide pas ────────────────────────────────────────
-///
-/// Elle enregistre l'écart entre attendu et perçu, avec son motif. Elle ne dit
-/// **pas qui supporte la perte** — commerçant, transporteur, Echango ou
-/// partage. C'est une règle métier non tranchée (`specs_paiement_livraison.md`
-/// §9), et l'encoder ici reviendrait à la trancher par défaut. Le registre
-/// constate ; l'arbitrage viendra se poser dessus.
-model CashCollection {
-  id                  String   @id @default(cuid())
-
-  /// ⚠️ `Restrict` et non `Cascade` (défaut D14).
-  ///
-  /// En `Cascade`, supprimer un conducteur effaçait les lignes d'encaissement
-  /// qui le nomment — **y compris la dette que son facilitateur doit au
-  /// commerçant**, puisqu'elle se calcule sur ces mêmes lignes. C'est
-  /// exactement le scénario que §7.5 promet de tenir : « la perte d'un
-  /// conducteur ne change rien au solde que voit le commerçant ». Un compte
-  /// portant des écritures ne se supprime pas ; il se désactive.
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
-
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
-
-  fleetbaseOrderUuid  String   @unique
-
-  /// Facilitateur de la course, **figé à l'encaissement**.
-  ///
-  /// ── Ce que cette colonne rend possible ──────────────────────────────────
-  ///
-  /// Une même ligne d'encaissement porte **deux** obligations : le conducteur
-  /// doit à son facilitateur, le facilitateur doit au commerçant
-  /// (`docs/specs_facilitateur.md` §7.1). Les trois parties étant nommées ici —
-  /// `driverId`, `facilitatorId`, `merchantId` — les deux dettes se calculent
-  /// depuis les mêmes lignes, sans second registre et sans solde stocké.
-  ///
-  /// ── Pourquoi figée, et pourquoi nullable ────────────────────────────────
-  ///
-  /// Figée : c'est l'exception §3.3 d'`architecture_bff_fleetbase.md`, la même
-  /// que `expectedAmount`. Si un admin change `facilitator_uuid` demain, la
-  /// dette d'hier ne doit pas changer de débiteur.
-  ///
-  /// Nullable : une colonne obligatoire sur une table non vide fait échouer la
-  /// migration, et **`null` a ici un sens précis** — pas de facilitateur sur
-  /// cette course, donc le conducteur règle directement avec le commerçant.
-  /// C'est le comportement d'avant ce chantier, et c'est celui de toutes les
-  /// lignes existantes : la reprise de données n'a rien à écrire.
-  facilitatorId       String?
-  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
-  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
-  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
-  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
-  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
-  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
-  /// change rien au solde que voit le commerçant »).
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
-
-  /// Ce que la commande annonçait, figé à l'encaissement. Recalculé plus tard
-  /// depuis la commande, il pourrait avoir changé — et un écart ne se conteste
-  /// pas sans savoir ce qui était annoncé au moment du geste.
-  expectedAmount      Float
-
-  /// Ce que le transporteur déclare avoir réellement perçu. Peut valoir 0 :
-  /// un client qui refuse de payer est un fait à enregistrer, pas une absence
-  /// d'évènement.
-  collectedAmount     Float
-
-  /// Obligatoire dès que les deux montants diffèrent — voir COLLECTION_DISCREPANCY_REASONS.
-  /// C'est ce motif, déclaré à la porte, qui remplace l'enquête au dépôt.
-  discrepancyReason   String?
-  notes               String?
-
-  currency            String
-
-  collectedAt         DateTime @default(now())
-
-  /// Qui affirme cet encaissement : `driver` ou `merchant`.
-  ///
-  /// ── Pourquoi deux origines, et pourquoi elles ne valent PAS pareil ─────────
-  ///
-  /// Le cas normal est `driver` : le transporteur tient l'argent et déclare ce
-  /// qu'il a perçu. Il s'attribue une dette à lui-même — personne ne ment pour
-  /// se rendre débiteur, et aucune confirmation n'est nécessaire.
-  ///
-  /// Le cas `merchant` existe parce qu'une clôture faite hors application (un
-  /// admin depuis la console Fleetbase) ne passe par aucune de nos gardes : la
-  /// livraison est faite, l'encaissement n'est enregistré nulle part, et le
-  /// commerçant se retrouve avec un trou qu'il est seul à voir. Il peut donc le
-  /// déclarer — mais il déclare alors la dette de QUELQU'UN D'AUTRE, ce qui
-  /// change tout : sans confirmation, n'importe quel commerçant pourrait
-  /// inventer une créance sur un transporteur.
-  declaredBy          String   @default("driver")
-
-  /// Quand l'autre partie a confirmé. Toujours renseigné d'office sur une
-  /// déclaration `driver` — c'est sa propre dette.
-  ///
-  /// ⚠️ `debtBetween()` ne compte que les encaissements confirmés : une
-  /// déclaration en attente est une affirmation, exactement comme une remise
-  /// non confirmée.
-  confirmedAt         DateTime?
-
-  /// Le transporteur conteste : « je n'ai pas encaissé cette livraison », ou
-  /// « pas ce montant ». La ligne reste, elle ne compte pas, et les deux
-  /// parties voient le désaccord — l'effacer laisserait le commerçant sans
-  /// trace de ce qu'il a affirmé.
-  disputedAt          DateTime?
-  disputeReason       String?
-
-  @@index([driverId, merchantId])
-  @@index([merchantId])
-  @@index([driverId, confirmedAt])
-}
+/// L'implémentation complète, éprouvée contre un vrai Fleetbase, est figée sous
+/// le tag `registre-caisse-v1`. Motif, modélisation et défaut connu :
+/// `docs/registre_caisse_precis.md`.
 
 
-/// Remise d'espèces d'un transporteur à un commerçant.
-///
-/// ── Pourquoi une confirmation des deux côtés ────────────────────────────────
-///
-/// Une remise déclarée d'un seul côté n'est pas une preuve, c'est une
-/// affirmation — et c'est précisément le moment où le registre doit être
-/// incontestable, puisqu'il éteint une dette. Tant que la seconde partie n'a
-/// pas confirmé, la remise n'existe pas pour le calcul du solde.
-///
-/// Déclarable **par l'un ou l'autre** : le transporteur qui remet, ou le
-/// commerçant qui reçoit. Imposer un sens unique bloquerait la moitié des cas
-/// réels — celui qui a le téléphone en main au moment de la remise n'est pas
-/// toujours le même.
-model CashRemittance {
-  id                  String   @id @default(cuid())
-
-  /// ── Les deux bouts sont typés, et il le fallait ─────────────────────────
-  ///
-  /// Une remise ne relie plus fatalement un conducteur à un commerçant : la
-  /// chaîne compte deux maillons (`docs/specs_facilitateur.md` §7.1), et le
-  /// premier — conducteur → facilitateur — **n'a aucun commerçant à nommer**.
-  /// Avec `merchantId` obligatoire, cette remise n'avait littéralement pas de
-  /// forme de ligne ; c'est ce qui rendait la chaîne interne impossible à
-  /// écrire, et non seulement pénible.
-  ///
-  /// `from` doit, `to` reçoit. Les combinaisons réelles :
-  ///   driver   → fleet     (le conducteur remet à son facilitateur)
-  ///   fleet    → merchant  (le facilitateur reverse au commerçant)
-  ///   driver   → merchant  (pas de facilitateur : le cas d'avant ce chantier)
-  ///   et les trois sens inverses, quand la position est négative.
-  fromType            String?  // 'driver' | 'fleet' | 'merchant'
-  fromId              String?
-  toType              String?
-  toId                String?
-
-  /// ⚠️ Devenues **nullables**, et jamais renommées ni supprimées.
-  ///
-  /// Les lignes écrites avant ce chantier les portent toutes les deux, et
-  /// c'est d'elles que se déduisent `from`/`to` quand ces derniers sont nuls —
-  /// une colonne ajoutée ne doit jamais changer le sens des lignes d'avant,
-  /// surtout quand ce sens est une somme d'argent (leçon du journal §30.4).
-  ///
-  /// Elles restent renseignées quand elles ont un sens : `driverId` sur toute
-  /// remise où un conducteur est partie, `merchantId` de même. Elles ne
-  /// décident de rien — ce sont `from`/`to` qui font foi dès qu'ils existent —
-  /// mais elles gardent les index et les jointures existants opérants.
-  driverId            String?
-  driver              DriverAccount? @relation(fields: [driverId], references: [id], onDelete: SetNull)
-
-  merchantId          String?
-  merchant            MerchantAccount? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
-
-  amount              Float
-  currency            String
-
-  /// Sens du versement.
-  ///
-  /// `driver_to_merchant` : le cas ordinaire, le transporteur rend les espèces
-  /// qu'il a encaissées. `merchant_to_driver` : le commerçant règle une
-  /// rémunération que l'encaissement n'a pas couverte — course sans
-  /// encaissement, ou montant perçu inférieur à la course. Sans ce second sens,
-  /// un transporteur qui a livré sans encaisser n'aurait aucun moyen d'être
-  /// payé dans l'application.
-  direction           String   @default("driver_to_merchant")
-
-  /// `driver` ou `merchant` — qui a déclaré. La confirmation revient
-  /// nécessairement à l'autre.
-  declaredBy          String
-  declaredAt          DateTime @default(now())
-
-  /// Tant que ce champ est nul, la remise ne réduit pas la dette.
-  confirmedAt         DateTime?
-
-  /// Refus explicite : « je n'ai jamais reçu cette somme ». Distinct d'une
-  /// remise simplement en attente — l'une appelle une vérification, l'autre
-  /// seulement de la patience.
-  disputedAt          DateTime?
-  disputeReason       String?
-
-  @@index([driverId, merchantId])
-  @@index([merchantId, confirmedAt])
-  @@index([driverId, confirmedAt])
-}
 
 
-/// Rémunération d'une course, et la commission qu'Echango y prélève.
-///
-/// ── Pourquoi enregistrer, dès maintenant, ce que personne ne facture encore ──
-///
-/// La commission est le revenu d'Echango. Son recouvrement — facture au
-/// transporteur, compensation sur un versement — n'est pas construit, et c'est
-/// assumé : c'est un acte de gestion, pas une fonctionnalité de l'application.
-/// Mais le **calcul** ne se rattrape pas après coup : le taux peut changer, le
-/// prix d'une course aussi, et une commission recalculée six mois plus tard sur
-/// des paramètres différents ne serait plus celle qui était due. On fige donc
-/// le montant et le taux au moment de la course, comme les entrées de
-/// tarification.
-///
-/// ── Comment l'argent se répartit ────────────────────────────────────────────
-///
-/// Sur une course à 500 dont la commission est de 20 %, encaissée 5 000 :
-///
-///     le transporteur détient          5 000
-///     il retient sa rémunération       −500   (`retainedFromCash`)
-///     il doit au commerçant             4 500
-///     il doit à Echango                   100  (`commissionAmount`)
-///     il lui reste                        400
-///
-/// La retenue est **plafonnée au montant réellement perçu** : sur une course
-/// sans encaissement, ou dont le client n'a payé que 300, il ne peut pas se
-/// payer sur de l'argent qu'il n'a pas. Le reliquat demeure dû par le
-/// commerçant, et c'est ce que `direction: merchant_to_driver` permet de
-/// régler.
-model DriverEarning {
-  id                  String   @id @default(cuid())
-
-  /// `Restrict` pour la même raison que sur `CashCollection` (défaut D14).
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Restrict)
-
-  merchantId          String
-  merchant            MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Restrict)
-
-  fleetbaseOrderUuid  String   @unique
-
-  /// Facilitateur de la course, figé — voir `CashCollection.facilitatorId`.
-  facilitatorId       String?
-  /// ⚠️ `Restrict`, comme `driverId` et `merchantId` — et pour une raison plus
-  /// forte encore : c'est cette colonne qui **décide de l'identité du débiteur**
-  /// dans `legScope()`. Un `SetNull` faisait basculer, sans trace et sans
-  /// erreur, toutes les dettes portées par une entreprise (ou par Echango) en
-  /// dettes personnelles du conducteur envers le commerçant — l'inverse exact de
-  /// ce que `specs_facilitateur.md` §7.5 promet (« la perte d'un conducteur ne
-  /// change rien au solde que voit le commerçant »).
-  facilitator         FleetAccount? @relation(fields: [facilitatorId], references: [id], onDelete: Restrict)
-
-  /// Qui **encaisse** cette rémunération : `driver` ou `fleet`.
-  ///
-  /// ── Ce n'est pas une redite de `facilitatorId` ──────────────────────────
-  ///
-  /// La course rapporte `grossAmount`, et ce montant ne va pas toujours à la
-  /// même personne. Sur une course du pool, il revient au **conducteur** — sa
-  /// rémunération, un montant que nous connaissons puisque le commerçant l'a
-  /// saisi. Sur une course confiée à une entreprise, il revient à
-  /// **l'entreprise**, qui paie ensuite son conducteur selon un contrat interne
-  /// que nous ne verrons jamais.
-  ///
-  /// C'est exactement ce que décide `FleetAccount.isPlatform`, et c'est la
-  /// seule variation du modèle (`docs/specs_facilitateur.md` §7.2). Sans cette
-  /// colonne, `recordEarning` créditerait la course au conducteur d'une
-  /// entreprise : un salarié empocherait le chiffre d'affaires de son
-  /// employeur, et Echango facturerait l'employeur au salarié.
-  ///
-  /// `null` = ligne antérieure à ce chantier ⇒ le conducteur, comme alors.
-  earnerType          String?
-  earnerId            String?
-
-  /// Rémunération brute de la course, telle qu'annoncée au transporteur.
-  grossAmount         Float
-
-  /// Taux appliqué, figé ici : il changera, et une commission passée doit
-  /// rester explicable avec le taux qui était le sien.
-  commissionRate      Float
-  commissionAmount    Float
-
-  /// Part que le transporteur a pu prélever directement sur les espèces
-  /// encaissées. Plafonnée au montant perçu — on ne se paie pas sur de l'argent
-  /// qu'on n'a pas.
-  retainedFromCash    Float    @default(0)
-
-  currency            String
-  earnedAt            DateTime @default(now())
-
-  @@index([driverId, merchantId])
-  @@index([merchantId])
-}
 
 
 /// Évènement porté à la connaissance d'un commerçant.

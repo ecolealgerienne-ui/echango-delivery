@@ -64,7 +64,7 @@ refuse() { # libellé interdit obtenu — la moitié qui compte
 # Chargées depuis une copie pour que `MUTATE` n'écrive jamais dans le dépôt.
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-cp fleetbase.sh resolve-driver.sh driver-session.sh ledger.sh "$WORK/"
+cp fleetbase.sh resolve-driver.sh driver-session.sh "$WORK/"
 if [ -n "${MUTATE:-}" ]; then
   sed -i "$MUTATE" "$WORK"/*.sh
   echo "⚠️  mutation appliquée : $MUTATE"
@@ -79,7 +79,6 @@ PASSWORD="x"
 # shellcheck disable=SC1090
 . "$WORK/driver-session.sh"
 # shellcheck disable=SC1090
-. "$WORK/ledger.sh"
 
 # ── Le talon ───────────────────────────────────────────────────────────────
 #

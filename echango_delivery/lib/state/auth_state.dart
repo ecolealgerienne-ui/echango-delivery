@@ -155,14 +155,17 @@ class AuthState extends ChangeNotifier with WriteEnvelope {
     _role = role;
     _userId = user is Map ? user['id'] as String? : null;
     _email = (user is Map ? user['email'] as String? : null) ?? email;
-    _displayName = user is Map
-        ? (user['businessName'] as String? ??
-            [user['firstName'], user['lastName']]
-                .whereType<String>()
-                .join(' ')
-                .trim())
-        : null;
-    if (_displayName != null && _displayName!.isEmpty) _displayName = null;
+    // ⚠️ **Le repli sur `firstName`/`lastName` a été retiré le 03/08/2026** : la
+    // connexion ne les sert plus, aucun des trois personas. Un repli sur des
+    // clés qui n'arrivent jamais n'est pas prudent, il est **mort** — et il
+    // laisse croire, à qui le lit, que le serveur les envoie encore.
+    //
+    // ⚠️ `businessName` peut valoir `null` : il vient du `Vendor` Fleetbase, et
+    // `getVendorIdentity` rend `null` plutôt que de faire échouer la connexion
+    // quand la lecture échoue. Le seul lecteur — le titre de l'écran commerçant
+    // — a déjà son repli traduit.
+    final nom = user is Map ? user['businessName'] as String? : null;
+    _displayName = (nom != null && nom.trim().isNotEmpty) ? nom : null;
 
     await _prefs.setString(_roleKey, role.jwtType);
     await _prefs.setString(_emailKey, _email!);

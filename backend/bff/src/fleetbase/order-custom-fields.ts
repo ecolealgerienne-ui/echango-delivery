@@ -188,6 +188,76 @@ export const ORDER_CUSTOM_FIELDS: OrderCustomFieldDefinition[] = [
     valueType: 'array',
     decode: asList,
   },
+
+  // ── Ce qui s'est passé à la porte ──────────────────────────────────────────
+  //
+  // Les trois champs ci-dessus décrivent ce qui **était attendu** ; ceux-ci
+  // décrivent ce qui **a eu lieu**. Ils sont écrits par la clôture de la
+  // livraison, jamais par la création.
+  //
+  // ⚠️ Ils remplacent la table `CashCollection` du registre de caisse, retiré
+  // le 03/08/2026 (`docs/registre_caisse_precis.md`). Le fait reste, le solde
+  // part : la plateforme dit ce qui a été perçu, elle ne tient plus le compte
+  // de qui doit quoi à qui.
+  //
+  // ⚠️ **L'idempotence devient structurelle, et c'est le gain principal.** La
+  // table accumulait des lignes, donc une reprise après échec réseau exigeait
+  // une garde explicite — celle des remises manquait, et trois déclarations
+  // pour une même dette étaient acceptées (mesuré le 03/08/2026). Ici la même
+  // valeur écrite deux fois donne le même état : il n'y a rien à garder.
+  {
+    key: 'collected_amount',
+    description:
+      'Somme réellement perçue à la porte, déclarée par le transporteur en clôturant. '
+      + 'Zéro est une valeur légitime : un destinataire qui refuse de payer est un fait.',
+    valueType: 'text',
+    decode: asNumber,
+  },
+  {
+    key: 'collected_at',
+    description: 'Horodatage de la déclaration d\'encaissement (ISO 8601).',
+    valueType: 'text',
+    decode: asText,
+  },
+  {
+    key: 'collection_reason',
+    description:
+      'Motif de l\'écart entre le montant annoncé et le montant perçu, '
+      + 'choisi dans une liste fermée. Absent quand les deux coïncident.',
+    valueType: 'text',
+    decode: asText,
+  },
+
+  // ── Ce que les transporteurs ont dit de cette course ───────────────────────
+  //
+  // ⚠️ **Ces deux-là étaient des tables du BFF** (`OrderDecline`,
+  // `DeliveryFailure`) jusqu'au 03/08/2026. Ils sont remontés chez Fleetbase
+  // parce que **la console est utilisée en exploitation** : un opérateur qui
+  // ouvre une course immobile doit pouvoir lire « six refus, prix trop bas » ou
+  // « échec : destinataire absent » sans nous appeler. Une donnée qui explique
+  // un blocage et qui n'est visible que du BFF est une donnée qui manque là où
+  // on la cherche.
+  //
+  // ⚠️ **Ni l'un ni l'autre n'est projeté vers les applications** — voir
+  // `PROJECTED_META_FIELDS`. Un transporteur n'a pas à savoir qui d'autre a
+  // refusé la course, ni à quel prix. C'est une décision de confidentialité,
+  // écrite là-bas avec son motif.
+  {
+    key: 'declines',
+    description:
+      'Refus enregistrés : qui, quand, pour quel motif, et à quel prix la '
+      + 'course était offerte. Sert à comprendre pourquoi une course ne part pas.',
+    valueType: 'array',
+    decode: asList,
+  },
+  {
+    key: 'delivery_failures',
+    description:
+      'Échecs de livraison signalés à la porte : motif, précisions, preuve '
+      + 'photographique et horodatage.',
+    valueType: 'array',
+    decode: asList,
+  },
 ];
 
 export const ORDER_CUSTOM_FIELD_KEYS = ORDER_CUSTOM_FIELDS.map((f) => f.key);

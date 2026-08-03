@@ -15,7 +15,12 @@
  * qui a donné huit lignes titrées « Destinataire » sans critère de décision.
  */
 
-import { projectOrderForDriver, projectOrderForFleet } from './order.projection';
+import {
+  PROJECTED_META_FIELDS,
+  projectOrderForDriver,
+  projectOrderForFleet,
+} from './order.projection';
+import { ORDER_CUSTOM_FIELD_KEYS } from '../../fleetbase/order-custom-fields';
 
 const order = (): any => ({
   uuid: 'ord-1',
@@ -182,5 +187,75 @@ describe('les deux populations voient la même chose', () => {
     expect(driver.payload).toEqual(fleet.payload);
     expect(driver.meta).toEqual(fleet.meta);
     expect(driver.redacted).toBe(fleet.redacted);
+  });
+});
+
+/**
+ * Le catalogue des champs personnalisés et la liste d'autorisation des
+ * projections **doivent bouger ensemble**.
+ *
+ * ── Le défaut que ces cas ferment, commis le jour même ────────────────────
+ *
+ * `collected_amount`, `collected_at` et `collection_reason` ont été ajoutés au
+ * catalogue le 03/08/2026 et **oubliés dans `META_FIELDS`**. Ils étaient donc
+ * écrits sur la commande, relus par le serveur, et **retirés au dernier
+ * moment** : la fiche du commerçant affichait « pas encore encaissé » sur une
+ * livraison pourtant déclarée. Aucune erreur, aucun journal — la liste refuse
+ * par défaut, ce qui est la bonne polarité et rend l'oubli silencieux.
+ *
+ * Un commentaire ne peut pas échouer ; ce test, si (règle 5).
+ *
+ * ⚠️ **Ce n'est PAS « tout le catalogue doit être projeté ».** Certaines clés
+ * doivent rester invisibles aux applications — un refus nommant un autre
+ * transporteur en est l'exemple. La liste ci-dessous les nomme, une par une,
+ * avec son motif : c'est une décision qui s'écrit, pas un oubli qui se tolère.
+ */
+describe('catalogue et projection ne divergent pas', () => {
+  /** Clés du catalogue délibérément NON servies aux applications. */
+  const JAMAIS_PROJETE: Record<string, string> = {
+    // Un transporteur n'a pas à savoir qui d'autre a refusé la course, ni à
+    // quel prix elle leur avait été offerte : ce serait lui donner la position
+    // de négociation des autres. L'opérateur, lui, le lit dans la console.
+    declines:
+      'identité et prix offert aux autres transporteurs — visible en console seulement',
+    // Un échec porte un motif, des précisions libres et une photo. Le
+    // commerçant le reçoit par un chemin dédié, filtré ; le relayer en vrac
+    // ferait sortir les notes d'un transporteur vers les autres.
+    delivery_failures:
+      'notes libres et preuve — servies par un chemin dédié, jamais en vrac',
+  };
+
+  it('toute clé du catalogue est projetée, ou nommée comme ne devant pas l’être', () => {
+    const oubliees = ORDER_CUSTOM_FIELD_KEYS
+      .filter((k) => !PROJECTED_META_FIELDS.includes(k))
+      .filter((k) => !(k in JAMAIS_PROJETE));
+
+    expect(oubliees).toEqual([]);
+  });
+
+  it('la liste de projection ne contient rien d’inconnu du catalogue', () => {
+    // L'autre sens : une clé projetée que plus personne n'écrit est un champ
+    // mort qui laisse croire à une donnée disponible.
+    const orphelines = PROJECTED_META_FIELDS.filter(
+      (k) => !ORDER_CUSTOM_FIELD_KEYS.includes(k),
+    );
+
+    expect(orphelines).toEqual([]);
+  });
+
+  it('le témoin : retirer une clé de la projection DOIT être détecté', () => {
+    // Sans ce cas, une liste `PROJECTED_META_FIELDS` accidentellement vidée
+    // rendrait les deux précédents verts pour la mauvaise raison.
+    // ⚠️ Le témoin rejoue le PREMIER cas au complet — exceptions comprises —
+    // au lieu de comparer à une liste écrite à la main. La première version
+    // attendait `['collected_amount']` en dur, et elle est tombée dès qu'une
+    // exception légitime s'est ajoutée : un témoin qu'il faut recopier à chaque
+    // changement finit par être « corrigé » sans être compris.
+    const ampute = PROJECTED_META_FIELDS.filter((k) => k !== 'collected_amount');
+    const oubliees = ORDER_CUSTOM_FIELD_KEYS
+      .filter((k) => !ampute.includes(k))
+      .filter((k) => !(k in JAMAIS_PROJETE));
+
+    expect(oubliees).toEqual(['collected_amount']);
   });
 });

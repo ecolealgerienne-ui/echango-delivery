@@ -149,11 +149,11 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          businessName: dto.businessName,
-          phone: dto.phone,
-          businessPhone: dto.businessPhone,
+          // ⚠️ **Le profil n'est plus copié ici** (03/08/2026). Il vient
+          // d'être écrit sur le `Vendor` et le `Contact` Fleetbase, juste
+          // au-dessus — le recopier créait une seconde source qui se figeait à
+          // l'inscription. `dto.firstName` & co. restent acceptés par le DTO :
+          // ils servent à créer les objets amont, pas à être stockés ici.
           fleetbaseVendorUuid: vendorUuid,
           fleetbaseCustomerUuid: customerUuid,
           emailVerified: true, // TODO: Email verification in v2
@@ -418,12 +418,26 @@ export class AuthService {
     // Generate JWT token
     const token = this.generateToken(merchant.id, merchant.email, 'merchant', merchant.tokenVersion);
 
+    // ⚠️ **Le nom vient du `Vendor` Fleetbase**, plus d'une copie locale figée
+    // à l'inscription (03/08/2026). C'est le seul champ de profil que
+    // l'application lit réellement — `authState.displayName` en fait le titre
+    // de l'écran commerçant.
+    //
+    // ⚠️ Un appel Fleetbase de plus sur le chemin de connexion, assumé : la
+    // route est plafonnée à 5/min, et la disponibilité de Fleetbase est un
+    // prérequis du produit (décision du 03/08/2026). `getVendorIdentity` rend
+    // `null` sans lever — un nom illisible ne doit pas empêcher de se
+    // connecter.
+    const identite = await this.fleetbaseClient.getVendorIdentity(
+      merchant.fleetbaseVendorUuid,
+    );
+
     return {
       token,
       user: {
         id: merchant.id,
         email: merchant.email,
-        businessName: merchant.businessName,
+        businessName: identite?.name ?? null,
       },
     };
   }
@@ -480,11 +494,11 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          businessName: dto.businessName,
-          phone: dto.phone,
-          businessPhone: dto.businessPhone,
+          // ⚠️ **Le profil n'est plus copié ici** (03/08/2026). Il vient
+          // d'être écrit sur le `Vendor` et le `Contact` Fleetbase, juste
+          // au-dessus — le recopier créait une seconde source qui se figeait à
+          // l'inscription. `dto.firstName` & co. restent acceptés par le DTO :
+          // ils servent à créer les objets amont, pas à être stockés ici.
           fleetbaseVendorUuid: vendorUuid,
         },
       });
@@ -568,12 +582,17 @@ export class AuthService {
 
     const token = this.generateToken(fleet.id, fleet.email, 'fleet', fleet.tokenVersion);
 
+    // Même motif que pour le commerçant : le nom vit sur le `Vendor`.
+    const identiteFlotte = await this.fleetbaseClient.getVendorIdentity(
+      fleet.fleetbaseVendorUuid,
+    );
+
     return {
       token,
       user: {
         id: fleet.id,
         email: fleet.email,
-        businessName: fleet.businessName,
+        businessName: identiteFlotte?.name ?? null,
       },
     };
   }
@@ -919,9 +938,14 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          phone: dto.phone,
+          // ⚠️ **Nom et téléphone ne sont plus copiés ici** (03/08/2026). Le
+          // conducteur EXISTE déjà chez Fleetbase — l'invitation porte son
+          // uuid — donc son identité y est, et la recopier créait une seconde
+          // copie qui se figeait à l'inscription. Mesurée le même jour : elle
+          // divergeait sur **trois conducteurs sur trois**.
+          //
+          // `dto.firstName`/`lastName`/`phone` restent acceptés par le DTO :
+          // ils servent au formulaire, pas au stockage.
           fleetbaseDriverUuid: invitation.fleetbaseDriverUuid,
           fleetbaseUserUuid: fleetbaseDriver.user_uuid || null,
           fleetbaseDriverPublicId: fleetbaseDriver.public_id || null,
@@ -941,12 +965,12 @@ export class AuthService {
 
       return {
         token,
-        user: {
-          id: driver.id,
-          email: driver.email,
-          firstName: driver.firstName,
-          lastName: driver.lastName,
-        },
+        // ⚠️ **Sans nom depuis le 03/08/2026**, et c'est vérifié plutôt que
+        // supposé : l'application ne lit `user.firstName` nulle part, et
+        // `authState.displayName` ne sert qu'au titre de l'écran COMMERÇANT.
+        // Les servir aurait imposé un appel Fleetbase sur le chemin de
+        // connexion pour un champ que personne n'affiche.
+        user: { id: driver.id, email: driver.email },
       };
     } catch (error) {
       if (error instanceof BadRequestException || error instanceof ConflictException) {
@@ -999,12 +1023,8 @@ export class AuthService {
 
     return {
       token,
-      user: {
-        id: driver.id,
-        email: driver.email,
-        firstName: driver.firstName,
-        lastName: driver.lastName,
-      },
+      // Même motif qu'à l'inscription : aucun lecteur côté application.
+      user: { id: driver.id, email: driver.email },
     };
   }
 
@@ -1178,16 +1198,13 @@ export class AuthService {
     });
   }
 
-  /**
-   * Verify JWT token and return payload
-   */
-  verifyToken(token: string) {
-    try {
-      return this.jwtService.verify(token);
-    } catch (error) {
-      unauthorized('auth.token_invalid', 'Invalid or expired token');
-    }
-  }
+  // ⚠️ `verifyToken(token)` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
+  //
+  // `POST /auth/verify` porte le même nom dans le contrôleur, ce qui l'a fait
+  // passer pour employé : elle rend `{valid: true, user: req.user}`, le garde
+  // global ayant déjà validé le jeton. La vérification réelle vit dans
+  // `JwtAuthGuard`, et c'est le bon endroit — une seconde implémentation aurait
+  // pu diverger de celle qui protège réellement les routes.
 
   /**
    * Generate JWT token

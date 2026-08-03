@@ -6,7 +6,8 @@
 # affecte un transporteur depuis la console. Si c'est vrai, ce n'est pas un
 # défaut d'affichage — `meta` porte le prix, le montant à encaisser, le colis
 # et les précisions d'adresse. Perdre `cod_amount` signifie qu'aucun montant
-# n'est réclamé à la porte, et que le registre de caisse n'a rien à figer.
+# n'est réclamé à la porte, et que la déclaration d'encaissement n'a plus de
+# montant attendu auquel se comparer.
 #
 # Le script lit la commande à l'unité, sans BFF ni app, et affiche `meta` en
 # entier avec l'état d'affectation. Le lancer AVANT puis APRÈS une affectation

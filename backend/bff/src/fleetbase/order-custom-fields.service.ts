@@ -4,6 +4,7 @@ import {
   ORDER_CUSTOM_FIELDS,
   customFieldName,
   encodeCustomFieldValue,
+  readOrderCustomFields,
 } from './order-custom-fields';
 
 /**
@@ -210,4 +211,71 @@ export class OrderCustomFieldsService {
     return values;
   }
 
+  /**
+   * Écrit des valeurs sur une commande **déjà créée**.
+   *
+   * Sert à consigner ce qui s'est passé à la porte au moment de la clôture.
+   * Rend le nombre de valeurs écrites, pour que l'appelant puisse refuser
+   * plutôt que de clôturer une livraison dont l'encaissement n'est nulle part.
+   *
+   * ⚠️ **Ne rend jamais un succès muet sur zéro valeur.** Si le catalogue est
+   * incomplet — définition absente, Fleetbase injoignable au provisionnement —
+   * `valuesFor` rend une liste vide, et écrire une liste vide serait un appel
+   * réussi qui n'enregistre rien. C'est précisément la forme de panne que la
+   * règle 10 interdit : un défaut sans valeur par défaut. L'appelant reçoit 0
+   * et doit en faire quelque chose.
+   */
+  /**
+   * Ajoute un élément à une liste portée par une commande.
+   *
+   * Sert aux refus et aux échecs de livraison, qui s'accumulent : ce ne sont
+   * pas des valeurs qu'on remplace mais des faits qu'on empile.
+   *
+   * ⚠️ **Lire-modifier-écrire, donc NON atomique — et la fenêtre se nomme
+   * (règle 2).** Deux transporteurs qui refusent la *même* course diffusée dans
+   * le même souffle peuvent voir un refus écrasé par l'autre. Ce n'est pas
+   * théorique sur une course en diffusion large.
+   *
+   * **Ce que ça coûte quand ça arrive** : la course réapparaît une fois dans la
+   * liste de celui dont le refus s'est perdu. Il la refuse à nouveau. C'est un
+   * désagrément, pas une perte — aucune décision, aucun argent, aucune
+   * livraison n'en dépend.
+   *
+   * **Pourquoi on l'accepte plutôt que de garder une table** : la table
+   * garantissait l'unicité mais rendait le refus **invisible depuis la
+   * console**, donc invisible à l'opérateur qui cherche pourquoi une course ne
+   * part pas. Une garantie parfaite sur une donnée que personne ne peut lire
+   * vaut moins qu'une garantie imparfaite sur une donnée qui explique un
+   * blocage.
+   *
+   * ⚠️ **`dedupe` est obligatoire, et ce n'est pas une commodité** : sans lui,
+   * un transporteur qui refuse deux fois — reprise après échec réseau —
+   * empilerait deux entrées, et le compte des refus mentirait à l'opérateur.
+   * La table portait un `@@unique` ; ici c'est cette fonction qui le tient.
+   */
+  async appendToOrderList(
+    orderId: string,
+    order: any,
+    key: string,
+    element: Record<string, any>,
+    dedupe: (existing: Record<string, any>) => boolean,
+  ): Promise<number> {
+    const current = readOrderCustomFields(order)[key];
+    const liste: Record<string, any>[] = Array.isArray(current) ? current : [];
+
+    const suivante = [...liste.filter((e) => !dedupe(e)), element];
+    return this.writeToOrder(orderId, { [key]: suivante });
+  }
+
+  async writeToOrder(
+    orderId: string,
+    patch: Record<string, any>,
+  ): Promise<number> {
+    const orderConfigUuid = await this.fleetbaseClient.getDefaultOrderConfigUuid();
+    const values = await this.valuesFor(orderConfigUuid, patch);
+    if (!values.length) return 0;
+
+    await this.fleetbaseClient.setOrderCustomFieldValues(orderId, values);
+    return values.length;
+  }
 }

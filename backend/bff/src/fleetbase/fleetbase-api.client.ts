@@ -124,20 +124,13 @@ export class FleetbaseApiClient {
     );
   }
 
-  /**
-   * Call Fleetbase customer-portal-api endpoint
-   * Used for merchant operations (read/write orders, etc.)
-   */
-  async callCustomerPortal(method: string, path: string, data?: any, token?: string, params?: any) {
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-    return this.apiClient({
-      method,
-      url: `/customer-portal/int/v1${path}`,
-      data,
-      params,
-      headers,
-    });
-  }
+  // ⚠️ `callCustomerPortal()` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
+  //
+  // Vestige de l'époque où le module commerçant passait par
+  // `customer-portal-api` ; il est passé au cache local et à l'API interne
+  // depuis. Une méthode qui construit une URL vers un chemin qu'on n'emprunte
+  // plus laisse croire que ce chemin est encore une option.
+
 
 
   /**
@@ -205,16 +198,6 @@ export class FleetbaseApiClient {
     });
   }
 
-  /**
-   * Login to customer-portal for merchant
-   */
-  async merchantLogin(email: string, password: string) {
-    const response = await this.callCustomerPortal('POST', '/auth/login', {
-      email,
-      password,
-    });
-    return response.data;
-  }
 
   /**
    * Create a Fleetbase Vendor for a merchant
@@ -797,16 +780,6 @@ export class FleetbaseApiClient {
     return response.data;
   }
 
-  /**
-   * Get merchant's orders via customer-portal-api
-   */
-  async getMerchantOrders(token: string, page = 1, limit = 25) {
-    const response = await this.callCustomerPortal('GET', '/orders', undefined, token, {
-      page,
-      limit,
-    });
-    return response.data;
-  }
 
   /**
    * Commandes de la compagnie, filtrées côté serveur.
@@ -1016,6 +989,70 @@ export class FleetbaseApiClient {
    * Les relations demandées sont celles dont la projection commerçant a besoin
    * — ni plus (chaque `with[]` coûte une jointure), ni moins.
    */
+  /**
+   * La commande **déballée**, avec ses relations.
+   *
+   * ⚠️ La lecture unitaire est enveloppée dans `{order: {…}}` là où la liste
+   * rend l'objet nu. Appeler `getOrderWithRelations` sans déballer rendait huit
+   * lignes d'`uuid: null` par lot — la seule trace qu'il y ait eu.
+   */
+  async readOrderFull(orderUuid: string): Promise<any> {
+    const response = await this.getOrderWithRelations(orderUuid);
+    return response?.order ?? response;
+  }
+
+  /**
+   * Recharge des commandes venues d'une LISTE, en lectures unitaires.
+   *
+   * ── Pourquoi c'est indispensable, et pas une optimisation ──────────────────
+   *
+   * ⚠️ **La liste ne porte AUCUN champ personnalisé.** `GET /orders` est servi
+   * par la ressource d'index : `meta` y vaut `{_index_resource: true}` et
+   * `custom_field_values` est **absent**, `with[]` ou pas — mesuré le
+   * 01/08/2026, reconfirmé le 03/08. Prix, montant à encaisser, type de
+   * véhicule, refus et échecs de livraison vivent tous là : une liste non
+   * rechargée les affiche donc **tous vides**.
+   *
+   * ⚠️ **C'est la régression du 03/08/2026, et elle mérite d'être nommée.**
+   * `Order.specMeta` — une copie locale — comblait ce trou pour les modules qui
+   * lisent par la liste. Il a été retiré après avoir prouvé que les 535
+   * commandes avaient bien leurs champs personnalisés… ce qui prouvait le
+   * **stockage**, pas la **lecture**. Le transporteur s'est retrouvé sans prix
+   * ni montant à encaisser. La preuve portait sur la mauvaise moitié du trajet.
+   *
+   * ── Ce que la fonction garantit, et ce qu'elle ne garantit pas ─────────────
+   *
+   * Par lots de huit, en parallèle : recharger cinquante commandes une par une
+   * rendrait la liste inutilisable. ⚠️ Une commande qu'on ne sait pas recharger
+   * est **rendue telle quelle**, avec un avertissement — pas retirée. Elle
+   * s'affichera sans ses montants, ce qui se voit ; la faire disparaître serait
+   * un manque que personne ne peut constater.
+   */
+  async hydrateOrders(orders: any[], batch = 8): Promise<any[]> {
+    if (!orders.length) return orders;
+
+    const out: any[] = [];
+    for (let i = 0; i < orders.length; i += batch) {
+      const loaded = await Promise.all(
+        orders.slice(i, i + batch).map(async (o: any) => {
+          if (!o?.uuid) return o;
+          try {
+            return (await this.readOrderFull(o.uuid)) ?? o;
+          } catch (error: any) {
+            this.logger.warn(
+              `Commande ${o.uuid} non rechargée (${error?.message}) — elle s'affichera `
+                + 'sans ses montants',
+            );
+            return o;
+          }
+        }),
+      );
+      out.push(...loaded);
+    }
+
+    return out;
+  }
+
   async getOrderWithRelations(orderUuid: string) {
     const params = new URLSearchParams();
     for (const relation of [
@@ -1630,10 +1667,6 @@ export class FleetbaseApiClient {
     return response.data;
   }
 
-  async getOrderPublic(orderPublicId: string) {
-    const response = await this.callFleetOpsPublic('GET', `/orders/${this.seg(orderPublicId)}`);
-    return response.data;
-  }
 
   /**
    * Delete a UserDevice, used to retire a push token the driver no longer has.
@@ -1739,6 +1772,173 @@ export class FleetbaseApiClient {
   ) {
     const response = await this.callFleetOps('PUT', `/drivers/${driverId}`, {
       driver: { custom_field_values: values },
+    });
+    return response.data;
+  }
+
+  /**
+   * Écrit des valeurs de champs personnalisés sur une **commande existante**.
+   *
+   * Sert à consigner ce qui s'est passé à la porte — montant perçu, écart,
+   * horodatage — au moment de la clôture. La création, elle, les passe dans le
+   * corps de `createOrder`.
+   *
+   * ⚠️ **Le corps ne porte QUE `custom_field_values`, et c'est essentiel.** Le
+   * chemin de mise à jour de Fleetbase est un `$record->update($input)`
+   * générique : toute clé présente est écrite telle quelle, et `meta` — qui est
+   * dans le `$fillable` et n'a aucun mutateur — serait **remplacé en entier**.
+   * C'est exactement ce que fait la console en affectant un transporteur, et ce
+   * qui a détruit prix et montants sur une commande réelle le 30/07/2026. En
+   * n'envoyant pas la clé, on ne peut pas commettre la même faute.
+   *
+   * ⚠️ **Enveloppe sous `order`**, comme `setDriverCustomFieldValues` sous
+   * `driver` : envoyé à plat, Laravel rend un 500 dont le message nomme un
+   * fichier du framework et ne dit rien du contrat.
+   *
+   * ── Mesuré en réel le 03/08/2026, contre le Fleetbase de développement ─────
+   *
+   * Trois choses, chacune avec son témoin, parce qu'aucune ne se déduit de la
+   * lecture du source :
+   *
+   *  1. **L'appel passe** — `PUT` sur le `public_id`, HTTP 200, et la valeur
+   *     est **relue**. Le code HTTP seul ne prouve rien : Fleetbase abandonne
+   *     un champ inconnu sans rien dire.
+   *  2. **`meta` est intact** après l'écriture, à l'octet près.
+   *  3. ⚠️ **Le `PUT` FUSIONNE, il ne remplace pas** — et c'était la question
+   *     qui décidait de tout. Trois champs posés (`price`, `cod_amount`,
+   *     `collected_amount`), puis un `PUT` n'en portant **qu'un seul** : les
+   *     trois sont toujours là, seul celui envoyé a changé.
+   *
+   * Sans ce troisième témoin, cette méthode aurait effacé prix et montant à
+   * encaisser **au moment précis de la clôture** — le défaut `meta` du
+   * 30/07/2026, reproduit sur le mécanisme censé le corriger. Et il fallait
+   * **poser** le témoin : lire une commande qui ne porte qu'un champ ne
+   * distingue pas « les autres ont été détruits » de « elle n'en avait pas ».
+   */
+  // ── Champs personnalisés d'un commerçant (Vendor) ─────────────────────────
+  //
+  // ⚠️ **La définition est portée par le VENDOR lui-même**, pas par une
+  // configuration partagée : `subject_uuid` vaut l'uuid du vendor. Chaque
+  // commerçant a donc sa propre définition `favourites`. C'est la mécanique de
+  // Fleetbase pour les sujets qui ne sont pas des `OrderConfig`, et ça décide
+  // de la forme du service qui s'en sert — un cache par vendor, pas un global.
+  //
+  // ⚠️ **Mesuré le 03/08/2026, pas déduit.** Le trait `HasCustomFields` sur
+  // `Vendor.php` dit que le modèle les accepte ; il ne dit rien de la route.
+  // Constaté en réel : `PUT /int/v1/vendors/{public_id}` avec le corps
+  // enveloppé sous `vendor` rend 200, et la valeur se relit — **déjà
+  // désérialisée en liste**, pas en chaîne JSON.
+
+  /**
+   * L'identité d'une entreprise — **la seule source**.
+   *
+   * ⚠️ `MerchantAccount.businessName` et `FleetAccount.businessName` en
+   * gardaient une copie, figée à l'inscription, jusqu'au 03/08/2026. Mesurées
+   * ce jour-là : 303 identiques sur 304 côté commerçant — bénin, mais c'est le
+   * même mécanisme qui avait fait diverger **trois conducteurs sur trois**. Une
+   * copie que personne ne compare finit par mentir ; la question n'est que
+   * quand.
+   *
+   * ⚠️ Rend `null` plutôt qu'un nom vide si la lecture échoue : l'appelant
+   * décide quoi afficher, et « je n'ai pas pu savoir » ne doit pas se déguiser
+   * en « cette entreprise n'a pas de nom » (règle 10).
+   */
+  /**
+   * Les entreprises dont le nom contient [query].
+   *
+   * ⚠️ **`query` est le bon paramètre, et c'est mesuré** (03/08/2026) :
+   * sur 456 vendors, `query=vende` en rend **1**, un témoin inventé en rend
+   * **0**, et `name=vende` en rend **0** — c'est une égalité, pas un
+   * « contient ». Sans témoin, un filtre abandonné en silence par Fleetbase
+   * aurait rendu les 456 comme si c'était le résultat.
+   *
+   * ⚠️ **Rend TOUS les vendors, commerçants compris.** Chez Fleetbase, un
+   * commerçant et une entreprise de transport sont le même objet. L'appelant
+   * doit intersecter avec ce que le BFF sait — c'est lui qui distingue les
+   * deux populations.
+   */
+  async searchVendors(query: string, maxPages = 6, pageSize = 100): Promise<any[]> {
+    const all: any[] = [];
+
+    try {
+      for (let page = 1; page <= maxPages; page++) {
+        const response = await this.callFleetOps('GET', '/vendors', undefined, {
+          query,
+          page,
+          limit: pageSize,
+        });
+        // ⚠️ **`response.data`, jamais `response`.** `callFleetOps` rend la
+        // réponse axios ; `extractCollection` attend le CORPS. Lui passer la
+        // réponse ne lève pas — elle rend simplement une liste **vide**, et la
+        // recherche affichait « aucune entreprise » sur un vendor qui existait,
+        // que Fleetbase trouvait, et dont l'uuid correspondait bien à un compte
+        // (mesuré le 03/08/2026). Un déballage raté ne fait pas de bruit : il
+        // fait disparaître des résultats.
+        const rows = this.extractCollection(response.data, 'vendors');
+        all.push(...rows);
+
+        if (rows.length < pageSize) return all;
+
+        if (page === maxPages) {
+          // ⚠️ **Jamais de troncature muette.** L'appelant intersecte ensuite
+          // avec ce que le BFF connaît : une page manquante ne rend pas « moins
+          // de résultats », elle rend **aucun** quand l'entreprise cherchée
+          // était au-delà. C'est le défaut mesuré le 03/08/2026 — un vendor
+          // existant, une recherche qui le trouve, et une liste vide à l'écran
+          // parce que le plafond était à 30.
+          this.logger.warn(
+            `Recherche d'entreprises « ${query} » tronquée à ${maxPages * pageSize} — `
+              + 'une entreprise existante peut manquer à la liste',
+          );
+        }
+      }
+      return all;
+    } catch (error: any) {
+      this.logger.warn(`Recherche d'entreprises impossible (${query}) : ${error.message}`);
+      return all;
+    }
+  }
+
+  async getVendorIdentity(
+    vendorId: string,
+  ): Promise<{ name: string | null; phone: string | null } | null> {
+    try {
+      const response = await this.callFleetOps('GET', `/vendors/${this.seg(vendorId)}`);
+      const vendor = response.data?.vendor ?? response.data;
+      if (!vendor) return null;
+      return {
+        name: typeof vendor.name === 'string' && vendor.name.trim() ? vendor.name : null,
+        phone: typeof vendor.phone === 'string' && vendor.phone.trim() ? vendor.phone : null,
+      };
+    } catch (error: any) {
+      this.logger.warn(`Identité du vendor ${vendorId} illisible : ${error.message}`);
+      return null;
+    }
+  }
+
+  async getVendorWithCustomFields(vendorId: string) {
+    const response = await this.callFleetOps('GET', `/vendors/${this.seg(vendorId)}`, undefined, {
+      'with[]': 'customFieldValues.customField',
+    });
+    return response.data?.vendor ?? response.data;
+  }
+
+  async setVendorCustomFieldValues(
+    vendorId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/vendors/${this.seg(vendorId)}`, {
+      vendor: { custom_field_values: values },
+    });
+    return response.data;
+  }
+
+  async setOrderCustomFieldValues(
+    orderId: string,
+    values: { custom_field_uuid: string; value: any; value_type: string }[],
+  ) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderId)}`, {
+      order: { custom_field_values: values },
     });
     return response.data;
   }

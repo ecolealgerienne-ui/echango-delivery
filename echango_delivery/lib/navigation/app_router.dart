@@ -2,7 +2,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/register_screen.dart';
-import '../screens/cash/cash_screen.dart';
+import '../screens/commercant/collections_screen.dart';
 import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
@@ -65,12 +65,10 @@ GoRouter buildAppRouter(AuthState authState) {
         path: '/transporteur',
         builder: (_, __) => const DashboardScreen(),
         routes: [
-          // Registre de caisse, vu du transporteur : ce qu'il détient et doit
-          // remettre, commerçant par commerçant.
-          GoRoute(
-            path: 'caisse',
-            builder: (_, __) => const CashScreen(persona: 'driver'),
-          ),
+          // ⚠️ `/transporteur/caisse` a été retiré le 03/08/2026 avec le
+          // registre de caisse. Le transporteur déclare ce qu'il a perçu **en
+          // clôturant la livraison**, sur la fiche de la course ; il n'y a
+          // plus de solde à consulter (`docs/registre_caisse_precis.md`).
           GoRoute(
             path: 'commandes/:id',
             builder: (_, s) =>
@@ -121,11 +119,12 @@ GoRouter buildAppRouter(AuthState authState) {
             path: 'notifications',
             builder: (_, __) => const NotificationsScreen(),
           ),
-          // Même écran, autre bout du registre : ce que les transporteurs ont
-          // encaissé pour ce commerçant et ne lui ont pas encore remis.
+          // La seule vue qui subsiste du sujet « argent » : ce que les
+          // commandes de ce commerçant disent avoir été perçu à chaque porte.
+          // En lecture seule — aucun solde, aucune remise.
           GoRoute(
             path: 'encaissements',
-            builder: (_, __) => const CashScreen(persona: 'merchant'),
+            builder: (_, __) => const CollectionsScreen(),
           ),
           GoRoute(
             path: 'commandes/:id',
@@ -142,13 +141,10 @@ GoRouter buildAppRouter(AuthState authState) {
         path: '/flotte',
         builder: (_, __) => const FlotteHomeScreen(),
         routes: [
-          // Le registre vu de l'entreprise : ce que ses conducteurs lui doivent,
-          // ce qu'elle doit aux commerçants. Même écran que les deux autres
-          // personas — c'est le même registre, vu d'un troisième bout.
-          GoRoute(
-            path: 'caisse',
-            builder: (_, __) => const CashScreen(persona: 'fleet'),
-          ),
+          // ⚠️ `/flotte/caisse` a été retiré le 03/08/2026. L'entreprise
+          // répond des espèces de ses conducteurs et en tient le compte chez
+          // elle : la plateforme lui dit ce qui a été déclaré à chaque porte,
+          // pas ce que chacun lui doit.
           // Une route et non un cinquième onglet : les positions se chargent à
           // la demande. Un onglet les chargerait — flotte entière et tuiles de
           // carte comprises — à chaque ouverture de l'espace entreprise, y

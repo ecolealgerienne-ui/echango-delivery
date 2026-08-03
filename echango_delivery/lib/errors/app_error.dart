@@ -43,46 +43,22 @@ class AppError {
   static const String authMissingToken = 'auth.missing_token';
   static const String authSessionRevoked = 'auth.session_revoked';
 
-  // ── Caisse (encaissements, remises) ─────────────────────────────────────
-  /// Plusieurs prestataires « plateforme » configurés côté serveur : l'argent
-  /// des courses du pool ne peut plus être routé sans ambiguïté. Refus
-  /// délibéré du serveur, pas une panne — il faut un opérateur.
   /// L'entreprise visée n'a pas de compte actif dans le réseau Echango.
   static const String merchantFleetNotInNetwork = 'merchant.fleet_not_in_network';
 
-  static const String cashPlatformAmbiguous = 'cash.platform_ambiguous';
+  // ── Encaissement à la porte ─────────────────────────────────────────────
+  //
+  // ⚠️ Vingt-cinq codes vivaient ici — remises, confirmations, plafonds,
+  // contreparties. Retirés le 03/08/2026 avec le registre de caisse
+  // (`docs/registre_caisse_precis.md`). Les cinq qui restent portent tous sur
+  // un seul geste : ce que le transporteur déclare avoir perçu en clôturant.
+  static const String cashCodDeclarationRequired = 'cash.cod_declaration_required';
   static const String cashAmountNegative = 'cash.amount_negative';
   static const String cashAmountExceedsExpected = 'cash.amount_exceeds_expected';
   static const String cashDiscrepancyReasonRequired = 'cash.discrepancy_reason_required';
-  static const String cashCollectionConflict = 'cash.collection_conflict';
-  static const String cashRemittanceAmountMustBePositive =
-      'cash.remittance_amount_must_be_positive';
-  static const String cashNoDebt = 'cash.no_debt';
-  static const String cashRemittanceExceedsDebt = 'cash.remittance_exceeds_debt';
-  static const String cashRemittanceAlreadyConfirmed = 'cash.remittance_already_confirmed';
-  static const String cashRemittanceDisputed = 'cash.remittance_disputed';
-  static const String cashRemittanceMustBeConfirmedByOtherParty =
-      'cash.remittance_must_be_confirmed_by_other_party';
-  static const String cashRemittanceSelfDisputeForbidden =
-      'cash.remittance_self_dispute_forbidden';
-  static const String cashRemittanceNotFound = 'cash.remittance_not_found';
-  static const String cashCeilingExceeded = 'cash.ceiling_exceeded';
-  static const String cashCodDeclarationRequired = 'cash.cod_declaration_required';
-  static const String cashOrderUnknownToRegistry = 'cash.order_unknown_to_registry';
-
-  // Régularisation d'une livraison close hors application.
-  static const String cashCollectionAlreadyDeclared = 'cash.collection_already_declared';
-  static const String cashCollectionNotFound = 'cash.collection_not_found';
-  static const String cashCollectionNotConfirmable = 'cash.collection_not_confirmable';
-  static const String cashCollectionAlreadyConfirmed = 'cash.collection_already_confirmed';
-  static const String cashCollectionDisputed = 'cash.collection_disputed';
-  static const String cashOrderNotDelivered = 'cash.order_not_delivered';
-  static const String cashOrderHasNoCod = 'cash.order_has_no_cod';
-  static const String cashDriverRequired = 'cash.driver_required';
-  static const String cashDriverNotInNetwork = 'cash.driver_not_in_network';
-  static const String cashCounterpartyNotFound = 'cash.counterparty_not_found';
-  static const String cashDriverNoAccount = 'cash.driver_no_account';
-  static const String cashDriverUnknownToMerchant = 'cash.driver_unknown_to_merchant';
+  /// La déclaration n'a pas pu être écrite sur la commande : la livraison reste
+  /// ouverte, et le transporteur doit réessayer plutôt que continuer.
+  static const String cashCollectionNotRecorded = 'cash.collection_not_recorded';
 
   // ── Commandes ────────────────────────────────────────────────────────────
   static const String orderNotFound = 'order.not_found';
@@ -94,14 +70,16 @@ class AppError {
   static const String orderCancelNotAllowed = 'order.cancel_not_allowed';
   static const String orderAlreadyTerminal = 'order.already_terminal';
   static const String orderAlreadyStarted = 'order.already_started';
-  static const String orderAlreadyAccepted = 'order.already_accepted';
-  static const String orderAlreadyDeclined = 'order.already_declined';
   static const String orderNotAssignedToDriver = 'order.not_assigned_to_driver';
-  static const String orderDeclineReasonRequired = 'order.decline_reason_required';
-  static const String orderProofRequired = 'order.proof_required';
+  /// Le refus n'a pas pu être écrit sur la commande : la course reviendrait
+  /// au rafraîchissement suivant, il faut réessayer.
+  static const String orderDeclineNotRecorded = 'order.decline_not_recorded';
+
+  /// Le signalement d'échec n'a pas pu être écrit sur la commande : le
+  /// commerçant n'a pas été prévenu, il faut réessayer.
+  static const String orderFailureNotRecorded = 'order.failure_not_recorded';
   static const String orderProofNotFound = 'order.proof_not_found';
   static const String orderTrackingFailed = 'order.tracking_failed';
-  static const String orderTemplateFailed = 'order.template_failed';
   static const String orderMissingPublicId = 'order.missing_public_id';
   static const String orderReleaseFailed = 'order.release_failed';
   static const String orderAlreadyTaken = 'order.already_taken';
@@ -153,7 +131,6 @@ class AppError {
   static const String merchantInactive = 'merchant.inactive';
   static const String merchantAddressNotFound = 'merchant.address_not_found';
   static const String merchantFavouriteNotFound = 'merchant.favourite_not_found';
-  static const String merchantFavouriteAlreadyExists = 'merchant.favourite_already_exists';
   static const String merchantDriverNotInNetwork = 'merchant.driver_not_in_network';
   static const String merchantFavouriteAddUnavailable = 'merchant.favourite_add_unavailable';
   static const String merchantAddressSaveFailed = 'merchant.address_save_failed';

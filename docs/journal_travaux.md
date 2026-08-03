@@ -1,3 +1,31 @@
+- [x] **Le BFF vidé de ce que Fleetbase peut porter — 16 tables → 10 (03/08/2026)** — carte complète dans [`ou_vit_quoi.md`](ou_vit_quoi.md), motif du registre de caisse dans [`registre_caisse_precis.md`](registre_caisse_precis.md).
+
+  **Le critère n'était pas doctrinal.** La console Fleetbase est utilisée en exploitation : une donnée qui n'existe que côté BFF est **absente de l'endroit où un opérateur la cherche**. Un refus de course, un échec de livraison, un favori expliquent chacun un blocage — les garder chez nous, c'est obliger l'opérateur à appeler.
+
+  **Six tables et six colonnes retirées** : le registre de caisse (`CashCollection`, `CashRemittance`, `DriverEarning`), puis `OrderDecline`, `DriverFavourite`, `DeliveryFailure` ; `Order.specMeta` ; et le **profil** des trois personas — nom, téléphone, raison sociale, catégorie de véhicule. Les trois tables de comptes ne portent plus que le **secret de connexion** et les liens.
+
+  ⚠️ **La duplication du profil avait DÉJÀ divergé** : trois conducteurs sur trois. « Test Transporteur » côté BFF contre « Amar BENGHARBI » chez Fleetbase, téléphone vide d'un côté et renseigné de l'autre. L'application affichait un nom, la console un autre, pour la même personne, sans une erreur. Côté commerçant elle était bénigne — 303 identiques sur 304 — mais c'est le même mécanisme.
+
+  ✅ **Zéro appel Fleetbase ajouté sur les chemins chauds**, et c'est ce qui a rendu le lot sûr : les lecteurs interrogeaient **déjà** Fleetbase pour autre chose. `getProfile` lisait le statut en ligne ; le filtre des opportunités lisait la zone et la position ; la sollicitation d'un favori lisait la zone de chacun. Le seul appel neuf est sur la **connexion**, pour le titre de l'écran commerçant — route plafonnée à 5/min.
+
+  ✅ **La reprise est un script du dépôt, idempotent, prouvé par un second passage à chaque lot** — et il tolère d'avoir déjà tourné : une table absente veut dire « déjà migré », pas « échec ». ⚠️ Il refuse de bénir un passage incomplet, **et il a fallu trois versions menteuses pour y arriver** : 546 commandes illisibles suivies d'un « ✅ peut être supprimé », onze refus lus et zéro repris sans un mot, et une non-idempotence que seule la seconde exécution a montrée. *Un script de reprise qui lit des lignes et n'en traite aucune n'a pas « rien à faire » : il a échoué sans le dire.*
+
+  ✅ **Trois propriétés gagnées, pas seulement des tables perdues** :
+
+  - l'**appartenance des preuves devient structurelle** — la route porte l'uuid de la commande (`GET commandes/:orderId/preuves/:id`), donc servir une preuve exige de traverser le contrôle qui existe déjà. Elle reposait avant sur un filtre qu'il fallait **penser** à écrire, sur un chemin que le code décrivait lui-même comme anti-IDOR ;
+  - l'**idempotence devient gratuite** — une table accumule des lignes, un champ personnalisé écrit deux fois la même valeur donne le même état. C'est ce qui rendait le défaut des remises possible ;
+  - **deux requêtes en base disparaissent** des chemins chauds, l'échec et le refus arrivant avec la course.
+
+  ⚠️ **CINQ défauts introduits par moi dans ce chantier, tous une ABSENCE et jamais une erreur.** Un `(f: any)` sur un objet renommé → une liste dont toutes les valeurs valaient `undefined`, en HTTP 200. `specMeta` retiré après avoir prouvé le **stockage** et non la **lecture** → la liste Fleetbase ne sert pas les champs personnalisés. Cinq champs laissés dans deux `create()` Prisma → `tsc` **vert**, c'est `npm run build` qui a vu. `limit=30` recopié d'un contexte où il valait 11 sur un ensemble déjà filtré → une intersection **vide**. `extractCollection(response)` au lieu de `response.data` → une liste **vide**, sans un mot.
+
+  **Aucun trouvé en relisant. Tous en exécutant** — et deux fois mon propre banc a menti avant d'être juste : un hash bcrypt mangé par le shell, et un scénario lancé sans avoir synchronisé la copie WSL. *« La mutation n'a jamais pris effet » et « le correctif est faux » sont deux choses.*
+
+  ✅ **Six pièges Fleetbase mesurés et consignés** (§3 d'`ou_vit_quoi.md`), dont trois qui n'étaient pas connus : le `PUT` **fusionne** au lieu de remplacer — il fallait **poser** un témoin, lire une commande qui ne porte qu'un champ ne distingue pas « détruits » de « jamais eu » ; une valeur `array` revient **déjà désérialisée** ; et **il n'y a PAS de cache** en travers d'une lecture après écriture, ce qui ferme une question ouverte depuis le 29/07 et innocente toute la mécanique lire-modifier-écrire.
+
+  **Vérifié** : 5 scénarios contre un vrai Fleetbase, 160 tests Jest, `flutter analyze` propre, 60 tests Flutter, 5 contrôles Dart, schéma Prisma valide, migration appliquée dans la copie WSL.
+
+  ⚠️ **Ce qui n'a PAS été fait, et pourquoi** : l'authentification. Sur 315 `User` Fleetbase de type `customer`, **un seul** porte un mot de passe — le secret n'est donc pas dupliqué, il n'existe que chez nous. Migrer n'en retirerait pas une copie, ça en **créerait 312**, dans un système dont la console reste ouverte aux conducteurs (un `User` de type `driver`, vérifié, lit les commandes de toute l'organisation ; l'IAM ferme `vendors`, `contacts`, `places` — pas `orders`).
+
 - [x] **Un huitième scénario : le voyage de la wilaya (02/08/2026)** — `scripts/test-wilaya.sh`, ajouté à `run-all-scenarios.sh`. Écrit parce que le lot précédent était vérifié par une sonde jetable : une preuve qui ne se rejoue pas n'est pas une preuve, c'est un souvenir.
 
   **Trois contrôles, chacun avec son cas négatif dans le même passage** — le scénario se prouve lui-même plutôt que de dépendre d'un banc extérieur :

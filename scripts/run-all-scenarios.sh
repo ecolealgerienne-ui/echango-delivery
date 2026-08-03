@@ -65,13 +65,14 @@ SCENARIOS=(
   # dépend d'aucun des autres et n'en dérange aucun. Son email est stable, il
   # ne consomme donc une inscription qu'à sa toute première exécution.
   test-wilaya
-  test-parcours-argent
-  test-parcours-argent-flotte
   test-multi-appartenance
-  test-regularisation-commercant
-  test-ecart-et-dette-negative
-  test-plafonds-dette
   test-sorties-de-course
+  # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
+  # d'un décor RICHE — une course portant des champs personnalisés. Les courses
+  # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
+  # que d'annoncer « aucune fuite » sur une commande qui n'avait rien à cacher.
+  # Le placer après les autres lui donne les courses qu'ils viennent de créer.
+  test-frontiere-projection
 )
 
 names=(); codes=(); notes=()

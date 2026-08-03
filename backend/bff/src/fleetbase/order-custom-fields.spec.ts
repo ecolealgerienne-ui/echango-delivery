@@ -1,4 +1,5 @@
 import {
+  FLEETBASE_OWNED_ORDER_KEYS,
   ORDER_CUSTOM_FIELDS,
   customFieldName,
   encodeCustomFieldValue,
@@ -117,34 +118,58 @@ describe('champs personnalisés de commande', () => {
       meta: { _index_resource: true },
     };
 
-    const effective = effectiveOrderMeta(order, null);
+    const effective = effectiveOrderMeta(order);
 
     expect(effective?.cod_amount).toBe(1950);
     expect(effective?.price).toBe(650);
   });
 
   it('ne relaie jamais le drapeau interne `_index_resource`', () => {
-    // Même sans spécification locale : la version initiale ne nettoyait que la
-    // branche de fusion, et le drapeau ressortait sur toute commande ancienne.
-    expect(effectiveOrderMeta({ meta: { _index_resource: true } }, null)).toEqual({});
-    expect(effectiveOrderMeta({ meta: { _index_resource: true } }, { price: 1 })?.price).toBe(1);
+    // La version initiale ne nettoyait que la branche de fusion, et le drapeau
+    // ressortait sur toute commande ancienne.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })).toEqual({});
   });
 
-  it('laisse une correction faite en console primer sur la copie locale', () => {
-    const effective = effectiveOrderMeta(
-      { custom_field_values: [{ custom_field: { name: 'price' }, value: '900' }], meta: {} },
-      { price: 650, pricing_inputs: { distance: 3200 } },
-    );
+  it('laisse une correction faite en console primer sur `meta`', () => {
+    // Les champs personnalisés sont fusionnés EN DERNIER : une valeur corrigée
+    // par un admin l'emporte sur ce que `meta` porte encore.
+    const effective = effectiveOrderMeta({
+      custom_field_values: [{ custom_field: { name: 'price' }, value: '900' }],
+      meta: { price: 650, pricing_inputs: { distance: 3200 } },
+    });
 
     expect(effective?.price).toBe(900);
-    // Hors catalogue : reste servi par la copie locale.
+    // Hors catalogue : `pricing_inputs` n'a pas de champ personnalisé et reste
+    // servi par `meta`.
     expect(effective?.pricing_inputs?.distance).toBe(3200);
   });
 
-  it('retombe sur la copie locale quand rien n\'a survécu en amont', () => {
-    const effective = effectiveOrderMeta({ meta: { _index_resource: true } }, { cod_amount: 1200 });
+  it('⚠️ NE RATTRAPE PLUS un `meta` effacé sans champs personnalisés', () => {
+    // ── Ce cas documente une PERTE, et c'est pour ça qu'il existe ───────────
+    //
+    // Une troisième couche existait jusqu'au 03/08/2026 : `Order.specMeta`, la
+    // copie locale figée à la création, qui rendait ses montants quand tout le
+    // reste avait été effacé. Elle est retirée — la reprise a constaté 535
+    // commandes sur 535 déjà complètes en amont, donc elle ne rattrapait plus
+    // rien (`scripts/backfill-order-custom-fields.sh`).
+    //
+    // Ce qui reste vrai : une commande dont la console a effacé `meta` ET qui
+    // n'a aucun champ personnalisé ne rend plus rien. Une création neuve est
+    // **refusée** si le catalogue est incomplet (`assertCustomFieldsComplete`),
+    // donc le cas ne peut plus naître. L'écrire noir sur blanc plutôt que de
+    // laisser quelqu'un le découvrir sur une fiche vide.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })).toEqual({});
+  });
 
-    expect(effective?.cod_amount).toBe(1200);
+  it('⚠️ `pricing_inputs` ne survit plus à un effacement de `meta`', () => {
+    // Conséquence assumée : il n'a délibérément PAS de champ personnalisé (une
+    // donnée de calibration encombrerait la fiche de la console pour un admin
+    // qui n'en a rien à faire), et `specMeta` était son dernier abri.
+    //
+    // Sa perte n'empêche aucune livraison — c'est le critère qui avait justifié
+    // de le laisser hors catalogue, et il tient toujours.
+    expect(effectiveOrderMeta({ meta: { _index_resource: true } })?.pricing_inputs)
+      .toBeUndefined();
   });
 
   it('survit à un double encodage, si l\'amont corrige son ordre d\'affectation', () => {
@@ -175,5 +200,83 @@ describe('champs personnalisés de commande', () => {
     });
 
     expect(read['marge_interne']).toBeUndefined();
+  });
+});
+
+/**
+ * Les noms que Fleetbase sert déjà sur une commande.
+ *
+ * ── Pourquoi cette liste est épinglée ici ──────────────────────────────────
+ *
+ * Un champ personnalisé qui porte un nom déjà utilisé par Fleetbase ne produit
+ * **aucune erreur** : le repli « à plat » de `readOrderCustomFields` lit la
+ * valeur de Fleetbase, et comme les champs personnalisés sont fusionnés en
+ * dernier, cette valeur **l'emporte** sur la nôtre.
+ *
+ * Constaté le 02/08/2026 sur `currency` : `Order` a une colonne du même nom,
+ * dont le défaut est `USD`. La fiche servait `DZD`, la liste servait `USD`,
+ * et chaque couche prise séparément disait `DZD`. Aucune relecture ne pouvait
+ * le montrer — il a fallu comparer deux routes pour la même commande.
+ *
+ * ── D'où viennent ces noms ─────────────────────────────────────────────────
+ *
+ * Relevés le 03/08/2026 dans le source de `fleetops-api` tel qu'il tourne dans
+ * le conteneur, pas de mémoire :
+ *
+ *   Http/Resources/v1/Order.php        (fiche)  — 52 clés
+ *   Http/Resources/v1/Index/Order.php  (liste)  — 38 clés
+ *
+ * ⚠️ **À reprendre à chaque montée de version de Fleetbase.** Une clé ajoutée
+ * en amont ne casse rien immédiatement : elle attend qu'on lui donne le même
+ * nom. La liste étant épinglée et non déduite de la donnée examinée, ce test
+ * ne peut pas se rendre vert tout seul en perdant sa cible — c'est le défaut
+ * qu'avait la première version du banc de refus HTTP.
+ */
+const FLEETBASE_ORDER_KEYS = [
+  'adhoc', 'adhoc_distance', 'barcode', 'comments', 'company_uuid', 'created_at',
+  'currency', 'customer', 'customer_type', 'customer_uuid', 'dispatched',
+  'dispatched_at', 'distance', 'driver_assigned', 'driver_assigned_uuid', 'eta',
+  'facilitator', 'facilitator_type', 'facilitator_uuid', 'files',
+  'has_driver_assigned', 'id', 'internal_id', 'is_scheduled', 'latest_status',
+  'latest_status_code', 'meta', 'notes', 'order_config', 'order_config_uuid',
+  'payload', 'payload_uuid', 'pod_method', 'pod_required', 'public_id',
+  'purchase_rate', 'purchase_rate_uuid', 'qr_code', 'route_uuid', 'scheduled_at',
+  'started', 'started_at', 'status', 'time', 'tracker_data', 'tracking',
+  'tracking_number', 'tracking_number_uuid', 'tracking_statuses',
+  'transaction_amount', 'transaction_uuid', 'type', 'updated_at', 'uuid',
+  'vehicle_assigned', 'vehicle_assigned_uuid',
+];
+
+describe('collision de noms avec Fleetbase', () => {
+  it('aucune clé du catalogue ne porte un nom que Fleetbase sert déjà', () => {
+    const collisions = ORDER_CUSTOM_FIELDS.map((f) => f.key)
+      .filter((key) => FLEETBASE_ORDER_KEYS.includes(key))
+      .filter((key) => !FLEETBASE_OWNED_ORDER_KEYS.includes(key));
+
+    expect(collisions).toEqual([]);
+  });
+
+  it('`currency` EST une collision — et elle est traitée, pas ignorée', () => {
+    // Le témoin. Sans lui, un jour où `FLEETBASE_ORDER_KEYS` se viderait par
+    // erreur, le cas précédent passerait au vert sans rien regarder.
+    expect(FLEETBASE_ORDER_KEYS).toContain('currency');
+    expect(ORDER_CUSTOM_FIELDS.map((f) => f.key)).toContain('currency');
+    expect(FLEETBASE_OWNED_ORDER_KEYS).toContain('currency');
+  });
+
+  it('le repli à plat ne lit PAS une clé que Fleetbase possède', () => {
+    // La reproduction exacte du défaut du 02/08/2026 : une commande de liste,
+    // sans valeurs de champs personnalisés, qui porte la devise de Fleetbase.
+    const read = readOrderCustomFields({ currency: 'USD', price: '650' });
+
+    expect(read.currency).toBeUndefined();
+    expect(read.price).toBe(650);
+  });
+
+  it('les trois champs de la déclaration à la porte sont libres', () => {
+    for (const key of ['collected_amount', 'collected_at', 'collection_reason']) {
+      expect(ORDER_CUSTOM_FIELDS.map((f) => f.key)).toContain(key);
+      expect(FLEETBASE_ORDER_KEYS).not.toContain(key);
+    }
   });
 });

@@ -1,12 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+
 import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
+import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CashService, driverParty, merchantParty } from '../cash/cash.service';
+import { assertCollectedAmount } from '../common/money/collection';
+import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
@@ -34,7 +39,7 @@ export class TransporteurService {
     private readonly fleetbaseClient: FleetbaseApiClient,
     private readonly audit: AuditService,
     private readonly notifications: NotificationsService,
-    private readonly cash: CashService,
+    private readonly orderCustomFields: OrderCustomFieldsService,
     private readonly configService: ConfigService,
     private readonly driverZone: DriverZoneService,
   ) {}
@@ -119,7 +124,21 @@ export class TransporteurService {
       badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
 
-    return orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+    const found = orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+
+    // ⚠️ Rechargée avant d'être rendue : la liste ne porte aucun champ
+    // personnalisé, donc une fiche servie telle quelle n'aurait ni prix, ni
+    // montant à encaisser, ni signalement d'échec. Une lecture unitaire de plus
+    // sur une fiche est sans conséquence — c'est une commande, pas cinquante.
+    if (!found?.uuid) return found;
+    try {
+      return (await this.fleetbaseClient.readOrderFull(found.uuid)) ?? found;
+    } catch (error: any) {
+      this.logger.warn(
+        `Commande ${found.uuid} non rechargée (${error?.message}) — servie sans ses montants`,
+      );
+      return found;
+    }
   }
 
   /**
@@ -134,154 +153,107 @@ export class TransporteurService {
   }
 
   /**
-   * Attach this driver's reported failures to the orders being returned.
-   *
-   * Without this a reported failure is invisible: it lives only in the BFF
-   * (§6.5 — no confirmed native per-waypoint failed status), and the Fleetbase
-   * order keeps its own status, so the app has no way to show that anything
-   * was reported. The driver files a report and the screen looks unchanged,
-   * which is indistinguishable from the feature being broken.
-   *
-   * Exposed as `delivery_failure` because that is the key the app's model
-   * already reads.
-   */
-  /**
-   * Recomplète `meta` depuis la spécification figée à la création.
+   * Recompose `meta` depuis les champs personnalisés de la commande.
    *
    * ⚠️ Nécessaire parce qu'une affectation de transporteur **depuis la console
-   * Fleetbase efface `meta`** (constaté le 30/07/2026 : il ne restait que
-   * `{_index_resource: true}`). Pour le transporteur, ce n'est pas un
-   * affichage dégradé — `cod_amount` disparu signifie qu'aucun montant ne lui
-   * est annoncé, et `price` disparu qu'il ne sait pas ce que la course
-   * rapporte. Il accepterait à l'aveugle une course encaissée.
+   * Fleetbase efface `meta`** (constaté le 30/07/2026). Pour le transporteur,
+   * ce n'est pas un affichage dégradé — `cod_amount` disparu signifie qu'aucun
+   * montant ne lui est annoncé, et `price` disparu qu'il ne sait pas ce que la
+   * course rapporte. Il accepterait à l'aveugle une course encaissée.
    *
-   * Une seule requête pour toute la liste : la fusion doit être invisible en
-   * coût, sans quoi elle finirait par être retirée d'un chemin « chaud ».
+   * ⚠️ **Interrogeait la base locale jusqu'au 03/08/2026**, pour y lire
+   * `Order.specMeta`. C'est désormais une projection pure, sans entrée/sortie
+   * et sans possibilité d'échouer.
    */
-  private async withSpecMeta(orders: any[]): Promise<any[]> {
-    if (!orders.length) return orders;
-
-    const uuids = orders.map((o) => o?.uuid).filter(Boolean);
-    if (!uuids.length) return orders;
-
-    const rows = await this.prisma.order
-      .findMany({
-        where: { fleetbaseOrderId: { in: uuids } },
-        select: { fleetbaseOrderId: true, specMeta: true },
-      })
-      // La spécification est un filet, pas une dépendance : si la lecture
-      // échoue, on sert ce que Fleetbase a donné plutôt que de faire échouer
-      // la liste entière.
-      .catch((error: any) => {
-        this.logger.warn(`Spécifications de commande illisibles : ${error.message}`);
-        return [] as { fleetbaseOrderId: string; specMeta: any }[];
-      });
-
-    if (!rows.length) return orders;
-
-    const spec = new Map(rows.map((r: any) => [r.fleetbaseOrderId, r.specMeta]));
-    return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o, spec.get(o?.uuid)) }));
+  private withEffectiveMeta(orders: any[]): any[] {
+    return orders.map((o) => ({ ...o, meta: effectiveOrderMeta(o) }));
   }
 
-  private async attachFailures(driverId: string, orders: any[]) {
+  /**
+   * Projette les courses assignées, signalements d'échec compris.
+   *
+   * ⚠️ **Ne fait plus aucune requête depuis le 03/08/2026** : les échecs vivent
+   * sur la commande, donc ils arrivent avec elle. La version précédente
+   * interrogeait la base une fois par liste servie.
+   *
+   * ⚠️ **Et elle rendait la commande Fleetbase BRUTE jusqu'au 03/08/2026** —
+   * `{...o, meta: effectiveOrderMeta(o)}`, sans jamais traverser
+   * `projectOrderForDriver`. La liste d'autorisation existait, s'accordait avec
+   * le catalogue, était testée — et **ce chemin ne l'appelait pas**. Sortaient
+   * donc `meta.declines[]` en entier (uuid Fleetbase, motif, notes libres et
+   * **prix offert** à chaque transporteur qui avait refusé), `proof_url`, et
+   * `custom_field_values[]` brut.
+   *
+   * Le motif de l'oubli est instructif : la branche adhoc d'à côté projetait
+   * bien (`{unclaimed: true}`), et les deux autres modules aussi. C'est
+   * l'**exception** qui avait l'air d'une règle — une fonction nommée « attache
+   * les échecs » ne se lit pas comme une frontière de sortie.
+   *
+   * ⚠️ Et le test qui devait l'attraper accordait le catalogue avec la liste
+   * d'autorisation **sans jamais exécuter le chemin** : deux listes d'accord
+   * pendant qu'un appelant sautait les deux. Règle 8 — un contrôle qui n'a
+   * jamais eu l'occasion de refuser. Le banc de non-régression est désormais
+   * dans `transporteur-projection.spec.ts`, et il part de la commande brute.
+   */
+  private attachFailures(orders: any[]): any[] {
     if (!orders.length) return orders;
 
-    orders = await this.withSpecMeta(orders);
-
-    const failures = await this.prisma.deliveryFailure.findMany({
-      where: {
-        driverId,
-        fleetbaseOrderUuid: { in: orders.map((o) => o?.uuid).filter(Boolean) },
-      },
-      orderBy: { reportedAt: 'desc' },
-    });
-
-    // Projeter même sans signalement : cette méthode est le seul point de
-    // passage des commandes assignées, et un retour anticipé laisserait sortir
-    // les objets Fleetbase bruts.
-    if (!failures.length) return orders.map((o) => projectOrderForDriver(o));
-
-    // Tous les rapports d'une commande, du plus récent au plus ancien.
-    //
-    // Une version précédente ne gardait que le dernier, au motif que « seul le
-    // dernier décrit l'état courant ». C'est vrai d'un badge de statut, faux
-    // d'un signalement : une livraison qui a échoué trois fois n'est pas celle
-    // qui a échoué une fois, et l'opérateur qui décide de la suite a besoin de
-    // la série. Chaque rapport porte de surcroît sa propre photo — n'en
-    // exposer qu'une revenait à effacer les preuves précédentes.
-    const byOrder = new Map<string, any[]>();
-    for (const f of failures) {
-      const list = byOrder.get(f.fleetbaseOrderUuid) ?? [];
-      list.push(f);
-      byOrder.set(f.fleetbaseOrderUuid, list);
-    }
-
-    const project = (failure: any) => ({
-      id: failure.id,
-      reason: failure.reason,
-      notes: failure.notes,
-      // Chemin sur le BFF, jamais l'URL Fleetbase. Celle-ci pointe sur
-      // l'hôte tel que Fleetbase se connaît — injoignable depuis un
-      // téléphone — et surtout elle n'est protégée par rien : la donner à
-      // l'app reviendrait à publier les preuves de livraison à qui
-      // devinerait l'adresse. Ici, le jeton du transporteur fait foi.
-      photo_url: failure.proofUrl ? `/transporteur/preuves/${failure.id}` : null,
-      created_at: failure.reportedAt.toISOString(),
-    });
-
-    return orders.map((order) => {
-      const list = byOrder.get(order?.uuid);
-      return projectOrderForDriver(order, {
-        extra: list?.length
-          ? {
-              // `delivery_failure` reste le plus récent : c'est ce qu'affichent
-              // les vues résumées, et le retirer casserait la liste sans rien
-              // apporter.
-              delivery_failure: project(list[0]),
-              delivery_failures: list.map(project),
-            }
-          : {},
-      });
-    });
+    return this.withEffectiveMeta(orders).map((o) =>
+      projectOrderForDriver(o, { extra: projectFailures(o, 'transporteur') }),
+    );
   }
 
   /**
    * Sert la photo d'un signalement, après contrôle d'appartenance.
    *
-   * Le filtre porte sur `driverId` en plus de l'identifiant : sans lui, un
-   * transporteur lirait les preuves d'un autre en changeant un cuid — même
-   * discipline anti-IDOR que partout ailleurs, appliquée ici à un fichier.
+   * ── L'appartenance est STRUCTURELLE depuis le 03/08/2026 ─────────────────
+   *
+   * La route porte l'uuid de la **commande**, plus un identifiant global de
+   * signalement. Servir la preuve exige donc de résoudre la commande — donc de
+   * traverser le contrôle de visibilité, qui vérifie déjà qu'elle concerne ce
+   * transporteur. La version précédente cherchait le signalement par son seul
+   * identifiant et devait re-vérifier le propriétaire à la main : la discipline
+   * anti-IDOR reposait sur le fait que son auteur y avait pensé.
+   *
+   * ⚠️ **`mine` est exigé EXPLICITEMENT, et il ne l'était pas.** La visibilité
+   * couvre deux cas — la course est à moi, ou c'est une adhoc que je peux
+   * encore réclamer. Seul le premier donne droit aux preuves. Ça tenait
+   * jusqu'ici par un **effet de bord** : la fiche d'une adhoc non réclamée
+   * repartait projetée, donc sans `meta.delivery_failures`, donc `findFailure`
+   * ne trouvait rien. Une protection qui repose sur ce qu'une projection efface
+   * disparaît le jour où l'on déplace la projection — c'est exactement ce que
+   * fait le correctif d'à côté. Elle est donc écrite.
+   *
+   * ⚠️ On ne distingue toujours PAS « pas de preuve » de « preuve d'un autre » :
+   * même réponse, et seul le second cas est journalisé. Distinguer serait un
+   * oracle.
    */
-  async getProofImage(driverId: string, failureId: string) {
-    const driver = await this.getDriverOrFail(driverId);
-
-    const failure = await this.prisma.deliveryFailure.findFirst({
-      where: { id: failureId, driverId: driver.id },
-    });
+  async getProofImage(driverId: string, orderId: string, failureId: string) {
+    const { order, mine } = await this.resolveVisibleOrder(driverId, orderId);
+    const [hydrated] = this.withEffectiveMeta([order]);
+    const failure = mine ? findFailure(hydrated ?? order, failureId) : undefined;
 
     if (!failure) {
-      // Distinguer « pas de preuve » de « preuve d'un autre » serait un oracle :
-      // même réponse, mais seul le second cas est journalisé.
       this.audit.denied({
         actorType: 'transporteur',
         actorId: driverId,
         action: 'proof.access',
         resourceType: 'DeliveryFailure',
         resourceId: failureId,
-        reason: 'Signalement inexistant ou appartenant à un autre transporteur',
+        reason: 'Signalement inexistant sur cette course',
       });
       notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
-    if (!failure.proofUrl) {
+    if (!failure.proof_url) {
       notFound('order.proof_not_found', 'Aucune preuve pour ce signalement');
     }
 
     try {
-      return await this.fleetbaseClient.fetchStoredFile(failure.proofUrl);
+      return await this.fleetbaseClient.fetchStoredFile(failure.proof_url);
     } catch (error) {
       this.logger.warn(
-        `Lecture de la preuve ${failureId} impossible (${failure.proofUrl}) : ${error.message}. ` +
+        `Lecture de la preuve ${failureId} impossible (${failure.proof_url}) : ${error.message}. ` +
           'Si Fleetbase répond « There is nothing to see here », le fichier existe mais ' +
           'aucune route ne le sert : vérifier FLEETBASE_PROOF_DISK=public et que ' +
           '`php artisan storage:link` a bien été exécuté côté Fleetbase.',
@@ -404,10 +376,15 @@ export class TransporteurService {
     });
     if (!fleet) return null;
 
+    // ⚠️ Le nom vient du `Vendor` : le compte local ne porte plus que le lien
+    // et le secret (03/08/2026). Un appel de plus sur un chemin déjà en train
+    // d'interroger Fleetbase pour trouver ce vendor.
+    const identite = await this.fleetbaseClient.getVendorIdentity(vendorUuid);
+
     return {
       id: null,
       fleet_id: fleet.id,
-      name: fleet.businessName,
+      name: identite?.name ?? null,
       status: 'active',
       // Ce qui distingue l'origine d'une adhésion : elle ne se refuse pas et ne
       // se suspend pas depuis l'application. L'écran doit le savoir pour ne pas
@@ -519,14 +496,27 @@ export class TransporteurService {
       this.logger.warn(`Could not read online status for driver ${driverId}: ${error.message}`);
     }
 
+    // ⚠️ **Nom, téléphone et véhicule viennent de Fleetbase**, plus d'une copie
+    // locale figée à l'inscription. Mesuré le 03/08/2026 : les deux divergeaient
+    // sur **trois conducteurs sur trois** — l'application affichait « Test
+    // Transporteur » là où la console affichait « Amar BENGHARBI ». Deux copies,
+    // et personne ne les comparait.
+    //
+    // ⚠️ `name` est un seul champ chez Fleetbase ; le contrat servi garde
+    // `firstName`/`lastName` pour ne pas casser l'écran, en découpant au
+    // premier espace. Le découpage est une **présentation**, pas une donnée :
+    // il ne repart jamais en écriture.
+    const profil = await this.driverZone.read(driver.fleetbaseDriverUuid);
+    const [prenom, ...reste] = (profil.name ?? '').trim().split(/\s+/);
+
     return {
       id: driver.id,
       email: driver.email,
-      firstName: driver.firstName,
-      lastName: driver.lastName,
-      phone: driver.phone,
+      firstName: prenom || null,
+      lastName: reste.length ? reste.join(' ') : null,
+      phone: profil.phone,
       fleetbaseDriverUuid: driver.fleetbaseDriverUuid,
-      vehicleType: driver.vehicleType,
+      vehicleType: profil.vehicleType,
       online,
     };
   }
@@ -578,10 +568,15 @@ export class TransporteurService {
 
   async updateVehicleType(driverId: string, vehicleType?: string) {
     const driver = await this.getDriverOrFail(driverId);
-    await this.prisma.driverAccount.update({
-      where: { id: driver.id },
-      data: { vehicleType: vehicleType ?? null },
-    });
+    const publicId = await this.getDriverPublicId(driver);
+    // ⚠️ Écrit chez Fleetbase depuis le 03/08/2026, plus dans une colonne du
+    // BFF : un opérateur en console peut désormais lire et corriger la
+    // catégorie d'un transporteur venu s'en plaindre.
+    await this.driverZone.writeVehicleType(
+      driver.fleetbaseDriverUuid,
+      publicId,
+      vehicleType ?? null,
+    );
     return { vehicleType: vehicleType ?? null };
   }
 
@@ -698,8 +693,18 @@ export class TransporteurService {
     // pas. Un nom de filtre qui régresserait serait abandonné en silence par
     // Fleetbase, et cette ligne est ce qui fait qu'une telle régression vide la
     // liste au lieu d'exposer les courses des autres.
-    const assigned = assignedRaw.filter((o) =>
-      this.isAssignedTo(o, driver.fleetbaseDriverUuid),
+    // ⚠️ **Rechargées une par une, et ce n'est pas une optimisation manquée.**
+    //
+    // `fetchEveryOrder` passe par `GET /orders`, servi par la ressource d'index :
+    // `meta` y vaut `{_index_resource: true}` et `custom_field_values` est
+    // **absent**. Sans ce rechargement, le transporteur verrait ses courses sans
+    // prix, sans montant à encaisser et sans exigence de véhicule — et les
+    // filtres ci-dessous décideraient sur du vide.
+    //
+    // Le filtre d'appartenance passe AVANT : on ne recharge que ce qu'on va
+    // servir, jamais toute la compagnie.
+    const assigned = await this.fleetbaseClient.hydrateOrders(
+      assignedRaw.filter((o) => this.isAssignedTo(o, driver.fleetbaseDriverUuid)),
     );
 
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
@@ -710,7 +715,17 @@ export class TransporteurService {
     // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
     // champ non rempli serait le pire des défauts silencieux.
     const ladder = ['moto', 'voiture', 'utilitaire'];
-    const mine = ladder.indexOf(driver.vehicleType ?? '');
+    // ⚠️ **Une seule lecture Fleetbase pour les trois critères.** Catégorie de
+    // véhicule, zone déclarée et position sortent de la même réponse : les
+    // séparer coûterait trois appels par affichage de liste, sur un
+    // environnement où chacun prend ~3 s.
+    //
+    // ⚠️ La catégorie vivait dans `DriverAccount.vehicleType` jusqu'au
+    // 03/08/2026 — une colonne du BFF, donc invisible d'un opérateur.
+    const { zone, point, vehicleType } = await this.driverZone.read(
+      driver.fleetbaseDriverUuid,
+    );
+    const mine = ladder.indexOf(vehicleType ?? '');
     // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
     // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
     // passerait pour « sans exigence » : un transporteur en moto se verrait
@@ -722,24 +737,29 @@ export class TransporteurService {
       return required < 0 || required <= mine;
     };
 
-    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
-    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
-    // reviendrait au rafraîchissement suivant, et l'écran serait
-    // indiscernable d'une fonctionnalité en panne.
-    const declined = new Set(
-      (
-        await this.prisma.orderDecline.findMany({
-          where: { driverId: driver.id },
-          select: { fleetbaseOrderUuid: true },
-        })
-      ).map((d: any) => d.fleetbaseOrderUuid),
-    );
-
     // Recomplété AVANT le filtre, pas après : `suits()` lit
     // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
     // traiter la course comme sans exigence.
-    const adhocHydrated = await this.withSpecMeta(
-      adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
+    //
+    // ⚠️ **Le refus se lit désormais SUR la commande**, plus dans une table du
+    // BFF (03/08/2026). L'ordre a donc changé : il fallait auparavant une
+    // requête en base *avant* de recomposer `meta` ; maintenant le refus **est
+    // dans** `meta`, donc il se lit une fois les courses recomposées — sans
+    // aucune entrée/sortie supplémentaire, puisqu'elles sont déjà en main.
+    //
+    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
+    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
+    // reviendrait au rafraîchissement suivant, et l'écran serait indiscernable
+    // d'une fonctionnalité en panne.
+    // ⚠️ Rechargement AVANT `withEffectiveMeta`, pour la même raison que
+    // ci-dessus : `isClaimableAdhoc` se décide sur des champs que la liste
+    // porte (statut, `adhoc`, conducteur), donc il réduit d'abord l'ensemble ;
+    // tout ce qui suit lit `meta`, que seule la lecture unitaire fournit.
+    const adhocFull = await this.fleetbaseClient.hydrateOrders(
+      adhocRaw.filter((o) => this.isClaimableAdhoc(o)),
+    );
+    const adhocHydrated = this.withEffectiveMeta(adhocFull).filter(
+      (o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid),
     );
 
     // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
@@ -753,7 +773,6 @@ export class TransporteurService {
     // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
     // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
     // sans que personne ne puisse constater ce qui manque.
-    const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
     const adhoc = adhocHydrated
       .filter(suits)
       .filter((o) => zoneAllows(o, zone, point));
@@ -773,16 +792,16 @@ export class TransporteurService {
 
     if (query.type === 'adhoc') return { orders: publicAdhoc };
     if (query.type === 'history') {
-      return { orders: await this.attachFailures(driver.id, assigned.filter(isFinished)) };
+      return { orders: this.attachFailures(assigned.filter(isFinished)) };
     }
     if (query.type === 'assigned') {
-      return { orders: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))) };
+      return { orders: this.attachFailures(assigned.filter((o) => !isFinished(o))) };
     }
 
     return {
-      active: await this.attachFailures(driver.id, assigned.filter((o) => !isFinished(o))),
+      active: this.attachFailures(assigned.filter((o) => !isFinished(o))),
       adhoc: publicAdhoc,
-      history: await this.attachFailures(driver.id, assigned.filter(isFinished)),
+      history: this.attachFailures(assigned.filter(isFinished)),
     };
   }
 
@@ -840,72 +859,30 @@ export class TransporteurService {
   }
 
   /**
-   * Confirme un encaissement que le commerçant a déclaré à la place du
-   * transporteur, après une clôture faite hors application.
+   * La commande **brute**, après contrôle de visibilité — usage INTERNE.
    *
-   * ── D'où vient l'autorisation ───────────────────────────────────────────────
+   * ⚠️ **Ne jamais rendre ça par une route.** C'est l'objet Fleetbase entier :
+   * `declines`, `proof_url`, `custom_field_values`, toutes les relations. Les
+   * écritures en ont besoin (`orderPublicId`, `isAssignedTo`, la liste courante
+   * des signalements avant un ajout) ; un client, non.
    *
-   * De la ligne de registre elle-même, dont `driverId` est ce transporteur —
-   * `CashService` le vérifie. Passer par `getOrder()` aurait été le réflexe, et
-   * il aurait **échoué précisément dans le cas visé** : ces livraisons peuvent
-   * ne porter aucun `driver_assigned_uuid` chez Fleetbase (observé en réel), et
-   * `getOrder()` refuse tout ce qui n'est ni assigné ni adhoc réclamable.
+   * ── Pourquoi c'est une fonction séparée depuis le 03/08/2026 ──────────────
    *
-   * ── Pourquoi la rémunération est relue ici ──────────────────────────────────
-   *
-   * Elle vient de la **commande**, jamais du corps de la requête : la faire
-   * saisir par celui qui confirme sa propre dette lui laisserait fixer ce qu'il
-   * retient dessus. Si la commande est illisible, on confirme quand même avec
-   * une rémunération nulle — bloquer laisserait la dette hors du registre, ce
-   * qui est le défaut qu'on répare, et une rémunération manquante se rattrape.
+   * `getOrder()` servait les deux rôles : résolveur pour huit écritures, et
+   * gestionnaire de `GET /transporteur/commandes/:id`. Une seule valeur de
+   * retour ne pouvait donc pas être à la fois brute et projetée — et c'est le
+   * **brut** qui gagnait, puisque c'est ce dont le code interne avait besoin
+   * pour fonctionner. La fuite était la conséquence silencieuse de ce partage :
+   * rien ne cassait, la route servait simplement plus que prévu.
    */
-  async confirmDeclaredCollection(driverId: string, collectionId: string) {
-    const collection = await this.prisma.cashCollection.findFirst({
-      where: { id: collectionId, driverId },
-      select: { fleetbaseOrderUuid: true },
-    });
-
-    if (!collection) {
-      notFound('cash.collection_not_found', 'Encaissement introuvable');
-    }
-
-    let price = 0;
-    try {
-      // Lecture unitaire, et non `resolveOrder()` : celle-ci télécharge toutes
-      // les commandes de l'organisation pour en retrouver une dont on connaît
-      // déjà l'uuid.
-      const response = await this.fleetbaseClient.getOrderWithRelations(
-        collection.fleetbaseOrderUuid,
-      );
-      const order = response?.order ?? response;
-
-      // L'uuid renvoyé est comparé à celui demandé, comme partout ailleurs sur
-      // les lectures unitaires : lire la rémunération d'une AUTRE course
-      // fixerait ici ce que le transporteur retient sur son encaissement.
-      if (order?.uuid === collection.fleetbaseOrderUuid) {
-        const [hydrated] = await this.withSpecMeta([order]);
-        price = Number(hydrated?.meta?.price ?? order?.meta?.price) || 0;
-      } else {
-        this.logger.warn(
-          `Lecture unitaire inexploitable pour ${collection.fleetbaseOrderUuid} — `
-            + 'confirmation sans rémunération',
-        );
-      }
-    } catch (error: any) {
-      this.logger.warn(
-        `Rémunération illisible pour ${collection.fleetbaseOrderUuid} lors de la `
-          + `confirmation d'encaissement : ${error.message} — confirmée sans rémunération`,
-      );
-    }
-
-    return this.cash.confirmCollection(driverId, collectionId, price);
-  }
-
-  async getOrder(driverId: string, orderId: string) {
+  private async resolveVisibleOrder(
+    driverId: string,
+    orderId: string,
+  ): Promise<{ order: any; mine: boolean }> {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    const { mine, claimableAdhoc } = this.assertOrderVisible(
+    const { mine } = this.assertOrderVisible(
       order,
       driverId,
       driver.fleetbaseDriverUuid,
@@ -913,16 +890,28 @@ export class TransporteurService {
       'order.access',
     );
 
+    return { order, mine };
+  }
+
+  /**
+   * La fiche d'une course, **telle qu'elle sort du BFF**.
+   *
+   * Seule frontière HTTP de la lecture unitaire : tout ce qui est rendu ici est
+   * passé par une liste d'autorisation.
+   */
+  async getOrder(driverId: string, orderId: string) {
+    const { order, mine } = await this.resolveVisibleOrder(driverId, orderId);
+
     // Une adhoc que ce driver n'a pas encore réclamée passe par la même
     // expurgation que la liste. Sans ça, la protection ne tiendrait pas une
     // seconde : il suffirait d'ouvrir la fiche pour obtenir le nom, l'adresse
     // exacte et le téléphone que la liste venait de retirer.
     if (!mine) {
-      const [hydrated] = await this.withSpecMeta([order]);
+      const [hydrated] = this.withEffectiveMeta([order]);
       return projectOrderForDriver(hydrated ?? order, { unclaimed: true });
     }
 
-    const [withFailure] = await this.attachFailures(driver.id, [order]);
+    const [withFailure] = this.attachFailures([order]);
     return withFailure;
   }
 
@@ -996,28 +985,49 @@ export class TransporteurService {
     // Recomplété d'abord : sans ça, un refus sur une commande dont `meta` a été
     // écrasé enregistrerait un motif sans le prix qui l'explique — c'est-à-dire
     // précisément la moitié inutile de la paire.
-    const [hydratedForDecline] = await this.withSpecMeta([order]);
+    const [hydratedForDecline] = this.withEffectiveMeta([order]);
     const meta = hydratedForDecline?.meta ?? order?.meta ?? {};
 
-    const decline = await this.prisma.orderDecline.upsert({
-      where: {
-        driverId_fleetbaseOrderUuid: {
-          driverId: driver.id,
-          fleetbaseOrderUuid: order.uuid,
-        },
-      },
-      create: {
-        driverId: driver.id,
-        fleetbaseOrderUuid: order.uuid,
+    // ⚠️ Le refus est écrit SUR LA COMMANDE depuis le 03/08/2026, plus dans une
+    // table du BFF. Motif : la console est utilisée en exploitation, et un
+    // opérateur qui ouvre une course immobile doit pouvoir lire « six refus,
+    // prix trop bas » sans nous appeler. Une donnée qui explique un blocage et
+    // qui n'est lisible que du BFF est une donnée qui manque là où on la
+    // cherche.
+    //
+    // L'unicité par (conducteur, course) était tenue par un `@@unique` ; elle
+    // l'est maintenant par le dédoublonnage passé à `appendToOrderList`, dont
+    // la fenêtre de concurrence est documentée là-bas.
+    const written = await this.orderCustomFields.appendToOrderList(
+      this.orderPublicId(order),
+      hydratedForDecline ?? order,
+      'declines',
+      {
+        driver_uuid: driver.fleetbaseDriverUuid,
         reason: dto.reason,
-        notes: dto.notes,
-        wasAssigned: mine,
-        pricingInputs: meta.pricing_inputs ?? undefined,
-        offeredPrice: typeof meta.price === 'number' ? meta.price : undefined,
-        currency: typeof meta.currency === 'string' ? meta.currency : undefined,
+        notes: dto.notes ?? null,
+        was_assigned: mine,
+        // Copiées, pas référencées : c'est l'appariement « ce qui était
+        // offert » / « refusé pour tel motif » qui a de la valeur, et il
+        // disparaît dès que la commande change.
+        pricing_inputs: meta.pricing_inputs ?? null,
+        offered_price: typeof meta.price === 'number' ? meta.price : null,
+        currency: typeof meta.currency === 'string' ? meta.currency : null,
+        declined_at: new Date().toISOString(),
       },
-      update: { reason: dto.reason, notes: dto.notes, declinedAt: new Date() },
-    });
+      (e) => e?.driver_uuid === driver.fleetbaseDriverUuid,
+    );
+
+    if (!written) {
+      // ⚠️ Refuser plutôt que de laisser croire au refus. Un refus non
+      // enregistré, c'est la course qui revient au rafraîchissement suivant :
+      // l'écran devient indiscernable d'une fonctionnalité en panne, et c'est
+      // exactement ce que ce chemin existe pour empêcher.
+      badRequest(
+        'order.decline_not_recorded',
+        'Votre refus n\'a pas pu être enregistré. Réessayez dans un instant.',
+      );
+    }
 
     if (mine) {
       // Le cache est aligné AVANT de notifier, et c'est ce qui évite un
@@ -1051,8 +1061,10 @@ export class TransporteurService {
     );
 
     return {
-      id: decline.id,
-      reason: decline.reason,
+      // ⚠️ Plus d'`id` : le refus n'est plus une ligne, c'est un élément d'une
+      // liste portée par la commande. Il n'avait aucun lecteur — l'application
+      // ne se sert que de `releasedToPool`, qui décide du message affiché.
+      reason: dto.reason,
       /** La course est-elle repartie au réseau, ou seulement masquée ? */
       releasedToPool: mine,
     };
@@ -1083,21 +1095,22 @@ export class TransporteurService {
    */
   async acceptOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (order?.driver_assigned_uuid && !this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.already_taken', 'This order has already been taken by another driver');
     }
 
-    // Le plafond de dette est vérifié ICI, et pas seulement à la création.
+    // ⚠️ Un plafond de dette était vérifié ici, et il a été retiré le
+    // 03/08/2026 avec le registre de caisse — pas par négligence, par
+    // impossibilité : ce qu'un transporteur détient, c'est l'argent encaissé
+    // **et pas encore remis**, et sans registre des remises nous ne savons pas
+    // ce qui a été rendu. Un plafond calculé sur autre chose aurait borné une
+    // exposition qui n'est pas celle qui compte.
     //
-    // Depuis que les courses encaissées peuvent partir au pool commun, c'est
-    // l'acceptation qui décide qui les prend — le contrôle posé à la création
-    // ne couvre que les favoris sollicités d'avance. Sans cette vérification,
-    // le plafond serait décoratif sur exactement le chemin le plus fréquent :
-    // la même erreur que la garde de clôture posée sur la route que
-    // l'application n'emprunte pas.
-    await this.assertCashCeiling(driver.id, order);
+    // Le risque n'a pas disparu, il a changé de porteur : l'entreprise pour
+    // ses conducteurs, le commerçant pour un indépendant (décision produit du
+    // 03/08/2026, `docs/registre_caisse_precis.md`).
 
     const publicId = await this.getDriverPublicId(driver);
 
@@ -1114,24 +1127,14 @@ export class TransporteurService {
 
   async startOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
-    // ⚠️ Le plafond se vérifie AUSSI ici, et pas seulement à l'acceptation.
-    //
-    // Une course pré-assignée — favori sollicité à la création, ou affectation
-    // par une entreprise — n'a jamais traversé `acceptOrder()`. Son plafond
-    // avait été vérifié à la création, contre la dette d'alors ; entre-temps le
-    // conducteur a pu encaisser dix autres courses. Sur un brouillon, le délai
-    // est arbitrairement long.
-    //
-    // C'est la leçon du §16 appliquée : **une garde se pose sur le fait, pas
-    // sur le chemin auquel on pense en premier**. Le fait est ici « ce
-    // conducteur devient porteur d'espèces ».
-    await this.assertCashCeiling(driver.id, order);
+    // ⚠️ Second point de vérification du plafond de dette, retiré avec le
+    // premier le 03/08/2026 — même motif (`docs/registre_caisse_precis.md`).
 
     try {
       return await this.fleetbaseClient.startOrder(this.orderPublicId(order));
@@ -1160,13 +1163,13 @@ export class TransporteurService {
    */
   async completeOrder(driverId: string, orderId: string, cash?: CashCollectionDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
-    await this.settleCashIfDue(driver.id, order, cash);
+    await this.recordCollectionIfDue(order, cash);
 
     try {
       return await this.fleetbaseClient.completeOrder(this.orderPublicId(order));
@@ -1186,7 +1189,7 @@ export class TransporteurService {
    */
   async getNextActivities(driverId: string, orderId: string, waypoint?: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1202,107 +1205,91 @@ export class TransporteurService {
 
 
   /**
-   * Solde une livraison qu'on s'apprête à clôturer : encaissement s'il y en a
-   * un, rémunération dans tous les cas.
+   * Consigne ce qui s'est passé à la porte, avant de clôturer la livraison.
    *
-   * ── Appelé depuis les DEUX chemins de clôture, et c'est essentiel ───────────
+   * ── Appelée depuis les DEUX chemins de clôture, et c'est essentiel ─────────
    *
    * `POST /terminer` n'est pas le seul moyen de clore une livraison :
    * l'application suit en réalité les transitions que le serveur lui propose
    * (`next-activity`), et la transition terminale passe par `update-activity`.
    * Poser la garde sur le seul `terminer` l'aurait rendue décorative — le
    * chemin réellement emprunté par l'app l'aurait contournée, et une livraison
-   * encaissée se serait close sans que l'argent figure nulle part.
+   * encaissée se serait close sans que le montant perçu figure nulle part.
    *
-   * ── L'ordre n'est pas indifférent ───────────────────────────────────────────
+   * ── L'ordre n'est pas indifférent ─────────────────────────────────────────
    *
-   * Le registre s'écrit **avant** la clôture Fleetbase. Si l'écriture échoue,
-   * la commande reste ouverte et le transporteur peut réessayer ; dans l'ordre
-   * inverse, on obtiendrait une livraison close et un encaissement fantôme.
+   * La déclaration s'écrit **avant** la clôture Fleetbase. Si l'écriture
+   * échoue, la commande reste ouverte et le transporteur peut réessayer ; dans
+   * l'ordre inverse, on obtiendrait une livraison close et un encaissement
+   * dont rien ne garde trace. C'est la règle 2 : sans transaction entre les
+   * deux systèmes, la plus réversible d'abord.
    *
-   * ── Comment l'argent se répartit ────────────────────────────────────────────
+   * ── Ce que cette fonction ne fait plus, et pourquoi ────────────────────────
    *
-   * Le transporteur retient sa rémunération sur les espèces qu'il tient, et ne
-   * doit au commerçant que la différence. La formule vaut que les frais de
-   * livraison soient inclus ou non dans le montant à encaisser — c'est ce qui
-   * rend ce choix purement informatif pour le commerçant.
+   * Elle écrivait dans un registre de caisse — dette du conducteur, part du
+   * facilitateur, rémunération, commission. Ce registre est retiré depuis le
+   * 03/08/2026 : tenir des soldes est de la trésorerie, pas de la logistique
+   * (`docs/registre_caisse_precis.md`). Ce qui reste est le **fait** : combien
+   * a été perçu, quand, et pourquoi ça diffère de ce qui était annoncé.
+   *
+   * ⚠️ **La reprise devient sûre sans garde d'idempotence, et c'est un gain.**
+   * Le registre accumulait des lignes, donc un réessai après échec réseau
+   * exigeait une logique explicite pour ne pas compter deux fois — celle des
+   * remises manquait, et trois déclarations pour une même dette étaient
+   * acceptées (mesuré le 03/08/2026). Ici la même valeur écrite deux fois
+   * donne le même état : il n'y a rien à garder.
    */
-  private async settleCashIfDue(
-    driverId: string,
-    order: any,
-    cash?: CashCollectionDto,
-  ): Promise<void> {
+  private async recordCollectionIfDue(order: any, cash?: CashCollectionDto): Promise<void> {
     // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
-    // `codAmount = 0` : la course se clôturerait sans qu'aucun encaissement
-    // ne soit enregistré, alors que le transporteur tient l'argent. La dette
-    // n'existerait nulle part.
-    const [hydrated] = await this.withSpecMeta([order]);
+    // `codAmount = 0` : la course se clôturerait sans déclaration, alors que
+    // le transporteur tient l'argent.
+    const [hydrated] = this.withEffectiveMeta([order]);
     const meta = hydrated?.meta ?? order?.meta;
 
     const codAmount = Number(meta?.cod_amount) || 0;
-    const price = Number(meta?.price) || 0;
 
-    // Rien à enregistrer : ni encaissement, ni rémunération annoncée.
-    if (codAmount <= 0 && price <= 0) return;
+    // Rien n'était à percevoir à la porte : rien à consigner.
+    if (codAmount <= 0) return;
 
-    if (codAmount > 0 && !cash) {
+    const currency = platformCurrency(this.configService.get('CURRENCY'));
+
+    if (!cash) {
       badRequest(
         'cash.cod_declaration_required',
-        `Cette livraison est payée à la réception (${codAmount} ${this.cash.currency}) : ` +
+        `Cette livraison est payée à la réception (${codAmount} ${currency}) : ` +
           'déclarez le montant encaissé pour la clôturer.',
       );
     }
 
-    // Le commerçant vient du cache local, jamais de Fleetbase : c'est lui qui
-    // fait autorité sur « à qui appartient cette commande » (§2.8).
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order.uuid },
-      select: { merchantId: true },
+    const collected = assertCollectedAmount(
+      cash.collectedAmount,
+      codAmount,
+      cash.discrepancyReason,
+      currency,
+    );
+
+    const written = await this.orderCustomFields.writeToOrder(this.orderPublicId(order), {
+      collected_amount: collected,
+      collected_at: new Date().toISOString(),
+      // Absent quand les deux montants coïncident : poser un motif sur une
+      // déclaration sans écart rendrait illisible celle qui en a un.
+      ...(collected !== codAmount ? { collection_reason: cash.discrepancyReason } : {}),
     });
 
-    if (!cached) {
-      // Commande créée hors d'Echango — depuis la console opérateur. Il n'y a
-      // pas de commerçant à qui rendre des comptes, donc pas de registre : mais
-      // on refuse quand même l'encaissement, faute de savoir à qui l'imputer.
-      if (codAmount > 0) {
-        badRequest(
-          'cash.order_unknown_to_registry',
-          "Commande inconnue du registre Echango : impossible d'enregistrer un encaissement",
-        );
-      }
-      return;
-    }
-
-    // Résolu UNE fois, puis figé dans les deux écritures : la partie ne doit
-    // pas pouvoir différer entre l'encaissement et la rémunération de la même
-    // course (exception §3.3 d'`architecture_bff_fleetbase.md`).
-    const facilitator = await this.resolveFacilitator(order);
-
-    let collected = 0;
-    if (codAmount > 0 && cash) {
-      const result = await this.cash.declareCollection(
-        driverId,
-        cached.merchantId,
-        order.uuid,
-        codAmount,
-        cash,
-        facilitator?.id ?? null,
+    if (!written) {
+      // ⚠️ Le pire des deux mondes serait un succès muet : la livraison se
+      // clôture, le transporteur repart avec l'argent, et rien n'en garde
+      // trace. Refuser laisse la course reprenable — c'est la règle 10, un
+      // défaut n'a pas de valeur par défaut.
+      badRequest(
+        'cash.collection_not_recorded',
+        "L'encaissement n'a pas pu être enregistré. Ne clôturez pas cette livraison : réessayez.",
       );
-      collected = result.collectedAmount;
     }
 
-    // La rémunération est enregistrée sur TOUTE course, encaissée ou non :
-    // c'est elle qui porte la commission d'Echango, et une course prépayée en
-    // produit une tout autant. `collected` borne ce que le transporteur peut
-    // retenir — on ne se paie pas sur de l'argent qu'on n'a pas.
-    await this.cash.recordEarning(
-      driverId,
-      cached.merchantId,
-      order.uuid,
-      price,
-      collected,
-      facilitator,
+    this.logger.log(
+      `Encaissement ${order.uuid} : ${collected} ${currency} perçus sur ${codAmount} annoncés`,
     );
   }
 
@@ -1326,101 +1313,27 @@ export class TransporteurService {
    * conducteur appartient à cette entreprise ne change rien — elle lui sera
    * affectée par son employeur, elle ne se réclame pas.
    */
+  /**
+   * Ce transporteur a-t-il déjà refusé cette course ?
+   *
+   * ⚠️ **Lu sur la commande, et donc gratuit** : `meta.declines` arrive avec la
+   * course, il n'y a rien à interroger. La version précédente faisait une
+   * requête en base par liste servie.
+   *
+   * ⚠️ **Laisse passer ce qu'il ne comprend pas**, comme le filtre de zone et
+   * pour la même raison : une course montrée à tort est un désagrément qui se
+   * remarque et se corrige ; une course jamais montrée est un manque à gagner
+   * que personne ne peut constater.
+   */
+  private hasDeclined(order: any, driverUuid?: string | null): boolean {
+    if (!driverUuid) return false;
+    const declines = order?.meta?.declines;
+    if (!Array.isArray(declines)) return false;
+    return declines.some((d: any) => d?.driver_uuid === driverUuid);
+  }
+
   private isClaimableAdhoc(order: any): boolean {
     return isOrderClaimable(order);
-  }
-
-  /**
-   * Le facilitateur de cette course — **délégué au registre**.
-   *
-   * ── Pourquoi ce n'est plus écrit ici (revue du 01/08/2026, C2) ───────────
-   *
-   * Ces quatre-vingt-dix lignes existaient **en double**, une copie par module,
-   * et l'ancien commentaire de celle-ci affirmait que le repli plateforme était
-   * « ici et nulle part ailleurs ». Il était aussi dans `commercant.service.ts`,
-   * en sens inverse : un `return null` là où celle-ci rendait Echango.
-   *
-   * Les deux alimentent le même registre, et `legScope()` construit une jambe
-   * différente selon que le facilitateur est nul — donc **deux contreparties
-   * pour deux courses identiques**, selon le chemin de clôture. Un commentaire
-   * ne peut pas échouer ; `CashService` le tient désormais pour les deux.
-   */
-  private resolveFacilitator(
-    order: any,
-  ): Promise<{ id: string; isPlatform: boolean } | null> {
-    return this.cash.resolveFacilitator(order);
-  }
-
-  /** Identifiant du facilitateur seul, quand seul l'identifiant est utile. */
-  private resolveFacilitatorId(order: any): Promise<string | null> {
-    return this.cash.resolveFacilitatorId(order);
-  }
-
-  /**
-   * Refuse la course si l'encaissement ferait franchir le plafond de dette.
-   *
-   * Ce plafond est le garde-fou principal du paiement à la livraison : sans
-   * agences ni dépôts, cesser de confier des espèces à qui en doit déjà trop
-   * est le seul instrument de limitation du risque dont nous disposions.
-   *
-   * Le message dit le montant et la somme due : « refusé » sans chiffre laisse
-   * le transporteur sans moyen de savoir combien remettre pour repartir.
-   */
-  private async assertCashCeiling(driverId: string, order: any): Promise<void> {
-    // Même raison que dans `settleCashIfDue` : sur un `meta` effacé, le plafond
-    // de dette serait vérifié contre 0 et laisserait passer n'importe quel
-    // montant — le seul garde-fou du paiement à la livraison, désarmé
-    // silencieusement.
-    const [hydrated] = await this.withSpecMeta([order]);
-    const codAmount = Number(hydrated?.meta?.cod_amount ?? order?.meta?.cod_amount) || 0;
-    if (codAmount <= 0) return;
-
-    const cached = await this.prisma.order.findFirst({
-      where: { fleetbaseOrderId: order.uuid },
-      select: { merchantId: true },
-    });
-    if (!cached) return;
-
-    // La contrepartie du conducteur est son facilitateur quand la course en
-    // porte un — c'est LUI qui borne son exposition, et non plus le commerçant
-    // (`docs/specs_facilitateur.md` §7.6). Sur une course sans facilitateur,
-    // `driverCounterparty` rend le commerçant : comportement d'avant, inchangé.
-    const facilitatorId = await this.resolveFacilitatorId(order);
-    const counterparty = this.cash.driverCounterparty(facilitatorId, cached.merchantId);
-
-    const { allowed, held, ceiling, scope } = await this.cash.canTakeCashOrder(
-      driverParty(driverId),
-      counterparty,
-      codAmount,
-    );
-
-    if (!allowed) {
-      // ⚠️ Le message nomme la contrepartie RÉELLE, et il y en a trois.
-      //
-      // « pour ce commerçant » est faux dans deux cas sur trois, et chacun
-      // envoie le conducteur remettre au mauvais endroit — donc ne pas se
-      // débloquer, et conclure à un défaut de l'application :
-      //
-      //   · plafond par personne  → le total, toutes contreparties confondues ;
-      //   · contrepartie `fleet`  → une entreprise, ou **Echango** depuis que le
-      //     pool a un facilitateur (01/08/2026). C'est le cas le plus courant, et
-      //     le total y est agrégé sur TOUS les commerçants du pool : « pour ce
-      //     commerçant » y désignait un montant qui n'est pas le sien.
-      badRequest(
-        'cash.ceiling_exceeded',
-        scope === 'person'
-          ? `Vous détenez déjà ${held} ${this.cash.currency} au total, toutes entreprises et ` +
-              `commerçants confondus, et cette course en ajouterait ${codAmount} — au-delà du ` +
-              `plafond de ${ceiling}. Remettez des espèces avant d'en reprendre une encaissée.`
-          : counterparty.type === 'fleet'
-            ? `Vous détenez déjà ${held} ${this.cash.currency} pour le compte de votre ` +
-                `donneur d'ordre, et cette course en ajouterait ${codAmount} — au-delà du ` +
-                `plafond de ${ceiling}. Remettez les espèces avant de reprendre une course encaissée.`
-            : `Vous détenez déjà ${held} ${this.cash.currency} pour ce commerçant, et cette ` +
-                `course en ajouterait ${codAmount} — au-delà du plafond de ${ceiling}. ` +
-                'Remettez les espèces avant de reprendre une course encaissée pour lui.',
-      );
-    }
   }
 
   /**
@@ -1433,7 +1346,7 @@ export class TransporteurService {
    * l'`OrderConfig` — **modifiable depuis la console**, et choisie par
    * `configs.find(key === 'transport') || configs[0]`. Le jour où l'activité
    * terminale d'une configuration porte un autre code, une livraison encaissée
-   * se clôturait sans que `settleCashIfDue()` ne s'exécute : livraison close,
+   * se clôturait sans que `recordCollectionIfDue()` ne s'exécute : livraison close,
    * argent dans la poche du conducteur, aucune `CashCollection`, aucune dette,
    * et rien pour le dire. C'est le mode d'échec exact du §16, où la même garde
    * était décorative pour une autre raison.
@@ -1462,7 +1375,7 @@ export class TransporteurService {
 
   async updateActivity(driverId: string, orderId: string, dto: UpdateActivityDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1471,7 +1384,7 @@ export class TransporteurService {
     // La transition terminale exige la déclaration d'encaissement au même titre
     // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.
     if (this.isTerminalActivity(dto.activity)) {
-      await this.settleCashIfDue(driver.id, order, dto.cash);
+      await this.recordCollectionIfDue(order, dto.cash);
     }
 
     try {
@@ -1488,7 +1401,7 @@ export class TransporteurService {
 
   async capturePhoto(driverId: string, orderId: string, dto: CapturePhotoDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1529,7 +1442,11 @@ export class TransporteurService {
    */
   async reportDeliveryFailure(driverId: string, orderId: string, dto: ReportDeliveryFailureDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
+    // Recompose avant l'ecriture : `appendToOrderList` lit la liste actuelle
+    // dans `meta` ; la lire sur un `meta` efface par la console repartirait
+    // d'une liste vide, et les signalements precedents disparaitraient.
+    const [hydrated] = this.withEffectiveMeta([order]);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1590,17 +1507,37 @@ export class TransporteurService {
       }
     }
 
-    const failure = await this.prisma.deliveryFailure.create({
-      data: {
-        driverId: driver.id,
-        fleetbaseOrderUuid: order.uuid || orderId,
-        waypointUuid: dto.waypointUuid,
+    // ⚠️ Écrit SUR LA COMMANDE depuis le 03/08/2026, plus dans une table du
+    // BFF : c'est la donnée qui explique le mieux pourquoi une livraison
+    // n'aboutit pas, et un opérateur en console devait nous appeler pour
+    // l'obtenir (`docs/registre_caisse_precis.md` pour le motif général).
+    const failureId = randomUUID();
+    const reportedAt = new Date().toISOString();
+    const written = await this.orderCustomFields.appendToOrderList(
+      this.orderPublicId(order),
+      hydrated ?? order,
+      'delivery_failures',
+      {
+        id: failureId,
+        driver_uuid: driver.fleetbaseDriverUuid,
+        waypoint_uuid: dto.waypointUuid ?? null,
         reason: dto.reason,
-        notes: dto.notes,
-        fleetbaseProofUuid,
-        proofUrl,
+        notes: dto.notes ?? null,
+        proof_url: proofUrl,
+        proof_ref: fleetbaseProofUuid,
+        reported_at: reportedAt,
       },
-    });
+      // Chaque signalement est un fait distinct — trois échecs successifs sur
+      // la même course sont trois lignes. Rien à dédoublonner, donc.
+      () => false,
+    );
+
+    if (!written) {
+      badRequest(
+        'order.failure_not_recorded',
+        'Le signalement n\'a pas pu être enregistré. Réessayez dans un instant.',
+      );
+    }
 
     this.logger.log(`Delivery failure reported: order ${orderId}, reason ${dto.reason}`);
 
@@ -1616,14 +1553,14 @@ export class TransporteurService {
     });
 
     return {
-      id: failure.id,
-      reason: failure.reason,
+      id: failureId,
+      reason: dto.reason,
       // Ce qui compte pour l'appelant est que Fleetbase ait bien stocké la
       // photo, pas qu'on ait su en relire tel identifiant : l'URL est le
       // signal fiable, l'identifiant dépend de l'API empruntée.
       photoUploaded: Boolean(proofUrl || fleetbaseProofUuid),
-      photoUrl: proofUrl ? `/transporteur/preuves/${failure.id}` : null,
-      reportedAt: failure.reportedAt,
+      photoUrl: proofUrl ? `/transporteur/commandes/${order.uuid}/preuves/${failureId}` : null,
+      reportedAt,
     };
   }
 }
