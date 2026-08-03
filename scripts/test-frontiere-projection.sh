@@ -46,6 +46,10 @@
 set -euo pipefail
 
 BFF_URL="${BFF_URL:-http://localhost:3001}"
+# Même défaut que les autres scénarios : `driver-session.sh` lit cette variable
+# sans la définir, et `set -u` fait échouer le banc sur le décor plutôt que sur
+# ce qu'il examine.
+PASSWORD="${PASSWORD:-motdepasse123}"
 DRIVER_HINT="${1:-}"
 
 command -v jq >/dev/null 2>&1 || { echo "jq requis."; exit 1; }
