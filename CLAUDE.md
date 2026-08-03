@@ -361,7 +361,7 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # 6 scénarios — le BFF en curl
+./scripts/run-all-scenarios.sh [conducteur]     # 8 scénarios — le BFF en curl
 ./scripts/test-frontiere-http.sh                # 66 routes × 3 refus (jeton, rôle, révocation)
 ./scripts/test-appartenance.sh                  # la ressource de A refusée à B
 ./scripts/test-frontiere-projection.sh          # aucune commande Fleetbase brute ne sort
@@ -375,7 +375,7 @@ flutter drive --driver=test_driver/integration_test.dart \
   --target=integration_test/parcours_trois_personas_test.dart -d <émulateur> --dart-define=…
 ```
 
-Les six scénarios couvrent : multi-appartenance, les trois sorties d'une course, **le voyage de la wilaya**, les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12 — et la **frontière de projection**.
+Les huit scénarios couvrent : multi-appartenance, les trois sorties d'une course, **le voyage de la wilaya**, les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12 —, la **frontière de projection**, le **ciblage d'un favori nommé** (`test-visibilite-ciblage.sh` : ciblé = invisible aux autres, redirection réversible, témoin positif à chaque pas) et le **pool mutualisé** (`test-pool-mutualise.sh` : un conducteur sert deux commerçants — la thèse produit).
 
 ⚠️ **`test-frontiere-projection.sh` répond à une question qu'aucun autre ne posait (03/08/2026) : la route APPELLE-t-elle la projection ?** Les tests Jest prouvent que la liste d'autorisation retire ; ils accordaient le catalogue et l'autorisation — **deux listes cohérentes** — pendant que deux chemins sautaient les deux, et `GET /transporteur/commandes/:id` a servi la commande Fleetbase **entière** une journée durant, `meta.declines[]` compris (uuid, motif et **prix offert** de chaque concurrent). Le banc lit la même commande **deux fois**, chez Fleetbase et par le BFF, et **refuse de conclure** si la version Fleetbase ne porte pas ce qu'on cherche à ne pas voir. Éprouvé par mutation du vrai code.
 
