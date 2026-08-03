@@ -81,11 +81,26 @@ pass "Conducteur : ${DRIVER_LABEL:-$DRIVER_UUID}"
 # On prend l'historique en plus de l'actif : une course terminée porte plus de
 # champs personnalisés (encaissement déclaré, échecs), donc elle est un
 # meilleur témoin. Peu importe laquelle, du moment que Fleetbase en porte.
-liste="$(dapi "/transporteur/commandes?mode=history")"
+# ⚠️ **Un refus n'est PAS une liste vide** — et la première version de ce banc
+# les confondait. Un 401 rendait `.orders == null`, donc « aucune course », donc
+# un saut annoncé comme un décor insuffisant : le banc accusait le décor alors
+# que c'était la session qui avait échoué. C'est le défaut que ce dépôt corrige
+# depuis cinq fois (règle 10), reproduit dans l'outil censé le débusquer.
+lire_liste() { # mode -> liste sur stdout, échoue bruyamment sur un refus
+  local mode="$1" r
+  r="$(dapi "/transporteur/commandes?mode=$mode")"
+  if echo "$r" | jq -e '(.statusCode | type) == "number"' >/dev/null 2>&1; then
+    fail "La liste ($mode) a été REFUSÉE — ce n'est pas un décor vide" \
+      "$(echo "$r" | jq -c '{statusCode, code, message}')"
+  fi
+  printf '%s' "$r"
+}
+
+liste="$(lire_liste history)"
 uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
 
 if [ -z "$uuid" ]; then
-  liste="$(dapi "/transporteur/commandes?mode=assigned")"
+  liste="$(lire_liste assigned)"
   uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
 fi
 
