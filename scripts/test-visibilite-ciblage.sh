@@ -76,13 +76,20 @@ obtain_driver_token "$Y_UUID" >/dev/null 2>&1 || fail "Jeton Y impossible" "${DR
 Y_TOKEN="$DRIVER_TOKEN"
 pass "X (favori) = ${X_UUID:0:8}…   Y (non favori) = ${Y_UUID:0:8}…"
 
-# ── Le commerçant met X en favori ───────────────────────────────────────────
-step "X mis en favori"
+# ── Favoris PROPRES : X favori, Y NON favori ───────────────────────────────
+#
+# ⚠️ Les favoris s'accumulent entre les runs. Sans ce ménage, Y pourrait déjà
+# être favori d'un run précédent, et le test « cibler un non-favori » serait faux.
+step "X favori, Y non favori"
+for fid in $(mapi GET /commercant/transporteurs/favoris | jq -r '.data[]?.id'); do
+  mapi DELETE "/commercant/transporteurs/favoris/$fid" >/dev/null 2>&1 || true
+done
 mapi POST /commercant/transporteurs/favoris \
   "$(jq -n --arg u "$X_UUID" '{fleetbaseDriverUuid:$u, partyType:"driver"}')" >/dev/null
-favs="$(mapi GET /commercant/transporteurs/favoris | jq -r '[.data[]?.driver_uuid] | index("'"$X_UUID"'")')"
-[ "$favs" != "null" ] && [ -n "$favs" ] || fail "X n'apparaît pas dans les favoris"
-pass "X est favori"
+favs="$(mapi GET /commercant/transporteurs/favoris | jq -c '[.data[]?.driver_uuid]')"
+echo "$favs" | jq -e 'index("'"$X_UUID"'")' >/dev/null || fail "X n'apparaît pas dans les favoris" "$favs"
+echo "$favs" | jq -e 'index("'"$Y_UUID"'")' >/dev/null && fail "Y ne devrait PAS être favori" "$favs"
+pass "X est favori, Y ne l'est pas"
 
 # ── Une course CIBLÉE sur X ─────────────────────────────────────────────────
 step "Course ciblée sur X"
@@ -93,8 +100,10 @@ resp="$(mapi POST /commercant/commandes "$(jq -n --arg t "$X_UUID" '{
   dropoffContactName:"Destinataire", dropoffContactPhone:"+213555111111",
   items:[{description:"colis", quantity:1}], price:650, podMethod:"aucune",
   targetFavouriteUuid:$t }')")"
-UUID="$(echo "$resp" | jq -r '.uuid // .order.uuid // empty')"
-[ -n "$UUID" ] || fail "Création ciblée échouée" "$(echo "$resp" | jq -c '{code,message}')"
+# ⚠️ La création rend la LIGNE DE CACHE : l'identifiant Fleetbase (celui que
+# prennent les routes :id) est `fleetbaseOrderId`, pas `.uuid`.
+UUID="$(echo "$resp" | jq -r '.fleetbaseOrderId // .uuid // .order.uuid // empty')"
+[ -n "$UUID" ] || fail "Création ciblée échouée" "$(echo "$resp" | head -c 300)"
 pass "Course créée : $UUID"
 echo "   état : $(order_state "$UUID")"
 

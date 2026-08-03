@@ -60,7 +60,7 @@ publish_broadcast() { # token label -> uuid sur stdout
       dropoffContactName:"Destinataire", dropoffContactPhone:"+213555111111",
       items:[{description:"colis", quantity:1}], price:650, podMethod:"aucune",
       draft:true }')")"
-  uuid="$(echo "$o" | jq -r '.uuid // .order.uuid // empty')"
+  uuid="$(echo "$o" | jq -r '.fleetbaseOrderId // .uuid // .order.uuid // empty')"
   [ -n "$uuid" ] || { echo "ERR_CREATE:$(echo "$o" | jq -c '{code,message}')"; return 1; }
   curl -sS -X POST "$BFF_URL/commercant/commandes/$uuid/publier" \
     -H "Authorization: Bearer $tok" >/dev/null
