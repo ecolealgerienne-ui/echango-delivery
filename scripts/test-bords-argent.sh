@@ -91,7 +91,11 @@ expect_code "Perçu 3000 > annoncé 2000" cash.amount_exceeds_expected \
   "$(dapi POST "/transporteur/commandes/$C/terminer" '{"collectedAmount":3000}')"
 expect_code "Perçu 1500 ≠ 2000 sans motif" cash.discrepancy_reason_required \
   "$(dapi POST "/transporteur/commandes/$C/terminer" '{"collectedAmount":1500}')"
-expect_code "Perçu négatif" cash.amount_negative \
+# ⚠️ Le négatif est attrapé par le DTO (`@Min(0)` → `validation.failed`) AVANT
+# `assertCollectedAmount` (`cash.amount_negative`). Ce dernier est donc une
+# défense en profondeur inatteignable par l'endpoint : on éprouve le rejet
+# RÉEL, pas la couche du dessous.
+expect_code "Perçu négatif (rejeté par le DTO)" validation.failed \
   "$(dapi POST "/transporteur/commandes/$C/terminer" '{"collectedAmount":-5}')"
 
 # La course doit être ENCORE ouverte après ces refus.
