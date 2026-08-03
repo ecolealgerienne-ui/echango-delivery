@@ -29,6 +29,36 @@ Cette section est en tête parce que c'est celle qu'on oublie : elle ne décrit
 pas un travail à faire, elle décrit **ce qu'on ne sait pas**. Un banc vert sur
 dix sujets ne dit rien du onzième.
 
+### ✅ La frontière de sortie — comblée le 03/08/2026, et voici ce qu'elle cachait
+
+Ce manque-ci n'était pas listé, et c'est justement pourquoi il mérite d'ouvrir
+la section : **personne ne vérifiait qu'une route APPELLE la projection.**
+
+Trois contrôles portaient sur le sujet et aucun ne posait cette question. Les
+tests Jest accordaient le catalogue des champs personnalisés avec la liste
+d'autorisation — **deux listes cohérentes** — pendant que deux chemins sautaient
+les deux. Les cinq scénarios composaient leurs requêtes en `curl` et
+regardaient les codes de retour, pas la forme des réponses.
+
+Résultat : `GET /transporteur/commandes/:id` a servi la commande Fleetbase
+**entière** pendant une journée — `meta.declines[]` compris, c'est-à-dire l'uuid
+Fleetbase, le motif, les notes libres et le **prix offert** à chaque
+transporteur ayant refusé la course. Trouvé en vérifiant une revue de sécurité,
+pas par un contrôle du dépôt.
+
+⚠️ **Ce lot l'avait créé.** Les refus vivaient dans une table Prisma jusqu'au
+03/08 ; les déplacer vers les champs personnalisés les a fait entrer dans un
+`meta` que ce chemin recopiait tel quel. Le déplacement était juste, la
+recopie ne l'était plus — et rien ne relie les deux.
+
+**Comblé par `scripts/test-frontiere-projection.sh`** : la même commande lue
+deux fois, chez Fleetbase et par le BFF. Prouvé par mutation du vrai code.
+
+⚠️ **Sa limite, dite maintenant** : il vérifie la **forme** de ce qui sort des
+routes qu'il connaît. Un chemin neuf qui oublie de projeter le laissera vert.
+La question « toute route projette-t-elle ? » reste sans mécanisme — c'est un
+manque, et il est ici plutôt que découvert.
+
 ### La concurrence — aucun banc, aucun scénario, rien
 
 ⚠️ **Vérifié le 03/08/2026 : il n'existe aucun test parallèle dans le dépôt.**

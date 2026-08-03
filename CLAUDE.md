@@ -361,9 +361,10 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ### Ce qui est vérifié, et par quoi
 
 ```
-./scripts/run-all-scenarios.sh [conducteur]     # 5 scénarios — le BFF en curl
+./scripts/run-all-scenarios.sh [conducteur]     # 6 scénarios — le BFF en curl
 ./scripts/test-frontiere-http.sh                # 66 routes × 3 refus (jeton, rôle, révocation)
 ./scripts/test-appartenance.sh                  # la ressource de A refusée à B
+./scripts/test-frontiere-projection.sh          # aucune commande Fleetbase brute ne sort
 flutter analyze && flutter test                 # 0 problème · 60 tests
 dart tool/check_*.dart [--self-test]            # 5 contrôles · 76 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
@@ -374,7 +375,9 @@ flutter drive --driver=test_driver/integration_test.dart \
   --target=integration_test/parcours_trois_personas_test.dart -d <émulateur> --dart-define=…
 ```
 
-Les cinq scénarios couvrent : multi-appartenance, les trois sorties d'une course, **le voyage de la wilaya**, et les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12.
+Les six scénarios couvrent : multi-appartenance, les trois sorties d'une course, **le voyage de la wilaya**, les deux bancs de la **frontière HTTP** — refus (`test-frontiere-http.sh`) et appartenance (`test-appartenance.sh`), motifs en règle 12 — et la **frontière de projection**.
+
+⚠️ **`test-frontiere-projection.sh` répond à une question qu'aucun autre ne posait (03/08/2026) : la route APPELLE-t-elle la projection ?** Les tests Jest prouvent que la liste d'autorisation retire ; ils accordaient le catalogue et l'autorisation — **deux listes cohérentes** — pendant que deux chemins sautaient les deux, et `GET /transporteur/commandes/:id` a servi la commande Fleetbase **entière** une journée durant, `meta.declines[]` compris (uuid, motif et **prix offert** de chaque concurrent). Le banc lit la même commande **deux fois**, chez Fleetbase et par le BFF, et **refuse de conclure** si la version Fleetbase ne porte pas ce qu'on cherche à ne pas voir. Éprouvé par mutation du vrai code.
 
 ⚠️ **Cinq et non dix depuis le 03/08/2026** : les scénarios d'argent — parcours à 2 et 3 maillons, régularisation, écart à la porte et dette négative, les deux plafonds — sont partis avec le registre de caisse qu'ils éprouvaient (`docs/registre_caisse_precis.md`). Ce qui reste du sujet — la déclaration à la porte et son refus sans motif — est éprouvé **dans l'application**, par les parcours joués à l'écran, qui est le seul endroit d'où ce geste part réellement.
 
