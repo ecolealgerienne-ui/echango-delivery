@@ -112,16 +112,44 @@ lire_liste() { # type -> renseigne LISTE
 
 lire_liste history
 liste="$LISTE"
-uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
+candidats="$(echo "$liste" | jq -r '(.orders // [])[].uuid')"
 
-if [ -z "$uuid" ]; then
-  lire_liste assigned
-  liste="$LISTE"
-  uuid="$(echo "$liste" | jq -r '(.orders // [])[0].uuid // empty')"
-fi
+lire_liste assigned
+liste_assignee="$LISTE"
+candidats="$candidats
+$(echo "$liste_assignee" | jq -r '(.orders // [])[].uuid')"
 
-[ -n "$uuid" ] || skip "Ce conducteur n'a aucune course — rien à examiner."
-pass "Course examinée : $uuid"
+[ -n "$(echo "$candidats" | tr -d '[:space:]')" ] \
+  || skip "Ce conducteur n'a aucune course — rien à examiner."
+
+# ── On CHERCHE une course qui porte un témoin ─────────────────────────────
+#
+# ⚠️ Prendre la première venue ne marche pas : le dépôt contient des centaines
+# de courses d'AVANT la migration du 03/08/2026, qui n'ont aucun champ
+# personnalisé. Tomber sur l'une d'elles faisait sauter le banc en annonçant
+# « rien à cacher » — vrai de cette course, faux de la route.
+#
+# Un banc qui dépend de l'ordre d'une liste ne teste pas ce qu'il croit.
+uuid=""
+nb_cfv=0
+examines=0
+for c in $candidats; do
+  [ -n "$c" ] || continue
+  examines=$((examines + 1))
+  b="$(fb_get "/int/v1/orders/$c" 2>/dev/null)" || continue
+  n="$(echo "$b" | jq -r '(.data // .) | (.custom_field_values // []) | length')"
+  if [ "${n:-0}" -gt 0 ]; then
+    uuid="$c"; nb_cfv="$n"; brut="$b"
+    break
+  fi
+done
+
+[ -n "$uuid" ] || skip \
+  "Aucune des $examines course(s) de ce conducteur ne porte de champ
+   personnalisé — toutes datent d'avant la migration du 03/08/2026. Il n'y a
+   rien à laisser fuir, donc rien à prouver."
+
+pass "Course examinée : $uuid ($examines candidate(s) parcourue(s))"
 
 # ── LE TÉMOIN : ce que Fleetbase porte réellement ─────────────────────────
 step "Témoin — ce que Fleetbase porte sur cette commande"
@@ -130,18 +158,16 @@ step "Témoin — ce que Fleetbase porte sur cette commande"
 # UNITAIRE qui compte : la liste ne sert AUCUN champ personnalisé (piège §3.1
 # de `docs/ou_vit_quoi.md`). Y lire le témoin le rendrait toujours vide, donc
 # ce banc sauterait toujours en annonçant « rien à cacher ».
-brut="$(fb_get "/int/v1/orders/$uuid")" \
-  || fail "Lecture Fleetbase impossible pour $uuid" "${FLEETBASE_ERROR:-}"
+#
+# `brut` a déjà été lue par la boucle de sélection ci-dessus, qui n'a retenu
+# cette course QUE parce qu'elle porte des champs personnalisés.
 brut_data="$(echo "$brut" | jq -c '.data // .')"
 
-a_cfv="$(echo "$brut_data" | jq -r 'has("custom_field_values")')"
-nb_cfv="$(echo "$brut_data" | jq -r '(.custom_field_values // []) | length')"
+pass "Fleetbase porte $nb_cfv champ(s) personnalisé(s) sur cette commande"
 
-[ "$a_cfv" = "true" ] && [ "$nb_cfv" -gt 0 ] || skip \
-  "La commande Fleetbase ne porte AUCUN champ personnalisé ($nb_cfv). Il n'y a
-   donc rien à laisser fuir, et un « aucune fuite » ne voudrait rien dire."
-
-pass "Fleetbase porte $nb_cfv champ(s) personnalisé(s) et la clé custom_field_values"
+# Ce que le témoin contient précisément — utile quand le banc échoue, et
+# suffisant pour voir si la course porte de quoi éprouver `declines`.
+echo "   clés : $(echo "$brut_data" | jq -r '[(.custom_field_values // [])[] | (.custom_field.name // .custom_field_name // "?")] | join(", ")')"
 
 # ── Ce que le BFF sert pour la MÊME commande ──────────────────────────────
 step "Ce que le BFF sert — la fiche, puis la liste"
