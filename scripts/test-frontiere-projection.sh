@@ -94,11 +94,18 @@ pass "Conducteur : ${DRIVER_LABEL:-$DRIVER_UUID}"
 # l'écran. Le banc s'arrêtait sans une ligne d'explication. C'est exactement le
 # défaut du banc de `require_free_driver` (règle 8) — refait ici trois jours
 # plus tard, dans un fichier écrit pour le dénoncer.
-lire_liste() { # mode -> renseigne LISTE
-  local mode="$1"
-  LISTE="$(dapi "/transporteur/commandes?mode=$mode")"
+#
+# ⚠️ **Le paramètre s'appelle `type`, PAS `mode`** — et c'est le refus ci-dessus
+# qui l'a appris. Avec `forbidNonWhitelisted` (règle 13), `mode=` n'est pas
+# ignoré : il est **refusé** en 400 `validation.failed`. La version qui
+# confondait refus et liste vide a donc déclaré « aucune course » pour deux
+# conducteurs, dont un qui en portait **33**. Le refus était la bonne réponse
+# du serveur ; c'est le banc qui ne savait pas la lire.
+lire_liste() { # type -> renseigne LISTE
+  local type="$1"
+  LISTE="$(dapi "/transporteur/commandes?type=$type")"
   if echo "$LISTE" | jq -e '(.statusCode | type) == "number"' >/dev/null 2>&1; then
-    fail "La liste ($mode) a été REFUSÉE — ce n'est pas un décor vide" \
+    fail "La liste ($type) a été REFUSÉE — ce n'est pas un décor vide" \
       "$(echo "$LISTE" | jq -c '{statusCode, code, message}')"
   fi
 }
