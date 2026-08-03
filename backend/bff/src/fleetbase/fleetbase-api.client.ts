@@ -1016,6 +1016,70 @@ export class FleetbaseApiClient {
    * Les relations demandées sont celles dont la projection commerçant a besoin
    * — ni plus (chaque `with[]` coûte une jointure), ni moins.
    */
+  /**
+   * La commande **déballée**, avec ses relations.
+   *
+   * ⚠️ La lecture unitaire est enveloppée dans `{order: {…}}` là où la liste
+   * rend l'objet nu. Appeler `getOrderWithRelations` sans déballer rendait huit
+   * lignes d'`uuid: null` par lot — la seule trace qu'il y ait eu.
+   */
+  async readOrderFull(orderUuid: string): Promise<any> {
+    const response = await this.getOrderWithRelations(orderUuid);
+    return response?.order ?? response;
+  }
+
+  /**
+   * Recharge des commandes venues d'une LISTE, en lectures unitaires.
+   *
+   * ── Pourquoi c'est indispensable, et pas une optimisation ──────────────────
+   *
+   * ⚠️ **La liste ne porte AUCUN champ personnalisé.** `GET /orders` est servi
+   * par la ressource d'index : `meta` y vaut `{_index_resource: true}` et
+   * `custom_field_values` est **absent**, `with[]` ou pas — mesuré le
+   * 01/08/2026, reconfirmé le 03/08. Prix, montant à encaisser, type de
+   * véhicule, refus et échecs de livraison vivent tous là : une liste non
+   * rechargée les affiche donc **tous vides**.
+   *
+   * ⚠️ **C'est la régression du 03/08/2026, et elle mérite d'être nommée.**
+   * `Order.specMeta` — une copie locale — comblait ce trou pour les modules qui
+   * lisent par la liste. Il a été retiré après avoir prouvé que les 535
+   * commandes avaient bien leurs champs personnalisés… ce qui prouvait le
+   * **stockage**, pas la **lecture**. Le transporteur s'est retrouvé sans prix
+   * ni montant à encaisser. La preuve portait sur la mauvaise moitié du trajet.
+   *
+   * ── Ce que la fonction garantit, et ce qu'elle ne garantit pas ─────────────
+   *
+   * Par lots de huit, en parallèle : recharger cinquante commandes une par une
+   * rendrait la liste inutilisable. ⚠️ Une commande qu'on ne sait pas recharger
+   * est **rendue telle quelle**, avec un avertissement — pas retirée. Elle
+   * s'affichera sans ses montants, ce qui se voit ; la faire disparaître serait
+   * un manque que personne ne peut constater.
+   */
+  async hydrateOrders(orders: any[], batch = 8): Promise<any[]> {
+    if (!orders.length) return orders;
+
+    const out: any[] = [];
+    for (let i = 0; i < orders.length; i += batch) {
+      const loaded = await Promise.all(
+        orders.slice(i, i + batch).map(async (o: any) => {
+          if (!o?.uuid) return o;
+          try {
+            return (await this.readOrderFull(o.uuid)) ?? o;
+          } catch (error: any) {
+            this.logger.warn(
+              `Commande ${o.uuid} non rechargée (${error?.message}) — elle s'affichera `
+                + 'sans ses montants',
+            );
+            return o;
+          }
+        }),
+      );
+      out.push(...loaded);
+    }
+
+    return out;
+  }
+
   async getOrderWithRelations(orderUuid: string) {
     const params = new URLSearchParams();
     for (const relation of [

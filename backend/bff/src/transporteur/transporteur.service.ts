@@ -124,7 +124,21 @@ export class TransporteurService {
       badRequest('order.fetch_failed', 'Failed to fetch orders');
     }
 
-    return orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+    const found = orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+
+    // ⚠️ Rechargée avant d'être rendue : la liste ne porte aucun champ
+    // personnalisé, donc une fiche servie telle quelle n'aurait ni prix, ni
+    // montant à encaisser, ni signalement d'échec. Une lecture unitaire de plus
+    // sur une fiche est sans conséquence — c'est une commande, pas cinquante.
+    if (!found?.uuid) return found;
+    try {
+      return (await this.fleetbaseClient.readOrderFull(found.uuid)) ?? found;
+    } catch (error: any) {
+      this.logger.warn(
+        `Commande ${found.uuid} non rechargée (${error?.message}) — servie sans ses montants`,
+      );
+      return found;
+    }
   }
 
   /**
@@ -629,8 +643,18 @@ export class TransporteurService {
     // pas. Un nom de filtre qui régresserait serait abandonné en silence par
     // Fleetbase, et cette ligne est ce qui fait qu'une telle régression vide la
     // liste au lieu d'exposer les courses des autres.
-    const assigned = assignedRaw.filter((o) =>
-      this.isAssignedTo(o, driver.fleetbaseDriverUuid),
+    // ⚠️ **Rechargées une par une, et ce n'est pas une optimisation manquée.**
+    //
+    // `fetchEveryOrder` passe par `GET /orders`, servi par la ressource d'index :
+    // `meta` y vaut `{_index_resource: true}` et `custom_field_values` est
+    // **absent**. Sans ce rechargement, le transporteur verrait ses courses sans
+    // prix, sans montant à encaisser et sans exigence de véhicule — et les
+    // filtres ci-dessous décideraient sur du vide.
+    //
+    // Le filtre d'appartenance passe AVANT : on ne recharge que ce qu'on va
+    // servir, jamais toute la compagnie.
+    const assigned = await this.fleetbaseClient.hydrateOrders(
+      assignedRaw.filter((o) => this.isAssignedTo(o, driver.fleetbaseDriverUuid)),
     );
 
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
@@ -667,9 +691,16 @@ export class TransporteurService {
     // Sans ce filtre, le refus n'aurait aucun effet visible : la course
     // reviendrait au rafraîchissement suivant, et l'écran serait indiscernable
     // d'une fonctionnalité en panne.
-    const adhocHydrated = this.withEffectiveMeta(
+    // ⚠️ Rechargement AVANT `withEffectiveMeta`, pour la même raison que
+    // ci-dessus : `isClaimableAdhoc` se décide sur des champs que la liste
+    // porte (statut, `adhoc`, conducteur), donc il réduit d'abord l'ensemble ;
+    // tout ce qui suit lit `meta`, que seule la lecture unitaire fournit.
+    const adhocFull = await this.fleetbaseClient.hydrateOrders(
       adhocRaw.filter((o) => this.isClaimableAdhoc(o)),
-    ).filter((o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid));
+    );
+    const adhocHydrated = this.withEffectiveMeta(adhocFull).filter(
+      (o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid),
+    );
 
     // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
     //

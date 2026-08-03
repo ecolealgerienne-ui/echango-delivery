@@ -125,7 +125,28 @@ export class CommerçantService {
       }));
     }
 
-    const byId = new Map(live.map((o: any) => [o?.uuid, o]));
+    // ⚠️ **Rechargées une par une avant d'être appariées.**
+    //
+    // `fetchLiveOrders` passe par `GET /orders`, servi par la ressource
+    // d'index : `meta` y vaut `{_index_resource: true}` et
+    // `custom_field_values` est **absent**, `with[]` ou pas. Sans ce
+    // rechargement, la liste du commerçant n'aurait ni prix, ni montant à
+    // encaisser, ni encaissement déclaré.
+    //
+    // ⚠️ On ne recharge que ce que le cache local désigne — donc une PAGE (25
+    // par défaut), pas toute la compagnie. Les appelants qui passent une seule
+    // commande n'y perdent rien.
+    //
+    // ⚠️ **Sauf un** : `collectionsOnMyOrders` passe toutes les commandes du
+    // commerçant. Par lots de huit, trois cents commandes font une quarantaine
+    // d'aller-retours. C'est lent et c'est juste ; le borner tronquerait la
+    // liste en silence, ce qui serait pire.
+    const voulus = new Set(cached.map((c) => c.fleetbaseOrderId));
+    const complets = await this.fleetbaseClient.hydrateOrders(
+      live.filter((o: any) => voulus.has(o?.uuid)),
+    );
+
+    const byId = new Map(complets.map((o: any) => [o?.uuid, o]));
 
     return cached.map((c) => {
       const order = byId.get(c.fleetbaseOrderId);

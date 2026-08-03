@@ -1193,9 +1193,8 @@ export class FlotteService {
    *
    * Un seul point d'entrée pour que la question ne se repose pas quatre fois.
    */
-  private async readOrder(orderId: string): Promise<any> {
-    const response = await this.fleetbaseClient.getOrderWithRelations(orderId);
-    return response?.order || response;
+  private readOrder(orderId: string): Promise<any> {
+    return this.fleetbaseClient.readOrderFull(orderId);
   }
 
   /**
@@ -1220,79 +1219,15 @@ export class FlotteService {
   }
 
   /**
-   * Recharge une page de commandes en **lecture unitaire**, seule forme qui
-   * porte les montants.
+   * Recharge une page de commandes — **délégué au client** depuis le 03/08/2026.
    *
-   * ── Le défaut que ceci répare (revue du 01/08/2026, C1) ──────────────────
-   *
-   * `withEffectiveMeta()` recompose `meta` depuis `custom_field_values`. Sur une
-   * commande issue d'une **liste**, il n'y a rien à recomposer : Fleetbase sert
-   * une ressource d'index allégée, qui remplace `meta` par le seul drapeau
-   * `{_index_resource: true}` et **n'inclut aucune valeur de champ
-   * personnalisé**.
-   *
-   * ⚠️ Le commentaire de `getAllOrders` affirmait le contraire — « le demander
-   * ici les charge en une fois » — et **c'est cette phrase qui a servi
-   * d'argument** pour écrire l'hydratation des deux listes de ce module. Mesuré
-   * le 01/08/2026 : `GET /int/v1/orders?limit=2&with[]=customFieldValues.customField`
-   * rend `meta = {_index_resource: true}`, `custom_field_values` absent,
-   * `meta.price = null` ; la même commande en lecture unitaire rend `meta` réel
-   * et huit valeurs. Une donnée d'appui fausse ne dort pas dans un commentaire,
-   * elle fait conclure.
-   *
-   * Conséquence de l'ancien état : une entreprise décidait de prendre une course
-   * **sans voir le prix, le montant à encaisser, le véhicule exigé ni les
-   * consignes** — c'est-à-dire le défaut D6 que ce module croyait avoir fermé.
-   * Rien ne le signalait : `pick()` omet les clés absentes, la ligne s'affiche,
-   * seuls les chiffres manquent. Les modules commerçant et transporteur y
-   * échappaient parce qu'ils hydratent depuis `Order.specMeta`, le filet local
-   * que ce module n'a pas.
-   *
-   * ── Pourquoi une lecture par commande, et pas une requête groupée ─────────
-   *
-   * Il n'y en a pas. Mesuré : `custom-field-values?subject_uuid=` est bien
-   * honoré (13 valeurs contre 0 pour un uuid inventé — le témoin le prouve),
-   * mais `subject_uuid[]=A&subject_uuid[]=B` n'en retient **qu'un**, et la forme
-   * à virgule rend 0. Le coût est donc borné par la **page** — 25 lignes — et
-   * non par le nombre de courses de l'entreprise : d'où l'hydratation **après**
-   * la pagination, jamais avant.
-   *
-   * ⚠️ Une lecture qui échoue ne fait pas tomber la liste : la ligne reste,
-   * amputée de ses montants, et le journal le dit. Perdre vingt-quatre lignes
-   * lisibles parce que la vingt-cinquième a échoué serait le remède pire que le
-   * mal — mais un montant manquant sans trace serait le défaut qu'on corrige.
+   * Le corps vivait ici ; il vit maintenant dans `hydrateOrders`, parce que le
+   * module transporteur en a besoin du même. Deux copies auraient divergé sur
+   * la taille du lot ou sur le traitement d'un rechargement raté, et personne
+   * ne les aurait comparées (règle 5).
    */
-  private async hydratePage(orders: any[]): Promise<any[]> {
-    const BATCH = 8;
-    const out: any[] = [];
-
-    for (let i = 0; i < orders.length; i += BATCH) {
-      const slice = orders.slice(i, i + BATCH);
-      const loaded = await Promise.all(
-        slice.map(async (o: any) => {
-          if (!o?.uuid) return o;
-          try {
-            // ⚠️ Par `readOrder`, jamais par le client directement : la lecture
-            // unitaire est **enveloppée** dans `{order: {…}}` là où la liste rend
-            // l'objet nu. Appeler le client sans déballer rendait huit lignes
-            // d'`uuid: null` par page — soit exactement la taille d'un lot, la
-            // seule trace qu'il y ait eu. `readOrder` porte déjà cet unwrap,
-            // avec le commentaire qui dit pourquoi (règle 5).
-            const full = await this.readOrder(o.uuid);
-            return full ?? o;
-          } catch (error) {
-            this.logger.warn(
-              `Commande ${o.uuid} non rechargée (${error?.message}) — elle s'affichera ` +
-                'sans ses montants',
-            );
-            return o;
-          }
-        }),
-      );
-      out.push(...loaded);
-    }
-
-    return out;
+  private hydratePage(orders: any[]): Promise<any[]> {
+    return this.fleetbaseClient.hydrateOrders(orders);
   }
 
   private async getFleetWithValidation(fleetId: string) {
