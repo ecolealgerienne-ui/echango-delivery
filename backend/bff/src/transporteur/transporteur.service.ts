@@ -170,19 +170,37 @@ export class TransporteurService {
   }
 
   /**
-   * Attache les signalements d'échec aux courses servies au transporteur.
+   * Projette les courses assignées, signalements d'échec compris.
    *
    * ⚠️ **Ne fait plus aucune requête depuis le 03/08/2026** : les échecs vivent
    * sur la commande, donc ils arrivent avec elle. La version précédente
    * interrogeait la base une fois par liste servie.
+   *
+   * ⚠️ **Et elle rendait la commande Fleetbase BRUTE jusqu'au 03/08/2026** —
+   * `{...o, meta: effectiveOrderMeta(o)}`, sans jamais traverser
+   * `projectOrderForDriver`. La liste d'autorisation existait, s'accordait avec
+   * le catalogue, était testée — et **ce chemin ne l'appelait pas**. Sortaient
+   * donc `meta.declines[]` en entier (uuid Fleetbase, motif, notes libres et
+   * **prix offert** à chaque transporteur qui avait refusé), `proof_url`, et
+   * `custom_field_values[]` brut.
+   *
+   * Le motif de l'oubli est instructif : la branche adhoc d'à côté projetait
+   * bien (`{unclaimed: true}`), et les deux autres modules aussi. C'est
+   * l'**exception** qui avait l'air d'une règle — une fonction nommée « attache
+   * les échecs » ne se lit pas comme une frontière de sortie.
+   *
+   * ⚠️ Et le test qui devait l'attraper accordait le catalogue avec la liste
+   * d'autorisation **sans jamais exécuter le chemin** : deux listes d'accord
+   * pendant qu'un appelant sautait les deux. Règle 8 — un contrôle qui n'a
+   * jamais eu l'occasion de refuser. Le banc de non-régression est désormais
+   * dans `transporteur-projection.spec.ts`, et il part de la commande brute.
    */
   private attachFailures(orders: any[]): any[] {
     if (!orders.length) return orders;
 
-    return this.withEffectiveMeta(orders).map((o) => {
-      const projected = projectFailures(o, 'transporteur');
-      return Object.keys(projected).length ? { ...o, ...projected } : o;
-    });
+    return this.withEffectiveMeta(orders).map((o) =>
+      projectOrderForDriver(o, { extra: projectFailures(o, 'transporteur') }),
+    );
   }
 
   /**
@@ -192,19 +210,28 @@ export class TransporteurService {
    *
    * La route porte l'uuid de la **commande**, plus un identifiant global de
    * signalement. Servir la preuve exige donc de résoudre la commande — donc de
-   * traverser `getOrder()`, qui vérifie déjà qu'elle est assignée à ce
+   * traverser le contrôle de visibilité, qui vérifie déjà qu'elle concerne ce
    * transporteur. La version précédente cherchait le signalement par son seul
    * identifiant et devait re-vérifier le propriétaire à la main : la discipline
    * anti-IDOR reposait sur le fait que son auteur y avait pensé.
+   *
+   * ⚠️ **`mine` est exigé EXPLICITEMENT, et il ne l'était pas.** La visibilité
+   * couvre deux cas — la course est à moi, ou c'est une adhoc que je peux
+   * encore réclamer. Seul le premier donne droit aux preuves. Ça tenait
+   * jusqu'ici par un **effet de bord** : la fiche d'une adhoc non réclamée
+   * repartait projetée, donc sans `meta.delivery_failures`, donc `findFailure`
+   * ne trouvait rien. Une protection qui repose sur ce qu'une projection efface
+   * disparaît le jour où l'on déplace la projection — c'est exactement ce que
+   * fait le correctif d'à côté. Elle est donc écrite.
    *
    * ⚠️ On ne distingue toujours PAS « pas de preuve » de « preuve d'un autre » :
    * même réponse, et seul le second cas est journalisé. Distinguer serait un
    * oracle.
    */
   async getProofImage(driverId: string, orderId: string, failureId: string) {
-    const order = await this.getOrder(driverId, orderId);
+    const { order, mine } = await this.resolveVisibleOrder(driverId, orderId);
     const [hydrated] = this.withEffectiveMeta([order]);
-    const failure = findFailure(hydrated ?? order, failureId);
+    const failure = mine ? findFailure(hydrated ?? order, failureId) : undefined;
 
     if (!failure) {
       this.audit.denied({
@@ -831,17 +858,49 @@ export class TransporteurService {
     return { mine, claimableAdhoc };
   }
 
-  async getOrder(driverId: string, orderId: string) {
+  /**
+   * La commande **brute**, après contrôle de visibilité — usage INTERNE.
+   *
+   * ⚠️ **Ne jamais rendre ça par une route.** C'est l'objet Fleetbase entier :
+   * `declines`, `proof_url`, `custom_field_values`, toutes les relations. Les
+   * écritures en ont besoin (`orderPublicId`, `isAssignedTo`, la liste courante
+   * des signalements avant un ajout) ; un client, non.
+   *
+   * ── Pourquoi c'est une fonction séparée depuis le 03/08/2026 ──────────────
+   *
+   * `getOrder()` servait les deux rôles : résolveur pour huit écritures, et
+   * gestionnaire de `GET /transporteur/commandes/:id`. Une seule valeur de
+   * retour ne pouvait donc pas être à la fois brute et projetée — et c'est le
+   * **brut** qui gagnait, puisque c'est ce dont le code interne avait besoin
+   * pour fonctionner. La fuite était la conséquence silencieuse de ce partage :
+   * rien ne cassait, la route servait simplement plus que prévu.
+   */
+  private async resolveVisibleOrder(
+    driverId: string,
+    orderId: string,
+  ): Promise<{ order: any; mine: boolean }> {
     const driver = await this.getDriverOrFail(driverId);
     const order = await this.resolveOrder(orderId);
 
-    const { mine, claimableAdhoc } = this.assertOrderVisible(
+    const { mine } = this.assertOrderVisible(
       order,
       driverId,
       driver.fleetbaseDriverUuid,
       orderId,
       'order.access',
     );
+
+    return { order, mine };
+  }
+
+  /**
+   * La fiche d'une course, **telle qu'elle sort du BFF**.
+   *
+   * Seule frontière HTTP de la lecture unitaire : tout ce qui est rendu ici est
+   * passé par une liste d'autorisation.
+   */
+  async getOrder(driverId: string, orderId: string) {
+    const { order, mine } = await this.resolveVisibleOrder(driverId, orderId);
 
     // Une adhoc que ce driver n'a pas encore réclamée passe par la même
     // expurgation que la liste. Sans ça, la protection ne tiendrait pas une
@@ -1036,7 +1095,7 @@ export class TransporteurService {
    */
   async acceptOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (order?.driver_assigned_uuid && !this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.already_taken', 'This order has already been taken by another driver');
@@ -1068,7 +1127,7 @@ export class TransporteurService {
 
   async startOrder(driverId: string, orderId: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1104,7 +1163,7 @@ export class TransporteurService {
    */
   async completeOrder(driverId: string, orderId: string, cash?: CashCollectionDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1130,7 +1189,7 @@ export class TransporteurService {
    */
   async getNextActivities(driverId: string, orderId: string, waypoint?: string) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1316,7 +1375,7 @@ export class TransporteurService {
 
   async updateActivity(driverId: string, orderId: string, dto: UpdateActivityDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1342,7 +1401,7 @@ export class TransporteurService {
 
   async capturePhoto(driverId: string, orderId: string, dto: CapturePhotoDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
 
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
@@ -1383,7 +1442,7 @@ export class TransporteurService {
    */
   async reportDeliveryFailure(driverId: string, orderId: string, dto: ReportDeliveryFailureDto) {
     const driver = await this.getDriverOrFail(driverId);
-    const order = await this.getOrder(driverId, orderId);
+    const { order } = await this.resolveVisibleOrder(driverId, orderId);
     // Recompose avant l'ecriture : `appendToOrderList` lit la liste actuelle
     // dans `meta` ; la lire sur un `meta` efface par la console repartirait
     // d'une liste vide, et les signalements precedents disparaitraient.

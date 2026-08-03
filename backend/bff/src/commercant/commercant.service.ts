@@ -1145,9 +1145,22 @@ export class CommerçantService {
     // ⚠️ Les échecs se lisent sur la commande FUSIONNÉE, pas sur le cache : ils
     // vivent dans ses champs personnalisés depuis le 03/08/2026, et `merged`
     // est ce qui les porte.
+    //
+    // ⚠️ **Et ils se lisent sur le BRUT, pas sur le projeté — corrigé le
+    // 03/08/2026.** `failuresFor` s'appliquait à la valeur de `detailedOrder`,
+    // qui est **déjà projetée** ; or `delivery_failures` ne figure pas dans
+    // `PROJECTED_META_FIELDS`, délibérément (l'app reçoit la forme expurgée,
+    // avec un chemin de photo authentifié, pas la liste brute). La lecture
+    // rendait donc **toujours** une liste vide : le commerçant ne voyait aucun
+    // échec de livraison, et `GET .../preuves/:id` répondait 404 en toutes
+    // circonstances.
+    //
+    // Aucune erreur, aucun journal — la capacité existait des deux côtés et ne
+    // se rejoignait nulle part (règles 9 et 10). Trouvée en vérifiant une
+    // revue de sécurité, pas à la relecture.
     return {
-      ...(merged as any),
-      ...this.failuresFor(merged),
+      ...(merged.projected as any),
+      ...(merged.raw ? this.failuresFor(merged.raw) : {}),
     };
   }
 
@@ -1197,16 +1210,35 @@ export class CommerçantService {
    * indisponible ») au lieu de faire échouer la fiche. Y retomber garantit
    * qu'un défaut de la lecture unitaire dégrade l'affichage au lieu de le
    * casser.
+   *
+   * ── Deux formes, et il en FALLAIT deux (03/08/2026) ───────────────────────
+   *
+   * `projected` sort par la route ; `raw` ne sort jamais et sert à lire ce que
+   * la projection retire — aujourd'hui les seuls `delivery_failures`.
+   *
+   * ⚠️ Cette fonction ne rendait que le projeté, et ses deux appelants avaient
+   * besoin du brut sans le savoir : ils lisaient `meta.delivery_failures` sur
+   * un objet d'où la liste d'autorisation venait de le retirer. Le résultat
+   * était **toujours vide**, sans erreur ni journal.
+   *
+   * ⚠️ `raw` est `null` sur la branche de repli, et ce n'est pas un oubli : le
+   * repli passe par la LISTE Fleetbase, qui ne sert **aucun champ
+   * personnalisé** (piège §3.1 de `docs/ou_vit_quoi.md`). Prétendre y lire des
+   * échecs rendrait une liste vide qu'on croirait complète — dire `null` force
+   * l'appelant à distinguer « aucun échec » de « je n'ai pas pu regarder »
+   * (règle 10).
    */
   private async detailedOrder(
     order: { id: string; fleetbaseOrderId: string },
     vendorUuid: string,
-  ): Promise<any> {
+  ): Promise<{ projected: any; raw: any | null }> {
     const live = await this.liveOrderDetailed(order, vendorUuid);
-    if (live) return projectOrderForMerchant(live, { bff_order_id: order.id });
+    if (live) {
+      return { projected: projectOrderForMerchant(live, { bff_order_id: order.id }), raw: live };
+    }
 
     const [merged] = await this.mergeWithFleetbase([order], vendorUuid);
-    return merged;
+    return { projected: merged, raw: null };
   }
 
   /**
@@ -1289,9 +1321,12 @@ export class CommerçantService {
   async getFailureProof(merchantId: string, orderId: string, failureId: string) {
     const merchant = await this.getMerchantWithValidation(merchantId);
     const order = await this.resolveOwnedOrder(merchantId, orderId);
-    const live = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
+    const { raw } = await this.detailedOrder(order, merchant.fleetbaseVendorUuid);
 
-    const failure = findFailure(live, failureId);
+    // ⚠️ `raw` seul : la preuve se lit dans `meta.delivery_failures`, que la
+    // projection retire. Cette route répondait 404 en TOUTES circonstances
+    // jusqu'au 03/08/2026, parce qu'elle cherchait dans le projeté.
+    const failure = raw ? findFailure(raw, failureId) : undefined;
 
     if (!failure?.proof_url) {
       this.audit.denied({
