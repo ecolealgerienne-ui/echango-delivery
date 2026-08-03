@@ -95,7 +95,12 @@ pass "Course examinée : $uuid"
 # ── LE TÉMOIN : ce que Fleetbase porte réellement ─────────────────────────
 step "Témoin — ce que Fleetbase porte sur cette commande"
 
-brut="$(fb_get "/orders/$uuid")"
+# ⚠️ `/int/v1/orders/{uuid}` et non `/orders/{uuid}` — et c'est la LECTURE
+# UNITAIRE qui compte : la liste ne sert AUCUN champ personnalisé (piège §3.1
+# de `docs/ou_vit_quoi.md`). Y lire le témoin le rendrait toujours vide, donc
+# ce banc sauterait toujours en annonçant « rien à cacher ».
+brut="$(fb_get "/int/v1/orders/$uuid")" \
+  || fail "Lecture Fleetbase impossible pour $uuid" "${FLEETBASE_ERROR:-}"
 brut_data="$(echo "$brut" | jq -c '.data // .')"
 
 a_cfv="$(echo "$brut_data" | jq -r 'has("custom_field_values")')"
