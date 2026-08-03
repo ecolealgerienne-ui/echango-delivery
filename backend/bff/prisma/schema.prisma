@@ -16,9 +16,6 @@ model MerchantAccount {
   id                String   @id @default(cuid())
   email             String   @unique
   password          String   // bcrypted
-  firstName         String?
-  lastName          String?
-  phone             String?
   emailVerified     Boolean  @default(false)
 
   // Link to Fleetbase
@@ -32,8 +29,6 @@ model MerchantAccount {
   // d'abord comment le chiffrer.
 
   // Business
-  businessName      String
-  businessPhone     String?
 
   // Status
   active            Boolean  @default(true)
@@ -53,6 +48,21 @@ model MerchantAccount {
 
   @@index([fleetbaseVendorUuid])
   @@index([emailVerified])
+  // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
+  // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
+  // `Contact` Fleetbase, figé à l'inscription.
+  //
+  // Bénin ici (303 raisons sociales identiques sur 304 au moment du retrait),
+  // mais c'est le mécanisme qui avait fait diverger **trois conducteurs sur
+  // trois**. Une copie que personne ne compare finit par mentir ; la question
+  // n'est que quand.
+  //
+  // Le nom vient désormais de `getVendorIdentity`, la recherche d'entreprises
+  // de `searchVendors` — l'appartenance restant décidée ici, puisque chez
+  // Fleetbase un commerçant et une entreprise sont le même objet.
+  //
+  // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
+  // contenu qu'un opérateur en console ne doit justement PAS voir.
 }
 
 // Fleet Manager Account (not a Fleetbase User either)
@@ -60,16 +70,11 @@ model FleetAccount {
   id                String   @id @default(cuid())
   email             String   @unique
   password          String   // bcrypted
-  firstName         String?
-  lastName          String?
-  phone             String?
 
   // Link to Fleetbase
   fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
 
   // Business
-  businessName      String
-  businessPhone     String?
 
   /// Les conducteurs rattachés à cette entreprise **en plus** de ceux dont elle
   /// est l'origine (`Driver.vendor_uuid`). Voir `DriverMembership`.
@@ -123,6 +128,21 @@ model FleetAccount {
   @@index([fleetbaseVendorUuid])
   @@index([active])
   @@index([isPlatform])
+  // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
+  // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
+  // `Contact` Fleetbase, figé à l'inscription.
+  //
+  // Bénin ici (303 raisons sociales identiques sur 304 au moment du retrait),
+  // mais c'est le mécanisme qui avait fait diverger **trois conducteurs sur
+  // trois**. Une copie que personne ne compare finit par mentir ; la question
+  // n'est que quand.
+  //
+  // Le nom vient désormais de `getVendorIdentity`, la recherche d'entreprises
+  // de `searchVendors` — l'appartenance restant décidée ici, puisque chez
+  // Fleetbase un commerçant et une entreprise sont le même objet.
+  //
+  // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
+  // contenu qu'un opérateur en console ne doit justement PAS voir.
 }
 
 // Driver ("transporteur") Account - not a Fleetbase User either.

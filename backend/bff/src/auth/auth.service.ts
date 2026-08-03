@@ -149,11 +149,11 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          businessName: dto.businessName,
-          phone: dto.phone,
-          businessPhone: dto.businessPhone,
+          // ⚠️ **Le profil n'est plus copié ici** (03/08/2026). Il vient
+          // d'être écrit sur le `Vendor` et le `Contact` Fleetbase, juste
+          // au-dessus — le recopier créait une seconde source qui se figeait à
+          // l'inscription. `dto.firstName` & co. restent acceptés par le DTO :
+          // ils servent à créer les objets amont, pas à être stockés ici.
           fleetbaseVendorUuid: vendorUuid,
           fleetbaseCustomerUuid: customerUuid,
           emailVerified: true, // TODO: Email verification in v2
@@ -418,12 +418,26 @@ export class AuthService {
     // Generate JWT token
     const token = this.generateToken(merchant.id, merchant.email, 'merchant', merchant.tokenVersion);
 
+    // ⚠️ **Le nom vient du `Vendor` Fleetbase**, plus d'une copie locale figée
+    // à l'inscription (03/08/2026). C'est le seul champ de profil que
+    // l'application lit réellement — `authState.displayName` en fait le titre
+    // de l'écran commerçant.
+    //
+    // ⚠️ Un appel Fleetbase de plus sur le chemin de connexion, assumé : la
+    // route est plafonnée à 5/min, et la disponibilité de Fleetbase est un
+    // prérequis du produit (décision du 03/08/2026). `getVendorIdentity` rend
+    // `null` sans lever — un nom illisible ne doit pas empêcher de se
+    // connecter.
+    const identite = await this.fleetbaseClient.getVendorIdentity(
+      merchant.fleetbaseVendorUuid,
+    );
+
     return {
       token,
       user: {
         id: merchant.id,
         email: merchant.email,
-        businessName: merchant.businessName,
+        businessName: identite?.name ?? null,
       },
     };
   }
@@ -480,11 +494,11 @@ export class AuthService {
         data: {
           email: dto.email,
           password: hashedPassword,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
-          businessName: dto.businessName,
-          phone: dto.phone,
-          businessPhone: dto.businessPhone,
+          // ⚠️ **Le profil n'est plus copié ici** (03/08/2026). Il vient
+          // d'être écrit sur le `Vendor` et le `Contact` Fleetbase, juste
+          // au-dessus — le recopier créait une seconde source qui se figeait à
+          // l'inscription. `dto.firstName` & co. restent acceptés par le DTO :
+          // ils servent à créer les objets amont, pas à être stockés ici.
           fleetbaseVendorUuid: vendorUuid,
         },
       });
@@ -568,12 +582,17 @@ export class AuthService {
 
     const token = this.generateToken(fleet.id, fleet.email, 'fleet', fleet.tokenVersion);
 
+    // Même motif que pour le commerçant : le nom vit sur le `Vendor`.
+    const identiteFlotte = await this.fleetbaseClient.getVendorIdentity(
+      fleet.fleetbaseVendorUuid,
+    );
+
     return {
       token,
       user: {
         id: fleet.id,
         email: fleet.email,
-        businessName: fleet.businessName,
+        businessName: identiteFlotte?.name ?? null,
       },
     };
   }

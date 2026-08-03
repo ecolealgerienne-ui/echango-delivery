@@ -349,10 +349,15 @@ export class TransporteurService {
     });
     if (!fleet) return null;
 
+    // ⚠️ Le nom vient du `Vendor` : le compte local ne porte plus que le lien
+    // et le secret (03/08/2026). Un appel de plus sur un chemin déjà en train
+    // d'interroger Fleetbase pour trouver ce vendor.
+    const identite = await this.fleetbaseClient.getVendorIdentity(vendorUuid);
+
     return {
       id: null,
       fleet_id: fleet.id,
-      name: fleet.businessName,
+      name: identite?.name ?? null,
       status: 'active',
       // Ce qui distingue l'origine d'une adhésion : elle ne se refuse pas et ne
       // se suspend pas depuis l'application. L'écran doit le savoir pour ne pas

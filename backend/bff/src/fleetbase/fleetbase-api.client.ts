@@ -1860,6 +1860,64 @@ export class FleetbaseApiClient {
   // enveloppé sous `vendor` rend 200, et la valeur se relit — **déjà
   // désérialisée en liste**, pas en chaîne JSON.
 
+  /**
+   * L'identité d'une entreprise — **la seule source**.
+   *
+   * ⚠️ `MerchantAccount.businessName` et `FleetAccount.businessName` en
+   * gardaient une copie, figée à l'inscription, jusqu'au 03/08/2026. Mesurées
+   * ce jour-là : 303 identiques sur 304 côté commerçant — bénin, mais c'est le
+   * même mécanisme qui avait fait diverger **trois conducteurs sur trois**. Une
+   * copie que personne ne compare finit par mentir ; la question n'est que
+   * quand.
+   *
+   * ⚠️ Rend `null` plutôt qu'un nom vide si la lecture échoue : l'appelant
+   * décide quoi afficher, et « je n'ai pas pu savoir » ne doit pas se déguiser
+   * en « cette entreprise n'a pas de nom » (règle 10).
+   */
+  /**
+   * Les entreprises dont le nom contient [query].
+   *
+   * ⚠️ **`query` est le bon paramètre, et c'est mesuré** (03/08/2026) :
+   * sur 456 vendors, `query=vende` en rend **1**, un témoin inventé en rend
+   * **0**, et `name=vende` en rend **0** — c'est une égalité, pas un
+   * « contient ». Sans témoin, un filtre abandonné en silence par Fleetbase
+   * aurait rendu les 456 comme si c'était le résultat.
+   *
+   * ⚠️ **Rend TOUS les vendors, commerçants compris.** Chez Fleetbase, un
+   * commerçant et une entreprise de transport sont le même objet. L'appelant
+   * doit intersecter avec ce que le BFF sait — c'est lui qui distingue les
+   * deux populations.
+   */
+  async searchVendors(query: string, limit = 25): Promise<any[]> {
+    try {
+      const response = await this.callFleetOps('GET', '/vendors', undefined, {
+        query,
+        limit,
+      });
+      return this.extractCollection(response, 'vendors');
+    } catch (error: any) {
+      this.logger.warn(`Recherche d'entreprises impossible (${query}) : ${error.message}`);
+      return [];
+    }
+  }
+
+  async getVendorIdentity(
+    vendorId: string,
+  ): Promise<{ name: string | null; phone: string | null } | null> {
+    try {
+      const response = await this.callFleetOps('GET', `/vendors/${this.seg(vendorId)}`);
+      const vendor = response.data?.vendor ?? response.data;
+      if (!vendor) return null;
+      return {
+        name: typeof vendor.name === 'string' && vendor.name.trim() ? vendor.name : null,
+        phone: typeof vendor.phone === 'string' && vendor.phone.trim() ? vendor.phone : null,
+      };
+    } catch (error: any) {
+      this.logger.warn(`Identité du vendor ${vendorId} illisible : ${error.message}`);
+      return null;
+    }
+  }
+
   async getVendorWithCustomFields(vendorId: string) {
     const response = await this.callFleetOps('GET', `/vendors/${this.seg(vendorId)}`, undefined, {
       'with[]': 'customFieldValues.customField',

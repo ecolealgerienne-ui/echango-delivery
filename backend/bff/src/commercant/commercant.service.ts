@@ -868,17 +868,37 @@ export class CommerçantService {
     // facilitateur par défaut de toute course du pool : le mettre en favori ne
     // changerait rien, et l'afficher dans une liste de prestataires « qu'on
     // choisit » ferait croire à un choix qui n'en est pas un.
-    let fleets: any[] = [];
+    // ⚠️ **La recherche se fait chez Fleetbase, l'appartenance chez nous**
+    // (03/08/2026). Le nom vit sur le `Vendor` ; le BFF, lui, est le seul à
+    // savoir lesquels de ces vendors sont des entreprises de transport — chez
+    // Fleetbase, un commerçant et une entreprise sont le même objet.
+    //
+    // ⚠️ `query=` est **mesuré** honoré, avec témoin : 456 vendors, 1 résultat
+    // sur un fragment réel, 0 sur un fragment inventé. Un filtre abandonné en
+    // silence aurait rendu les 456 comme si c'était la réponse.
+    let fleets: { fleetbaseVendorUuid: string; businessName: string | null }[] = [];
     if (q.length >= 2) {
-      fleets = await this.prisma.fleetAccount.findMany({
-        where: {
-          active: true,
-          isPlatform: false,
-          businessName: { contains: q, mode: 'insensitive' },
-        },
-        select: { fleetbaseVendorUuid: true, businessName: true },
-        take: 11,
-      });
+      const vendors = await this.fleetbaseClient.searchVendors(q, 30);
+      const parUuid = new Map<string, string | null>(
+        vendors.map((v: any) => [v?.uuid, typeof v?.name === 'string' ? v.name : null]),
+      );
+
+      const comptes = parUuid.size
+        ? await this.prisma.fleetAccount.findMany({
+            where: {
+              active: true,
+              isPlatform: false,
+              fleetbaseVendorUuid: { in: [...parUuid.keys()].filter(Boolean) },
+            },
+            select: { fleetbaseVendorUuid: true },
+            take: 11,
+          })
+        : [];
+
+      fleets = comptes.map((f: any) => ({
+        fleetbaseVendorUuid: f.fleetbaseVendorUuid,
+        businessName: parUuid.get(f.fleetbaseVendorUuid) ?? null,
+      }));
     }
 
     // Le plafond porte sur le TOTAL, pas sur chaque famille : c'est une seule
@@ -968,7 +988,7 @@ export class CommerçantService {
     if (partyType === 'fleet') {
       const fleet = await this.prisma.fleetAccount.findUnique({
         where: { fleetbaseVendorUuid: fleetbaseDriverUuid },
-        select: { id: true, active: true, businessName: true },
+        select: { id: true, active: true },
       });
 
       if (!fleet || !fleet.active) {
@@ -988,10 +1008,14 @@ export class CommerçantService {
 
       // Le nom vient du serveur, comme pour un conducteur : une liste de favoris
       // doit décrire des entités réelles, pas les étiquettes de son auteur.
+      // ⚠️ Le nom vient du `Vendor`, plus de la copie locale : c'est lui qui
+      // fait foi, et un opérateur qui corrige une raison sociale en console
+      // doit voir la correction se propager aux listes de favoris.
+      const identite = await this.fleetbaseClient.getVendorIdentity(fleetbaseDriverUuid);
       await this.favourites.add(merchant.fleetbaseVendorUuid, {
         party_type: 'fleet',
         party_uuid: fleetbaseDriverUuid,
-        party_name: fleet.businessName ?? driverName,
+        party_name: identite?.name ?? driverName ?? null,
       });
       return { added: true };
     }
