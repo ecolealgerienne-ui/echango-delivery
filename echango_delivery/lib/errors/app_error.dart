@@ -74,6 +74,9 @@ class AppError {
   static const String orderAlreadyDeclined = 'order.already_declined';
   static const String orderNotAssignedToDriver = 'order.not_assigned_to_driver';
   static const String orderDeclineReasonRequired = 'order.decline_reason_required';
+  /// Le refus n'a pas pu être écrit sur la commande : la course reviendrait
+  /// au rafraîchissement suivant, il faut réessayer.
+  static const String orderDeclineNotRecorded = 'order.decline_not_recorded';
   static const String orderProofRequired = 'order.proof_required';
   static const String orderProofNotFound = 'order.proof_not_found';
   static const String orderTrackingFailed = 'order.tracking_failed';

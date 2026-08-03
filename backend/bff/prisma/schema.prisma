@@ -189,7 +189,6 @@ model DriverAccount {
   // Relations
   deviceTokens          DriverDeviceToken[]
   deliveryFailures      DeliveryFailure[]
-  declines              OrderDecline[]
 
   // Timestamps
   createdAt             DateTime @default(now())
@@ -610,58 +609,19 @@ model DriverMembership {
 }
 
 
-/// Refus motivé d'une course par un transporteur.
+/// ⚠️ `OrderDecline` a été SUPPRIMÉ le 03/08/2026 — les refus vivent désormais
+/// sur la commande, en champ personnalisé `declines`.
 ///
-/// ── Pourquoi enregistrer un refus, et pas seulement le subir ────────────────
+/// Motif : **la console Fleetbase est utilisée en exploitation**. Un opérateur
+/// qui ouvre une course immobile doit pouvoir lire « six refus, prix trop bas »
+/// sans nous appeler. Un refus enregistré ici n'était visible que du BFF, donc
+/// absent de l'endroit où on le cherche.
 ///
-/// Sans trace, un refus se manifeste par une absence : la course reste dans la
-/// liste, le transporteur la refait défiler à chaque rafraîchissement, et
-/// personne n'apprend rien. Deux besoins distincts sont servis ici.
-///
-/// **Pour le transporteur** : une course écartée disparaît de sa liste. C'est
-/// la seule façon de rendre une liste d'opportunités exploitable — sans cela,
-/// les courses qu'il ne veut pas noient celles qu'il voudrait.
-///
-/// **Pour la plateforme** : le motif est la donnée qui manque pour construire
-/// le barème. `PricingService` capture ce qu'une course *valait* (distance,
-/// horaire, véhicule) ; le refus dit ce que le marché en *pense*. Un « prix
-/// insuffisant » sur un trajet de 12 km à 22 h vaut mieux que n'importe quelle
-/// estimation faite au bureau — et il ne se reconstitue pas après coup, d'où
-/// la copie des entrées tarifaires ci-dessous plutôt qu'une simple référence
-/// à la commande, qui pourrait être modifiée ou supprimée.
-model OrderDecline {
-  id                  String   @id @default(cuid())
-
-  driverId            String
-  driver              DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
-
-  fleetbaseOrderUuid  String
-
-  /// Voir DECLINE_REASONS dans le DTO transporteur.
-  reason              String
-  notes               String?
-
-  /// La course était-elle assignée à ce transporteur (favori sollicité), ou
-  /// simplement diffusée ? Le premier cas la renvoie au pool et concerne le
-  /// commerçant ; le second n'engage que l'affichage.
-  wasAssigned         Boolean  @default(false)
-
-  /// Copie des entrées tarifaires de la commande refusée (`meta.pricing_inputs`)
-  /// et du montant proposé. Figées ici : c'est l'appariement « ce qui était
-  /// offert » / « refusé pour tel motif » qui a de la valeur, et il disparaît
-  /// dès que la commande change.
-  pricingInputs       Json?
-  offeredPrice        Float?
-  currency            String?
-
-  declinedAt          DateTime @default(now())
-
-  /// Un transporteur ne refuse une course qu'une fois — un second appel met à
-  /// jour le motif plutôt que d'empiler des lignes qui fausseraient les
-  /// statistiques de refus.
-  @@unique([driverId, fleetbaseOrderUuid])
-  @@index([fleetbaseOrderUuid])
-}
+/// ⚠️ Ce que la table garantissait et que le champ ne garantit plus :
+/// l'unicité par (conducteur, course), qui était un `@@unique`. Elle est tenue
+/// par le dédoublonnage d'`appendToOrderList`, dont la fenêtre de concurrence
+/// est nommée là-bas — deux refus simultanés sur la même course diffusée
+/// peuvent en perdre un, et la course réapparaît alors une fois.
 
 
 /// ── Le registre de caisse a été retiré le 03/08/2026 ────────────────────────

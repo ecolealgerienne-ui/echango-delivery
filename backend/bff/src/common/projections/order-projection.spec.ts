@@ -213,8 +213,16 @@ describe('les deux populations voient la même chose', () => {
 describe('catalogue et projection ne divergent pas', () => {
   /** Clés du catalogue délibérément NON servies aux applications. */
   const JAMAIS_PROJETE: Record<string, string> = {
-    // Aucune pour l'instant. Une entrée ici est une décision de
-    // confidentialité, et son motif s'écrit en face.
+    // Un transporteur n'a pas à savoir qui d'autre a refusé la course, ni à
+    // quel prix elle leur avait été offerte : ce serait lui donner la position
+    // de négociation des autres. L'opérateur, lui, le lit dans la console.
+    declines:
+      'identité et prix offert aux autres transporteurs — visible en console seulement',
+    // Un échec porte un motif, des précisions libres et une photo. Le
+    // commerçant le reçoit par un chemin dédié, filtré ; le relayer en vrac
+    // ferait sortir les notes d'un transporteur vers les autres.
+    delivery_failures:
+      'notes libres et preuve — servies par un chemin dédié, jamais en vrac',
   };
 
   it('toute clé du catalogue est projetée, ou nommée comme ne devant pas l’être', () => {
@@ -238,9 +246,16 @@ describe('catalogue et projection ne divergent pas', () => {
   it('le témoin : retirer une clé de la projection DOIT être détecté', () => {
     // Sans ce cas, une liste `PROJECTED_META_FIELDS` accidentellement vidée
     // rendrait les deux précédents verts pour la mauvaise raison.
+    // ⚠️ Le témoin rejoue le PREMIER cas au complet — exceptions comprises —
+    // au lieu de comparer à une liste écrite à la main. La première version
+    // attendait `['collected_amount']` en dur, et elle est tombée dès qu'une
+    // exception légitime s'est ajoutée : un témoin qu'il faut recopier à chaque
+    // changement finit par être « corrigé » sans être compris.
     const ampute = PROJECTED_META_FIELDS.filter((k) => k !== 'collected_amount');
-    expect(ORDER_CUSTOM_FIELD_KEYS.filter((k) => !ampute.includes(k))).toEqual([
-      'collected_amount',
-    ]);
+    const oubliees = ORDER_CUSTOM_FIELD_KEYS
+      .filter((k) => !ampute.includes(k))
+      .filter((k) => !(k in JAMAIS_PROJETE));
+
+    expect(oubliees).toEqual(['collected_amount']);
   });
 });

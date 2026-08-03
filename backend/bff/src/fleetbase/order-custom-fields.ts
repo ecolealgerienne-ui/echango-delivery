@@ -227,6 +227,37 @@ export const ORDER_CUSTOM_FIELDS: OrderCustomFieldDefinition[] = [
     valueType: 'text',
     decode: asText,
   },
+
+  // ── Ce que les transporteurs ont dit de cette course ───────────────────────
+  //
+  // ⚠️ **Ces deux-là étaient des tables du BFF** (`OrderDecline`,
+  // `DeliveryFailure`) jusqu'au 03/08/2026. Ils sont remontés chez Fleetbase
+  // parce que **la console est utilisée en exploitation** : un opérateur qui
+  // ouvre une course immobile doit pouvoir lire « six refus, prix trop bas » ou
+  // « échec : destinataire absent » sans nous appeler. Une donnée qui explique
+  // un blocage et qui n'est visible que du BFF est une donnée qui manque là où
+  // on la cherche.
+  //
+  // ⚠️ **Ni l'un ni l'autre n'est projeté vers les applications** — voir
+  // `PROJECTED_META_FIELDS`. Un transporteur n'a pas à savoir qui d'autre a
+  // refusé la course, ni à quel prix. C'est une décision de confidentialité,
+  // écrite là-bas avec son motif.
+  {
+    key: 'declines',
+    description:
+      'Refus enregistrés : qui, quand, pour quel motif, et à quel prix la '
+      + 'course était offerte. Sert à comprendre pourquoi une course ne part pas.',
+    valueType: 'array',
+    decode: asList,
+  },
+  {
+    key: 'delivery_failures',
+    description:
+      'Échecs de livraison signalés à la porte : motif, précisions, preuve '
+      + 'photographique et horodatage.',
+    valueType: 'array',
+    decode: asList,
+  },
 ];
 
 export const ORDER_CUSTOM_FIELD_KEYS = ORDER_CUSTOM_FIELDS.map((f) => f.key);

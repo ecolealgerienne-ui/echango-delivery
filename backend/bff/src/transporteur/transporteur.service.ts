@@ -707,25 +707,23 @@ export class TransporteurService {
       return required < 0 || required <= mine;
     };
 
-    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
-    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
-    // reviendrait au rafraîchissement suivant, et l'écran serait
-    // indiscernable d'une fonctionnalité en panne.
-    const declined = new Set(
-      (
-        await this.prisma.orderDecline.findMany({
-          where: { driverId: driver.id },
-          select: { fleetbaseOrderUuid: true },
-        })
-      ).map((d: any) => d.fleetbaseOrderUuid),
-    );
-
     // Recomplété AVANT le filtre, pas après : `suits()` lit
     // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
     // traiter la course comme sans exigence.
+    //
+    // ⚠️ **Le refus se lit désormais SUR la commande**, plus dans une table du
+    // BFF (03/08/2026). L'ordre a donc changé : il fallait auparavant une
+    // requête en base *avant* de recomposer `meta` ; maintenant le refus **est
+    // dans** `meta`, donc il se lit une fois les courses recomposées — sans
+    // aucune entrée/sortie supplémentaire, puisqu'elles sont déjà en main.
+    //
+    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
+    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
+    // reviendrait au rafraîchissement suivant, et l'écran serait indiscernable
+    // d'une fonctionnalité en panne.
     const adhocHydrated = this.withEffectiveMeta(
-      adhocRaw.filter((o) => this.isClaimableAdhoc(o) && !declined.has(o?.uuid)),
-    );
+      adhocRaw.filter((o) => this.isClaimableAdhoc(o)),
+    ).filter((o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid));
 
     // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
     //
@@ -922,25 +920,46 @@ export class TransporteurService {
     const [hydratedForDecline] = this.withEffectiveMeta([order]);
     const meta = hydratedForDecline?.meta ?? order?.meta ?? {};
 
-    const decline = await this.prisma.orderDecline.upsert({
-      where: {
-        driverId_fleetbaseOrderUuid: {
-          driverId: driver.id,
-          fleetbaseOrderUuid: order.uuid,
-        },
-      },
-      create: {
-        driverId: driver.id,
-        fleetbaseOrderUuid: order.uuid,
+    // ⚠️ Le refus est écrit SUR LA COMMANDE depuis le 03/08/2026, plus dans une
+    // table du BFF. Motif : la console est utilisée en exploitation, et un
+    // opérateur qui ouvre une course immobile doit pouvoir lire « six refus,
+    // prix trop bas » sans nous appeler. Une donnée qui explique un blocage et
+    // qui n'est lisible que du BFF est une donnée qui manque là où on la
+    // cherche.
+    //
+    // L'unicité par (conducteur, course) était tenue par un `@@unique` ; elle
+    // l'est maintenant par le dédoublonnage passé à `appendToOrderList`, dont
+    // la fenêtre de concurrence est documentée là-bas.
+    const written = await this.orderCustomFields.appendToOrderList(
+      this.orderPublicId(order),
+      hydratedForDecline ?? order,
+      'declines',
+      {
+        driver_uuid: driver.fleetbaseDriverUuid,
         reason: dto.reason,
-        notes: dto.notes,
-        wasAssigned: mine,
-        pricingInputs: meta.pricing_inputs ?? undefined,
-        offeredPrice: typeof meta.price === 'number' ? meta.price : undefined,
-        currency: typeof meta.currency === 'string' ? meta.currency : undefined,
+        notes: dto.notes ?? null,
+        was_assigned: mine,
+        // Copiées, pas référencées : c'est l'appariement « ce qui était
+        // offert » / « refusé pour tel motif » qui a de la valeur, et il
+        // disparaît dès que la commande change.
+        pricing_inputs: meta.pricing_inputs ?? null,
+        offered_price: typeof meta.price === 'number' ? meta.price : null,
+        currency: typeof meta.currency === 'string' ? meta.currency : null,
+        declined_at: new Date().toISOString(),
       },
-      update: { reason: dto.reason, notes: dto.notes, declinedAt: new Date() },
-    });
+      (e) => e?.driver_uuid === driver.fleetbaseDriverUuid,
+    );
+
+    if (!written) {
+      // ⚠️ Refuser plutôt que de laisser croire au refus. Un refus non
+      // enregistré, c'est la course qui revient au rafraîchissement suivant :
+      // l'écran devient indiscernable d'une fonctionnalité en panne, et c'est
+      // exactement ce que ce chemin existe pour empêcher.
+      badRequest(
+        'order.decline_not_recorded',
+        'Votre refus n\'a pas pu être enregistré. Réessayez dans un instant.',
+      );
+    }
 
     if (mine) {
       // Le cache est aligné AVANT de notifier, et c'est ce qui évite un
@@ -974,8 +993,10 @@ export class TransporteurService {
     );
 
     return {
-      id: decline.id,
-      reason: decline.reason,
+      // ⚠️ Plus d'`id` : le refus n'est plus une ligne, c'est un élément d'une
+      // liste portée par la commande. Il n'avait aucun lecteur — l'application
+      // ne se sert que de `releasedToPool`, qui décide du message affiché.
+      reason: dto.reason,
       /** La course est-elle repartie au réseau, ou seulement masquée ? */
       releasedToPool: mine,
     };
@@ -1224,6 +1245,25 @@ export class TransporteurService {
    * conducteur appartient à cette entreprise ne change rien — elle lui sera
    * affectée par son employeur, elle ne se réclame pas.
    */
+  /**
+   * Ce transporteur a-t-il déjà refusé cette course ?
+   *
+   * ⚠️ **Lu sur la commande, et donc gratuit** : `meta.declines` arrive avec la
+   * course, il n'y a rien à interroger. La version précédente faisait une
+   * requête en base par liste servie.
+   *
+   * ⚠️ **Laisse passer ce qu'il ne comprend pas**, comme le filtre de zone et
+   * pour la même raison : une course montrée à tort est un désagrément qui se
+   * remarque et se corrige ; une course jamais montrée est un manque à gagner
+   * que personne ne peut constater.
+   */
+  private hasDeclined(order: any, driverUuid?: string | null): boolean {
+    if (!driverUuid) return false;
+    const declines = order?.meta?.declines;
+    if (!Array.isArray(declines)) return false;
+    return declines.some((d: any) => d?.driver_uuid === driverUuid);
+  }
+
   private isClaimableAdhoc(order: any): boolean {
     return isOrderClaimable(order);
   }

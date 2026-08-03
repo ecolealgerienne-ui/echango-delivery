@@ -90,6 +90,15 @@ export const ErrorCode = {
   CASH_COLLECTION_NOT_RECORDED: 'cash.collection_not_recorded',
 
   // ── Commandes ────────────────────────────────────────────────────────────
+  /**
+   * Le refus n'a pas pu être écrit sur la commande.
+   *
+   * Refus délibéré au lieu d'un succès muet : un refus non enregistré fait
+   * revenir la course au rafraîchissement suivant, et l'écran devient
+   * indiscernable d'une fonctionnalité en panne — ce que ce chemin existe
+   * précisément pour empêcher.
+   */
+  ORDER_DECLINE_NOT_RECORDED: 'order.decline_not_recorded',
   ORDER_NOT_FOUND: 'order.not_found',
   ORDER_FORBIDDEN: 'order.forbidden',
   ORDER_FETCH_FAILED: 'order.fetch_failed',

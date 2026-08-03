@@ -4,6 +4,7 @@ import {
   ORDER_CUSTOM_FIELDS,
   customFieldName,
   encodeCustomFieldValue,
+  readOrderCustomFields,
 } from './order-custom-fields';
 
 /**
@@ -224,6 +225,48 @@ export class OrderCustomFieldsService {
    * règle 10 interdit : un défaut sans valeur par défaut. L'appelant reçoit 0
    * et doit en faire quelque chose.
    */
+  /**
+   * Ajoute un élément à une liste portée par une commande.
+   *
+   * Sert aux refus et aux échecs de livraison, qui s'accumulent : ce ne sont
+   * pas des valeurs qu'on remplace mais des faits qu'on empile.
+   *
+   * ⚠️ **Lire-modifier-écrire, donc NON atomique — et la fenêtre se nomme
+   * (règle 2).** Deux transporteurs qui refusent la *même* course diffusée dans
+   * le même souffle peuvent voir un refus écrasé par l'autre. Ce n'est pas
+   * théorique sur une course en diffusion large.
+   *
+   * **Ce que ça coûte quand ça arrive** : la course réapparaît une fois dans la
+   * liste de celui dont le refus s'est perdu. Il la refuse à nouveau. C'est un
+   * désagrément, pas une perte — aucune décision, aucun argent, aucune
+   * livraison n'en dépend.
+   *
+   * **Pourquoi on l'accepte plutôt que de garder une table** : la table
+   * garantissait l'unicité mais rendait le refus **invisible depuis la
+   * console**, donc invisible à l'opérateur qui cherche pourquoi une course ne
+   * part pas. Une garantie parfaite sur une donnée que personne ne peut lire
+   * vaut moins qu'une garantie imparfaite sur une donnée qui explique un
+   * blocage.
+   *
+   * ⚠️ **`dedupe` est obligatoire, et ce n'est pas une commodité** : sans lui,
+   * un transporteur qui refuse deux fois — reprise après échec réseau —
+   * empilerait deux entrées, et le compte des refus mentirait à l'opérateur.
+   * La table portait un `@@unique` ; ici c'est cette fonction qui le tient.
+   */
+  async appendToOrderList(
+    orderId: string,
+    order: any,
+    key: string,
+    element: Record<string, any>,
+    dedupe: (existing: Record<string, any>) => boolean,
+  ): Promise<number> {
+    const current = readOrderCustomFields(order)[key];
+    const liste: Record<string, any>[] = Array.isArray(current) ? current : [];
+
+    const suivante = [...liste.filter((e) => !dedupe(e)), element];
+    return this.writeToOrder(orderId, { [key]: suivante });
+  }
+
   async writeToOrder(
     orderId: string,
     patch: Record<string, any>,
