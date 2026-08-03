@@ -62,17 +62,18 @@ MERCHANT_TOKEN="$(curl -sS -X POST "$BFF_URL/auth/merchant/login" -H 'Content-Ty
 [ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant impossible ($MERCHANT)"
 pass "Commerçant connecté"
 
-resolve_driver transporteur-test-4093@echango.local >/dev/null 2>&1 || fail "X introuvable"
-X_UUID="$DRIVER_UUID"
-obtain_driver_token "$X_UUID" >/dev/null 2>&1 || fail "Jeton X impossible"
+# ⚠️ Deux conducteurs qui ont un COMPTE BFF (donc connectables). `resolve_driver`
+# résout un nom/uuid Fleetbase, PAS un email `@echango.local` — c'est
+# `_accounted_driver_uuids` qui donne les uuids des comptes. `obtain_driver_token`
+# prend une uuid Fleetbase, jamais un email.
+mapfile -t DRV < <(_accounted_driver_uuids)
+X_UUID="${DRV[0]:-}"; Y_UUID="${DRV[1]:-}"
+[ -n "$X_UUID" ] && [ -n "$Y_UUID" ] && [ "$X_UUID" != "$Y_UUID" ] \
+  || fail "Il faut deux conducteurs distincts avec un compte (trouvés : ${#DRV[@]})"
+obtain_driver_token "$X_UUID" >/dev/null 2>&1 || fail "Jeton X impossible" "${DRIVER_SESSION_ERROR:-}"
 X_TOKEN="$DRIVER_TOKEN"
-
-resolve_driver driver-test-10000@echango.local >/dev/null 2>&1 || fail "Y introuvable"
-Y_UUID="$DRIVER_UUID"
-obtain_driver_token "$Y_UUID" >/dev/null 2>&1 || fail "Jeton Y impossible"
+obtain_driver_token "$Y_UUID" >/dev/null 2>&1 || fail "Jeton Y impossible" "${DRIVER_SESSION_ERROR:-}"
 Y_TOKEN="$DRIVER_TOKEN"
-
-[ "$X_UUID" != "$Y_UUID" ] || fail "X et Y sont le même transporteur — le témoin serait vide"
 pass "X (favori) = ${X_UUID:0:8}…   Y (non favori) = ${Y_UUID:0:8}…"
 
 # ── Le commerçant met X en favori ───────────────────────────────────────────

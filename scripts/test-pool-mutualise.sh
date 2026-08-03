@@ -76,11 +76,19 @@ TA="$(login_merchant "$MERCHANT_A")"; [ -n "$TA" ] || fail "Commerçant A ($MERC
 TB="$(login_merchant "$MERCHANT_B")"; [ -n "$TB" ] || fail "Commerçant B ($MERCHANT_B)"
 pass "Deux commerçants connectés (A, B)"
 
-resolve_driver transporteur-test-4093@echango.local >/dev/null 2>&1 || fail "Conducteur Z introuvable"
-Z_UUID="$DRIVER_UUID"
-# Z doit être LIBRE : une course déjà en cours l'empêche d'en accepter (driver.unavailable).
-if declare -F require_free_driver >/dev/null 2>&1; then require_free_driver "$Z_UUID" || true; fi
-obtain_driver_token "$Z_UUID" >/dev/null 2>&1 || fail "Jeton Z impossible"
+# Un conducteur avec un compte BFF (connectable). Voir la note du même bloc dans
+# test-visibilite-ciblage : `resolve_driver` ne résout pas un email `@echango.local`.
+mapfile -t DRV < <(_accounted_driver_uuids)
+Z_UUID="${DRV[0]:-}"
+[ -n "$Z_UUID" ] || fail "Aucun conducteur avec un compte BFF"
+# Z doit être LIBRE pour accepter (sinon « driver.unavailable »). On annule ses
+# courses non terminées directement chez Fleetbase — `require_free_driver`
+# dépend de fonctions (`dapi`, `pass`) définies par le scénario appelant.
+for u in $(fb_get "/int/v1/orders?limit=100" | jq -r --arg d "$Z_UUID" \
+    '[.orders[]? | select(.driver_assigned_uuid==$d and (.status|IN("completed","canceled","cancelled")|not))][].uuid'); do
+  fb_api PUT "/int/v1/orders/$u" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true
+done
+obtain_driver_token "$Z_UUID" >/dev/null 2>&1 || fail "Jeton Z impossible" "${DRIVER_SESSION_ERROR:-}"
 Z_TOKEN="$DRIVER_TOKEN"
 pass "Un conducteur Z, libre (${Z_UUID:0:8}…)"
 
