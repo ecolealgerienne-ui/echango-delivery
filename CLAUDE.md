@@ -478,7 +478,10 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   | `DriverFavourite` | `favourites` sur le `Vendor` du commerçant | ✅ |
   | `DeliveryFailure` | `delivery_failures` sur la commande | ✅ |
 
-  **Tables : 16 → 10.** Donnée métier de commande en base : **zéro**.
+  **Tables : 16 → 10.** Donnée métier de commande en base : **zéro**. Et
+  `DriverAccount` ne porte plus que le **secret de connexion** — email, mot de
+  passe, `tokenVersion`, `active` — plus les liens Fleetbase. C'est le seul
+  contenu qu'un opérateur ne doit justement pas voir.
 
   ⚠️ **Et une propriété gagnée, pas seulement une table perdue** : la route de
   preuve porte désormais l'uuid de la **commande**
@@ -527,6 +530,37 @@ Voir le plan d'action détaillé et priorisé dans `docs/specs_echango_delivery.
   mot, et une non-idempotence que seule la seconde exécution a montrée. Le garde
   qui compte : **un script de reprise qui lit des lignes et n'en traite aucune
   n'a pas « rien à faire », il a échoué sans le dire.**
+
+  ✅ **Le PROFIL du conducteur est descendu aussi (03/08/2026)** —
+  `firstName`, `lastName`, `phone`, `vehicleType`. Ce n'était pas une
+  duplication théorique : mesurée le même jour, elle avait **déjà divergé sur
+  les trois conducteurs de la base**. « Test Transporteur » côté BFF contre
+  « Amar BENGHARBI » chez Fleetbase, téléphone vide d'un côté et renseigné de
+  l'autre. L'application affichait un nom, la console un autre, pour la même
+  personne — sans une erreur.
+
+  ⚠️ **Zéro appel Fleetbase ajouté**, et c'est ce qui rend le lot sûr : les
+  trois lecteurs interrogeaient déjà Fleetbase pour autre chose. `getProfile`
+  lisait le statut en ligne ; le filtre des opportunités lisait la zone et la
+  position ; la sollicitation d'un favori lisait la zone de chacun. Le nom et
+  la catégorie sortent des mêmes réponses.
+
+  ⚠️ **Un `where` Prisma est devenu un filtre en mémoire**, et c'est un gain :
+  la catégorie de véhicule filtrait les favoris dans la requête. Elle filtre
+  maintenant sur une lecture qui existait déjà — et garde son biais, *non
+  déclaré = compatible*, parce qu'un transporteur ne doit pas être écarté du
+  réseau par un champ qu'il n'a pas rempli.
+
+  ⚠️ **Vérifié avant de retirer, pas supposé** : `user.firstName` n'est lu
+  **nulle part** dans l'application, et `authState.displayName` ne sert qu'au
+  titre de l'écran **commerçant**. Les servir à la connexion aurait imposé un
+  appel Fleetbase sur ce chemin pour un champ que personne n'affiche.
+
+  **Reste `businessName`/`businessPhone`** du commerçant et de l'entreprise —
+  eux ont un lecteur (le titre d'écran). Leur duplication est bénigne : **303
+  sur 304 identiques**, là où le conducteur divergeait sur 3 sur 3. À traiter
+  quand on acceptera un appel Fleetbase à la connexion, ou que l'écran ira
+  chercher son titre ailleurs.
 
   ⚠️ **Ce qui ne peut PAS monter, et le dire évite de le retenter** :
 
