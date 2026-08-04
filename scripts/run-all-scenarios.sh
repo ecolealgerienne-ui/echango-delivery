@@ -70,18 +70,37 @@ SCENARIOS=(
   # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
   # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).
   test-visibilite-ciblage
+  # Le filtre véhicule isolé : on bascule le véhicule du conducteur, tout le
+  # reste fixe. moto ne voit pas « utilitaire », utilitaire oui, voiture non.
+  test-filtre-vehicule
   # La thèse produit : un conducteur sert deux commerçants. Prouvé par l'accès
   # et l'acceptation, pas par la liste géospatiale (voir l'en-tête du script).
   test-pool-mutualise
   # ⚠️ Concurrence : deux acceptations SIMULTANÉES, un seul gagnant. Probabiliste
   # (plusieurs tours) — un banc de course qui « passe » une fois ne prouve rien.
   test-concurrence-acceptation
-  # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
+  # Les bords de l'argent à la porte : les trois refus du tiroir, puis la
+  # livrée muette qui remonte comme « à déclarer ». Contrôle qui dit non (règle 8).
+  test-bords-argent
+  # La preuve de livraison : le propriétaire atteint le relais, l'intrus est
+  # bloqué à l'ACCÈS (order.not_found), jamais à l'étape stockage. Couvre les
+  # deux dernières routes à identifiant de la règle 12.
+  test-preuve-livraison
+  # Cycle de vie de l'appartenance : le départ coupe les courses À VENIR
+  # (driver.forbidden), jamais celle déjà confiée ; réadhérer rouvre l'accès.
+  test-cycle-appartenance
+  # ⚠️ **En DERNIER des bancs qui n'écrivent rien** : il a besoin
   # d'un décor RICHE — une course portant des champs personnalisés. Les courses
   # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
   # que d'annoncer « aucune fuite » sur une commande qui n'avait rien à cacher.
   # Le placer après les autres lui donne les courses qu'ils viennent de créer.
   test-frontiere-projection
+  # ⚠️ **Vraiment en dernier, et pour une raison qui lui est propre** : il
+  # ARRÊTE puis RALLUME le conteneur httpd de Fleetbase pour éprouver le mode
+  # dégradé. Un `trap` rallume quoi qu'il arrive, mais tant qu'il tourne les
+  # autres scénarios échoueraient — d'où sa place tout à la fin, quand plus
+  # personne n'a besoin de Fleetbase.
+  test-resilience-degradee
 )
 
 names=(); codes=(); notes=()
