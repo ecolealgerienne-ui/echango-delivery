@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { Public } from '../common/decorators/public.decorator';
 
 /**
@@ -10,19 +11,37 @@ import { Public } from '../common/decorators/public.decorator';
  * permanence, et redémarré en boucle selon l'orchestrateur (revue archi #13).
  *
  * La sonde vérifie la base — une dépendance sans laquelle le service ne peut
- * rien faire. Fleetbase n'est délibérément PAS vérifié : son indisponibilité
- * dégrade le service sans le rendre inutile (les commandes en cache restent
- * lisibles), et faire redémarrer le BFF parce qu'un tiers est tombé ne
- * réparerait rien.
+ * rien faire : si `SELECT 1` échoue, la route échoue, et l'orchestrateur a
+ * raison de redémarrer.
+ *
+ * ── Fleetbase est RAPPORTÉ, jamais une cause d'échec (corrigé le 04/08/2026) ──
+ *
+ * Son indisponibilité dégrade le service sans le rendre inutile (le cache reste
+ * lisible), et redémarrer le BFF parce qu'un tiers est tombé ne réparerait rien
+ * — donc la sonde ne DOIT PAS échouer sur Fleetbase. Mais l'ignorer entièrement
+ * était l'excès inverse : derrière un répartiteur de charge, `/health` à 200 en
+ * dépit d'un amont à terre continue d'envoyer du trafic sur un BFF qui ne peut
+ * pas servir. La bonne forme, retenue ici, est de **rapporter l'état de la
+ * dépendance sans échouer** (`docs/status_v1.md`, « /health ne peut pas
+ * échouer ») : `status: ok` tant que la base répond, et un bloc `dependencies`
+ * que le déploiement lit pour décider — retirer l'instance du pool, alerter —
+ * sans provoquer de boucle de redémarrage.
  */
 @Controller('health')
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fleetbase: FleetbaseApiClient,
+  ) {}
 
   @Public()
   @Get()
   async check() {
     await this.prisma.$queryRaw`SELECT 1`;
+
+    // Sonde courte, qui ne lève jamais : Fleetbase à terre ⇒ `reachable: false`,
+    // pas un `/health` en échec.
+    const fleetbase = await this.fleetbase.ping();
 
     // ── La fraîcheur du réconciliateur, enfin LUE ────────────────────────────
     //
@@ -45,6 +64,9 @@ export class HealthController {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
+      // La dépendance amont, rapportée sans jamais faire échouer la sonde. Le
+      // déploiement lit `reachable` pour décider ; `status` reste `ok`.
+      dependencies: { fleetbase },
       // `null` et non « jamais » : sur une installation neuve, aucune commande
       // n'a encore été réconciliée, et ce n'est pas une panne. Le distinguer
       // d'un âge nul est tout l'intérêt (règle 10).

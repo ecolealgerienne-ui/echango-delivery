@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
-import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from '../common/errors/http-errors';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { ConfigService } from '@nestjs/config';
@@ -123,7 +123,7 @@ export class TransporteurService {
       orders = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       this.logger.error(`Order lookup failed (${orderId}): ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
 
     const found = orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
@@ -688,7 +688,7 @@ export class TransporteurService {
       ]);
     } catch (error) {
       this.logger.error(`Order list failed for driver ${driverId}: ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
 
     // Revérifié en mémoire : le filtre serveur allège la requête, il n'autorise

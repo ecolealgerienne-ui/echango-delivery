@@ -1,5 +1,5 @@
 import { Injectable, Logger, HttpException, BadRequestException } from '@nestjs/common';
-import { badRequest, notFound, forbidden, conflict } from '../common/errors/http-errors';
+import { badRequest, notFound, forbidden, conflict, serviceUnavailable } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -249,7 +249,8 @@ export class CommerçantService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch orders: ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      // 503 : l'amont est injoignable, la requête du commerçant est valide.
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 

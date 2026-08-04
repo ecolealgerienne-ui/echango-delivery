@@ -10,7 +10,9 @@
 #
 #   missing → une course DISPARUE de Fleetbase remonte « missing », pas un 500 ;
 #   stale   → Fleetbase INJOIGNABLE rend les courses « stale » (cache), pas un 500 ;
-#   health  → `/health` reste `ok` même Fleetbase à terre (il lit le local).
+#   health  → `/health` reste `ok` même Fleetbase à terre (il lit le local), ET
+#             RAPPORTE la joignabilité de Fleetbase (`dependencies.fleetbase`) ;
+#   503     → un refus dû à l'amont sort en 503 (« réessaie »), pas en 400.
 #
 # ⚠️ **Ce banc ARRÊTE puis RALLUME un conteneur Fleetbase.** Un `trap` garantit
 # le redémarrage même en cas d'échec. À ne lancer que sur l'instance locale.
@@ -33,6 +35,8 @@ fail() { echo "❌ $1"; [ -n "${2:-}" ] && echo "   $2"; exit 1; }
 step() { echo; echo "── $1 ──"; }
 
 . "$(dirname "$0")/lib/fleetbase.sh"
+. "$(dirname "$0")/lib/resolve-driver.sh"
+. "$(dirname "$0")/lib/driver-session.sh"
 
 # ⚠️ Rallumer Fleetbase QUOI QU'IL ARRIVE.
 restore_fb() { docker start "$FB_HTTPD" >/dev/null 2>&1 || true; }
@@ -41,6 +45,7 @@ trap restore_fb EXIT
 mapi() { local m="$1" p="$2" b="${3:-}"
   if [ -n "$b" ]; then curl -sS -m 40 -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' -H "Authorization: Bearer $MERCHANT_TOKEN" -d "$b"
   else curl -sS -m 40 -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $MERCHANT_TOKEN"; fi; }
+fb_reachable() { curl -sS -m 10 "$BFF_URL/health" | jq -r '.dependencies.fleetbase.reachable // "absent"'; }
 
 create_draft() { # label -> fleetbaseOrderId
   local o; o="$(mapi POST /commercant/commandes "$(jq -n --arg n "$1" '{
@@ -62,7 +67,23 @@ MERCHANT_TOKEN="$(curl -sS -X POST "$BFF_URL/auth/merchant/login" -H 'Content-Ty
 [ -n "$MERCHANT_TOKEN" ] || fail "Connexion commerçant impossible"
 O="$(create_draft Missing)"; [ -n "$O" ] || fail "Création O"
 P="$(create_draft Stale)";   [ -n "$P" ] || fail "Création P"
-pass "Commerçant + deux courses (O=${O:0:8}…, P=${P:0:8}…)"
+# Un conducteur connectable, pour éprouver le 503 d'une liste qui interroge
+# vraiment Fleetbase (la liste commerçant, elle, dégrade en « stale »).
+mapfile -t DRV < <(_accounted_driver_uuids)
+Z_TOKEN=""
+for d in "${DRV[@]}"; do
+  obtain_driver_token "$d" >/dev/null 2>&1 || true
+  [ -n "${DRIVER_TOKEN:-}" ] || continue
+  [ "$(curl -sS -o /dev/null -w '%{http_code}' "$BFF_URL/transporteur/profil" -H "Authorization: Bearer $DRIVER_TOKEN")" = "200" ] \
+    && { Z_TOKEN="$DRIVER_TOKEN"; break; }
+done
+[ -n "$Z_TOKEN" ] || fail "Aucun conducteur connectable pour le témoin 503"
+pass "Commerçant + deux courses (O=${O:0:8}…, P=${P:0:8}…) + un conducteur"
+
+# ── health rapporte la joignabilité de Fleetbase (Fleetbase EN LIGNE) ───────
+step "/health RAPPORTE la dépendance (Fleetbase en ligne → reachable=true)"
+[ "$(fb_reachable)" = "true" ] || fail "/health devrait rapporter fleetbase.reachable=true" "$(curl -sS "$BFF_URL/health" | jq -c '.dependencies')"
+pass "dependencies.fleetbase.reachable = true"
 
 # ── missing : la course disparue de Fleetbase ──────────────────────────────
 step "Course DISPARUE de Fleetbase → « missing », pas un 500"
@@ -85,6 +106,21 @@ h="$(curl -sS -m 10 "$BFF_URL/health" | jq -r '.status // "ERR"')"
 [ "$h" = "ok" ] || fail "/health devrait rester ok Fleetbase à terre, a rendu « $h »"
 pass "/health reste « ok » (il lit le local, pas Fleetbase)"
 
+# ⚠️ Mais il DIT que la dépendance est tombée — sans échouer lui-même.
+[ "$(fb_reachable)" = "false" ] \
+  || fail "/health devrait rapporter fleetbase.reachable=false Fleetbase à terre" "$(curl -sS -m 10 "$BFF_URL/health" | jq -c '.dependencies')"
+pass "dependencies.fleetbase.reachable = false — l'état est rapporté, pas caché"
+
+# ── 503 et non 400 : une liste qui interroge vraiment Fleetbase ─────────────
+step "Un refus dû à l'amont sort en 503 (« réessaie »), pas en 400"
+code_http="$(curl -sS -m 40 -o /tmp/res503 -w '%{http_code}' "$BFF_URL/transporteur/commandes?type=adhoc" -H "Authorization: Bearer $Z_TOKEN")"
+code_err="$(jq -r '.code // empty' /tmp/res503 2>/dev/null)"
+echo "   /transporteur/commandes Fleetbase à terre → HTTP $code_http, code « $code_err »"
+[ "$code_http" = "503" ] \
+  || fail "Devrait être 503 (Service Unavailable), a rendu $code_http" "un 400 dirait au client « ta requête est fautive » et le découragerait de réessayer"
+[ "$code_err" = "order.fetch_failed" ] || fail "Le code devrait rester order.fetch_failed (« $code_err »)"
+pass "TÉMOIN : HTTP 503 + order.fetch_failed — le statut dit enfin la vérité"
+
 detail="$(mapi GET "/commercant/commandes/$P")"
 echo "$detail" | jq -e 'type=="object" and (.statusCode|type)!="number"' >/dev/null 2>&1 \
   || fail "La fiche a planté Fleetbase à terre" "$(echo "$detail" | jq -c '{statusCode,code}' 2>/dev/null)"
@@ -103,5 +139,6 @@ echo
 echo "════════════════════════════════════════════════════════════════"
 echo "✅ Fleetbase dégradé DÉGRADE l'affichage, il ne le casse pas :"
 echo "   course disparue absorbée, fiche « stale » servie du cache,"
-echo "   /health toujours ok."
+echo "   /health toujours ok mais RAPPORTE la dépendance à terre,"
+echo "   et un refus dû à l'amont sort en 503, pas en 400."
 echo "════════════════════════════════════════════════════════════════"

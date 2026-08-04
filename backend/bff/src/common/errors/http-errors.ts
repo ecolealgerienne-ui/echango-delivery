@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ErrorCode } from './error-codes';
@@ -63,4 +64,19 @@ export function notFound(code: ErrorCode, message: string): never {
 
 export function conflict(code: ErrorCode, message: string): never {
   throw new ConflictException({ code, message });
+}
+
+/**
+ * 503, et non 400 : l'amont (Fleetbase) est en panne, mais la requête du client
+ * est parfaitement valide.
+ *
+ * Un `4xx` dit « ta requête est fautive », et un client raisonnable en conclut
+ * qu'il est inutile de réessayer — exactement le mauvais message quand la seule
+ * chose qui cloche est un tiers momentanément injoignable. Un `503` dit « le
+ * service est indisponible, réessaie plus tard », ce qui est vrai. Le `code`
+ * reste stable pour la traduction ; c'est le STATUT qui mentait
+ * (`docs/status_v1.md`, « Un refus amont sort en 400, pas en 503 »).
+ */
+export function serviceUnavailable(code: ErrorCode, message: string): never {
+  throw new ServiceUnavailableException({ code, message });
 }
