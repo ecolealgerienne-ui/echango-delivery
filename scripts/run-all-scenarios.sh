@@ -70,6 +70,10 @@ SCENARIOS=(
   # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
   # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).
   test-visibilite-ciblage
+  # Ciblage d'un favori ENTREPRISE (facilitator) : la branche fleet, jamais jouée
+  # e2e (classe du (f:any)). facilitator posé, l'entreprise voit / le pool non,
+  # elle affecte son conducteur. Quatre témoins.
+  test-ciblage-entreprise
   # Le filtre véhicule isolé : on bascule le véhicule du conducteur, tout le
   # reste fixe. moto ne voit pas « utilitaire », utilitaire oui, voiture non.
   test-filtre-vehicule
