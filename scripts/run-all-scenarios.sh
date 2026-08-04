@@ -86,6 +86,10 @@ SCENARIOS=(
   # Les bords de l'argent à la porte : les trois refus du tiroir, puis la
   # livrée muette qui remonte comme « à déclarer ». Contrôle qui dit non (règle 8).
   test-bords-argent
+  # L'encaissement d'une livraison CLOSE est immuable : une seconde clôture à 0
+  # ne réécrit pas le montant déjà déclaré (order.already_terminal). A trouvé un
+  # vrai défaut — un 2000 réécrit à 0 en HTTP 2xx, silencieusement.
+  test-double-cloture
   # La preuve de livraison : le propriétaire atteint le relais, l'intrus est
   # bloqué à l'ACCÈS (order.not_found), jamais à l'étape stockage. Couvre les
   # deux dernières routes à identifiant de la règle 12.

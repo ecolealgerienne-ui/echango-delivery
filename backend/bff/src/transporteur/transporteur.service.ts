@@ -1192,6 +1192,7 @@ export class TransporteurService {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
+    this.assertNotFinalized(order);
     await this.recordCollectionIfDue(order, cash);
 
     try {
@@ -1262,6 +1263,29 @@ export class TransporteurService {
    * acceptées (mesuré le 03/08/2026). Ici la même valeur écrite deux fois
    * donne le même état : il n'y a rien à garder.
    */
+  /**
+   * Une livraison close est IMMUABLE — on ne la re-clôture pas, et surtout on ne
+   * réécrit pas son encaissement déjà déclaré.
+   *
+   * ⚠️ Sans cette garde, un second `POST /terminer {collectedAmount:0}` (« zéro
+   * perçu » est légal avec un motif) réécrivait `collected_amount` : un 2000
+   * honnête retombait à **0 en HTTP 2xx, silencieusement** — une livraison
+   * encaissée se lisait « 0 » chez le commerçant. Constaté par
+   * `scripts/test-double-cloture.sh`. `recordCollectionIfDue` seule ne pouvait
+   * pas s'en défendre : réécrire la MÊME valeur est idempotent, réécrire une
+   * valeur DIFFÉRENTE ne l'est pas — donc c'est l'état terminal, pas la valeur,
+   * qui doit être le verrou. `order.already_terminal` est le même refus que la
+   * console commerçant oppose déjà à une annulation tardive (règle 5).
+   */
+  private assertNotFinalized(order: any): void {
+    if (isTerminalOrderStatus(order?.status)) {
+      badRequest(
+        'order.already_terminal',
+        'Cette livraison est déjà clôturée : son encaissement ne peut plus être modifié.',
+      );
+    }
+  }
+
   private async recordCollectionIfDue(order: any, cash?: CashCollectionDto): Promise<void> {
     // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
@@ -1403,6 +1427,12 @@ export class TransporteurService {
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
+
+    // Même garde que `completeOrder` : une livraison close ne se re-clôture pas,
+    // et son encaissement ne se réécrit pas. `updateActivity` est le chemin réel
+    // de l'application ; sans cette garde, rejouer la transition terminale
+    // réécrirait `collected_amount` exactement comme le second `/terminer`.
+    this.assertNotFinalized(order);
 
     // La transition terminale exige la déclaration d'encaissement au même titre
     // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.
