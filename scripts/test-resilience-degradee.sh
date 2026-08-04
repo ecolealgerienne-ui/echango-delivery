@@ -45,7 +45,9 @@ trap restore_fb EXIT
 mapi() { local m="$1" p="$2" b="${3:-}"
   if [ -n "$b" ]; then curl -sS -m 40 -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' -H "Authorization: Bearer $MERCHANT_TOKEN" -d "$b"
   else curl -sS -m 40 -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $MERCHANT_TOKEN"; fi; }
-fb_reachable() { curl -sS -m 10 "$BFF_URL/health" | jq -r '.dependencies.fleetbase.reachable // "absent"'; }
+# ⚠️ PAS de `// "absent"` : en jq, `false // x` rend x (false est « vide » pour
+# `//`). Sur un booléen on lit la valeur nue — "true", "false" ou "null".
+fb_reachable() { curl -sS -m 10 "$BFF_URL/health" | jq -r '.dependencies.fleetbase.reachable'; }
 
 create_draft() { # label -> fleetbaseOrderId
   local o; o="$(mapi POST /commercant/commandes "$(jq -n --arg n "$1" '{
