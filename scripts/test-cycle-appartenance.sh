@@ -171,7 +171,11 @@ pass "TÉMOIN : C reste à D, toujours visible de l'entreprise — « pas ce qu'
 step "Une course À VENIR est refusée à l'ex-membre"
 # On libère D de C d'abord : sinon le refus sortirait « occupé » et non « parti »
 # (voir l'en-tête). C n'est plus la question ; le motif du refus, si.
-free_d "$D_UUID"
+# ⚠️ Annulation de C par son uuid CONNU, pas par le balayage `free_d` : la
+# pagination `?driver=` instable rate parfois C, et D resterait occupé au pas
+# suivant. Ici on sait exactement quoi annuler.
+fb_api PUT "/int/v1/orders/$C" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true
+[ "$(driver_of "$C")" = "null" ] || fb_api PUT "/int/v1/orders/$C" '{"order":{"status":"canceled"}}' >/dev/null 2>&1 || true
 C2="$(publish)"; [[ "$C2" == ERR:* ]] && fail "Publication C2" "$C2"
 fapi POST "/flotte/opportunites/$C2/prendre" '{}' >/dev/null
 r2="$(fapi POST "/flotte/commandes/$C2/assigner" "$(jq -n --arg d "$D_UUID" '{driverId:$d}')")"
