@@ -81,12 +81,15 @@ export class FleetbaseApiClient {
   private readonly logger = new Logger(FleetbaseApiClient.name);
   private readonly apiClient: AxiosInstance;
 
+  /** Base Fleetbase, mémorisée pour la sonde `ping()` de /health. */
+  private readonly baseURL: string;
+
   constructor() {
-    const baseURL = process.env.FLEETBASE_API_URL || 'http://localhost:8000';
+    this.baseURL = process.env.FLEETBASE_API_URL || 'http://localhost:8000';
     const apiKey = process.env.FLEETBASE_API_KEY;
 
     this.apiClient = axios.create({
-      baseURL,
+      baseURL: this.baseURL,
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -122,6 +125,33 @@ export class FleetbaseApiClient {
         throw error;
       },
     );
+  }
+
+  /**
+   * Fleetbase répond-il ? Sonde pour `/health`, qui la RAPPORTE sans échouer.
+   *
+   * ── Pourquoi elle ne passe pas par `this.apiClient` ──────────────────────────
+   *
+   * Un axios NU, hors intercepteur, et pour deux raisons : `validateStatus` laisse
+   * passer n'importe quel statut — un `401` ou un `404` prouve que Fleetbase
+   * **répond**, ce qui est toute la question ; et l'intercepteur du client
+   * journalise chaque erreur en `error`, or ici un amont à terre est un état
+   * qu'on mesure, pas un incident à crier à chaque `/health`. Timeout court
+   * (2,5 s) : la sonde ne doit pas hériter des 30 s du client, sinon `/health`
+   * traînerait autant qu'un vrai appel quand Fleetbase est lent.
+   *
+   * Ne lève jamais : une panne de la dépendance est un `reachable: false`, pas
+   * une exception qui ferait échouer la sonde (`docs/status_v1.md`, « /health ne
+   * peut pas échouer » — la bonne forme est de rapporter l'état, pas de tomber).
+   */
+  async ping(timeoutMs = 2500): Promise<{ reachable: boolean; latency_ms: number | null }> {
+    const start = Date.now();
+    try {
+      await axios.get(this.baseURL, { timeout: timeoutMs, validateStatus: () => true });
+      return { reachable: true, latency_ms: Date.now() - start };
+    } catch {
+      return { reachable: false, latency_ms: null };
+    }
   }
 
   // ⚠️ `callCustomerPortal()` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
@@ -1262,6 +1292,19 @@ export class FleetbaseApiClient {
         facilitator_type: FACILITATOR_TYPE_VENDOR,
         adhoc: false,
       },
+    });
+    return response.data;
+  }
+
+  /**
+   * Met à jour des champs NATIFS de la commande (PUT `/orders`, enveloppe
+   * `{order}`). Sert aux transitions de dispatch qui n'ont pas de route dédiée —
+   * notamment poser `adhoc: false` après une assignation, `assignOrderToDriver`
+   * ne touchant que `driver_assigned_uuid`.
+   */
+  async setOrderFields(orderUuid: string, fields: Record<string, any>) {
+    const response = await this.callFleetOps('PUT', `/orders/${this.seg(orderUuid)}`, {
+      order: fields,
     });
     return response.data;
   }

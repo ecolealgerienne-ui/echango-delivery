@@ -80,6 +80,29 @@ class ServerRules {
   /// ⚠️ Le serveur l'écrit `7_000_000` : le vérificateur retire les séparateurs
   /// avant de comparer, sans quoi il aurait échoué sur une égalité vraie.
   static const int maxPhotoBase64Length = 7000000;
+
+  /// Prix maximal d'une course, en unité de la devise (DZD).
+  ///
+  /// Source : `backend/bff/src/commercant/dto/create-order.dto.ts`,
+  /// `@Max(500000)` sur `CreateOrderDto.price`.
+  ///
+  /// ⚠️ Sans garde côté formulaire, une saisie hors borne partait et revenait en
+  /// 400 générique ne nommant aucun champ — trouvé par l'audit des écrans du
+  /// 04/08/2026.
+  static const int orderPriceMax = 500000;
+
+  /// Montant minimal à encaisser à la porte (0 = pas d'encaissement).
+  ///
+  /// Source : `backend/bff/src/commercant/dto/create-order.dto.ts`,
+  /// `@Min(1)` sur `CreateOrderDto.codAmount` — un encaissement de 0 se saisit en
+  /// laissant le champ vide, pas en écrivant 0.
+  static const int codAmountMin = 1;
+
+  /// Montant maximal à encaisser à la porte.
+  ///
+  /// Source : `backend/bff/src/commercant/dto/create-order.dto.ts`,
+  /// `@Max(500000)` sur `CreateOrderDto.codAmount`.
+  static const int codAmountMax = 500000;
 }
 
 /// Décisions locales à l'application : rien à synchroniser, tout à nommer.

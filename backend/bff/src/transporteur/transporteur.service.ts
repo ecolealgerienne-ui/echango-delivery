@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
-import { badRequest, conflict, forbidden, notFound } from '../common/errors/http-errors';
+import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from '../common/errors/http-errors';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
 import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { ConfigService } from '@nestjs/config';
@@ -13,6 +13,7 @@ import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { ResourceLockService } from '../common/concurrency/resource-lock.service';
 import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
@@ -42,6 +43,7 @@ export class TransporteurService {
     private readonly orderCustomFields: OrderCustomFieldsService,
     private readonly configService: ConfigService,
     private readonly driverZone: DriverZoneService,
+    private readonly lock: ResourceLockService,
   ) {}
 
   /**
@@ -121,7 +123,7 @@ export class TransporteurService {
       orders = await this.fleetbaseClient.fetchEveryOrder();
     } catch (error) {
       this.logger.error(`Order lookup failed (${orderId}): ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
 
     const found = orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
@@ -686,7 +688,7 @@ export class TransporteurService {
       ]);
     } catch (error) {
       this.logger.error(`Order list failed for driver ${driverId}: ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
 
     // Revérifié en mémoire : le filtre serveur allège la requête, il n'autorise
@@ -1114,15 +1116,36 @@ export class TransporteurService {
 
     const publicId = await this.getDriverPublicId(driver);
 
-    try {
-      const result = await this.fleetbaseClient.startOrder(this.orderPublicId(order), publicId);
-      this.logger.log(`Driver ${driverId} accepted order ${orderId}`);
-      return result;
-    } catch (error) {
-      this.logger.error(`Accept failed (${orderId}): ${error.message}`);
-      // Losing a race for an adhoc order is expected, not exceptional.
-      badRequest('order.accept_failed', error.response?.data?.errors?.[0] || 'Failed to accept this order');
-    }
+    // ⚠️ Section critique SÉRIALISÉE — le cœur du correctif de concurrence.
+    //
+    // Le contrôle « déjà prise ? » ci-dessus puis l'affectation formaient un
+    // lire-puis-agir : deux acceptations simultanées sur une course diffusée
+    // passaient TOUTES DEUX le contrôle (personne n'était encore assigné) et
+    // écrivaient TOUTES DEUX — Fleetbase affecte sans condition. Résultat : deux
+    // `201`, la course promise à deux conducteurs, « l'argent compté deux fois ».
+    // Constaté par `test-concurrence-acceptation.sh` (tour 3 : X→201 Y→201).
+    //
+    // Le verrou sérialise les acceptations d'UNE course ; la RELECTURE dans la
+    // section voit l'affectation que le gagnant vient de poser, et le perdant
+    // ressort `order.already_taken` — un refus codé, pas un faux succès. Le
+    // contrôle d'avant le verrou reste, en fast-path : il évite d'entrer en
+    // section quand la course est déjà prise depuis longtemps.
+    return this.lock.withLock(`order-accept:${orderId}`, async () => {
+      const fresh = await this.resolveOrder(orderId);
+      if (fresh?.driver_assigned_uuid && !this.isAssignedTo(fresh, driver.fleetbaseDriverUuid)) {
+        badRequest('order.already_taken', 'This order has already been taken by another driver');
+      }
+
+      try {
+        const result = await this.fleetbaseClient.startOrder(this.orderPublicId(fresh), publicId);
+        this.logger.log(`Driver ${driverId} accepted order ${orderId}`);
+        return result;
+      } catch (error) {
+        this.logger.error(`Accept failed (${orderId}): ${error.message}`);
+        // Losing a race for an adhoc order is expected, not exceptional.
+        badRequest('order.accept_failed', error.response?.data?.errors?.[0] || 'Failed to accept this order');
+      }
+    });
   }
 
   async startOrder(driverId: string, orderId: string) {
@@ -1169,6 +1192,7 @@ export class TransporteurService {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
 
+    this.assertNotFinalized(order);
     await this.recordCollectionIfDue(order, cash);
 
     try {
@@ -1239,6 +1263,29 @@ export class TransporteurService {
    * acceptées (mesuré le 03/08/2026). Ici la même valeur écrite deux fois
    * donne le même état : il n'y a rien à garder.
    */
+  /**
+   * Une livraison close est IMMUABLE — on ne la re-clôture pas, et surtout on ne
+   * réécrit pas son encaissement déjà déclaré.
+   *
+   * ⚠️ Sans cette garde, un second `POST /terminer {collectedAmount:0}` (« zéro
+   * perçu » est légal avec un motif) réécrivait `collected_amount` : un 2000
+   * honnête retombait à **0 en HTTP 2xx, silencieusement** — une livraison
+   * encaissée se lisait « 0 » chez le commerçant. Constaté par
+   * `scripts/test-double-cloture.sh`. `recordCollectionIfDue` seule ne pouvait
+   * pas s'en défendre : réécrire la MÊME valeur est idempotent, réécrire une
+   * valeur DIFFÉRENTE ne l'est pas — donc c'est l'état terminal, pas la valeur,
+   * qui doit être le verrou. `order.already_terminal` est le même refus que la
+   * console commerçant oppose déjà à une annulation tardive (règle 5).
+   */
+  private assertNotFinalized(order: any): void {
+    if (isTerminalOrderStatus(order?.status)) {
+      badRequest(
+        'order.already_terminal',
+        'Cette livraison est déjà clôturée : son encaissement ne peut plus être modifié.',
+      );
+    }
+  }
+
   private async recordCollectionIfDue(order: any, cash?: CashCollectionDto): Promise<void> {
     // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
@@ -1380,6 +1427,12 @@ export class TransporteurService {
     if (!this.isAssignedTo(order, driver.fleetbaseDriverUuid)) {
       badRequest('order.not_assigned_to_driver', 'This order is not assigned to you');
     }
+
+    // Même garde que `completeOrder` : une livraison close ne se re-clôture pas,
+    // et son encaissement ne se réécrit pas. `updateActivity` est le chemin réel
+    // de l'application ; sans cette garde, rejouer la transition terminale
+    // réécrirait `collected_amount` exactement comme le second `/terminer`.
+    this.assertNotFinalized(order);
 
     // La transition terminale exige la déclaration d'encaissement au même titre
     // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.

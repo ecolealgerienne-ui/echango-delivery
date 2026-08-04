@@ -115,8 +115,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// litige insoluble.
   String _podMethod = 'photo';
 
-  /// Solliciter d'abord les transporteurs favoris.
-  bool _preferFavourites = true;
+  /// Le favori nommé à qui confier la course, ou `null` pour diffuser en large.
+  ///
+  /// Remplace l'ancien booléen « solliciter mes favoris » : le commerçant
+  /// désigne désormais UN transporteur (ou une entreprise), et une course
+  /// ciblée l'attend même hors-ligne (`docs/plan_ciblage_favori.md`). `null` =
+  /// diffusion au pool réseau.
+  String? _targetFavouriteUuid;
 
   /// Nulles tant que le commerçant n'a pas désigné de point. Le formulaire
   /// refuse l'envoi dans ce cas plutôt que d'inventer une position.
@@ -254,8 +259,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final pod = t['podMethod'];
     if (pod is String) _podMethod = pod;
 
-    final preferFav = t['preferFavourites'];
-    if (preferFav is bool) _preferFavourites = preferFav;
+    final target = t['targetFavouriteUuid'];
+    if (target is String && target.isNotEmpty && target != '-') {
+      _targetFavouriteUuid = target;
+    }
 
     final pickupLat = coord('pickupLatitude');
     final pickupLon = coord('pickupLongitude');
@@ -381,6 +388,26 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return;
     }
 
+    // Bornes serveur reproduites (`ServerRules`, vérifiées par
+    // `check_server_rules.dart`) : un dépassement partirait et reviendrait en 400
+    // générique ne nommant AUCUN champ. On le dit ici, champ nommé, avant
+    // l'aller-retour (règle 7). Le `codAmount` n'est contrôlé que si
+    // l'encaissement est activé — c'est la seule branche qui l'envoie.
+    final price = double.tryParse(_price.text.trim());
+    final cod = _cashOnDelivery ? double.tryParse(_codAmount.text.trim()) : null;
+    final invalid = <String>[
+      if (price != null && price > ServerRules.orderPriceMax)
+        _t('order.form.invalid.price_max', {'max': '${ServerRules.orderPriceMax}'}),
+      if (cod != null && cod > ServerRules.codAmountMax)
+        _t('order.form.invalid.cod_max', {'max': '${ServerRules.codAmountMax}'}),
+      if (cod != null && cod < ServerRules.codAmountMin)
+        _t('order.form.invalid.cod_min'),
+    ];
+    if (invalid.isNotEmpty) {
+      showAppError(context, invalid.join(_t('order.form.missing.separator')));
+      return;
+    }
+
     final router = GoRouter.of(context);
 
     final orderId = await orderState.createOrder({
@@ -424,7 +451,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       if (_scheduledAt != null) 'scheduledAt': _scheduledAt!.toUtc().toIso8601String(),
       if (_vehicleType != null) 'vehicleType': _vehicleType,
       'podMethod': _podMethod,
-      'preferFavourites': _preferFavourites,
+      if (_targetFavouriteUuid != null) 'targetFavouriteUuid': _targetFavouriteUuid,
       if (double.tryParse(_price.text.trim()) != null)
         'price': double.parse(_price.text.trim()),
       // Montant à encaisser, distinct de la rémunération du transporteur : le
@@ -998,22 +1025,52 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     );
   }
 
-  /// Préférence pour les transporteurs favoris.
+  /// Choix de diffusion : le pool réseau (« large »), ou un favori nommé.
   ///
-  /// Le libellé dit explicitement le repli : sans lui, le commerçant croirait
-  /// que cocher la case bloque sa course quand ses favoris sont occupés.
+  /// ⚠️ Le libellé dit ce qu'implique le ciblage : une course confiée à un
+  /// favori **l'attend**, même hors-ligne — elle ne bascule pas toute seule au
+  /// pool. Sans cette phrase, le commerçant croirait sa course diffusée alors
+  /// qu'elle patiente (`docs/plan_ciblage_favori.md`).
   Widget _favouritesTile(MerchantOrderState orderState) {
-    if (orderState.favourites.isEmpty) return const SizedBox.shrink();
+    final favourites = orderState.favourites;
+    if (favourites.isEmpty) return const SizedBox.shrink();
 
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      value: _preferFavourites,
-      onChanged: (v) => setState(() => _preferFavourites = v),
-      title: Text(_t('order.form.favourites.title')),
-      subtitle: Text(
-        _t('order.form.favourites.hint',
-            {'count': '${orderState.favourites.length}'}),
-        style: Theme.of(context).textTheme.bodySmall,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: DropdownButtonFormField<String?>(
+        initialValue: _targetFavouriteUuid,
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: _t('order.form.dispatch.label'),
+          helperText: _t('order.form.dispatch.hint'),
+          border: const OutlineInputBorder(),
+        ),
+        items: [
+          DropdownMenuItem<String?>(
+            value: null,
+            child: Row(children: [
+              const Icon(Icons.public, size: 18),
+              const SizedBox(width: AppSpacing.sm),
+              Text(_t('order.form.dispatch.large')),
+            ]),
+          ),
+          ...favourites.map(
+            (f) => DropdownMenuItem<String?>(
+              value: f.driverUuid,
+              child: Row(children: [
+                Icon(f.isFleet ? Icons.business : Icons.person_outline, size: 18),
+                const SizedBox(width: AppSpacing.sm),
+                Flexible(
+                  child: Text(
+                    f.name ?? f.driverUuid,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ],
+        onChanged: (v) => setState(() => _targetFavouriteUuid = v),
       ),
     );
   }

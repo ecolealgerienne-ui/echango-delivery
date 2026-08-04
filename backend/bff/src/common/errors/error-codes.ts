@@ -138,6 +138,10 @@ export const ErrorCode = {
   ORDER_ACTIVITY_UPDATE_FAILED: 'order.activity_update_failed',
   ORDER_PROOF_UPLOAD_FAILED: 'order.proof_upload_failed',
   ORDER_NOT_FOUND_UPSTREAM: 'order.not_found_upstream',
+  /** La cible d'un ciblage nommé n'est pas un favori de ce commerçant. */
+  ORDER_TARGET_NOT_FAVOURITE: 'order.target_not_favourite',
+  /** Redirection refusée : la course a déjà été prise par un transporteur. */
+  ORDER_REDIRECT_NOT_ALLOWED: 'order.redirect_not_allowed',
 
   // ── Transporteurs (persona flotte + commerçant) ─────────────────────────
   DRIVER_NOT_FOUND: 'driver.not_found',

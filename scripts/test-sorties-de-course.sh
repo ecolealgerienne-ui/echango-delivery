@@ -119,7 +119,7 @@ create_order() { # publish
     dropoffLocationName: "Client Sorties", dropoffLatitude: 36.7500, dropoffLongitude: 3.0600,
     dropoffContactName: "Destinataire", dropoffContactPhone: "+213555111111",
     price: $f, codAmount: $g, codIncludesDelivery: false,
-    podMethod: "aucune", preferFavourites: false, draft: true }')")"
+    podMethod: "aucune", draft: true }')")"
   oid="$(echo "$o" | jq -r '.id // .uuid // empty')"
   [ -n "$oid" ] || { echo "CREATE_FAILED $(echo "$o" | jq -c '.')" >&2; return 1; }
 

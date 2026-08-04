@@ -66,13 +66,76 @@ SCENARIOS=(
   # ne consomme donc une inscription qu'à sa toute première exécution.
   test-wilaya
   test-multi-appartenance
+  # Le filtre wilaya CÔTÉ CONDUCTEUR : une course hors-wilaya lui est cachée,
+  # la bonne visible — dans les deux sens. test-wilaya prouve la persistance ;
+  # celui-ci prouve le filtre, conducteur connecté.
+  test-filtre-wilaya
   test-sorties-de-course
-  # ⚠️ **En DERNIER, et c'est structurant** : il n'écrit rien mais il a besoin
+  # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
+  # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).
+  test-visibilite-ciblage
+  # Ciblage d'un favori ENTREPRISE (facilitator) : la branche fleet, jamais jouée
+  # e2e (classe du (f:any)). facilitator posé, l'entreprise voit / le pool non,
+  # elle affecte son conducteur. Quatre témoins.
+  test-ciblage-entreprise
+  # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
+  # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
+  # l'ancien repli pickAvailableFavourite, jamais éprouvée.
+  test-refus-favori-pool
+  # Compensation de publication : dispatch échoué (étape 2) → l'étape 1 est
+  # RÉTRACTÉE (adhoc=false), la course reste republiable et ne circule pas.
+  # Échec injecté de façon déterministe (dispatched=true, statut created).
+  test-compensation-publication
+  # Le filtre véhicule isolé : on bascule le véhicule du conducteur, tout le
+  # reste fixe. moto ne voit pas « utilitaire », utilitaire oui, voiture non.
+  test-filtre-vehicule
+  # La thèse produit : un conducteur sert deux commerçants. Prouvé par l'accès
+  # et l'acceptation, pas par la liste géospatiale (voir l'en-tête du script).
+  test-pool-mutualise
+  # ⚠️ Concurrence : deux acceptations SIMULTANÉES, un seul gagnant. Probabiliste
+  # (plusieurs tours) — un banc de course qui « passe » une fois ne prouve rien.
+  test-concurrence-acceptation
+  # Les fenêtres de PERTE D'ÉCRITURE : N acteurs, une liste, en parallèle ⇒ N
+  # survivants. Garde le verrou par ressource (favoris, declines) — avant lui,
+  # 2/6 et 1/2. Sérialisation en-processus déterministe, donc N/N assertable.
+  test-concurrence-fenetres
+  # Les bords de l'argent à la porte : les trois refus du tiroir, puis la
+  # livrée muette qui remonte comme « à déclarer ». Contrôle qui dit non (règle 8).
+  test-bords-argent
+  # L'encaissement d'une livraison CLOSE est immuable : une seconde clôture à 0
+  # ne réécrit pas le montant déjà déclaré (order.already_terminal). A trouvé un
+  # vrai défaut — un 2000 réécrit à 0 en HTTP 2xx, silencieusement.
+  test-double-cloture
+  # La tarification que le CONDUCTEUR voit, en VALEUR : price relayé, cod_amount
+  # = marchandise + course (ou marchandise seule si comprise), refus sans prix.
+  # test-frontiere-projection ne vérifie que la présence, jamais la valeur.
+  test-tarification-conducteur
+  # Durabilité : la console écrase meta (assignation) → prix et montant à
+  # encaisser SURVIVENT (champs personnalisés). Le bug fondateur du 30/07, e2e.
+  test-durabilite-meta
+  # La preuve de livraison : le propriétaire atteint le relais, l'intrus est
+  # bloqué à l'ACCÈS (order.not_found), jamais à l'étape stockage. Couvre les
+  # deux dernières routes à identifiant de la règle 12.
+  test-preuve-livraison
+  # Cycle de vie de l'appartenance : le départ coupe les courses À VENIR
+  # (driver.forbidden), jamais celle déjà confiée ; réadhérer rouvre l'accès.
+  test-cycle-appartenance
+  # ⚠️ **En DERNIER des bancs qui n'écrivent rien** : il a besoin
   # d'un décor RICHE — une course portant des champs personnalisés. Les courses
   # d'avant le 03/08/2026 n'en ont aucun, et il refuse alors de conclure plutôt
   # que d'annoncer « aucune fuite » sur une commande qui n'avait rien à cacher.
   # Le placer après les autres lui donne les courses qu'ils viennent de créer.
   test-frontiere-projection
+  # ⚠️ Lent (~1-2 min) : il ATTEND un passage du réconciliateur (60 s par défaut).
+  # Une prise en charge faite HORS du BFF (chez Fleetbase) remonte au commerçant
+  # en order.assigned — toute la chaîne de notification, sinon sans couverture.
+  test-reconciliateur-notif
+  # ⚠️ **Vraiment en dernier, et pour une raison qui lui est propre** : il
+  # ARRÊTE puis RALLUME le conteneur httpd de Fleetbase pour éprouver le mode
+  # dégradé. Un `trap` rallume quoi qu'il arrive, mais tant qu'il tourne les
+  # autres scénarios échoueraient — d'où sa place tout à la fin, quand plus
+  # personne n'a besoin de Fleetbase.
+  test-resilience-degradee
 )
 
 names=(); codes=(); notes=()

@@ -159,10 +159,20 @@ export const ORDER_CUSTOM_FIELDS: OrderCustomFieldDefinition[] = [
     decode: asText,
   },
   {
-    key: 'prefer_favourites',
-    description: 'Les transporteurs favoris du commerçant ont-ils été sollicités en premier ?',
+    key: 'target_favourite_uuid',
+    description:
+      'Favori nommé à qui la course est confiée (uuid du conducteur ou du vendor). '
+      + 'Absent = diffusion large au pool réseau.',
     valueType: 'text',
-    decode: asBoolean,
+    decode: asText,
+  },
+  {
+    key: 'target_favourite_kind',
+    description:
+      'Nature du favori ciblé : « driver » (conducteur) ou « fleet » (entreprise). '
+      + 'Détermine comment la course lui est assignée à la publication.',
+    valueType: 'text',
+    decode: asText,
   },
   {
     key: 'instructions',

@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { badRequest, notFound, forbidden, conflict } from '../common/errors/http-errors';
+import { badRequest, notFound, forbidden, conflict, serviceUnavailable } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -101,7 +101,7 @@ export class FlotteService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch fleet orders: ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
@@ -144,7 +144,7 @@ export class FlotteService {
       };
     } catch (error) {
       this.logger.error(`Failed to fetch claimable orders: ${error.message}`);
-      badRequest('order.fetch_failed', 'Failed to fetch orders');
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
   }
 
@@ -385,7 +385,7 @@ export class FlotteService {
     } catch (error) {
       if (error instanceof NotFoundException || error instanceof ForbiddenException) throw error;
       this.logger.error(`Failed to fetch fleet drivers: ${error.message}`);
-      badRequest('driver.fetch_failed', 'Failed to fetch drivers');
+      serviceUnavailable('driver.fetch_failed', 'Failed to fetch drivers');
     }
   }
 

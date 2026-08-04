@@ -457,7 +457,7 @@ while [ "$((already + published))" -lt "$SPARE_ORDERS" ]; do
     dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
     pickupCity: "Alger", pickupProvince: "Alger",
     dropoffCity: "Alger", dropoffProvince: "Alger",
-    price: 650, podMethod: "aucune", preferFavourites: false }')"
+    price: 650, podMethod: "aucune" }')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création d'une course libre refusée" "$out"
   oid="$(jq -r '.id // empty' <<<"$out")"
@@ -533,7 +533,7 @@ ensure_cod_order() { # prix libellé
     pickupCity: "Alger", pickupProvince: "Alger",
     dropoffCity: "Alger", dropoffProvince: "Alger",
     price: $fee, codAmount: $cod, codIncludesDelivery: false,
-    podMethod: "aucune", preferFavourites: false }')"
+    podMethod: "aucune" }')"
   out="$(mapi POST /commercant/commandes "$body")"
   is_error <<<"$out" && fail "Création de la course « $what » refusée" "$out"
   oid="$(jq -r '.id // empty' <<<"$out")"
@@ -548,6 +548,125 @@ ensure_cod_order() { # prix libellé
 # dépendre chaque parcours de l'ordre d'exécution de l'autre.
 ensure_cod_order "$COD_FEE" "encaissement exact"
 ensure_cod_order "$COD_GAP_FEE" "écart à la porte"
+
+# ⚠️ **Le contrat imprimé doit refléter le décor, pas une valeur canned
+# (règle 10).** `ensure_cod_order` réutilise une course reconnue à son PRIX
+# sans jamais toucher son `cod_amount` : une course héritée d'un run précédent
+# porte donc son propre montant. Constaté le 04/08/2026 — la course à 777
+# portait cod=2727 pendant que le script annonçait TEST_COD_AMOUNT=1950, et le
+# test échouait sur `screenHas(1950)`, un montant que l'écran n'affiche nulle
+# part. On relit donc le cod RÉEL de la course « encaissement exact » (celle à
+# $COD_FEE) et c'est LUI qu'on annonce au test. Une course fraîchement créée
+# porte $COD_AMOUNT, donc la relecture est un no-op dans ce cas — le filet ne
+# sert que la course réutilisée.
+real_cod="$(dapi GET '/transporteur/commandes?type=adhoc' \
+  | jq -r --argjson f "$COD_FEE" 'first((.orders // [])[]?
+       | select((.meta.price // .price) == $f))
+       | (.meta.cod_amount // .cod_amount // empty)' 2>/dev/null || true)"
+if [ -n "$real_cod" ] && [ "$real_cod" != "null" ]; then
+  if [ "$real_cod" != "$COD_AMOUNT" ]; then
+    info "cod réel de la course à $COD_FEE = $real_cod (défaut $COD_AMOUNT écarté — décor réutilisé)"
+  fi
+  COD_AMOUNT="$real_cod"
+else
+  fail "cod_amount introuvable pour la course à $COD_FEE" \
+    "la course « encaissement exact » n'est pas dans le seau adhoc — décor incohérent"
+fi
+
+# ── Course CONFIÉE au conducteur (favori sollicité) ─────────────────────────
+#
+# ⚠️ **Le seul décor d'où part le geste « rendre ».** Refuser une opportunité
+# DIFFUSÉE l'écarte pour ce conducteur (`releasedToPool:false`, « écartée ») ;
+# RENDRE une course qu'on lui a CONFIÉE la renvoie au réseau
+# (`releasedToPool:true`, « rendue au réseau ») et prévient le commerçant. Même
+# bouton, même tiroir — seul le MESSAGE change, et c'est cette distinction que
+# l'écran doit porter. Elle exige une course assignée à CE conducteur, en
+# attente (`dispatched`), non démarrée : elle apparaît alors dans « En cours »
+# avec le bouton « Rendre ». Prix distinctif pour la reconnaître ; le nom du
+# destinataire, lui, est visible (course confiée = projection pleine).
+step "Course confiée au conducteur"
+
+CONFIDED_FEE="${CONFIDED_FEE:-4444}"
+
+# Le conducteur doit être favori du commerçant pour qu'on puisse lui cibler une
+# course. Idempotent : déjà favori répond sans erreur.
+mapi POST /commercant/transporteurs/favoris \
+  "$(jq -n --arg u "$DRIVER_UUID" '{fleetbaseDriverUuid:$u, partyType:"driver"}')" >/dev/null 2>&1 || true
+
+# Réutilise une course déjà confiée à ce prix ; en crée une sinon. ⚠️ Une
+# course RENDUE lors d'un run précédent est repartie au pool (driver null,
+# adhoc=true) : elle ne compte donc plus comme confiée, et une nouvelle est
+# créée — le test retrouve toujours une course à rendre.
+confided="$(dapi GET '/transporteur/commandes' \
+  | jq -r --argjson f "$CONFIDED_FEE" 'first((.active // [])[]?
+       | select((.meta.price // .price) == $f)
+       | select((.driver_assigned_uuid // .driver_uuid) != null))
+       | (.public_id // .id // empty)' 2>/dev/null || true)"
+if [ -n "$confided" ] && [ "$confided" != "null" ]; then
+  info "course confiée (prix $CONFIDED_FEE) déjà disponible"
+else
+  body="$(jq -n --arg t "$DRIVER_UUID" --argjson fee "$CONFIDED_FEE" '{
+    pickupLocationName: "Dépôt Confié", pickupLatitude: 36.7538, pickupLongitude: 3.0588,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: "Client Confié", dropoffLatitude: 36.7500, dropoffLongitude: 3.0600,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Alger", pickupProvince: "Alger",
+    dropoffCity: "Alger", dropoffProvince: "Alger",
+    items: [{description: "colis", quantity: 1}],
+    price: $fee, podMethod: "aucune", targetFavouriteUuid: $t }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création de la course confiée refusée" "$out"
+  [ -n "$(jq -r '.fleetbaseOrderId // empty' <<<"$out")" ] \
+    || fail "Course confiée créée sans identifiant Fleetbase" "$out"
+  pass "Course confiée au conducteur — prix $CONFIDED_FEE"
+fi
+
+# ── Entreprise : un conducteur de flotte + « Mes courses » vide ─────────────
+#
+# ⚠️ Deux manques pour le parcours « l'entreprise réclame puis affecte » :
+#   1. **Personne à désigner.** L'entreprise doit avoir au moins un conducteur
+#      dans SA flotte, sinon le tiroir d'affectation est vide (`fleet.drivers.
+#      empty`) et l'affectation échoue.
+#   2. **« Mes courses » encombré.** Les courses réclamées aux runs précédents y
+#      restent — Fleetbase les garde, ANNULÉES COMPRISES : les annuler ne les
+#      retire pas de la liste (`/flotte/commandes` les sert quand même). Le test
+#      ne saurait alors plus laquelle il vient de réclamer. On les SUPPRIME par
+#      l'API interne pour repartir d'un onglet vide, où la course réclamée est
+#      seule.
+step "Entreprise : conducteur de flotte + « Mes courses » vide"
+
+fapi() { # méthode chemin [corps] — appel authentifié côté ENTREPRISE
+  local m="$1" p="$2" b="${3:-}"
+  if [ -n "$b" ]; then
+    curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $FLEET_TOKEN" -d "$b"
+  else
+    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $FLEET_TOKEN"
+  fi
+}
+
+FLEET_DRIVER_NAME="${FLEET_DRIVER_NAME:-Conducteur Flotte Parcours}"
+FLEET_DRIVER_EMAIL="${FLEET_DRIVER_EMAIL:-flotte-driver-parcours@echango.local}"
+
+# Un conducteur DANS la flotte, reconnaissable à son nom. Idempotent : ajouté
+# une seule fois, réutilisé ensuite.
+if fapi GET /flotte/drivers \
+     | jq -e --arg n "$FLEET_DRIVER_NAME" '[(.data//[])[]|select(.name==$n)]|length>0' >/dev/null 2>&1; then
+  info "conducteur de flotte « $FLEET_DRIVER_NAME » déjà rattaché"
+else
+  fapi POST /flotte/drivers \
+    "$(jq -n --arg n "$FLEET_DRIVER_NAME" --arg e "$FLEET_DRIVER_EMAIL" \
+       '{name:$n, email:$e, phone:"0551060606"}')" >/dev/null 2>&1 || true
+  pass "conducteur ajouté à la flotte — $FLEET_DRIVER_NAME"
+fi
+
+# Vider « Mes courses » : SUPPRIMER (pas annuler — une annulée reste affichée)
+# les courses de l'entreprise héritées des runs précédents.
+cleaned=0
+for u in $(fapi GET '/flotte/commandes?limit=100' | jq -r '(.data//[])[].uuid'); do
+  fb_api DELETE "/int/v1/orders/$u" >/dev/null 2>&1 && cleaned=$((cleaned+1)) || true
+done
+info "« Mes courses » de l'entreprise vidé ($cleaned course(s) supprimée(s))"
 
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
@@ -568,7 +687,9 @@ cat <<CMD
     --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME" \\
     --dart-define=TEST_COD_AMOUNT=$COD_AMOUNT \\
     --dart-define=TEST_COD_FEE=$COD_FEE \\
-    --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE
+    --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE \\
+    --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE \\
+    --dart-define=TEST_FLEET_DRIVER_NAME="$FLEET_DRIVER_NAME"
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"

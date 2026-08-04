@@ -105,6 +105,9 @@ const Map<String, String> _fr = {
   'order.activity_update_failed': 'Mise à jour de l\'étape impossible.',
   'order.proof_upload_failed': 'Envoi de la preuve impossible.',
   'order.not_found_upstream': 'Commande introuvable chez le transporteur.',
+  'order.target_not_favourite': 'Ce transporteur ne fait pas partie de vos favoris.',
+  'order.redirect_not_allowed':
+      'Cette course a déjà été prise — impossible de la rediriger.',
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   'driver.not_found': 'Transporteur introuvable.',
@@ -258,6 +261,8 @@ const Map<String, String> _ar = {
   'order.activity_update_failed': 'تعذر تحديث الخطوة.',
   'order.proof_upload_failed': 'تعذر إرسال الإثبات.',
   'order.not_found_upstream': 'الطلبية غير موجودة لدى مزوّد الخدمة.',
+  'order.target_not_favourite': 'هذا الناقل ليس من مفضّليك.',
+  'order.redirect_not_allowed': 'تمّ أخذ هذه المهمة — لا يمكن إعادة توجيهها.',
 
   // ── السائقون ──────────────────────────────────────────────────────────────
   'driver.not_found': 'السائق غير موجود.',

@@ -4,6 +4,7 @@ import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { CommerçantService } from './commercant.service';
 import { Persona } from '../common/decorators/persona.decorator';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
+import { RedirectOrderDto } from './dto/redirect-order.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { GeocodeQueryDto, ReverseGeocodeQueryDto } from './dto/geocode.dto';
 import { AddFavouriteDto } from './dto/favourite.dto';
@@ -171,6 +172,20 @@ export class CommerçantController {
   @Post('commandes/:id/publier')
   async publishOrder(@Request() req: any, @Param('id', FleetbaseIdPipe) orderId: string) {
     return this.commercantService.publishOrder(req.user.id, orderId);
+  }
+
+  /**
+   * Change la cible d'une course déjà publiée : un favori nommé, ou le pool
+   * commun. Réversible tant que personne ne l'a prise
+   * (`docs/plan_ciblage_favori.md`).
+   */
+  @Post('commandes/:id/rediriger')
+  async redirectOrder(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) orderId: string,
+    @Body() dto: RedirectOrderDto,
+  ) {
+    return this.commercantService.redirectOrder(req.user.id, orderId, dto);
   }
 
   /**

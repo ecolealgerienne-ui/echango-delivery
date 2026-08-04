@@ -129,18 +129,27 @@ class _NotificationTile extends StatelessWidget {
     };
   }
 
-  /// Le titre, traduit depuis le `type`.
+  /// Le titre, traduit depuis le `type` — JAMAIS le texte serveur.
   ///
-  /// ⚠️ Le repli sur `notification.title` n'est pas de la prudence gratuite :
-  /// c'est le seul cas où un texte serveur a le droit d'atteindre l'écran — un
-  /// `type` que cette version de l'application ne connaît pas encore. Mieux
-  /// vaut une phrase en français qu'une ligne vide dans le journal de ses
-  /// livraisons.
-  String _title(BuildContext context) => _translated(context, 'title')
-      ?? notification.title;
+  /// ⚠️ **Décision (04/08/2026) : le message vient toujours du CODE, jamais du
+  /// serveur.** Un `type` que cette version de l'application ne connaît pas
+  /// encore retombe sur un message GÉNÉRIQUE traduit, et non sur
+  /// `notification.title`/`body` (rédigés en français par le serveur) — sinon un
+  /// arabophone lirait du français (règle 4). Le détail d'un type inconnu se lit
+  /// sur la commande, qu'on ouvre en touchant la notification.
+  ///
+  /// La version précédente repliait sur `notification.title`/`body` « le temps
+  /// que l'app connaisse le type » : c'était le seul chemin par lequel du texte
+  /// serveur atteignait encore l'écran, fermé ici.
+  String _title(BuildContext context) =>
+      _translated(context, 'title') ?? _generic(context, 'title');
 
-  String _body(BuildContext context) => _translated(context, 'body')
-      ?? notification.body;
+  String _body(BuildContext context) =>
+      _translated(context, 'body') ?? _generic(context, 'body');
+
+  /// Le repli GÉNÉRIQUE traduit, pour un `type` que l'app ne sait pas nommer.
+  String _generic(BuildContext context, String part) =>
+      orderLabel('order.notif.unknown.$part', context.read<LocaleState>().locale);
 
   String? _translated(BuildContext context, String part) {
     final locale = context.read<LocaleState>().locale;
@@ -151,6 +160,11 @@ class _NotificationTile extends StatelessWidget {
       'order.released' => 'order.notif.released.$part',
       'order.completed' => 'order.notif.completed.$part',
       'order.canceled' => 'order.notif.canceled.$part',
+      // ⚠️ Le corps est GÉNÉRIQUE, pas le motif d'échec. Le serveur le baque
+      // dans son `body` français sans `data.reason` : le relayer laisserait un
+      // arabophone lire du français (règle 4). Le motif détaillé vit sur la
+      // fiche de la commande — que le commerçant ouvre en touchant la notif.
+      'order.failed' => 'order.notif.failed.$part',
       _ => null,
     };
     if (key == null) return null;

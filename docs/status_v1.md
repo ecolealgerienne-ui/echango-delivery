@@ -29,6 +29,34 @@ Cette section est en tête parce que c'est celle qu'on oublie : elle ne décrit
 pas un travail à faire, elle décrit **ce qu'on ne sait pas**. Un banc vert sur
 dix sujets ne dit rien du onzième.
 
+### ✅ Le parcours Flutter d'intégration diverge après la suppression du registre (03/08/2026)
+
+Trouvé en **rejouant le parcours 3 personas sur émulateur** — ni les scénarios
+`curl`, ni `flutter test` (unitaire) ne pouvaient le voir. Après la suppression
+du registre de caisse, `parcoursEcartALaPorte` vérifiait encore un **net**
+(`short − codGapFee`) sur une **caisse conducteur qui n'existe plus**, en restant
+connecté au mauvais persona. `openCaisse` échouait « 3 onglets ».
+
+**Corrigé** : aligné sur le motif +2/+3 déjà migré — le conducteur déclare
+l'écart (le cœur, « le tiroir refuse sans motif », intact), la somme **perçue**
+se relit côté commerçant sur le nouvel écran collections. Parcours **11/11**.
+
+⚠️ **La leçon** : le chantier de suppression du registre avait mis à jour le
+backend, les docs, les scénarios `curl` **et** deux des trois tests d'argent
+Flutter — mais pas le troisième, et **le parcours d'intégration n'avait pas été
+rejoué** (il exige un émulateur). Il était cassé en silence depuis ce matin.
+C'est l'angle mort nommé dans `CLAUDE.md` : les scénarios ne touchent jamais
+l'application.
+
+⚠️ **Observation, PAS un bug** : le run révèle un `notifyListeners()` après
+`dispose` dans `CollectionsState.load()`. C'est un **artefact de teardown de
+test** — le provider est app-scoped (`main.dart:241`), jamais disposé à la
+navigation, donc l'erreur n'apparaît qu'entre deux `app.main()` du test. Toutes
+les classes d'état partagent ce motif latent ; aucune ne se déclenche en
+production. Non corrigé : le corriger ici seul serait du cargo-cult et une
+divergence de convention (règle 5). Si un jour on veut des logs de test
+propres, ce serait un mixin de garde partagé, pas un rustine locale.
+
 ### ✅ La frontière de sortie — comblée le 03/08/2026, et voici ce qu'elle cachait
 
 Ce manque-ci n'était pas listé, et c'est justement pourquoi il mérite d'ouvrir
@@ -59,32 +87,52 @@ routes qu'il connaît. Un chemin neuf qui oublie de projeter le laissera vert.
 La question « toute route projette-t-elle ? » reste sans mécanisme — c'est un
 manque, et il est ici plutôt que découvert.
 
-### La concurrence — aucun banc, aucun scénario, rien
+### ✅ La concurrence — mesurée, trois fenêtres RÉELLES, fermées par un verrou (04/08/2026)
 
-⚠️ **Vérifié le 03/08/2026 : il n'existe aucun test parallèle dans le dépôt.**
-Pas un `&`, pas un `wait`, pas un script de charge. Ce qui a été mesuré, c'est
-la **disponibilité** — Fleetbase coupé — et ce n'est ni la concurrence ni la
-charge.
+⚠️ **La section disait « aucun banc, rien ». C'était vrai jusqu'au 04/08.** Le
+banc existe désormais (`scripts/test-concurrence-fenetres.sh`), il a **mesuré**
+les fenêtres au lieu de les supposer, et le correctif est **prouvé rouge→vert**.
 
-**Trois fenêtres sont nommées dans le code et n'ont jamais été constatées.** Les
-deux premières ont été **créées par le chantier du 03/08** : la table portait un
-`@@unique`, le champ personnalisé ne l'a plus.
+**La mesure, avant tout correctif** — N appels en parallèle sur la même
+ressource, puis comptage des survivants, témoins séquentiels N/N à l'appui
+(règle 8) :
 
-| où | ce qui peut se perdre |
+| fenêtre | route | avant le verrou |
+|---|---|---|
+| `MerchantFavouritesService.add` (favoris) | `POST /commercant/transporteurs/favoris` | **2 survivants sur 6**, à **6/6 tours** |
+| `appendToOrderList` (`declines`) | `POST /transporteur/commandes/:id/refuser` | min **1/2**, à **1/6 tours** |
+| `acceptOrder` (affectation) | `POST /transporteur/commandes/:id/accepter` | **deux `201`** — course promise à deux (`test-concurrence-acceptation.sh`, tour 3) |
+
+Trois manifestations de la **même** course lire-modifier-écrire, sans
+transaction entre systèmes (règle 2). La favoris était la plus grave : 4 ajouts
+sur 6 **perdus en silence, en HTTP 200**, à chaque tour.
+
+**Le correctif** : `common/concurrency/resource-lock.service.ts` — un mutex
+**en-processus par clé de ressource**. Chaque section critique sérialise **et
+relit la ressource dans le verrou** — une lecture faite avant le verrou est déjà
+périmée, la sérialisation seule ne suffirait pas. Après :
+
+| fenêtre | après le verrou |
 |---|---|
-| `appendToOrderList` (`declines`) | deux transporteurs refusant la **même course diffusée** — un refus écrasé, la course réapparaît une fois |
-| `appendToOrderList` (`delivery_failures`) | idem, mais un seul conducteur par course : peu probable |
-| `MerchantFavouritesService.add` | deux ajouts du même commerçant depuis deux appareils |
-| clôture d'une commande | deux clôtures simultanées de la même course |
+| favoris | **6/6 à tous les tours** |
+| declines | **2/2 à tous les tours** |
+| acceptation | **un seul `201`, le perdant ressort `order.already_taken` (400)**, 8/8 tours |
 
-⚠️ **Sur une course en diffusion large, plusieurs refus quasi simultanés ne sont
-pas un cas de laboratoire.** La conséquence est documentée — « la course
-réapparaît une fois » — mais **documentée n'est pas constatée**.
+Le mutex étant total, N/N est **déterministe** : `test-concurrence-fenetres.sh`
+est donc passé d'un instrument de mesure à une **garde** (assertion N/N sous
+concurrence), et il est **dans `run-all-scenarios.sh`**. Retirer le verrou le
+fait repasser au rouge — la mesure d'avant (2/6, 1/2) est ce qu'il refuse.
 
-**Ce qu'il faut** : un banc qui lance N appels en parallèle sur la même
-ressource, puis **compte ce qui a survécu**. Une demi-heure, et il répond aux
-quatre lignes d'un coup. C'est cheap et décisif ; la charge, elle, est un autre
-sujet.
+⚠️ **En-processus, comme le throttler.** Il sérialise au sein d'**une** instance
+Node (le BFF tourne aujourd'hui en instance unique). À plusieurs instances, il
+faudra un verrou partagé Redis (`SET NX PX` + jeton) — même échéance VPS que le
+throttler, et `REDIS_URL` est déjà câblé dans le `docker-compose` du BFF.
+
+⚠️ **Deux fenêtres nommées, délibérément PAS gardées, et dit pourquoi** :
+`delivery_failures` (un seul conducteur par course — une concurrence exigerait
+le même acteur deux fois, que `dedupe` rabat) et la **clôture** (idempotente
+depuis le retrait du registre : réécrire la même valeur donne le même état).
+Aucune n'est une course à N acteurs. La **charge**, elle, reste un autre sujet.
 
 ### La charge — jamais mesurée, et un appelant non borné
 
@@ -551,7 +599,7 @@ Plan d'action d'origine, priorisé : `specs_echango_delivery.md` §9.
 
   ⚠️ **Un refus amont sort en 400, pas en 503.** `order.fetch_failed` dit « votre requête est fautive » là où l'amont est en panne — un client peut en conclure qu'il est inutile de réessayer. Le code est juste, le statut ment.
 
-  **Reste entier** : la concurrence (deux clôtures simultanées), la charge, et le comportement quand Fleetbase répond **lentement** plutôt que pas du tout — le délai est à 30 s, ce qui est très long pour un écran.
+  **Reste entier** : la charge, et le comportement quand Fleetbase répond **lentement** plutôt que pas du tout — le délai est à 30 s, ce qui est très long pour un écran. ⚠️ **La concurrence, elle, ne reste plus entière** : les trois fenêtres de perte d'écriture (favoris, declines, acceptation) sont mesurées et fermées par `ResourceLockService` (04/08/2026, voir « La concurrence » ci-dessus). La clôture n'en était pas une : elle est idempotente depuis le retrait du registre.
 
 - [ ] **Priorité 3** : trancher les règles métier non tranchées (tarification, commission, annulations, SLA, onboarding — liste complète dans `docs/specs_echango_delivery.md` §6).
 - [x] ✅ **Migrer les données métier de `meta` vers les champs personnalisés — FAIT**, et vérifié dans le code le 02/08/2026 : `createOrder` envoie `custom_field_values`, `meta` ne porte plus que `pricing_inputs`, et `effectiveOrderMeta` sert les trois couches par ordre de durabilité. ⚠️ **Cette ligne est restée cochée « à faire » après coup**, ce qui a fait reposer la question deux jours plus tard.

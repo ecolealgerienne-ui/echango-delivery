@@ -35,6 +35,25 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       : _apiClient = apiClient,
         _localeState = localeState;
 
+  // ⚠️ **Un `loadOrders()` en vol se résout APRÈS le dispose, et notifier un
+  // `ChangeNotifier` détruit lève (03/08 documenté : « notifier une classe
+  // d'état détruite »).** Le conducteur interroge le BFF en boucle
+  // (`DriverPresenceState._pollTimer`) ; le timer est bien annulé au dispose,
+  // mais `cancel()` n'interrompt pas un appel déjà parti attendre l'endpoint à
+  // ~9 s. À son retour, l'`OrderState` peut être détruit — d'où ce garde, seul
+  // endroit qui sait que l'objet ne vaut plus la peine d'être réveillé.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
   /// Message d'erreur générique de la langue courante, pour les échecs qui ne
   /// portent aucun `code` serveur (erreur de parsing, exception inattendue).
 
@@ -80,7 +99,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   Future<void> loadOrders() async {
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
       final buckets = await _apiClient.getOrderBuckets();
@@ -91,7 +110,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -99,7 +118,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   Future<void> selectOrder(String orderId) async {
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
       _selectedOrder = await _apiClient.getOrder(orderId);
@@ -122,7 +141,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       _errorMessage = messageForError(e, _localeState.locale);
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -180,7 +199,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
     _lastDeclineReleasedToPool = null;
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
       final response = await _apiClient.declineOrder(
@@ -203,7 +222,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       return false;
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -218,7 +237,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   Future<bool> captureProof(String orderId, String photoBase64) async {
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
       await _apiClient.captureProofPhoto(orderId, [photoBase64]);
@@ -228,7 +247,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       return false;
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -329,11 +348,11 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
 
   void clearError() {
     _errorMessage = null;
-    notifyListeners();
+    _notify();
   }
 
   void clearSelection() {
     _selectedOrder = null;
-    notifyListeners();
+    _notify();
   }
 }

@@ -166,6 +166,11 @@ const Map<String, String> _fr = {
   'order.form.favourites.hint':
       '{count} favori(s). Si aucun n’est disponible, la course est proposée à '
           'l’ensemble du réseau.',
+  'order.form.dispatch.label': 'À qui confier la course',
+  'order.form.dispatch.large': 'Tout le réseau (diffusion large)',
+  'order.form.dispatch.hint':
+      'Un favori nommé reçoit la course rien que pour lui — elle l’attend même '
+          'hors ligne. Vous pourrez toujours basculer en diffusion large.',
 
   // ── Instructions, brouillon, envoi ──────────────────────────────────────
   'order.form.instructions': 'Instructions pour le transporteur',
@@ -193,6 +198,13 @@ const Map<String, String> _fr = {
   'order.form.missing.dropoff_phone': 'le téléphone du destinataire',
   'order.form.missing.pickup_point': 'le point de retrait sur la carte',
   'order.form.missing.dropoff_point': 'le point de livraison sur la carte',
+  // Bornes reproduites du serveur (`ServerRules`) : dites ici, champ nommé,
+  // plutôt qu'attendues sous la forme d'un 400 générique.
+  'order.form.invalid.price_max': 'le prix ne peut pas dépasser {max}',
+  'order.form.invalid.cod_max':
+      'le montant à encaisser ne peut pas dépasser {max}',
+  'order.form.invalid.cod_min':
+      'un encaissement de 0 se saisit en laissant le champ vide',
   'order.form.saved':
       'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
           'transporteur.',
@@ -207,6 +219,9 @@ const Map<String, String> _fr = {
   'order.detail.publish.done':
       'Livraison publiée : Echango recherche un transporteur.',
   'order.detail.publish.failed': 'Publication impossible',
+  'order.detail.redirect': 'Rediriger la course',
+  'order.detail.redirect.done': 'Course redirigée.',
+  'order.detail.redirect.failed': 'Redirection impossible',
   'order.detail.duplicate': 'Refaire cette livraison',
   'order.detail.duplicate.failed':
       'Reprise impossible — le formulaire s’ouvre vide.',
@@ -269,7 +284,7 @@ const Map<String, String> _fr = {
   'order.detail.cod.merchant_pays': ' (livraison à votre charge)',
   'order.detail.cod.client_pays': ' (livraison payée par le client)',
   'order.detail.row.dispatch': 'Diffusion',
-  'order.detail.dispatch.favourites': 'Mes transporteurs habituels en priorité',
+  'order.detail.dispatch.favourites': 'Confiée à un favori',
   'order.detail.dispatch.network': 'Tout le réseau',
   'order.detail.row.instructions': 'Instructions',
   'order.detail.favourite.add': 'Ajouter {name} à mes transporteurs',
@@ -479,6 +494,13 @@ const Map<String, String> _fr = {
   'order.notif.completed.body': 'Votre livraison est arrivée à destination.',
   'order.notif.canceled.title': 'Livraison annulée',
   'order.notif.canceled.body': 'Votre demande de livraison a été annulée.',
+  'order.notif.failed.title': 'Échec de livraison',
+  'order.notif.failed.body': 'Le transporteur n’a pas pu livrer votre commande. '
+      'Ouvrez-la pour en voir le motif.',
+  // Repli d'un type de notification que cette version ne connaît pas encore :
+  // générique traduit, jamais le texte serveur (décision du 04/08/2026).
+  'order.notif.unknown.title': 'Mise à jour de votre livraison',
+  'order.notif.unknown.body': 'Ouvrez-la pour en voir le détail.',
   'order.fav.load.failed': 'Chargement impossible.',
   'order.fav.unavailable': 'Impossible de charger vos favoris.',
   'order.fav.unavailable.hint':
@@ -635,6 +657,11 @@ const Map<String, String> _ar = {
   'order.form.favourites.title': 'اقتراحها أولًا على ناقليّ المعتادين',
   'order.form.favourites.hint':
       '{count} مفضّل. إذا لم يتوفر أحد منهم، تُعرض المهمة على كامل الشبكة.',
+  'order.form.dispatch.label': 'إلى من تُسند المهمة',
+  'order.form.dispatch.large': 'كامل الشبكة (بثّ واسع)',
+  'order.form.dispatch.hint':
+      'المفضّل المُسمّى يتلقّى المهمة وحده — تنتظره حتى وهو غير متصل. '
+          'يمكنك دائمًا التحويل إلى البثّ الواسع.',
 
   // ── Instructions, brouillon, envoi ──────────────────────────────────────
   'order.form.instructions': 'تعليمات للناقل',
@@ -657,6 +684,9 @@ const Map<String, String> _ar = {
   'order.form.missing.dropoff_phone': 'هاتف المرسل إليه',
   'order.form.missing.pickup_point': 'نقطة الاستلام على الخريطة',
   'order.form.missing.dropoff_point': 'نقطة التسليم على الخريطة',
+  'order.form.invalid.price_max': 'لا يمكن أن يتجاوز السعر {max}',
+  'order.form.invalid.cod_max': 'لا يمكن أن يتجاوز المبلغ المطلوب تحصيله {max}',
+  'order.form.invalid.cod_min': 'مبلغ تحصيل قدره 0 يُدخَل بترك الحقل فارغًا',
   'order.form.saved':
       'حُفظت المسودة. راجعها ثم انشرها للعثور على ناقل.',
   'order.form.failed': 'تعذّر الإنشاء',
@@ -669,6 +699,9 @@ const Map<String, String> _ar = {
   'order.detail.publish': 'نشر',
   'order.detail.publish.done': 'نُشر التوصيل: Echango تبحث عن ناقل.',
   'order.detail.publish.failed': 'تعذّر النشر',
+  'order.detail.redirect': 'إعادة توجيه المهمة',
+  'order.detail.redirect.done': 'أُعيد توجيه المهمة.',
+  'order.detail.redirect.failed': 'تعذّرت إعادة التوجيه',
   'order.detail.duplicate': 'إعادة هذا التوصيل',
   'order.detail.duplicate.failed': 'تعذّرت الإعادة — تُفتح الاستمارة فارغة.',
   'order.detail.cancel.title': 'إلغاء هذا التوصيل؟',
@@ -721,7 +754,7 @@ const Map<String, String> _ar = {
   'order.detail.cod.merchant_pays': ' (التوصيل على حسابك)',
   'order.detail.cod.client_pays': ' (التوصيل يدفعه الزبون)',
   'order.detail.row.dispatch': 'النشر',
-  'order.detail.dispatch.favourites': 'ناقليّ المعتادون أولًا',
+  'order.detail.dispatch.favourites': 'مُسندة إلى مفضّل',
   'order.detail.dispatch.network': 'كامل الشبكة',
   'order.detail.row.instructions': 'التعليمات',
   'order.detail.favourite.add': 'إضافة {name} إلى ناقليّ',
@@ -885,6 +918,10 @@ const Map<String, String> _ar = {
   'order.notif.completed.body': 'وصلت توصيلتك إلى وجهتها.',
   'order.notif.canceled.title': 'أُلغيت التوصيلة',
   'order.notif.canceled.body': 'أُلغي طلب التوصيل الخاص بك.',
+  'order.notif.failed.title': 'فشل التوصيل',
+  'order.notif.failed.body': 'لم يتمكن الناقل من تسليم طلبك. افتحه لمعرفة السبب.',
+  'order.notif.unknown.title': 'تحديث بخصوص توصيلتك',
+  'order.notif.unknown.body': 'افتحها لعرض التفاصيل.',
   'order.fav.load.failed': 'تعذّر التحميل.',
   'order.fav.unavailable': 'تعذّر تحميل مفضّليك.',
   'order.fav.unavailable.hint': 'مفضّلوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',

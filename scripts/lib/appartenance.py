@@ -414,6 +414,16 @@ def run():
                 time.sleep(PACE)
                 if 200 <= pstatus < 300:
                     rid = pbody_out.get('id') or pbody_out.get('uuid')
+                    # ⚠️ Certaines créations répondent `{added:true}` SANS id :
+                    # `addFavourite` en est. La ressource EST posée (201), mais
+                    # son id ne vit que dans la liste (c'est le `party_uuid`). On
+                    # relit donc plutôt que de conclure « décor impossible » sur
+                    # une création réussie — le défaut qui rendait ce banc
+                    # PARTIEL de façon flaky selon qu'un favori résiduel traînait.
+                    if not rid:
+                        lstatus, lbody = call('GET', r['list'], token_a)
+                        time.sleep(PACE)
+                        rid = first_id(lbody) if 200 <= lstatus < 300 else None
                     pose = bool(rid)
                 if not pose:
                     print('   ⚠️ %s : décor impossible à poser (%s)' % (r['quoi'], pstatus))
