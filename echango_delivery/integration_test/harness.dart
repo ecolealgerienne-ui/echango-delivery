@@ -62,6 +62,12 @@ const String codGapFee =
 const String confidedFee =
     String.fromEnvironment('TEST_CONFIDED_FEE', defaultValue: '4444');
 
+/// Le **nom** du conducteur que le décor rattache à l'entreprise, pour qu'elle
+/// ait quelqu'un à désigner. On le reconnaît dans le tiroir de choix par son
+/// nom — une donnée que le décor a posée, pas un libellé traduit.
+const String fleetDriverName = String.fromEnvironment('TEST_FLEET_DRIVER_NAME',
+    defaultValue: 'Conducteur Flotte Parcours');
+
 /// Trouve la ligne d'une liste dont un texte contient [needle], casse ignorée.
 ///
 /// ⚠️ Casse ignorée parce que **Fleetbase rend les noms de lieux en

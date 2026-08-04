@@ -621,6 +621,53 @@ else
   pass "Course confiée au conducteur — prix $CONFIDED_FEE"
 fi
 
+# ── Entreprise : un conducteur de flotte + « Mes courses » vide ─────────────
+#
+# ⚠️ Deux manques pour le parcours « l'entreprise réclame puis affecte » :
+#   1. **Personne à désigner.** L'entreprise doit avoir au moins un conducteur
+#      dans SA flotte, sinon le tiroir d'affectation est vide (`fleet.drivers.
+#      empty`) et l'affectation échoue.
+#   2. **« Mes courses » encombré.** Les courses réclamées aux runs précédents y
+#      restent — Fleetbase les garde, ANNULÉES COMPRISES : les annuler ne les
+#      retire pas de la liste (`/flotte/commandes` les sert quand même). Le test
+#      ne saurait alors plus laquelle il vient de réclamer. On les SUPPRIME par
+#      l'API interne pour repartir d'un onglet vide, où la course réclamée est
+#      seule.
+step "Entreprise : conducteur de flotte + « Mes courses » vide"
+
+fapi() { # méthode chemin [corps] — appel authentifié côté ENTREPRISE
+  local m="$1" p="$2" b="${3:-}"
+  if [ -n "$b" ]; then
+    curl -sS -X "$m" "$BFF_URL$p" -H 'Content-Type: application/json' \
+      -H "Authorization: Bearer $FLEET_TOKEN" -d "$b"
+  else
+    curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $FLEET_TOKEN"
+  fi
+}
+
+FLEET_DRIVER_NAME="${FLEET_DRIVER_NAME:-Conducteur Flotte Parcours}"
+FLEET_DRIVER_EMAIL="${FLEET_DRIVER_EMAIL:-flotte-driver-parcours@echango.local}"
+
+# Un conducteur DANS la flotte, reconnaissable à son nom. Idempotent : ajouté
+# une seule fois, réutilisé ensuite.
+if fapi GET /flotte/drivers \
+     | jq -e --arg n "$FLEET_DRIVER_NAME" '[(.data//[])[]|select(.name==$n)]|length>0' >/dev/null 2>&1; then
+  info "conducteur de flotte « $FLEET_DRIVER_NAME » déjà rattaché"
+else
+  fapi POST /flotte/drivers \
+    "$(jq -n --arg n "$FLEET_DRIVER_NAME" --arg e "$FLEET_DRIVER_EMAIL" \
+       '{name:$n, email:$e, phone:"0551060606"}')" >/dev/null 2>&1 || true
+  pass "conducteur ajouté à la flotte — $FLEET_DRIVER_NAME"
+fi
+
+# Vider « Mes courses » : SUPPRIMER (pas annuler — une annulée reste affichée)
+# les courses de l'entreprise héritées des runs précédents.
+cleaned=0
+for u in $(fapi GET '/flotte/commandes?limit=100' | jq -r '(.data//[])[].uuid'); do
+  fb_api DELETE "/int/v1/orders/$u" >/dev/null 2>&1 && cleaned=$((cleaned+1)) || true
+done
+info "« Mes courses » de l'entreprise vidé ($cleaned course(s) supprimée(s))"
+
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
 step "Prêt"
@@ -641,7 +688,8 @@ cat <<CMD
     --dart-define=TEST_COD_AMOUNT=$COD_AMOUNT \\
     --dart-define=TEST_COD_FEE=$COD_FEE \\
     --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE \\
-    --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE
+    --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE \\
+    --dart-define=TEST_FLEET_DRIVER_NAME="$FLEET_DRIVER_NAME"
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"
