@@ -549,6 +549,30 @@ ensure_cod_order() { # prix libellé
 ensure_cod_order "$COD_FEE" "encaissement exact"
 ensure_cod_order "$COD_GAP_FEE" "écart à la porte"
 
+# ⚠️ **Le contrat imprimé doit refléter le décor, pas une valeur canned
+# (règle 10).** `ensure_cod_order` réutilise une course reconnue à son PRIX
+# sans jamais toucher son `cod_amount` : une course héritée d'un run précédent
+# porte donc son propre montant. Constaté le 04/08/2026 — la course à 777
+# portait cod=2727 pendant que le script annonçait TEST_COD_AMOUNT=1950, et le
+# test échouait sur `screenHas(1950)`, un montant que l'écran n'affiche nulle
+# part. On relit donc le cod RÉEL de la course « encaissement exact » (celle à
+# $COD_FEE) et c'est LUI qu'on annonce au test. Une course fraîchement créée
+# porte $COD_AMOUNT, donc la relecture est un no-op dans ce cas — le filet ne
+# sert que la course réutilisée.
+real_cod="$(dapi GET '/transporteur/commandes?type=adhoc' \
+  | jq -r --argjson f "$COD_FEE" 'first((.orders // [])[]?
+       | select((.meta.price // .price) == $f))
+       | (.meta.cod_amount // .cod_amount // empty)' 2>/dev/null || true)"
+if [ -n "$real_cod" ] && [ "$real_cod" != "null" ]; then
+  if [ "$real_cod" != "$COD_AMOUNT" ]; then
+    info "cod réel de la course à $COD_FEE = $real_cod (défaut $COD_AMOUNT écarté — décor réutilisé)"
+  fi
+  COD_AMOUNT="$real_cod"
+else
+  fail "cod_amount introuvable pour la course à $COD_FEE" \
+    "la course « encaissement exact » n'est pas dans le seau adhoc — décor incohérent"
+fi
+
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
 step "Prêt"
