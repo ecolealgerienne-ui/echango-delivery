@@ -78,6 +78,10 @@ SCENARIOS=(
   # e2e (classe du (f:any)). facilitator posé, l'entreprise voit / le pool non,
   # elle affecte son conducteur. Quatre témoins.
   test-ciblage-entreprise
+  # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
+  # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
+  # l'ancien repli pickAvailableFavourite, jamais éprouvée.
+  test-refus-favori-pool
   # Le filtre véhicule isolé : on bascule le véhicule du conducteur, tout le
   # reste fixe. moto ne voit pas « utilitaire », utilitaire oui, voiture non.
   test-filtre-vehicule
@@ -102,6 +106,9 @@ SCENARIOS=(
   # = marchandise + course (ou marchandise seule si comprise), refus sans prix.
   # test-frontiere-projection ne vérifie que la présence, jamais la valeur.
   test-tarification-conducteur
+  # Durabilité : la console écrase meta (assignation) → prix et montant à
+  # encaisser SURVIVENT (champs personnalisés). Le bug fondateur du 30/07, e2e.
+  test-durabilite-meta
   # La preuve de livraison : le propriétaire atteint le relais, l'intrus est
   # bloqué à l'ACCÈS (order.not_found), jamais à l'étape stockage. Couvre les
   # deux dernières routes à identifiant de la règle 12.
@@ -115,6 +122,10 @@ SCENARIOS=(
   # que d'annoncer « aucune fuite » sur une commande qui n'avait rien à cacher.
   # Le placer après les autres lui donne les courses qu'ils viennent de créer.
   test-frontiere-projection
+  # ⚠️ Lent (~1-2 min) : il ATTEND un passage du réconciliateur (60 s par défaut).
+  # Une prise en charge faite HORS du BFF (chez Fleetbase) remonte au commerçant
+  # en order.assigned — toute la chaîne de notification, sinon sans couverture.
+  test-reconciliateur-notif
   # ⚠️ **Vraiment en dernier, et pour une raison qui lui est propre** : il
   # ARRÊTE puis RALLUME le conteneur httpd de Fleetbase pour éprouver le mode
   # dégradé. Un `trap` rallume quoi qu'il arrive, mais tant qu'il tourne les
