@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { FleetbaseApiClient } from './fleetbase-api.client';
+import { ResourceLockService } from '../common/concurrency/resource-lock.service';
 
 /**
  * Les favoris d'un commerçant, **portés par son `Vendor` Fleetbase**.
@@ -51,7 +52,10 @@ export class MerchantFavouritesService {
   /** uuid du vendor → uuid de sa définition `favourites`. */
   private readonly definitions = new Map<string, string>();
 
-  constructor(private readonly fleetbase: FleetbaseApiClient) {}
+  constructor(
+    private readonly fleetbase: FleetbaseApiClient,
+    private readonly lock: ResourceLockService,
+  ) {}
 
   /**
    * Les favoris de ce commerçant, du plus récent au plus ancien.
@@ -92,19 +96,27 @@ export class MerchantFavouritesService {
     vendorUuid: string,
     favourite: MerchantFavourite,
   ): Promise<MerchantFavourite[]> {
-    const vendor = await this.fleetbase.getVendorWithCustomFields(vendorUuid);
-    const actuels = this.extract(vendor);
+    // ⚠️ Lire-modifier-écrire sur les favoris du `Vendor` : deux ajouts
+    // concurrents (deux appareils, ou plusieurs taps) lisaient la même liste et
+    // le second `PUT` écrasait le premier. Constaté par
+    // `scripts/test-concurrence-fenetres.sh` (2 favoris survivants sur 6). Le
+    // verrou sérialise, la lecture est DANS la section pour ne pas repartir d'une
+    // copie périmée. Clé par vendor : deux commerçants n'attendent pas l'un l'autre.
+    return this.lock.withLock(`vendor-fav:${vendorUuid}`, async () => {
+      const vendor = await this.fleetbase.getVendorWithCustomFields(vendorUuid);
+      const actuels = this.extract(vendor);
 
-    const suivants = [
-      { ...favourite, added_at: new Date().toISOString() },
-      ...actuels.filter(
-        (f) =>
-          !(f.party_uuid === favourite.party_uuid && f.party_type === favourite.party_type),
-      ),
-    ];
+      const suivants = [
+        { ...favourite, added_at: new Date().toISOString() },
+        ...actuels.filter(
+          (f) =>
+            !(f.party_uuid === favourite.party_uuid && f.party_type === favourite.party_type),
+        ),
+      ];
 
-    await this.write(vendorUuid, vendor, suivants);
-    return suivants;
+      await this.write(vendorUuid, vendor, suivants);
+      return suivants;
+    });
   }
 
   /**
@@ -115,14 +127,19 @@ export class MerchantFavouritesService {
    * une suppression qui n'a pas eu lieu.
    */
   async remove(vendorUuid: string, partyUuid: string): Promise<boolean> {
-    const vendor = await this.fleetbase.getVendorWithCustomFields(vendorUuid);
-    const actuels = this.extract(vendor);
-    const suivants = actuels.filter((f) => f.party_uuid !== partyUuid);
+    // Même ressource que `add` : la MÊME clé, pour qu'un ajout et un retrait
+    // concurrents ne se marchent pas dessus (l'un partirait de l'état d'avant
+    // l'autre). Lecture dans la section, comme pour l'ajout.
+    return this.lock.withLock(`vendor-fav:${vendorUuid}`, async () => {
+      const vendor = await this.fleetbase.getVendorWithCustomFields(vendorUuid);
+      const actuels = this.extract(vendor);
+      const suivants = actuels.filter((f) => f.party_uuid !== partyUuid);
 
-    if (suivants.length === actuels.length) return false;
+      if (suivants.length === actuels.length) return false;
 
-    await this.write(vendorUuid, vendor, suivants);
-    return true;
+      await this.write(vendorUuid, vendor, suivants);
+      return true;
+    });
   }
 
   /**

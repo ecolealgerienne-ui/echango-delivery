@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { FleetbaseApiClient } from './fleetbase-api.client';
+import { ResourceLockService } from '../common/concurrency/resource-lock.service';
 import {
   ORDER_CUSTOM_FIELDS,
   customFieldName,
@@ -44,7 +45,10 @@ export class OrderCustomFieldsService {
   /** Provisionnements en cours, pour que deux commandes simultanées n'en lancent pas deux. */
   private readonly inFlight = new Map<string, Promise<Map<string, string>>>();
 
-  constructor(private readonly fleetbaseClient: FleetbaseApiClient) {}
+  constructor(
+    private readonly fleetbaseClient: FleetbaseApiClient,
+    private readonly lock: ResourceLockService,
+  ) {}
 
   /**
    * Les définitions du catalogue, créées si besoin.
@@ -260,11 +264,40 @@ export class OrderCustomFieldsService {
     element: Record<string, any>,
     dedupe: (existing: Record<string, any>) => boolean,
   ): Promise<number> {
-    const current = readOrderCustomFields(order)[key];
-    const liste: Record<string, any>[] = Array.isArray(current) ? current : [];
+    // ⚠️ **Verrou + relecture, et l'un ne va pas sans l'autre.** Deux ajouts
+    // concurrents (deux transporteurs refusant la même course diffusée) lisaient
+    // la même liste, y ajoutaient chacun le sien, et le second `PUT` écrasait le
+    // premier — un refus perdu, en HTTP 200. Constaté par
+    // `scripts/test-concurrence-fenetres.sh` (declines : 1 survivant sur 2).
+    //
+    // Le verrou sérialise les ajouts sur cette commande ; la relecture **dans**
+    // la section les rend cumulatifs — l'`order` reçu a été lu AVANT le verrou et
+    // ne porte pas ce qu'un concurrent vient d'écrire. Clé par `uuid` (stable) ;
+    // relecture par `uuid` (`readOrderFull`), écriture par `public_id` (`orderId`).
+    const lockKey = `order-cf:${order?.uuid ?? orderId}`;
+    return this.lock.withLock(lockKey, async () => {
+      let fresh = order;
+      if (order?.uuid) {
+        try {
+          fresh = (await this.fleetbaseClient.readOrderFull(order.uuid)) ?? order;
+        } catch (error: any) {
+          // Dégradé, pas silencieux : sans relecture on retombe sur l'instantané
+          // passé — la fenêtre se rouvre pour cette écriture-là, mais mieux vaut
+          // un ajout que rien. Le verrou tient toujours l'exclusion mutuelle.
+          this.logger.warn(
+            `Relecture avant ajout '${key}' impossible sur ${order.uuid} (${error?.message}) — `
+              + "base potentiellement périmée",
+          );
+          fresh = order;
+        }
+      }
 
-    const suivante = [...liste.filter((e) => !dedupe(e)), element];
-    return this.writeToOrder(orderId, { [key]: suivante });
+      const current = readOrderCustomFields(fresh)[key];
+      const liste: Record<string, any>[] = Array.isArray(current) ? current : [];
+
+      const suivante = [...liste.filter((e) => !dedupe(e)), element];
+      return this.writeToOrder(orderId, { [key]: suivante });
+    });
   }
 
   async writeToOrder(

@@ -13,6 +13,7 @@ import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { ResourceLockService } from '../common/concurrency/resource-lock.service';
 import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
@@ -42,6 +43,7 @@ export class TransporteurService {
     private readonly orderCustomFields: OrderCustomFieldsService,
     private readonly configService: ConfigService,
     private readonly driverZone: DriverZoneService,
+    private readonly lock: ResourceLockService,
   ) {}
 
   /**
@@ -1114,15 +1116,36 @@ export class TransporteurService {
 
     const publicId = await this.getDriverPublicId(driver);
 
-    try {
-      const result = await this.fleetbaseClient.startOrder(this.orderPublicId(order), publicId);
-      this.logger.log(`Driver ${driverId} accepted order ${orderId}`);
-      return result;
-    } catch (error) {
-      this.logger.error(`Accept failed (${orderId}): ${error.message}`);
-      // Losing a race for an adhoc order is expected, not exceptional.
-      badRequest('order.accept_failed', error.response?.data?.errors?.[0] || 'Failed to accept this order');
-    }
+    // ⚠️ Section critique SÉRIALISÉE — le cœur du correctif de concurrence.
+    //
+    // Le contrôle « déjà prise ? » ci-dessus puis l'affectation formaient un
+    // lire-puis-agir : deux acceptations simultanées sur une course diffusée
+    // passaient TOUTES DEUX le contrôle (personne n'était encore assigné) et
+    // écrivaient TOUTES DEUX — Fleetbase affecte sans condition. Résultat : deux
+    // `201`, la course promise à deux conducteurs, « l'argent compté deux fois ».
+    // Constaté par `test-concurrence-acceptation.sh` (tour 3 : X→201 Y→201).
+    //
+    // Le verrou sérialise les acceptations d'UNE course ; la RELECTURE dans la
+    // section voit l'affectation que le gagnant vient de poser, et le perdant
+    // ressort `order.already_taken` — un refus codé, pas un faux succès. Le
+    // contrôle d'avant le verrou reste, en fast-path : il évite d'entrer en
+    // section quand la course est déjà prise depuis longtemps.
+    return this.lock.withLock(`order-accept:${orderId}`, async () => {
+      const fresh = await this.resolveOrder(orderId);
+      if (fresh?.driver_assigned_uuid && !this.isAssignedTo(fresh, driver.fleetbaseDriverUuid)) {
+        badRequest('order.already_taken', 'This order has already been taken by another driver');
+      }
+
+      try {
+        const result = await this.fleetbaseClient.startOrder(this.orderPublicId(fresh), publicId);
+        this.logger.log(`Driver ${driverId} accepted order ${orderId}`);
+        return result;
+      } catch (error) {
+        this.logger.error(`Accept failed (${orderId}): ${error.message}`);
+        // Losing a race for an adhoc order is expected, not exceptional.
+        badRequest('order.accept_failed', error.response?.data?.errors?.[0] || 'Failed to accept this order');
+      }
+    });
   }
 
   async startOrder(driverId: string, orderId: string) {
