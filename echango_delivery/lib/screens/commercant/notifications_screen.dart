@@ -129,18 +129,27 @@ class _NotificationTile extends StatelessWidget {
     };
   }
 
-  /// Le titre, traduit depuis le `type`.
+  /// Le titre, traduit depuis le `type` — JAMAIS le texte serveur.
   ///
-  /// ⚠️ Le repli sur `notification.title` n'est pas de la prudence gratuite :
-  /// c'est le seul cas où un texte serveur a le droit d'atteindre l'écran — un
-  /// `type` que cette version de l'application ne connaît pas encore. Mieux
-  /// vaut une phrase en français qu'une ligne vide dans le journal de ses
-  /// livraisons.
-  String _title(BuildContext context) => _translated(context, 'title')
-      ?? notification.title;
+  /// ⚠️ **Décision (04/08/2026) : le message vient toujours du CODE, jamais du
+  /// serveur.** Un `type` que cette version de l'application ne connaît pas
+  /// encore retombe sur un message GÉNÉRIQUE traduit, et non sur
+  /// `notification.title`/`body` (rédigés en français par le serveur) — sinon un
+  /// arabophone lirait du français (règle 4). Le détail d'un type inconnu se lit
+  /// sur la commande, qu'on ouvre en touchant la notification.
+  ///
+  /// La version précédente repliait sur `notification.title`/`body` « le temps
+  /// que l'app connaisse le type » : c'était le seul chemin par lequel du texte
+  /// serveur atteignait encore l'écran, fermé ici.
+  String _title(BuildContext context) =>
+      _translated(context, 'title') ?? _generic(context, 'title');
 
-  String _body(BuildContext context) => _translated(context, 'body')
-      ?? notification.body;
+  String _body(BuildContext context) =>
+      _translated(context, 'body') ?? _generic(context, 'body');
+
+  /// Le repli GÉNÉRIQUE traduit, pour un `type` que l'app ne sait pas nommer.
+  String _generic(BuildContext context, String part) =>
+      orderLabel('order.notif.unknown.$part', context.read<LocaleState>().locale);
 
   String? _translated(BuildContext context, String part) {
     final locale = context.read<LocaleState>().locale;

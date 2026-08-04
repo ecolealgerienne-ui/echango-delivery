@@ -497,6 +497,10 @@ const Map<String, String> _fr = {
   'order.notif.failed.title': 'Échec de livraison',
   'order.notif.failed.body': 'Le transporteur n’a pas pu livrer votre commande. '
       'Ouvrez-la pour en voir le motif.',
+  // Repli d'un type de notification que cette version ne connaît pas encore :
+  // générique traduit, jamais le texte serveur (décision du 04/08/2026).
+  'order.notif.unknown.title': 'Mise à jour de votre livraison',
+  'order.notif.unknown.body': 'Ouvrez-la pour en voir le détail.',
   'order.fav.load.failed': 'Chargement impossible.',
   'order.fav.unavailable': 'Impossible de charger vos favoris.',
   'order.fav.unavailable.hint':
@@ -916,6 +920,8 @@ const Map<String, String> _ar = {
   'order.notif.canceled.body': 'أُلغي طلب التوصيل الخاص بك.',
   'order.notif.failed.title': 'فشل التوصيل',
   'order.notif.failed.body': 'لم يتمكن الناقل من تسليم طلبك. افتحه لمعرفة السبب.',
+  'order.notif.unknown.title': 'تحديث بخصوص توصيلتك',
+  'order.notif.unknown.body': 'افتحها لعرض التفاصيل.',
   'order.fav.load.failed': 'تعذّر التحميل.',
   'order.fav.unavailable': 'تعذّر تحميل مفضّليك.',
   'order.fav.unavailable.hint': 'مفضّلوك ما زالوا مسجّلين. أعد المحاولة بعد قليل.',
