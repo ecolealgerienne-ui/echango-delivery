@@ -73,9 +73,10 @@ publish() { # -> fleetbaseOrderId
   mapi POST "/commercant/commandes/$uuid/publier" >/dev/null
   echo "$uuid"; }
 
-# Identifiant de l'adhésion de D dans cette flotte (ou vide).
-membership_id() { fapi GET /flotte/adhesions | jq -r --arg d "$1" '[.[]? | select(.driver_uuid==$d)][0].id // empty'; }
-membership_status() { fapi GET /flotte/adhesions | jq -r --arg d "$1" '[.[]? | select(.driver_uuid==$d)][0].status // "none"'; }
+# Identifiant de l'adhésion de D dans cette flotte (ou vide). La liste est
+# enveloppée dans `{data:[…]}` — le contrat sert les collections ainsi.
+membership_id() { fapi GET /flotte/adhesions | jq -r --arg d "$1" '[(.data // [])[] | select(.driver_uuid==$d)][0].id // empty'; }
+membership_status() { fapi GET /flotte/adhesions | jq -r --arg d "$1" '[(.data // [])[] | select(.driver_uuid==$d)][0].status // "none"'; }
 
 echo "════════════════════════════════════════════════════════════════"
 echo "  Cycle de vie de l'appartenance — ce qu'un départ coupe"
