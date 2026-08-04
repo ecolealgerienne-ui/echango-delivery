@@ -66,6 +66,10 @@ SCENARIOS=(
   # ne consomme donc une inscription qu'à sa toute première exécution.
   test-wilaya
   test-multi-appartenance
+  # Le filtre wilaya CÔTÉ CONDUCTEUR : une course hors-wilaya lui est cachée,
+  # la bonne visible — dans les deux sens. test-wilaya prouve la persistance ;
+  # celui-ci prouve le filtre, conducteur connecté.
+  test-filtre-wilaya
   test-sorties-de-course
   # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
   # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).
