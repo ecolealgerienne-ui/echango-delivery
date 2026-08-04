@@ -94,6 +94,10 @@ SCENARIOS=(
   # ne réécrit pas le montant déjà déclaré (order.already_terminal). A trouvé un
   # vrai défaut — un 2000 réécrit à 0 en HTTP 2xx, silencieusement.
   test-double-cloture
+  # La tarification que le CONDUCTEUR voit, en VALEUR : price relayé, cod_amount
+  # = marchandise + course (ou marchandise seule si comprise), refus sans prix.
+  # test-frontiere-projection ne vérifie que la présence, jamais la valeur.
+  test-tarification-conducteur
   # La preuve de livraison : le propriétaire atteint le relais, l'intrus est
   # bloqué à l'ACCÈS (order.not_found), jamais à l'étape stockage. Couvre les
   # deux dernières routes à identifiant de la règle 12.
