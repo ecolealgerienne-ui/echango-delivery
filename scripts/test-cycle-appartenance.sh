@@ -57,11 +57,28 @@ dapi() { local m="$1" p="$2" b="${3:-}"
   else curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $D_TOKEN"; fi; }
 
 driver_of() { fb_get "/int/v1/orders/$1" | jq -r '(.order//.data//.).driver_assigned_uuid // "null"'; }
-# ⚠️ Cibler les courses de D par `?driver=` — comme `driverIsBusy` — et non les
-# 100 premières commandes globales : sur 500+ commandes, une course en cours de
-# D échappait au scan et le rendait « occupé » de façon fantôme.
-free_d() { for u in $(fb_get "/int/v1/orders?driver=$1&limit=100" | jq -r '[.orders[]? | select(.status|IN("completed","canceled","cancelled")|not)][].uuid'); do
-  fb_api PUT "/int/v1/orders/$u" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true; done; }
+# ⚠️ **La pagination `?driver=` de Fleetbase est INSTABLE** : sans tri stable,
+# deux `page=N` successives ne rendent pas le même sous-ensemble, et une course
+# `started` de D peut n'apparaître sur AUCUNE page prise isolément tout en
+# comptant contre elle dans `driverIsBusy` (qui balaie jusqu'à 50 pages). Un
+# `free_d` mono-page rendait donc D « occupé » de façon fantôme. On balaie donc
+# TOUTES les pages, et on répète le balayage : chaque annulation décale la
+# fenêtre et fait remonter ce qu'un passage avait raté.
+free_d() {
+  local round p uuids u remaining
+  for round in 1 2 3; do
+    remaining=0
+    for p in 1 2 3 4 5 6; do
+      uuids="$(fb_get "/int/v1/orders?driver=$1&limit=100&page=$p" \
+        | jq -r '[.orders[]? | select(.status != null and (.status|IN("completed","canceled","cancelled")|not))][].uuid')"
+      for u in $uuids; do
+        remaining=1
+        fb_api PUT "/int/v1/orders/$u" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true
+      done
+    done
+    [ "$remaining" -eq 0 ] && break
+  done
+}
 
 publish() { # -> fleetbaseOrderId
   local o uuid
