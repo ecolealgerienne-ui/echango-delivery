@@ -157,7 +157,7 @@ Le critère n'est pas « est-ce un littéral » — `maxLines: 1` décrit la nat
 
 ✅ **Traité le 31/07/2026, et tenu par deux vérificateurs exécutés** — parce qu'un chantier de centralisation sans garde n'est pas un chantier, c'est un instantané : il suffit d'un `EdgeInsets.all(16)` dans le prochain écran pour rouvrir la divergence que 308 remplacements viennent de fermer.
 
-- `lib/config/app_rules.dart` — `ServerRules` (copies de règles serveur, chacune nommant son fichier d'origine) et `AppRules` (décisions locales). `dart tool/check_server_rules.dart` **lit les deux fichiers et compare** ; `--self-test` l'éprouve sur 22 cas, dont toutes les formes de divergence qu'il doit refuser. ⚠️ Il ne couvre que les **bornes numériques**.
+- `lib/config/app_rules.dart` — `ServerRules` (copies de règles serveur, chacune nommant son fichier d'origine) et `AppRules` (décisions locales). `dart tool/check_server_rules.dart` **lit les deux fichiers et compare** ; `--self-test` l'éprouve sur 25 cas, dont toutes les formes de divergence qu'il doit refuser. ⚠️ Il lit les **bornes numériques** sous `@MinLength`, `@Min` et `@Max` (le décorateur est paramétré) — dont `CreateOrderDto.price`/`codAmount`, gardées côté formulaire depuis l'audit du 04/08/2026.
 - **Les listes fermées de codes** (motifs de refus, d'échec de livraison, d'écart d'encaissement) sont recopiées des deux côtés — le serveur les applique (`@IsIn`, `assertCollectedAmount`), l'app les propose. `dart tool/check_closed_lists.dart` **lit les six fichiers et compare les ENSEMBLES** (l'ordre est cosmétique) : un code en trop côté app est refusé en 400 par le serveur, un code manquant n'est jamais proposé — les deux sont des pannes silencieuses. `--self-test` sur 10 cas, **et prouvé par mutation du vrai fichier** (un code bidon ajouté → refusé). Trouvé par l'audit des écrans du 04/08/2026, seul garde qui manquait à ces trois listes.
 - `lib/theme/app_spacing.dart` — `AppSpacing`/`AppRadius`, barème sorti de la mesure et non d'une convention (six valeurs portaient 91 % des 339 occurrences). `dart tool/check_spacing.dart` **refuse** un littéral du barème et **recense** ceux qui n'en font pas partie, sans échouer : les faire converger déplacerait des pixels, c'est une décision de design.
 
@@ -367,7 +367,7 @@ Echango Delivery est backé par **Fleetbase** (self-hosted, AGPL-3.0) — un log
 ./scripts/test-appartenance.sh                  # la ressource de A refusée à B
 ./scripts/test-frontiere-projection.sh          # aucune commande Fleetbase brute ne sort
 flutter analyze && flutter test                 # 0 problème · 60 tests
-dart tool/check_*.dart [--self-test]            # 6 contrôles · 86 cas dont refus
+dart tool/check_*.dart [--self-test]            # 6 contrôles · 89 cas dont refus
 npm run build                                   # ⚠️ PAS seulement tsc --noEmit
 
 # les TROIS personas joués DANS l'application, sur émulateur (02/08/2026)

@@ -198,6 +198,13 @@ const Map<String, String> _fr = {
   'order.form.missing.dropoff_phone': 'le téléphone du destinataire',
   'order.form.missing.pickup_point': 'le point de retrait sur la carte',
   'order.form.missing.dropoff_point': 'le point de livraison sur la carte',
+  // Bornes reproduites du serveur (`ServerRules`) : dites ici, champ nommé,
+  // plutôt qu'attendues sous la forme d'un 400 générique.
+  'order.form.invalid.price_max': 'le prix ne peut pas dépasser {max}',
+  'order.form.invalid.cod_max':
+      'le montant à encaisser ne peut pas dépasser {max}',
+  'order.form.invalid.cod_min':
+      'un encaissement de 0 se saisit en laissant le champ vide',
   'order.form.saved':
       'Brouillon enregistré. Relisez-le puis publiez-le pour trouver un '
           'transporteur.',
@@ -670,6 +677,9 @@ const Map<String, String> _ar = {
   'order.form.missing.dropoff_phone': 'هاتف المرسل إليه',
   'order.form.missing.pickup_point': 'نقطة الاستلام على الخريطة',
   'order.form.missing.dropoff_point': 'نقطة التسليم على الخريطة',
+  'order.form.invalid.price_max': 'لا يمكن أن يتجاوز السعر {max}',
+  'order.form.invalid.cod_max': 'لا يمكن أن يتجاوز المبلغ المطلوب تحصيله {max}',
+  'order.form.invalid.cod_min': 'مبلغ تحصيل قدره 0 يُدخَل بترك الحقل فارغًا',
   'order.form.saved':
       'حُفظت المسودة. راجعها ثم انشرها للعثور على ناقل.',
   'order.form.failed': 'تعذّر الإنشاء',

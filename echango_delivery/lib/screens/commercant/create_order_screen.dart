@@ -388,6 +388,26 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return;
     }
 
+    // Bornes serveur reproduites (`ServerRules`, vérifiées par
+    // `check_server_rules.dart`) : un dépassement partirait et reviendrait en 400
+    // générique ne nommant AUCUN champ. On le dit ici, champ nommé, avant
+    // l'aller-retour (règle 7). Le `codAmount` n'est contrôlé que si
+    // l'encaissement est activé — c'est la seule branche qui l'envoie.
+    final price = double.tryParse(_price.text.trim());
+    final cod = _cashOnDelivery ? double.tryParse(_codAmount.text.trim()) : null;
+    final invalid = <String>[
+      if (price != null && price > ServerRules.orderPriceMax)
+        _t('order.form.invalid.price_max', {'max': '${ServerRules.orderPriceMax}'}),
+      if (cod != null && cod > ServerRules.codAmountMax)
+        _t('order.form.invalid.cod_max', {'max': '${ServerRules.codAmountMax}'}),
+      if (cod != null && cod < ServerRules.codAmountMin)
+        _t('order.form.invalid.cod_min'),
+    ];
+    if (invalid.isNotEmpty) {
+      showAppError(context, invalid.join(_t('order.form.missing.separator')));
+      return;
+    }
+
     final router = GoRouter.of(context);
 
     final orderId = await orderState.createOrder({

@@ -76,7 +76,12 @@ class _Mirror {
     required this.family,
     required this.field,
     required this.what,
+    this.decorator = 'MinLength',
   });
+
+  /// Le décorateur qui porte la borne : `MinLength` (défaut), `Min`, `Max`.
+  /// Une même valeur numérique se lit de la même façon sous chacun.
+  final String decorator;
 
   /// Nom de la constante dans `lib/config/app_rules.dart`.
   final String constant;
@@ -133,6 +138,38 @@ const _mirrors = <_Mirror>[
     field: 'password',
     what: 'longueur minimale d’un mot de passe',
   ),
+  // ⚠️ **Famille `CreateOrderDto` EXACTE, et non `\w*OrderDto`.** Le même fichier
+  // porte `OrderItemDto` et `ListOrdersQueryDto`, qui ont aussi des `@Min`/`@Max`
+  // — mais sur `quantity`/`page`/`limit`, pas sur `price`/`codAmount`. Les
+  // inclure dans la famille ferait échouer le contrôle sur des classes qui n'ont
+  // légitimement pas ces champs (même piège que `ReverseGeocodeQueryDto`).
+  _Mirror(
+    constant: 'orderPriceMax',
+    serverFile: 'backend/bff/src/commercant/dto/create-order.dto.ts',
+    classes: {'CreateOrderDto'},
+    family: 'CreateOrderDto',
+    field: 'price',
+    what: 'prix maximal d’une course',
+    decorator: 'Max',
+  ),
+  _Mirror(
+    constant: 'codAmountMin',
+    serverFile: 'backend/bff/src/commercant/dto/create-order.dto.ts',
+    classes: {'CreateOrderDto'},
+    family: 'CreateOrderDto',
+    field: 'codAmount',
+    what: 'montant minimal à encaisser',
+    decorator: 'Min',
+  ),
+  _Mirror(
+    constant: 'codAmountMax',
+    serverFile: 'backend/bff/src/commercant/dto/create-order.dto.ts',
+    classes: {'CreateOrderDto'},
+    family: 'CreateOrderDto',
+    field: 'codAmount',
+    what: 'montant maximal à encaisser',
+    decorator: 'Max',
+  ),
 ];
 
 /// Une constante exportée du BFF, reproduite côté app.
@@ -185,7 +222,12 @@ final _fieldPattern = RegExp(r'^ {2}(?:readonly +)?(\w+)[?!]? *: *\w',
     multiLine: true);
 // `\s*` après la parenthèse : `@MinLength( 8 )` est du TypeScript valide, et un
 // formateur peut l'écrire ainsi.
-final _minLengthPattern = RegExp(r'@MinLength\(\s*(\d+)');
+//
+// ⚠️ Le décorateur est PARAMÉTRÉ (`MinLength`, `Min`, `Max`) : les bornes
+// numériques se lisent toutes ainsi. `@Min\(` ne matche PAS `@MinLength\(` — le
+// caractère qui suit `Min` y est `L`, pas `(`. Et `@Min\(\s*(\d+)` capture bien
+// le nombre d'un `@Min(1, { message: … })`, virgule et objet ignorés.
+RegExp _decoPattern(String deco) => RegExp('@$deco\\(\\s*(\\d+)');
 final _commentPattern = RegExp(r'//[^\n]*|/\*[\s\S]*?\*/');
 final _notNewline = RegExp(r'[^\n]');
 
@@ -208,7 +250,9 @@ String _stripComments(String source) => source.replaceAllMapped(
   String rawSource,
   Set<String> classes,
   String field,
+  String deco,
 ) {
+  final pattern = _decoPattern(deco);
   final source = _stripComments(rawSource);
   final marks = _classPattern
       .allMatches(source)
@@ -235,7 +279,7 @@ String _stripComments(String source) => source.replaceAllMapped(
       // celui-ci. Sans cette borne, un champ sans contrainte hériterait de
       // celle du voisin.
       final block = body.substring(j > 0 ? decls[j - 1].end : 0, decls[j].start);
-      final hits = _minLengthPattern.allMatches(block).toList();
+      final hits = pattern.allMatches(block).toList();
       values.add(hits.isEmpty ? null : int.parse(hits.last.group(1)!));
     }
     if (found) fields++;
@@ -276,8 +320,9 @@ class _Fixture {
     this.classes,
     this.expectedClasses,
     this.expectedFields,
-    this.expectedValues,
-  );
+    this.expectedValues, [
+    this.deco = 'MinLength',
+  ]);
 
   final String name;
   final String source;
@@ -285,6 +330,7 @@ class _Fixture {
   final int expectedClasses;
   final int expectedFields;
   final Set<int?> expectedValues;
+  final String deco;
 }
 
 const _fixtures = <_Fixture>[
@@ -412,6 +458,30 @@ export class ADto {
   q: string;
 }
 ''', {'ADto'}, 1, 1, {null}),
+  // Bornes numériques : le décorateur est paramétré (`Min`, `Max`).
+  _Fixture('décorateur @Max', '''
+export class ADto {
+  @Min(0)
+  @Max(500000)
+  q: number;
+}
+''', {'ADto'}, 1, 1, {500000}, 'Max'),
+  _Fixture('décorateur @Min avec message', '''
+export class ADto {
+  @Min(1, { message: 'laissez vide' })
+  @Max(500000)
+  q: number;
+}
+''', {'ADto'}, 1, 1, {1}, 'Min'),
+  // ⚠️ `@Min` ne doit PAS ramasser le `@Min` de `@MinLength` : ici le champ
+  // porte les deux, et lire `Min` doit rendre 1, jamais 3.
+  _Fixture('@Min ne matche pas @MinLength', '''
+export class ADto {
+  @MinLength(3)
+  @Min(1)
+  q: string;
+}
+''', {'ADto'}, 1, 1, {1}, 'Min'),
 ];
 
 /// La famille, éprouvée elle aussi : elle doit voir l'ajout qu'elle est censée
@@ -484,7 +554,7 @@ const _constFixtures =
 bool _selfTest() {
   var ok = true;
   for (final f in _fixtures) {
-    final r = _constraintsOf(f.source, f.classes, 'q');
+    final r = _constraintsOf(f.source, f.classes, 'q', f.deco);
     final match = r.classesSeen == f.expectedClasses &&
         r.fieldsSeen == f.expectedFields &&
         r.values.length == f.expectedValues.length &&
@@ -568,7 +638,7 @@ void main(List<String> args) {
       continue;
     }
 
-    final result = _constraintsOf(source, mirror.classes, mirror.field);
+    final result = _constraintsOf(source, mirror.classes, mirror.field, mirror.decorator);
 
     if (result.classesSeen != mirror.classes.length) {
       fail('${mirror.constant} : ${result.classesSeen} classe(s) trouvée(s) sur '
