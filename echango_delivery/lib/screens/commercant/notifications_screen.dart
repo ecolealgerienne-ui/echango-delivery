@@ -151,6 +151,11 @@ class _NotificationTile extends StatelessWidget {
       'order.released' => 'order.notif.released.$part',
       'order.completed' => 'order.notif.completed.$part',
       'order.canceled' => 'order.notif.canceled.$part',
+      // ⚠️ Le corps est GÉNÉRIQUE, pas le motif d'échec. Le serveur le baque
+      // dans son `body` français sans `data.reason` : le relayer laisserait un
+      // arabophone lire du français (règle 4). Le motif détaillé vit sur la
+      // fiche de la commande — que le commerçant ouvre en touchant la notif.
+      'order.failed' => 'order.notif.failed.$part',
       _ => null,
     };
     if (key == null) return null;
