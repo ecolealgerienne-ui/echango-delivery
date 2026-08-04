@@ -79,6 +79,10 @@ SCENARIOS=(
   # ⚠️ Concurrence : deux acceptations SIMULTANÉES, un seul gagnant. Probabiliste
   # (plusieurs tours) — un banc de course qui « passe » une fois ne prouve rien.
   test-concurrence-acceptation
+  # Les fenêtres de PERTE D'ÉCRITURE : N acteurs, une liste, en parallèle ⇒ N
+  # survivants. Garde le verrou par ressource (favoris, declines) — avant lui,
+  # 2/6 et 1/2. Sérialisation en-processus déterministe, donc N/N assertable.
+  test-concurrence-fenetres
   # Les bords de l'argent à la porte : les trois refus du tiroir, puis la
   # livrée muette qui remonte comme « à déclarer ». Contrôle qui dit non (règle 8).
   test-bords-argent

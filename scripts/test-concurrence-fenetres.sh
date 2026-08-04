@@ -51,11 +51,21 @@
 # chose. Puis la mesure parallèle, sur ROUNDS tours (un banc de concurrence est
 # probabiliste : un tour peut être sérialisé par le réseau et ne rien perdre).
 #
-# ⚠️ **Ce banc est un INSTRUMENT, pas une garde de non-régression.** Les fenêtres
-# sont ouvertes AUJOURD'HUI : il RAPPORTE la réalité mesurée (« fenêtre réelle »
-# ou « non observée »), il ne prétend pas qu'elles sont fermées. Il n'est donc
-# PAS dans `run-all-scenarios.sh` : il perd délibérément de la donnée à chaque
-# tour, et sa réponse se lit une fois, puis se consigne dans `status_v1.md`.
+# ── D'un instrument de mesure à une GARDE (04/08/2026) ────────────────────────
+#
+# La première version de ce banc était un instrument : il RAPPORTAIT la perte
+# (favoris 2/6, declines 1/2), sans prétendre que les fenêtres étaient fermées.
+# Elles le sont désormais — `ResourceLockService` sérialise les sections
+# critiques et relit la ressource dans le verrou. Le mutex étant en-processus et
+# total, N/N est **déterministe**, pas probabiliste : ce banc peut donc ASSERTER
+# la fermeture (sortie 1 si un seul tour perd une écriture), et il entre dans
+# `run-all-scenarios.sh`.
+#
+# ⚠️ **Il sait refuser (règle 8), et la preuve est datée.** Avant le verrou, la
+# mesure était 2/6 (favoris) et min 1/2 (declines) — exactement ce que
+# l'assertion N/N ci-dessous refuse. Retirer le verrou de `appendToOrderList` ou
+# de `MerchantFavouritesService.add` fait donc repasser ce banc au ROUGE. Le
+# retrait du verrou EST la mutation qui l'éprouve.
 #
 # ── Usage ─────────────────────────────────────────────────────────────────────
 #
@@ -152,26 +162,22 @@ seq_favs="$(count_favs_present)"
 [ "$seq_favs" -eq "$FANOUT" ] || fail "TÉMOIN faux : $FANOUT ajouts séquentiels, $seq_favs survivants (ajout ou comptage cassé)"
 pass "Séquentiel : $seq_favs/$FANOUT — l'ajout ET le comptage marchent"
 
-step "Fenêtre A — MESURE : $FANOUT ajouts EN PARALLÈLE, sur $ROUNDS tours"
-min_favs="$FANOUT"; lost_rounds_a=0
+step "Fenêtre A — GARDE : $FANOUT ajouts EN PARALLÈLE ⇒ $FANOUT survivants, sur $ROUNDS tours"
 for r in $(seq 1 "$ROUNDS"); do
   clean_favs
   i=0
   for u in "${FAV_UUIDS[@]}"; do add_fav "$u" "/tmp/fav_$i" & i=$((i+1)); done
   wait
   survivors="$(count_favs_present)"
-  [ "$survivors" -ge 1 ] && [ "$survivors" -le "$FANOUT" ] \
-    || fail "Tour $r : $survivors survivants hors [1..$FANOUT] — comptage ou route incohérents"
-  [ "$survivors" -lt "$min_favs" ] && min_favs="$survivors"
-  [ "$survivors" -lt "$FANOUT" ] && lost_rounds_a=$((lost_rounds_a+1))
+  [ "$survivors" -le "$FANOUT" ] \
+    || fail "Tour $r : $survivors > $FANOUT survivants — comptage ou route incohérents"
+  [ "$survivors" -eq "$FANOUT" ] \
+    || fail "Tour $r : $survivors/$FANOUT — PERTE D'ÉCRITURE : le verrou favoris a régressé" \
+       "avant le verrou : 2/$FANOUT à chaque tour — c'est ce que cette garde empêche de revenir"
   echo "   tour $r : $survivors/$FANOUT favoris survivants"
 done
 clean_favs
-if [ "$min_favs" -lt "$FANOUT" ]; then
-  VERDICT_A="⚠️  FENÊTRE RÉELLE — perte d'écriture favoris CONSTATÉE : min $min_favs/$FANOUT, sur $lost_rounds_a/$ROUNDS tours"
-else
-  VERDICT_A="non observée sur $ROUNDS tours à $FANOUT en parallèle (toujours $FANOUT/$FANOUT)"
-fi
+VERDICT_A="fermée — $FANOUT/$FANOUT sur $ROUNDS tours (verrou tenu sous concurrence)"
 echo "   → $VERDICT_A"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,8 +254,7 @@ seq_dec="$(count_declines "$C")"
   "commande $C — si 0, la lecture des declines chez Fleetbase est à revoir"
 pass "Séquentiel : 2/2 refus enregistrés — l'append ET le comptage marchent"
 
-step "Fenêtre B — MESURE : deux refus EN PARALLÈLE, sur $ROUNDS tours"
-min_dec=2; lost_rounds_b=0
+step "Fenêtre B — GARDE : deux refus EN PARALLÈLE ⇒ 2 enregistrés, sur $ROUNDS tours"
 for r in $(seq 1 "$ROUNDS"); do
   free_driver "$X_UUID"; free_driver "$Y_UUID"
   C="$(publish_broadcast)"; [[ "$C" == ERR:* ]] && fail "Publication (tour $r)" "$C"
@@ -258,25 +263,22 @@ for r in $(seq 1 "$ROUNDS"); do
   wait
   px="$(cat /tmp/dec_px.code)"; py="$(cat /tmp/dec_py.code)"
   survivors="$(count_declines "$C")"
-  [ "$survivors" -ge 1 ] && [ "$survivors" -le 2 ] \
-    || fail "Tour $r : $survivors refus hors [1..2] — comptage ou route incohérents" "X→$px Y→$py commande $C"
-  [ "$survivors" -lt "$min_dec" ] && min_dec="$survivors"
-  [ "$survivors" -lt 2 ] && lost_rounds_b=$((lost_rounds_b+1))
+  [ "$survivors" -le 2 ] \
+    || fail "Tour $r : $survivors > 2 refus — comptage ou route incohérents" "X→$px Y→$py commande $C"
+  [ "$survivors" -eq 2 ] \
+    || fail "Tour $r : $survivors/2 — PERTE D'ÉCRITURE : le verrou declines a régressé" \
+       "avant le verrou : min 1/2 — c'est ce que cette garde empêche de revenir (X→$px Y→$py commande $C)"
   echo "   tour $r : X→$px Y→$py | $survivors/2 refus enregistrés"
 done
-if [ "$min_dec" -lt 2 ]; then
-  VERDICT_B="⚠️  FENÊTRE RÉELLE — perte d'écriture declines CONSTATÉE : min $min_dec/2, sur $lost_rounds_b/$ROUNDS tours"
-else
-  VERDICT_B="non observée sur $ROUNDS tours (toujours 2/2)"
-fi
+VERDICT_B="fermée — 2/2 sur $ROUNDS tours (verrou tenu sous concurrence)"
 echo "   → $VERDICT_B"
 
 echo
 echo "════════════════════════════════════════════════════════════════"
-echo "  MESURE DES FENÊTRES DE PERTE D'ÉCRITURE"
+echo "  GARDE DES FENÊTRES DE PERTE D'ÉCRITURE — les deux TENUES"
 echo "  favoris   : $VERDICT_A"
 echo "  declines  : $VERDICT_B"
 echo "════════════════════════════════════════════════════════════════"
-echo "  Témoins séquentiels tenus (N/N) : le comptage sait dire N,"
-echo "  donc une mesure parallèle < N veut dire quelque chose."
+echo "  Témoins séquentiels N/N + concurrence N/N. Retirer le verrou"
+echo "  fait repasser au rouge (avant : favoris 2/6, declines 1/2)."
 echo "════════════════════════════════════════════════════════════════"
