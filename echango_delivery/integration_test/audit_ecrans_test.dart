@@ -26,6 +26,7 @@ import 'package:provider/provider.dart';
 import 'package:echango_delivery/main.dart' as app;
 import 'package:echango_delivery/i18n/order_strings.dart';
 import 'package:echango_delivery/state/locale_state.dart';
+import 'package:echango_delivery/widgets/section_card.dart';
 
 import 'harness.dart';
 
@@ -163,6 +164,146 @@ void main() {
         reason:
             'écarter une opportunité diffusée ne doit PAS afficher le message '
             'd’une course rendue au réseau');
+  });
+
+  testWidgets(
+      'conducteur — la zone (wilaya + rayon) fait l’aller-retour serveur',
+      (tester) async {
+    requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+
+    // La zone vit sur le PROFIL — la barre du bas (pas les onglets), icône
+    // « person ». Un filtre RETIRE des courses : mal réglé il fait croire à une
+    // panne, d'où l'aller-retour qui prouve qu'il persiste vraiment.
+    await tapVisible(tester, find.byIcon(Icons.person));
+
+    // Tout est scopé à la carte de zone, reconnue par l'icône du champ wilaya
+    // (unique sur le profil) : le profil porte d'autres AppSectionCard (véhicule)
+    // et d'autres FilledButton (déconnexion).
+    final wilayaIcon = find.byIcon(Icons.map_outlined);
+    await pumpUntil(tester, wilayaIcon,
+        reason: 'la carte de zone sur le profil',
+        onTimeout: 'profil : ${visibleTexts()}');
+    final wilayaField =
+        find.ancestor(of: wilayaIcon, matching: find.byType(TextField));
+    final radiusField = find.ancestor(
+        of: find.byIcon(Icons.social_distance_outlined),
+        matching: find.byType(TextField));
+    final zoneCard =
+        find.ancestor(of: wilayaIcon, matching: find.byType(AppSectionCard));
+
+    await tester.ensureVisible(wilayaField);
+    await tester.enterText(wilayaField, 'Blida');
+    await tester.enterText(radiusField, '20');
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Le seul FilledButton de la carte de zone : « enregistrer ».
+    await tapVisible(
+        tester, find.descendant(of: zoneCard, matching: find.byType(FilledButton)));
+
+    // Le serveur a le dernier mot : l'état affiché RELIT sa réponse. « Blida » à
+    // l'écran prouve qu'il l'a accepté, pas seulement que le champ a été rempli.
+    await pumpUntil(tester, find.textContaining('Blida'),
+        reason: 'l’état de zone reflète Blida après enregistrement',
+        onTimeout: 'zone : ${visibleTexts(40)}');
+
+    // ── L'aller-retour ───────────────────────────────────────────────────────
+    // Quitter le profil et y revenir reconstruit la carte, qui RELIT la zone
+    // depuis le serveur (getZone à l'initState). « Blida » toujours là = le
+    // serveur l'a persistée, ce n'est pas un simple écho du champ.
+    await tapVisible(tester, find.byIcon(Icons.list)); // onglet « Commandes »
+    await tester.pump(const Duration(milliseconds: 400));
+    await tapVisible(tester, find.byIcon(Icons.person)); // retour au profil
+    await pumpUntil(tester, find.textContaining('Blida'),
+        reason: 'la wilaya rechargée depuis le serveur (aller-retour)',
+        onTimeout:
+            'profil : ${visibleTexts(40)} — la zone n’a pas survécu au '
+            'rechargement, le serveur ne l’a pas persistée');
+
+    // ── Nettoyage ET preuve du retrait ───────────────────────────────────────
+    // Sans zone, les autres parcours voient TOUTES les opportunités : ce test
+    // doit repartir filtre vide. Le bouton « retirer » n'existe que si une zone
+    // est posée — sa disparition prouve le retrait.
+    final zoneCard2 =
+        find.ancestor(of: find.byIcon(Icons.map_outlined), matching: find.byType(AppSectionCard));
+    final clear =
+        find.descendant(of: zoneCard2, matching: find.byType(OutlinedButton));
+    await pumpUntil(tester, clear,
+        reason: 'le bouton « retirer » (une zone est posée)',
+        onTimeout: 'zone : ${visibleTexts(40)}');
+    await tapVisible(tester, clear);
+    await pumpUntilGone(tester, clear,
+        reason: 'le bouton « retirer » disparaît une fois la zone retirée',
+        onTimeout: 'zone : ${visibleTexts(40)}');
+  });
+
+  testWidgets(
+      'entreprise — réclamer une opportunité puis affecter un conducteur',
+      (tester) async {
+    requireCredentials({'TEST_FLEET_EMAIL': fleetEmail});
+    app.main();
+    await loginAs(tester, email: fleetEmail, home: Home.fleet);
+
+    // ── Réclamer une opportunité (onglet « Courses libres ») ─────────────────
+    await openTab(tester, 1);
+    // ⚠️ `hitTestable` : l'accueil entreprise a quatre onglets et le TabBarView
+    // les construit tous — mais seul l'onglet visible est FRAPPABLE. C'est ainsi
+    // qu'on ne désigne que la liste qu'on regarde, sans la confondre avec les
+    // ListTile des trois autres onglets (ni, plus tard, avec la fiche par-dessus).
+    final opp = find.byType(ListTile).hitTestable();
+    await pumpUntil(tester, opp,
+        reason: 'des opportunités à réclamer',
+        onTimeout:
+            'liste : ${visibleTexts()} — relancer scripts/provision-app-parcours.sh');
+    await tapVisible(tester, opp.first); // ouvre le détail de l'opportunité
+
+    // La fiche d'opportunité n'a qu'une action : « Prendre cette course ».
+    // `hitTestable` la borne à la fiche par-dessus l'accueil resté dans l'arbre.
+    final claim = find.byType(FilledButton).hitTestable();
+    await pumpUntil(tester, claim,
+        reason: 'le bouton « prendre cette course »',
+        onTimeout: 'fiche : ${visibleTexts()}');
+    await tapVisible(tester, claim.first);
+
+    // ── Affecter un conducteur (onglet « Mes courses ») ──────────────────────
+    // La prise ramène à l'accueil. Le décor a VIDÉ « Mes courses » : la course
+    // qu'on vient de réclamer y est donc seule.
+    await pumpUntil(tester, find.byType(Tab),
+        reason: 'retour à l’accueil entreprise après la prise',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+    await openTab(tester, 0);
+    final mine = find.byType(ListTile).hitTestable();
+    await pumpUntil(tester, mine,
+        reason: 'la course réclamée dans « Mes courses »',
+        onTimeout:
+            'liste : ${visibleTexts(40)} — la prise a-t-elle abouti ? '
+            'relancer scripts/provision-app-parcours.sh');
+    await tapVisible(tester, mine.first); // ouvre le détail de la course réclamée
+
+    // « Désigner un conducteur » porte une icône (person_add_alt), indépendante
+    // de la langue.
+    final assign = find.byIcon(Icons.person_add_alt).hitTestable();
+    await pumpUntil(tester, assign,
+        reason: 'le bouton « désigner un conducteur »',
+        onTimeout: 'fiche : ${visibleTexts(40)}');
+    await tapVisible(tester, assign.first);
+
+    // Le tiroir de choix : on désigne le conducteur que le décor a rattaché à
+    // l'entreprise, reconnu par son NOM (donnée du décor, pas un libellé traduit).
+    final chosen = find.descendant(
+        of: find.byType(BottomSheet), matching: rowContaining(fleetDriverName));
+    await pumpUntil(tester, chosen,
+        reason: 'le conducteur de flotte dans le tiroir de choix',
+        onTimeout: 'tiroir : ${visibleTexts(40)}');
+    await tapVisible(tester, chosen.first);
+
+    // Affectation réussie : une course AVEC conducteur n'a plus de barre
+    // d'action, donc le bouton « désigner » disparaît de la fiche (rechargée par
+    // le state après l'affectation). Sa disparition est la preuve.
+    await pumpUntilGone(tester, find.byIcon(Icons.person_add_alt),
+        reason: 'le bouton « désigner » disparaît une fois le conducteur affecté',
+        onTimeout: 'fiche : ${visibleTexts(40)}');
   });
 }
 
