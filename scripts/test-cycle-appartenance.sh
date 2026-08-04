@@ -57,7 +57,10 @@ dapi() { local m="$1" p="$2" b="${3:-}"
   else curl -sS -X "$m" "$BFF_URL$p" -H "Authorization: Bearer $D_TOKEN"; fi; }
 
 driver_of() { fb_get "/int/v1/orders/$1" | jq -r '(.order//.data//.).driver_assigned_uuid // "null"'; }
-free_d() { for u in $(fb_get "/int/v1/orders?limit=100" | jq -r --arg d "$1" '[.orders[]? | select(.driver_assigned_uuid==$d and (.status|IN("completed","canceled","cancelled")|not))][].uuid'); do
+# ⚠️ Cibler les courses de D par `?driver=` — comme `driverIsBusy` — et non les
+# 100 premières commandes globales : sur 500+ commandes, une course en cours de
+# D échappait au scan et le rendait « occupé » de façon fantôme.
+free_d() { for u in $(fb_get "/int/v1/orders?driver=$1&limit=100" | jq -r '[.orders[]? | select(.status|IN("completed","canceled","cancelled")|not)][].uuid'); do
   fb_api PUT "/int/v1/orders/$u" '{"order":{"status":"canceled","driver_assigned_uuid":null}}' >/dev/null 2>&1 || true; done; }
 
 publish() { # -> fleetbaseOrderId
