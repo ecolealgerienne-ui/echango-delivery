@@ -82,6 +82,10 @@ SCENARIOS=(
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
   test-refus-favori-pool
+  # Compensation de publication : dispatch échoué (étape 2) → l'étape 1 est
+  # RÉTRACTÉE (adhoc=false), la course reste republiable et ne circule pas.
+  # Échec injecté de façon déterministe (dispatched=true, statut created).
+  test-compensation-publication
   # Le filtre véhicule isolé : on bascule le véhicule du conducteur, tout le
   # reste fixe. moto ne voit pas « utilitaire », utilitaire oui, voiture non.
   test-filtre-vehicule
