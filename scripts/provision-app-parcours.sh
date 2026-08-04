@@ -573,6 +573,54 @@ else
     "la course « encaissement exact » n'est pas dans le seau adhoc — décor incohérent"
 fi
 
+# ── Course CONFIÉE au conducteur (favori sollicité) ─────────────────────────
+#
+# ⚠️ **Le seul décor d'où part le geste « rendre ».** Refuser une opportunité
+# DIFFUSÉE l'écarte pour ce conducteur (`releasedToPool:false`, « écartée ») ;
+# RENDRE une course qu'on lui a CONFIÉE la renvoie au réseau
+# (`releasedToPool:true`, « rendue au réseau ») et prévient le commerçant. Même
+# bouton, même tiroir — seul le MESSAGE change, et c'est cette distinction que
+# l'écran doit porter. Elle exige une course assignée à CE conducteur, en
+# attente (`dispatched`), non démarrée : elle apparaît alors dans « En cours »
+# avec le bouton « Rendre ». Prix distinctif pour la reconnaître ; le nom du
+# destinataire, lui, est visible (course confiée = projection pleine).
+step "Course confiée au conducteur"
+
+CONFIDED_FEE="${CONFIDED_FEE:-4444}"
+
+# Le conducteur doit être favori du commerçant pour qu'on puisse lui cibler une
+# course. Idempotent : déjà favori répond sans erreur.
+mapi POST /commercant/transporteurs/favoris \
+  "$(jq -n --arg u "$DRIVER_UUID" '{fleetbaseDriverUuid:$u, partyType:"driver"}')" >/dev/null 2>&1 || true
+
+# Réutilise une course déjà confiée à ce prix ; en crée une sinon. ⚠️ Une
+# course RENDUE lors d'un run précédent est repartie au pool (driver null,
+# adhoc=true) : elle ne compte donc plus comme confiée, et une nouvelle est
+# créée — le test retrouve toujours une course à rendre.
+confided="$(dapi GET '/transporteur/commandes' \
+  | jq -r --argjson f "$CONFIDED_FEE" 'first((.active // [])[]?
+       | select((.meta.price // .price) == $f)
+       | select((.driver_assigned_uuid // .driver_uuid) != null))
+       | (.public_id // .id // empty)' 2>/dev/null || true)"
+if [ -n "$confided" ] && [ "$confided" != "null" ]; then
+  info "course confiée (prix $CONFIDED_FEE) déjà disponible"
+else
+  body="$(jq -n --arg t "$DRIVER_UUID" --argjson fee "$CONFIDED_FEE" '{
+    pickupLocationName: "Dépôt Confié", pickupLatitude: 36.7538, pickupLongitude: 3.0588,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: "Client Confié", dropoffLatitude: 36.7500, dropoffLongitude: 3.0600,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Alger", pickupProvince: "Alger",
+    dropoffCity: "Alger", dropoffProvince: "Alger",
+    items: [{description: "colis", quantity: 1}],
+    price: $fee, podMethod: "aucune", targetFavouriteUuid: $t }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création de la course confiée refusée" "$out"
+  [ -n "$(jq -r '.fleetbaseOrderId // empty' <<<"$out")" ] \
+    || fail "Course confiée créée sans identifiant Fleetbase" "$out"
+  pass "Course confiée au conducteur — prix $CONFIDED_FEE"
+fi
+
 # ── 6. Ce qu'il faut à `flutter drive` ──────────────────────────────────────
 
 step "Prêt"
@@ -592,7 +640,8 @@ cat <<CMD
     --dart-define=TEST_DROPOFF_NAME="$DROPOFF_NAME" \\
     --dart-define=TEST_COD_AMOUNT=$COD_AMOUNT \\
     --dart-define=TEST_COD_FEE=$COD_FEE \\
-    --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE
+    --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE \\
+    --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"

@@ -52,6 +52,16 @@ const String codFee =
 const String codGapFee =
     String.fromEnvironment('TEST_COD_GAP_FEE', defaultValue: '888');
 
+/// Le **prix distinctif** de la course CONFIÉE au conducteur (favori sollicité).
+///
+/// C'est la seule course du décor assignée à ce conducteur sans être démarrée —
+/// donc la seule qu'il puisse « rendre » — et son prix la distingue des autres
+/// courses en cours, exactement comme [codFee] distingue la course à encaisser
+/// parmi les opportunités. Posée par `scripts/provision-app-parcours.sh` via
+/// une création ciblée (`targetFavouriteUuid`).
+const String confidedFee =
+    String.fromEnvironment('TEST_CONFIDED_FEE', defaultValue: '4444');
+
 /// Trouve la ligne d'une liste dont un texte contient [needle], casse ignorée.
 ///
 /// ⚠️ Casse ignorée parce que **Fleetbase rend les noms de lieux en
