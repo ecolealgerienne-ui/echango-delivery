@@ -5,6 +5,7 @@ import { CommerçantService } from './commercant.service';
 import { Persona } from '../common/decorators/persona.decorator';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { RedirectOrderDto } from './dto/redirect-order.dto';
+import { UpdateOrderPositionDto } from './dto/update-order-position.dto';
 import { SaveAddressDto } from './dto/address.dto';
 import { GeocodeQueryDto, ReverseGeocodeQueryDto } from './dto/geocode.dto';
 import { AddFavouriteDto } from './dto/favourite.dto';
@@ -186,6 +187,25 @@ export class CommerçantController {
     @Body() dto: RedirectOrderDto,
   ) {
     return this.commercantService.redirectOrder(req.user.id, orderId, dto);
+  }
+
+  /**
+   * Corrige le point de dépose d'une commande déjà créée — typiquement depuis
+   * une fiche client mise à jour après coup
+   * (`docs/specs_localisation_client_et_optimisation_parcours.md` §1.6).
+   */
+  @Post('commandes/:id/position')
+  async updateOrderPosition(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) orderId: string,
+    @Body() dto: UpdateOrderPositionDto,
+  ) {
+    return this.commercantService.updateOrderDropoffPosition(
+      req.user.id,
+      orderId,
+      dto.latitude,
+      dto.longitude,
+    );
   }
 
   /**

@@ -110,6 +110,8 @@ const Map<String, String> _fr = {
       'Cette course a déjà été prise — impossible de la rediriger.',
   'order.optimize_no_reference_point':
       'Le point de dépose de cette course est inconnu — impossible de chercher à proximité.',
+  'order.position_update_failed':
+      'Impossible de mettre à jour la position de dépose.',
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   'driver.not_found': 'Transporteur introuvable.',
@@ -154,6 +156,16 @@ const Map<String, String> _fr = {
 
   // ── Géocodage ────────────────────────────────────────────────────────────
   'geocoding.unavailable': 'Recherche d\'adresse indisponible.',
+
+  // ── Fiche client géolocalisée ────────────────────────────────────────────
+  'client.phone_invalid': 'Numéro de téléphone invalide.',
+  'client.link_not_found': 'Ce lien de localisation est introuvable.',
+  'client.link_expired': 'Ce lien de localisation a expiré.',
+  'client.link_already_used': 'Ce lien de localisation a déjà été utilisé.',
+  'client.link_generate_failed':
+      'Génération du lien de localisation impossible.',
+  'client.no_pending_submission':
+      'Aucune nouvelle position en attente pour ce numéro.',
 
   // ── Validation générique ─────────────────────────────────────────────────
   'validation.invalid_id': 'Identifiant invalide.',
@@ -267,6 +279,7 @@ const Map<String, String> _ar = {
   'order.redirect_not_allowed': 'تمّ أخذ هذه المهمة — لا يمكن إعادة توجيهها.',
   'order.optimize_no_reference_point':
       'نقطة تسليم هذه المهمة غير معروفة — يتعذّر البحث بالقرب منها.',
+  'order.position_update_failed': 'تعذر تحديث موقع التسليم.',
 
   // ── السائقون ──────────────────────────────────────────────────────────────
   'driver.not_found': 'السائق غير موجود.',
@@ -309,6 +322,14 @@ const Map<String, String> _ar = {
 
   // ── تحديد المواقع ─────────────────────────────────────────────────────────
   'geocoding.unavailable': 'البحث عن العنوان غير متاح.',
+
+  // ── بطاقة الزبون الجغرافية ────────────────────────────────────────────────
+  'client.phone_invalid': 'رقم الهاتف غير صالح.',
+  'client.link_not_found': 'رابط تحديد الموقع هذا غير موجود.',
+  'client.link_expired': 'انتهت صلاحية رابط تحديد الموقع هذا.',
+  'client.link_already_used': 'تم استخدام رابط تحديد الموقع هذا بالفعل.',
+  'client.link_generate_failed': 'تعذر إنشاء رابط تحديد الموقع.',
+  'client.no_pending_submission': 'لا يوجد موقع جديد بانتظار التأكيد لهذا الرقم.',
 
   // ── التحقق من الصحة ───────────────────────────────────────────────────────
   'validation.invalid_id': 'معرّف غير صالح.',

@@ -499,6 +499,25 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Corrige le point d'un `Place` déjà créé (PUT `/places/:uuid`).
+   *
+   * Sert à `docs/specs_localisation_client_et_optimisation_parcours.md` §1.6 :
+   * une fiche client mise à jour après coup doit pouvoir corriger le point de
+   * dépose d'une commande déjà créée. `dropoff_uuid`/`pickup_uuid` référencent
+   * un `Place` séparé (voir `createOrder` ci-dessous) — il n'y a donc aucun
+   * champ `payload` à écrire sur l'ordre lui-même, seulement ce `Place`.
+   */
+  async updatePlace(placeUuid: string, latitude: number, longitude: number) {
+    const response = await this.callFleetOps('PUT', `/places/${this.seg(placeUuid)}`, {
+      location: {
+        type: 'Point',
+        coordinates: [longitude, latitude],
+      },
+    });
+    return response.data;
+  }
+
+  /**
    * Create a Place owned by a merchant's Vendor, used as a saved address-book
    * entry. Confirmed by direct testing that owner_uuid is a genuine filter
    * column on GET /places (querying by an owner_uuid with no owned Places

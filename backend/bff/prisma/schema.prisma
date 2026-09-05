@@ -13,10 +13,10 @@ datasource db {
 
 // Echango Merchant Account (not a Fleetbase User)
 model MerchantAccount {
-  id                String   @id @default(cuid())
-  email             String   @unique
-  password          String   // bcrypted
-  emailVerified     Boolean  @default(false)
+  id            String  @id @default(cuid())
+  email         String  @unique
+  password      String // bcrypted
+  emailVerified Boolean @default(false)
 
   // Link to Fleetbase
   fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
@@ -31,23 +31,21 @@ model MerchantAccount {
   // Business
 
   // Status
-  active            Boolean  @default(true)
+  active Boolean @default(true)
 
   // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
-  tokenVersion      Int      @default(0)
+  tokenVersion Int @default(0)
 
   // Relations
-  deviceTokens      DeviceToken[]
-  orders            Order[]
-  notifications     MerchantNotification[]
+  deviceTokens        DeviceToken[]
+  orders              Order[]
+  notifications       MerchantNotification[]
+  clientLocationLinks ClientLocationLink[]
 
   // Timestamps
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  lastLoginAt       DateTime?
-
-  @@index([fleetbaseVendorUuid])
-  @@index([emailVerified])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
   // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
   // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
   // `Contact` Fleetbase, figé à l'inscription.
@@ -63,22 +61,25 @@ model MerchantAccount {
   //
   // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
   // contenu qu'un opérateur en console ne doit justement PAS voir.
+
+  @@index([fleetbaseVendorUuid])
+  @@index([emailVerified])
 }
 
 // Fleet Manager Account (not a Fleetbase User either)
 model FleetAccount {
-  id                String   @id @default(cuid())
-  email             String   @unique
-  password          String   // bcrypted
+  id       String @id @default(cuid())
+  email    String @unique
+  password String // bcrypted
 
   // Link to Fleetbase
-  fleetbaseVendorUuid   String  @unique // Vendor UUID in Fleetbase
+  fleetbaseVendorUuid String @unique // Vendor UUID in Fleetbase
 
   // Business
 
   /// Les conducteurs rattachés à cette entreprise **en plus** de ceux dont elle
   /// est l'origine (`Driver.vendor_uuid`). Voir `DriverMembership`.
-  memberships       DriverMembership[]
+  memberships DriverMembership[]
 
   /// Coupe-circuit applicatif, **distinct de la validation**.
   ///
@@ -87,7 +88,7 @@ model FleetAccount {
   /// Fleetbase ne peut pas l'exprimer : il ne connaît pas nos comptes. Les
   /// trois personas portent le même couple depuis le Lot 4 — ce n'est pas un
   /// état parallèle, ce sont deux faits différents.
-  active            Boolean  @default(true)
+  active Boolean @default(true)
 
   /// Ce prestataire est-il Echango lui-même ? **Exactement un enregistrement.**
   ///
@@ -113,21 +114,17 @@ model FleetAccount {
   /// Posé par un admin Echango uniquement, jamais par une route du BFF : un
   /// compte flotte qui pourrait se déclarer plateforme ferait retenir à ses
   /// conducteurs une rémunération qui ne leur revient pas.
-  isPlatform        Boolean  @default(false)
+  isPlatform Boolean @default(false)
 
   // Voir DriverAccount.tokenVersion : invalide d'un coup tous les jetons émis.
-  tokenVersion      Int      @default(0)
+  tokenVersion Int @default(0)
 
   // Relations — le facilitateur est désormais une partie du registre de caisse.
 
   // Timestamps
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  lastLoginAt       DateTime?
-
-  @@index([fleetbaseVendorUuid])
-  @@index([active])
-  @@index([isPlatform])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
   // ⚠️ `firstName`, `lastName`, `phone`, `businessName` et `businessPhone` ont
   // été SUPPRIMÉS le 03/08/2026 — du profil dupliqué avec le `Vendor` et le
   // `Contact` Fleetbase, figé à l'inscription.
@@ -143,6 +140,10 @@ model FleetAccount {
   //
   // Ce qui reste : le **secret de connexion** et les liens. C'est le seul
   // contenu qu'un opérateur en console ne doit justement PAS voir.
+
+  @@index([fleetbaseVendorUuid])
+  @@index([active])
+  @@index([isPlatform])
 }
 
 // Driver ("transporteur") Account - not a Fleetbase User either.
@@ -152,22 +153,22 @@ model FleetAccount {
 // an Echango account against it - registerDriver() verifies fleetbaseDriverUuid
 // against a live Fleetbase Driver before creating this row.
 model DriverAccount {
-  id                    String   @id @default(cuid())
-  email                 String   @unique
-  password              String   // bcrypted
+  id       String @id @default(cuid())
+  email    String @unique
+  password String // bcrypted
 
   // Link to Fleetbase
-  fleetbaseDriverUuid   String   @unique // Driver UUID in Fleetbase
-  fleetbaseUserUuid     String?          // Driver.user_uuid - push tokens route through
-                                          // UserDevice (user_uuid), not the Driver record
-                                          // itself (see docs/journal_implementation_bff.md)
+  fleetbaseDriverUuid     String  @unique // Driver UUID in Fleetbase
+  fleetbaseUserUuid       String? // Driver.user_uuid - push tokens route through
+  // UserDevice (user_uuid), not the Driver record
+  // itself (see docs/journal_implementation_bff.md)
   // Driver.public_id ("driver_xxxx"). Needed because POST /v1/orders/{id}/start
   // validates its `assign` param as a public_id and rejects a uuid - the one
   // place in the API that will not take the uuid.
   fleetbaseDriverPublicId String?
 
   // Status
-  active                Boolean  @default(true)
+  active Boolean @default(true)
 
   // Incrémenté pour invalider d'un coup tous les jetons déjà émis : changement
   // de mot de passe, appareil perdu, ou soupçon de compromission. Le jeton
@@ -177,7 +178,7 @@ model DriverAccount {
   // et changer son mot de passe n'y changeait rien (revue M12). La
   // désactivation d'un compte était en revanche déjà immédiate, puisque
   // `active` est relu à chaque requête ; il manquait son pendant sur les jetons.
-  tokenVersion          Int      @default(0)
+  tokenVersion Int @default(0)
 
   // `lastLatitude`/`lastLongitude`/`lastPositionAt` supprimées le 29/07/2026
   // (Lot 6). Leur motif était un **contresens** : il est vrai que `/positions`
@@ -202,15 +203,12 @@ model DriverAccount {
   /// plutôt que d'être exclu du réseau par un champ qu'il n'a pas rempli.
 
   // Relations
-  deviceTokens          DriverDeviceToken[]
+  deviceTokens DriverDeviceToken[]
 
   // Timestamps
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  lastLoginAt           DateTime?
-
-  @@index([fleetbaseDriverUuid])
-  @@index([active])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
   // ⚠️ `firstName`, `lastName`, `phone` et `vehicleType` ont été SUPPRIMÉS le
   // 03/08/2026 — c'était du profil dupliqué, et il avait déjà divergé.
   //
@@ -227,6 +225,9 @@ model DriverAccount {
   // Ce qui reste ici est le **secret de connexion** : email, mot de passe,
   // `tokenVersion`, `active`. C'est le seul contenu qu'un opérateur ne doit
   // justement PAS voir.
+
+  @@index([fleetbaseDriverUuid])
+  @@index([active])
 }
 
 // Push Token for a Driver's device. Mirrored to a Fleetbase UserDevice record
@@ -234,22 +235,22 @@ model DriverAccount {
 // (OrderPing) can reach it directly - kept as its own model rather than reusing
 // DeviceToken below, which is hard-wired to MerchantAccount.
 model DriverDeviceToken {
-  id                String   @id @default(cuid())
-  driverId          String
-  driver            DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  id       String        @id @default(cuid())
+  driverId String
+  driver   DriverAccount @relation(fields: [driverId], references: [id], onDelete: Cascade)
 
-  token             String   @unique
-  platform          String   // 'ios' or 'android'
+  token    String @unique
+  platform String // 'ios' or 'android'
 
   // UUID of the mirrored Fleetbase UserDevice record, once the write-through
   // succeeds. Null if the mirror failed or hasn't been attempted yet - the BFF
   // still works via REST polling either way, this only affects native push.
   fleetbaseUserDeviceUuid String?
 
-  active            Boolean  @default(true)
+  active Boolean @default(true)
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // `lastUsedAt` supprimé : jamais écrit, il laissait croire que les jetons
   // étaient purgés selon leur fraîcheur. Un champ mort au nom évocateur est un
@@ -272,23 +273,23 @@ model DriverDeviceToken {
 // déjà (specs_app_transporteur.md §2.1) : c'est l'opérateur qui décide qui
 // devient transporteur, pas le premier arrivé.
 model DriverInvitation {
-  id                  String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Jeton remis au transporteur hors bande (SMS, papier, oral).
   // Stocké haché : une fuite de la base ne doit pas livrer des invitations
   // utilisables, exactement comme pour un mot de passe.
-  tokenHash           String   @unique
+  tokenHash String @unique
 
   // Driver Fleetbase auquel ce jeton donne droit — figé à l'émission, donc
   // non choisi par l'appelant au moment de l'inscription.
   fleetbaseDriverUuid String
 
   // Facultatif : restreint l'invitation à un email précis.
-  email               String?
+  email String?
 
-  expiresAt           DateTime
-  usedAt              DateTime?
-  createdAt           DateTime @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 
   @@index([fleetbaseDriverUuid])
   @@index([expiresAt])
@@ -309,17 +310,17 @@ model DriverInvitation {
 
 // Device Token for Push Notifications
 model DeviceToken {
-  id                String   @id @default(cuid())
-  merchantId        String
-  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  id         String          @id @default(cuid())
+  merchantId String
+  merchant   MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
-  token             String   @unique
-  platform          String   // 'ios' or 'android'
+  token    String @unique
+  platform String // 'ios' or 'android'
 
-  active            Boolean  @default(true)
+  active Boolean @default(true)
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // `appVersion` et `lastUsedAt` supprimés — jamais écrits, comme leurs
   // homologues de DriverDeviceToken.
@@ -329,12 +330,12 @@ model DeviceToken {
 
 // Order Representation (cached from Fleetbase, for quick access)
 model Order {
-  id                String   @id @default(cuid())
-  merchantId        String
-  merchant          MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  id         String          @id @default(cuid())
+  merchantId String
+  merchant   MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   // Reference to Fleetbase
-  fleetbaseOrderId  String   @unique
+  fleetbaseOrderId String @unique
 
   /// Dernier statut Fleetbase **observé**, dans l'orthographe de Fleetbase
   /// (`created`, `dispatched`, `started`, `enroute`, `completed`, `canceled` —
@@ -350,7 +351,7 @@ model Order {
   /// permise, course terminée) se prend sur l'état lu chez Fleetbase à
   /// l'instant, pas sur cette colonne, qui peut avoir jusqu'à un cycle de
   /// réconciliation de retard.
-  status            String
+  status String
 
   // `trackingNumber` supprimé le 29/07/2026 (Lot 3) : c'est une donnée
   // Fleetbase recopiée, et l'invalidation de son cache est vérifiée (le
@@ -373,7 +374,7 @@ model Order {
   /// Dernier passage du réconciliateur, qu'il ait constaté un changement ou
   /// non. Distingue « rien n'a bougé » de « personne ne regarde » — sans quoi
   /// un réconciliateur arrêté est indiscernable d'une commande stable.
-  lastSyncedAt       DateTime?
+  lastSyncedAt DateTime?
 
   // `codAmount` et `codIncludesDelivery` supprimés le 29/07/2026 (Lot 2 de
   // `docs/plan_migration_fleetbase.md`) : **écrits à la création, lus nulle
@@ -411,9 +412,8 @@ model Order {
   // `fleetbaseCreatedAt`/`fleetbaseUpdatedAt` supprimés le 29/07/2026 (Lot 3) :
   // jamais écrits, jamais lus, et leur commentaire « synced from Fleetbase »
   // décrivait une synchronisation qui n'a jamais existé.
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([merchantId])
   @@index([fleetbaseOrderId])
@@ -439,34 +439,33 @@ model Order {
 // existait déjà ; rien ne l'écrivait, et les refus ne laissaient qu'un
 // `logger.warn` non structuré, perdu à la rotation des journaux.
 model AuditLog {
-  id                String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Qui. `merchantId`/`fleetId` ne savaient pas exprimer un transporteur, et
   // obligeaient à ajouter une colonne par persona ; le couple type + id vaut
   // pour les trois et pour ceux à venir.
-  actorType         String?  // 'merchant' | 'fleet' | 'transporteur'
-  actorId           String?
+  actorType String? // 'merchant' | 'fleet' | 'transporteur'
+  actorId   String?
 
   // What
-  action            String   // 'order.created', 'order.assigned', etc.
-  resourceType      String   // 'Order', 'Driver', etc.
-  resourceId        String?
+  action       String // 'order.created', 'order.assigned', etc.
+  resourceType String // 'Order', 'Driver', etc.
+  resourceId   String?
 
   // Details
-  details           String?  @db.Text // JSON stringified
-  userAgent         String?
+  details   String? @db.Text // JSON stringified
+  userAgent String?
 
   // Status
-  status            String   // 'success', 'failure'
-  errorMessage      String?
+  status       String // 'success', 'failure'
+  errorMessage String?
 
-  createdAt         DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([actorType, actorId])
   @@index([action])
   @@index([createdAt])
 }
-
 
 /// ⚠️ `DriverFavourite` a été SUPPRIMÉ le 03/08/2026 — les favoris vivent sur
 /// le **`Vendor` Fleetbase du commerçant**, en champ personnalisé `favourites`.
@@ -480,7 +479,6 @@ model AuditLog {
 /// l'appartenance devient **structurelle** : on ne lit que la liste d'un
 /// vendor, il n'existe plus d'identifiant global qui puisse désigner le favori
 /// de quelqu'un d'autre.
-
 
 /// L'appartenance d'un conducteur à une entreprise de transport.
 ///
@@ -517,13 +515,13 @@ model AuditLog {
 /// impossible au moment précis où il est demandé. Même convention que
 /// `DriverFavourite`.
 model DriverMembership {
-  id                  String   @id @default(cuid())
+  id String @id @default(cuid())
 
   /// Le conducteur, par son identité dans le réseau.
   fleetbaseDriverUuid String
 
-  fleetId             String
-  fleet               FleetAccount @relation(fields: [fleetId], references: [id], onDelete: Restrict)
+  fleetId String
+  fleet   FleetAccount @relation(fields: [fleetId], references: [id], onDelete: Restrict)
 
   /// `pending` — demandé par l'entreprise, le conducteur n'a pas répondu.
   /// `active` — accepté, l'entreprise peut lui confier des courses.
@@ -533,24 +531,23 @@ model DriverMembership {
   /// ⚠️ Une adhésion **ne se supprime pas**, elle change d'état. La dette d'un
   /// conducteur envers une entreprise survit à leur séparation, et une ligne
   /// effacée emporterait la seule trace du lien qui l'explique.
-  status              String   @default("pending")
+  status String @default("pending")
 
   /// Nom au moment de la demande — même motif que `DriverFavourite.driverName` :
   /// afficher une liste sans un appel Fleetbase par ligne.
-  driverName          String?
+  driverName String?
 
-  requestedAt         DateTime @default(now())
-  respondedAt         DateTime?
-  suspendedAt         DateTime?
+  requestedAt DateTime  @default(now())
+  respondedAt DateTime?
+  suspendedAt DateTime?
 
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([fleetbaseDriverUuid, fleetId])
   @@index([fleetId])
   @@index([fleetbaseDriverUuid])
 }
-
 
 /// ⚠️ `OrderDecline` a été SUPPRIMÉ le 03/08/2026 — les refus vivent désormais
 /// sur la commande, en champ personnalisé `declines`.
@@ -565,7 +562,6 @@ model DriverMembership {
 /// par le dédoublonnage d'`appendToOrderList`, dont la fenêtre de concurrence
 /// est nommée là-bas — deux refus simultanés sur la même course diffusée
 /// peuvent en perdre un, et la course réapparaît alors une fois.
-
 
 /// ── Le registre de caisse a été retiré le 03/08/2026 ────────────────────────
 ///
@@ -585,11 +581,6 @@ model DriverMembership {
 /// le tag `registre-caisse-v1`. Motif, modélisation et défaut connu :
 /// `docs/registre_caisse_precis.md`.
 
-
-
-
-
-
 /// Évènement porté à la connaissance d'un commerçant.
 ///
 /// ── Un journal, pas un transport ────────────────────────────────────────────
@@ -606,10 +597,10 @@ model DriverMembership {
 /// Fleetbase (qui passe par `UserDevice`) ne peut pas le joindre non plus. Les
 /// jetons sont bien collectés (`DeviceToken`) : il ne manque que l'expéditeur.
 model MerchantNotification {
-  id                 String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  merchantId         String
-  merchant           MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchantId String
+  merchant   MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   /// Commande concernée, dans les deux identifiants : l'uuid Fleetbase pour
   /// recouper avec l'amont, le cuid local pour que l'application puisse ouvrir
@@ -618,7 +609,7 @@ model MerchantNotification {
   orderId            String?
 
   /// Voir NOTIFICATION_TYPES dans notifications.service.ts.
-  type               String
+  type String
 
   /// ⚠️ Écrits **en français**, dans le code serveur. Ils restent parce qu'ils
   /// sont le repli d'un `type` que le client ne connaîtrait pas — mais
@@ -627,20 +618,88 @@ model MerchantNotification {
   /// 01/08/2026 elle les affichait tels quels, donc un commerçant arabophone
   /// lisait son unique canal d'évènements entièrement en français, sous un
   /// titre et une consigne arabes.
-  title              String
-  body               String
+  title String
+  body  String
 
   /// Les variables du message — nom du transporteur, numéro de suivi.
   ///
   /// Servies **à part** parce que l'ordre des mots change d'une langue à
   /// l'autre : les cuire dans `body` rend la phrase intraduisible sans la
   /// redécouper.
-  data               Json?
+  data Json?
 
-  readAt             DateTime?
-  createdAt          DateTime @default(now())
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
 
   /// Trié par date, filtré sur les non lues : l'index porte les deux.
   @@index([merchantId, readAt])
   @@index([merchantId, createdAt])
+}
+
+/// Fiche client géolocalisée — `docs/specs_localisation_client_et_optimisation_parcours.md` §1.
+///
+/// ⚠️ **Portée plateforme, jamais scopée à un commerçant.** C'est la
+/// nouveauté du modèle : jusqu'ici la seule donnée « transversale à tout le
+/// réseau » était Fleetbase lui-même (règle 1 de CLAUDE.md). Cette table ne
+/// duplique rien qu'un `Vendor`/`Contact` Fleetbase pourrait porter — un
+/// répertoire client indexé par téléphone, commun à tous les commerçants,
+/// n'a structurellement aucun équivalent côté Fleetbase.
+model Client {
+  id String @id @default(cuid())
+
+  /// Normalisé `+213XXXXXXXXX` par `common/phone/phone.ts` — jamais recopié
+  /// tel que saisi, sous peine d'une fiche par variante d'écriture du même
+  /// numéro (règle 5 : deux commerçants qui tapent le même client autrement
+  /// ne doivent pas produire deux fiches).
+  phone String @unique
+
+  name                String?
+  addressCity         String?
+  addressProvince     String?
+  addressNeighborhood String?
+  latitude            Float?
+  longitude           Float?
+
+  /// Position reçue via un lien de localisation, en attente de confirmation
+  /// par un commerçant (§1.4) — jamais appliquée à `latitude`/`longitude`
+  /// tant qu'aucune confirmation explicite n'a eu lieu, pour ne jamais
+  /// écraser silencieusement une position déjà connue.
+  ///
+  /// Absence des trois champs = rien en attente. Pas de champ `status`
+  /// séparé : un état dérivé de plusieurs colonnes divergerait au premier
+  /// écrit partiel (règle 1, corollaire), alors que « les trois valent
+  /// quelque chose, ou aucune » se lit directement sur les colonnes.
+  pendingLatitude    Float?
+  pendingLongitude   Float?
+  pendingSubmittedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Lien de localisation à durée de vie de 10 minutes, à usage unique — le
+/// canal par lequel un client soumet sa position sans créer de compte.
+///
+/// ⚠️ Le commerçant qui le génère est mémorisé pour l'audit et pour un futur
+/// besoin de traçabilité, mais la fiche mise à jour (`Client`) reste
+/// consultable par n'importe quel commerçant qui interroge ensuite le même
+/// numéro — la portée plateforme prime, ce lien n'est qu'un canal d'écriture.
+model ClientLocationLink {
+  id String @id @default(cuid())
+
+  /// Opaque, aléatoire (`crypto.randomBytes(32).toString('base64url')`) —
+  /// jamais le numéro de téléphone en clair dans l'URL publique.
+  token String @unique
+
+  merchantId String
+  merchant   MerchantAccount @relation(fields: [merchantId], references: [id])
+
+  clientPhone String
+
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([merchantId])
 }

@@ -1074,6 +1074,49 @@ class BffApiClient {
     return (await _get('/commercant/commandes/$id/modele') ?? <String, dynamic>{}) as Map<String, dynamic>;
   }
 
+  /// Corrige le point de dépose d'une commande déjà créée — typiquement depuis
+  /// une fiche client mise à jour après coup.
+  Future<void> updateMerchantOrderPosition(
+    String orderId, {
+    required double latitude,
+    required double longitude,
+  }) async {
+    await _post('/commercant/commandes/$orderId/position', {
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+  }
+
+  // ── Fiche client géolocalisée ────────────────────────────────────────────
+  //
+  // `docs/specs_localisation_client_et_optimisation_parcours.md` §1. Fiche
+  // platform-wide, indexée par téléphone — n'importe quel commerçant peut
+  // consulter ou proposer une position pour n'importe quel numéro.
+
+  /// Fiche connue pour ce numéro, ou `found: false` si aucune n'existe encore
+  /// (cas courant à la composition d'une commande, pas une erreur).
+  Future<ClientLookup> getClient(String phone) async {
+    final data = await _get('/commercant/clients/${Uri.encodeComponent(phone)}');
+    return ClientLookup.fromJson((data ?? <String, dynamic>{}) as Map<String, dynamic>);
+  }
+
+  /// Génère un lien de localisation (10 minutes, usage unique) à partager
+  /// soi-même via le partage natif du téléphone.
+  Future<LocationLink> generateLocationLink(String phone) async {
+    final data = await _post('/commercant/clients/${Uri.encodeComponent(phone)}/lien-position');
+    return LocationLink.fromJson((data ?? <String, dynamic>{}) as Map<String, dynamic>);
+  }
+
+  /// Applique la position en attente sur la fiche (§1.4 : jamais automatique).
+  Future<void> confirmClientPosition(String phone) async {
+    await _post('/commercant/clients/${Uri.encodeComponent(phone)}/confirmer');
+  }
+
+  /// Rejette la position en attente : la fiche garde son ancienne valeur.
+  Future<void> rejectClientPosition(String phone) async {
+    await _post('/commercant/clients/${Uri.encodeComponent(phone)}/rejeter');
+  }
+
   // ── Notifications (commerçant) ─────────────────────────────────────────
   //
   // Relevées par interrogation : l'envoi push vers un commerçant n'est pas
