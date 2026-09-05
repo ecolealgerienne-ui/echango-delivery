@@ -107,6 +107,12 @@ PUBLIC_ROUTES = {
     'POST /auth/login',
     'POST /auth/transporteur/register',
     'POST /auth/transporteur/login',
+    # Page de partage de position du client — aucune authentification, c'est
+    # le client final qui l'ouvre depuis un lien SMS/WhatsApp
+    # (docs/specs_localisation_client_et_optimisation_parcours.md §1.8).
+    # Chaque route porte son propre @Throttle (règle 12).
+    'GET /public/localisation/:token',
+    'POST /public/localisation/:token',
 }
 
 
@@ -149,6 +155,18 @@ def parse_controller(src, origin='?'):
     cls_m = re.search(r"@Persona\(\s*'([^']+)'\s*\)\s*\n\s*@Controller", src)
     cls_persona = cls_m.group(1) if cls_m else None
 
+    # ⚠️ **`@Public()` posé sur la CLASSE a le même besoin, et ne l'avait pas
+    # (trouvé le 05/09/2026 sur `ClientPublicController` — deux routes sous un
+    # seul `@Public()` de classe).** Sans ce repli, `pending_public` — remis à
+    # `False` après CHAQUE route pour que le cas inverse (un `@Public()` de
+    # MÉTHODE qui déborde sur la route suivante, cf. l'auto-test plus bas) soit
+    # refusé — ne profite qu'à la toute première route du fichier : elle seule
+    # suit textuellement le `@Public()` de tête. Toutes les routes suivantes de
+    # la même classe se retrouvaient donc protégées à tort dans l'énumération,
+    # ce qui aurait *réduit* le nombre de refus attendus sans qu'aucune route
+    # n'ait bougé — exactement l'angle mort que ce banc existe pour fermer.
+    cls_public = bool(re.search(r"@Public\(\)\s*\n\s*@Controller", src))
+
     routes = []
     pending_public = False
     pending_persona = None
@@ -168,7 +186,7 @@ def parse_controller(src, origin='?'):
             routes.append({
                 'verb': mr.group(1).upper(),
                 'path': full,
-                'public': pending_public,
+                'public': pending_public or cls_public,
                 'persona': pending_persona or cls_persona,
                 'origin': origin,
             })
@@ -315,6 +333,24 @@ export class C {
     check('rôle de méthode gagne', rs[3]['persona'], 'fleet')
     check('paramètre rendu concret', concrete(rs[2]['path']),
           '/commercant/commandes/' + BOGUS_ID)
+
+    # ⚠️ Cas trouvé le 05/09/2026 : `@Public()` de CLASSE (pas de méthode) sur
+    # un contrôleur à plusieurs routes — `ClientPublicController` en vrai. La
+    # version qui ne gérait que `@Persona` en repli de classe marquait la
+    # DEUXIÈME route comme protégée à tort.
+    src_pub = """
+@Public()
+@Controller('public/localisation')
+export class P {
+  @Get(':token')
+  a() {}
+  @Post(':token')
+  b() {}
+}
+"""
+    rp = parse_controller(src_pub)
+    check('@Public de classe : première route publique', rp[0]['public'], True)
+    check('@Public de classe : deuxième route AUSSI publique', rp[1]['public'], True)
 
     print('— refus attendus —')
     check('401 + bon code = ok', verdict('aucun jeton', 401, 'auth.missing_token')[0], 'ok')
