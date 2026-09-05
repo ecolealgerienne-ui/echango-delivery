@@ -342,11 +342,15 @@ class OrderDetailScreen extends StatelessWidget {
     if (!order.isFinished && !claimable) {
       buttons.add(const SizedBox(height: AppSpacing.md));
       buttons.add(
-        FilledButton(
+        // `.icon` : c'est le seul bouton d'action de cet écran qui n'en portait
+        // pas — tous les autres se désignent par icône dans les parcours joués
+        // à l'écran (accepter, rendre, désigner…), jamais par leur libellé.
+        FilledButton.icon(
           onPressed: busy
               ? null
               : () => context.push('/transporteur/commandes/${order.id}/optimisation'),
-          child: Text(
+          icon: const Icon(Icons.alt_route),
+          label: Text(
               driverLabel('driver.optimize.action', context.read<LocaleState>().locale)),
         ),
       );

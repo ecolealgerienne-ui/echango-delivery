@@ -305,6 +305,58 @@ void main() {
         reason: 'le bouton « désigner » disparaît une fois le conducteur affecté',
         onTimeout: 'fiche : ${visibleTexts(40)}');
   });
+
+  testWidgets(
+      'conducteur — « Optimiser » propose une course proche de la dépose',
+      (tester) async {
+    requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
+    app.main();
+    await loginAs(tester, email: driverEmail, home: Home.driver);
+
+    await openTab(tester, 1); // « En cours » : les courses assignées
+    await pumpUntil(tester, find.byType(ListTile),
+        reason: 'les courses en cours chargées (l’endpoint répond en ~9 s)',
+        onTimeout:
+            'liste : ${visibleTexts()} — le décor a-t-il confié la course de '
+            'référence ? relancer scripts/provision-app-parcours.sh');
+
+    // La course de référence s'identifie par son PRIX distinctif, comme
+    // toutes les courses du décor (le nom du destinataire n'est pas un repère
+    // fiable — il n'est masqué que sur une opportunité, pas ici, mais le prix
+    // reste le repère uniforme dans tout ce fichier).
+    final reference = rowContaining(optimizeRefFee);
+    await scrollUntilFound(tester, reference);
+    expect(reference.evaluate(), isNotEmpty,
+        reason:
+            'la course de référence (prix $optimizeRefFee) doit être « en '
+            'cours » — relancer scripts/provision-app-parcours.sh si absente');
+    await tapVisible(tester, reference);
+
+    // Le bouton « Optimiser » — désigné par son icône, jamais par son
+    // libellé (règle du harness). C'est la seule action de cet écran qui n'en
+    // portait pas avant ce scénario.
+    final optimize = find.byIcon(Icons.alt_route);
+    await pumpUntil(tester, optimize,
+        reason: 'le bouton « Optimiser » sur la course en cours',
+        onTimeout: 'fiche : ${visibleTexts()}');
+    await tapVisible(tester, optimize);
+
+    // L'écran d'optimisation interroge le serveur (même ordre de grandeur que
+    // les listes, ~9 s) puis rend une carte par suggestion. Sa présence est
+    // la seule preuve que le bouton est réellement branché sur la route
+    // (règle 9 : « ce que le serveur sert doit avoir un appelant ») — un
+    // `curl` sur cette même route ne peut pas voir si l'écran l'affiche.
+    await pumpUntil(tester, find.byType(Card),
+        reason: 'la suggestion proche de la dépose (l’endpoint répond en ~9 s)',
+        onTimeout:
+            'écran d’optimisation : ${visibleTexts()} — le décor a-t-il '
+            'publié une course à proximité ? relancer '
+            'scripts/provision-app-parcours.sh');
+    expect(screenHas(optimizeSuggestionFee), isTrue,
+        reason:
+            'la suggestion (prix $optimizeSuggestionFee), à ~300 m de la '
+            'dépose de référence, doit figurer dans la liste d’optimisation');
+  });
 }
 
 /// La locale COURANTE de l'application, lue dans l'arbre — pour calculer un
