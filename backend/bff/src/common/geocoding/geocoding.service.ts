@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { serviceUnavailable } from '../errors/http-errors';
 import { ErrorCode } from '../errors/error-codes';
+import { probeReachable } from '../http/reachability';
 
 /**
  * Une adresse décomposée.
@@ -132,23 +133,12 @@ export class GeocodingService {
 
   /**
    * `echango-geo` répond-il ? Sonde pour `/health`, qui la RAPPORTE sans
-   * échouer — même forme que `FleetbaseApiClient.ping()`.
-   *
-   * Axios nu, hors du client : `validateStatus` laisse passer n'importe quel
-   * statut (un `200` de `/health` suffit à prouver qu'il répond), et un amont
-   * à terre est un état qu'on mesure, pas un incident à journaliser à chaque
-   * `/health`. Timeout court : la sonde ne doit pas hériter des 12 s du client.
+   * échouer. Mécanique partagée dans `probeReachable` (cf.
+   * `FleetbaseApiClient.ping()`).
    */
   async ping(timeoutMs = 2500): Promise<{ reachable: boolean }> {
-    try {
-      await axios.get(`${this.baseURL}/health`, {
-        timeout: timeoutMs,
-        validateStatus: () => true,
-      });
-      return { reachable: true };
-    } catch {
-      return { reachable: false };
-    }
+    const { reachable } = await probeReachable(`${this.baseURL}/health`, timeoutMs);
+    return { reachable };
   }
 
   private unavailable(op: string, subject: string, error: unknown): never {

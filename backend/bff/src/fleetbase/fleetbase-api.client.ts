@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
+import { probeReachable } from '../common/http/reachability';
 
 /**
  * ── Filtres de requête Fleetbase — liste fermée, et volontairement fermée ────
@@ -130,28 +131,14 @@ export class FleetbaseApiClient {
   /**
    * Fleetbase répond-il ? Sonde pour `/health`, qui la RAPPORTE sans échouer.
    *
-   * ── Pourquoi elle ne passe pas par `this.apiClient` ──────────────────────────
-   *
-   * Un axios NU, hors intercepteur, et pour deux raisons : `validateStatus` laisse
-   * passer n'importe quel statut — un `401` ou un `404` prouve que Fleetbase
-   * **répond**, ce qui est toute la question ; et l'intercepteur du client
-   * journalise chaque erreur en `error`, or ici un amont à terre est un état
-   * qu'on mesure, pas un incident à crier à chaque `/health`. Timeout court
-   * (2,5 s) : la sonde ne doit pas hériter des 30 s du client, sinon `/health`
-   * traînerait autant qu'un vrai appel quand Fleetbase est lent.
-   *
-   * Ne lève jamais : une panne de la dépendance est un `reachable: false`, pas
-   * une exception qui ferait échouer la sonde (`docs/status_v1.md`, « /health ne
-   * peut pas échouer » — la bonne forme est de rapporter l'état, pas de tomber).
+   * La mécanique (axios nu hors intercepteur, n'importe quel statut = joignable,
+   * ne lève jamais) est dans `probeReachable` — partagée avec les autres
+   * dépendances de `/health`. Ici on ne fait que conserver la clé publiée
+   * `latency_ms` (snake_case) que ce `/health` expose depuis l'origine.
    */
   async ping(timeoutMs = 2500): Promise<{ reachable: boolean; latency_ms: number | null }> {
-    const start = Date.now();
-    try {
-      await axios.get(this.baseURL, { timeout: timeoutMs, validateStatus: () => true });
-      return { reachable: true, latency_ms: Date.now() - start };
-    } catch {
-      return { reachable: false, latency_ms: null };
-    }
+    const { reachable, latencyMs } = await probeReachable(this.baseURL, timeoutMs);
+    return { reachable, latency_ms: latencyMs };
   }
 
   // ⚠️ `callCustomerPortal()` a été SUPPRIMÉ le 03/08/2026 — jamais appelé.
