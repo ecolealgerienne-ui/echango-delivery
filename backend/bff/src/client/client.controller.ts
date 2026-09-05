@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Param, Request } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Persona } from '../common/decorators/persona.decorator';
+import { PhoneParamPipe } from '../common/pipes/phone.pipe';
 import { ClientService } from './client.service';
 
 /**
@@ -26,23 +27,23 @@ export class ClientController {
   constructor(private clientService: ClientService) {}
 
   @Get(':telephone')
-  async getClient(@Request() req: any, @Param('telephone') telephone: string) {
+  async getClient(@Request() req: any, @Param('telephone', PhoneParamPipe) telephone: string) {
     return this.clientService.getClient(req.user.id, telephone);
   }
 
   @Throttle(THROTTLE_LOCATION_LINK_GENERATE)
   @Post(':telephone/lien-position')
-  async generateLink(@Request() req: any, @Param('telephone') telephone: string) {
+  async generateLink(@Request() req: any, @Param('telephone', PhoneParamPipe) telephone: string) {
     return this.clientService.generateLink(req.user.id, telephone);
   }
 
   @Post(':telephone/confirmer')
-  async confirm(@Request() req: any, @Param('telephone') telephone: string) {
+  async confirm(@Request() req: any, @Param('telephone', PhoneParamPipe) telephone: string) {
     return this.clientService.confirmPending(req.user.id, telephone);
   }
 
   @Post(':telephone/rejeter')
-  async reject(@Request() req: any, @Param('telephone') telephone: string) {
+  async reject(@Request() req: any, @Param('telephone', PhoneParamPipe) telephone: string) {
     return this.clientService.rejectPending(req.user.id, telephone);
   }
 }

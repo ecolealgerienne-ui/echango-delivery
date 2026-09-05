@@ -2,6 +2,7 @@ import { Controller, Get, Post, Param, Body, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { Public } from '../common/decorators/public.decorator';
+import { LocationTokenPipe } from '../common/pipes/location-token.pipe';
 import { ClientService } from './client.service';
 import { SubmitLocationDto } from './dto/submit-location.dto';
 import { renderLocationPage } from './location-page';
@@ -29,14 +30,14 @@ export class ClientPublicController {
 
   @Throttle(THROTTLE_LOCATION_LINK_VIEW)
   @Get(':token')
-  async getPage(@Param('token') token: string, @Res() res: Response) {
+  async getPage(@Param('token', LocationTokenPipe) token: string, @Res() res: Response) {
     const { state } = await this.clientService.resolveLinkState(token);
     res.type('html').send(renderLocationPage(state, token));
   }
 
   @Throttle(THROTTLE_LOCATION_LINK_SUBMIT)
   @Post(':token')
-  async submit(@Param('token') token: string, @Body() dto: SubmitLocationDto) {
+  async submit(@Param('token', LocationTokenPipe) token: string, @Body() dto: SubmitLocationDto) {
     return this.clientService.submitLocation(token, dto.lat, dto.lng);
   }
 }
