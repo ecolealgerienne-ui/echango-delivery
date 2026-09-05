@@ -96,6 +96,10 @@ export class ClientService {
       badRequest('client.link_generate_failed', 'Génération du lien impossible');
     }
 
+    // Le repli sur localhost n'est atteignable qu'en développement :
+    // `validateEnv()` (`config/env.validation.ts`) refuse de démarrer en
+    // production sans `PUBLIC_URL`, pour ne jamais générer silencieusement un
+    // lien inutilisable hors de ce serveur.
     const base = (process.env.PUBLIC_URL || 'http://localhost:3001').replace(/\/+$/, '');
     return { url: `${base}/public/localisation/${token}`, expiresAt };
   }
