@@ -332,6 +332,26 @@ class OrderDetailScreen extends StatelessWidget {
       );
     }
 
+    // Optimisation de parcours : depuis une course déjà tenue, d'autres
+    // courses du pool proches de sa dépose — pour enchaîner
+    // (`docs/specs_localisation_client_et_optimisation_parcours.md` §2).
+    // Même condition que le signalement d'échec plus bas : une course
+    // acceptée, pas encore close. Pas de sens sur une opportunité pas encore
+    // tenue (`claimable`) — on n'« enchaîne » pas sur une course qu'on n'a
+    // pas commencée.
+    if (!order.isFinished && !claimable) {
+      buttons.add(const SizedBox(height: AppSpacing.md));
+      buttons.add(
+        FilledButton(
+          onPressed: busy
+              ? null
+              : () => context.push('/transporteur/commandes/${order.id}/optimisation'),
+          child: Text(
+              driverLabel('driver.optimize.action', context.read<LocaleState>().locale)),
+        ),
+      );
+    }
+
     // Refus. Deux situations, un seul geste :
     //
     // — une opportunité diffusée qu'on écarte : elle quitte la liste, et rien

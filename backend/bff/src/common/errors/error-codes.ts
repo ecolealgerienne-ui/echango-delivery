@@ -142,6 +142,16 @@ export const ErrorCode = {
   ORDER_TARGET_NOT_FAVOURITE: 'order.target_not_favourite',
   /** Redirection refusée : la course a déjà été prise par un transporteur. */
   ORDER_REDIRECT_NOT_ALLOWED: 'order.redirect_not_allowed',
+  /**
+   * Optimisation de parcours demandée sur une course sans point de dépose
+   * connu (§2 de `docs/specs_localisation_client_et_optimisation_parcours.md`).
+   *
+   * Refus explicite plutôt qu'une liste de suggestions vide : sans point de
+   * référence, aucune distance ne peut être calculée, et une liste vide
+   * silencieuse se lirait comme « rien à proximité » alors que la vraie
+   * réponse est « on ne sait pas où vous déposez » (règle 10).
+   */
+  ORDER_OPTIMIZE_NO_REFERENCE_POINT: 'order.optimize_no_reference_point',
 
   // ── Transporteurs (persona flotte + commerçant) ─────────────────────────
   DRIVER_NOT_FOUND: 'driver.not_found',

@@ -168,6 +168,17 @@ export class TransporteurController {
   }
 
   /**
+   * Depuis cette course déjà tenue, d'autres courses du pool proches de sa
+   * dépose — pour enchaîner (`docs/specs_localisation_client_et_optimisation_parcours.md`
+   * §2). Lecture seule : accepter une suggestion passe par la route
+   * ci-dessus, avec son verrou habituel.
+   */
+  @Get('commandes/:id/optimisation')
+  async optimizeRoute(@Request() req: any, @Param('id', FleetbaseIdPipe) id: string) {
+    return this.transporteurService.optimizeRoute(this.driverId(req), id);
+  }
+
+  /**
    * Refus motivé. Sur une course diffusée, elle disparaît de la liste de ce
    * transporteur ; sur une course qui lui était assignée, elle repart au
    * réseau et le commerçant en est informé.

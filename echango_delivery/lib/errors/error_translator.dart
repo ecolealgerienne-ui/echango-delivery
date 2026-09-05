@@ -108,6 +108,8 @@ const Map<String, String> _fr = {
   'order.target_not_favourite': 'Ce transporteur ne fait pas partie de vos favoris.',
   'order.redirect_not_allowed':
       'Cette course a déjà été prise — impossible de la rediriger.',
+  'order.optimize_no_reference_point':
+      'Le point de dépose de cette course est inconnu — impossible de chercher à proximité.',
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   'driver.not_found': 'Transporteur introuvable.',
@@ -263,6 +265,8 @@ const Map<String, String> _ar = {
   'order.not_found_upstream': 'الطلبية غير موجودة لدى مزوّد الخدمة.',
   'order.target_not_favourite': 'هذا الناقل ليس من مفضّليك.',
   'order.redirect_not_allowed': 'تمّ أخذ هذه المهمة — لا يمكن إعادة توجيهها.',
+  'order.optimize_no_reference_point':
+      'نقطة تسليم هذه المهمة غير معروفة — يتعذّر البحث بالقرب منها.',
 
   // ── السائقون ──────────────────────────────────────────────────────────────
   'driver.not_found': 'السائق غير موجود.',
