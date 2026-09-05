@@ -621,6 +621,74 @@ else
   pass "Course confiée au conducteur — prix $CONFIDED_FEE"
 fi
 
+# ── Course de référence + suggestion voisine, pour « Optimiser » ────────────
+#
+# ⚠️ **Loin de tout autre décor, et c'est une contrainte mesurée, pas un
+# goût.** `test-optimisation-parcours.sh` a trouvé 425 commandes adhoc
+# accumulées à Alger par des mois de passages précédents, qui rivalisent avec
+# les nouveaux candidats pour le plafond des 10 suggestions. Les deux courses
+# ci-dessous vivent donc à Tamanrasset — aucun autre script ne pose de décor
+# là-bas — plutôt que de risquer la même contamination silencieuse.
+#
+# Deux courses : une CONFIÉE au conducteur (la référence — c'est depuis elle
+# que le bouton « Optimiser » part), et une voisine de sa DÉPOSE, publiée au
+# pool, non ciblée (la suggestion attendue). Prix distinctifs, comme partout
+# ailleurs dans ce script.
+step "Course de référence + suggestion voisine (optimisation de parcours)"
+
+OPTIMIZE_REF_FEE="${OPTIMIZE_REF_FEE:-6161}"
+OPTIMIZE_SUGGESTION_FEE="${OPTIMIZE_SUGGESTION_FEE:-6262}"
+
+optimize_ref="$(dapi GET '/transporteur/commandes' \
+  | jq -r --argjson f "$OPTIMIZE_REF_FEE" 'first((.active // [])[]?
+       | select((.meta.price // .price) == $f)
+       | select((.driver_assigned_uuid // .driver_uuid) != null))
+       | (.public_id // .id // empty)' 2>/dev/null || true)"
+if [ -n "$optimize_ref" ] && [ "$optimize_ref" != "null" ]; then
+  info "course de référence (prix $OPTIMIZE_REF_FEE) déjà disponible"
+else
+  body="$(jq -n --arg t "$DRIVER_UUID" --argjson fee "$OPTIMIZE_REF_FEE" '{
+    pickupLocationName: "Dépôt Optimisation", pickupLatitude: 22.7830, pickupLongitude: 5.5228,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: "Client Optimisation", dropoffLatitude: 22.7900, dropoffLongitude: 5.5300,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Tamanrasset", pickupProvince: "Tamanrasset",
+    dropoffCity: "Tamanrasset", dropoffProvince: "Tamanrasset",
+    items: [{description: "colis", quantity: 1}],
+    price: $fee, podMethod: "aucune", targetFavouriteUuid: $t }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création de la course de référence refusée" "$out"
+  [ -n "$(jq -r '.fleetbaseOrderId // empty' <<<"$out")" ] \
+    || fail "Course de référence créée sans identifiant Fleetbase" "$out"
+  pass "Course de référence confiée au conducteur — prix $OPTIMIZE_REF_FEE"
+fi
+
+# La suggestion : à ~300 m de la dépose de référence (22.7900, 5.5300), donc
+# largement dans le rayon de 15 km — un candidat évident, pas une limite.
+n_suggestion="$(dapi GET '/transporteur/commandes?type=adhoc' \
+  | jq --argjson f "$OPTIMIZE_SUGGESTION_FEE" '[(.orders // [])[]?
+       | select((.meta.price // .price) == $f)] | length' 2>/dev/null || echo 0)"
+if [ "${n_suggestion:-0}" -gt 0 ]; then
+  info "course suggestion (prix $OPTIMIZE_SUGGESTION_FEE) déjà disponible"
+else
+  body="$(jq -n --argjson fee "$OPTIMIZE_SUGGESTION_FEE" '{
+    draft: true,
+    pickupLocationName: "Dépôt Voisin", pickupLatitude: 22.7920, pickupLongitude: 5.5320,
+    pickupContactName: "Commerce", pickupContactPhone: "0551020304",
+    dropoffLocationName: "Client Voisin", dropoffLatitude: 22.8200, dropoffLongitude: 5.5500,
+    dropoffContactName: "Destinataire", dropoffContactPhone: "0551020305",
+    pickupCity: "Tamanrasset", pickupProvince: "Tamanrasset",
+    dropoffCity: "Tamanrasset", dropoffProvince: "Tamanrasset",
+    price: $fee, podMethod: "aucune" }')"
+  out="$(mapi POST /commercant/commandes "$body")"
+  is_error <<<"$out" && fail "Création de la course suggestion refusée" "$out"
+  oid="$(jq -r '.id // empty' <<<"$out")"
+  [ -n "$oid" ] || fail "Course suggestion créée sans identifiant" "$out"
+  pub="$(mapi POST "/commercant/commandes/$oid/publier")"
+  is_error <<<"$pub" && fail "Publication de la course suggestion refusée" "$pub"
+  pass "Course suggestion publiée près de la dépose — prix $OPTIMIZE_SUGGESTION_FEE"
+fi
+
 # ── Entreprise : un conducteur de flotte + « Mes courses » vide ─────────────
 #
 # ⚠️ Deux manques pour le parcours « l'entreprise réclame puis affecte » :
@@ -689,6 +757,8 @@ cat <<CMD
     --dart-define=TEST_COD_FEE=$COD_FEE \\
     --dart-define=TEST_COD_GAP_FEE=$COD_GAP_FEE \\
     --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE \\
+    --dart-define=TEST_OPTIMIZE_REF_FEE=$OPTIMIZE_REF_FEE \\
+    --dart-define=TEST_OPTIMIZE_SUGGESTION_FEE=$OPTIMIZE_SUGGESTION_FEE \\
     --dart-define=TEST_FLEET_DRIVER_NAME="$FLEET_DRIVER_NAME"
 CMD
 echo

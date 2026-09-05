@@ -14,7 +14,15 @@ import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { ResourceLockService } from '../common/concurrency/resource-lock.service';
-import { DEFAULT_ZONE_RADIUS_KM, zoneAllows } from '../common/orders/driver-zone';
+import {
+  DEFAULT_ZONE_RADIUS_KM,
+  zoneAllows,
+  dropoffPoint,
+  pickupPoint,
+  distanceKm,
+  DriverZone,
+  DriverPoint,
+} from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
   projectOrderForDriver,
@@ -30,6 +38,15 @@ import {
   CapturePhotoDto,
   ListDriverOrdersQueryDto,
 } from './dto/transporteur.dto';
+
+/**
+ * Nombre maximal de suggestions rendues par l'optimisation de parcours.
+ *
+ * Décision produit (05/09/2026, `docs/specs_localisation_client_et_optimisation_parcours.md`
+ * §2.7, laissée ouverte par la spec) : aucune contrepartie serveur à mirroiter
+ * côté app, c'est une borne de réponse, pas une règle de validation.
+ */
+const MAX_ROUTE_OPTIMIZATION_SUGGESTIONS = 10;
 
 @Injectable()
 export class TransporteurService {
@@ -712,57 +729,17 @@ export class TransporteurService {
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
     // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);
     // the BFF only avoids showing orders already taken.
-    // Une exigence de véhicule est un MINIMUM, pas une égalité : une course
-    // demandant une voiture reste faisable en utilitaire. Et un transporteur
-    // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
-    // champ non rempli serait le pire des défauts silencieux.
-    const ladder = ['moto', 'voiture', 'utilitaire'];
-    // ⚠️ **Une seule lecture Fleetbase pour les trois critères.** Catégorie de
-    // véhicule, zone déclarée et position sortent de la même réponse : les
-    // séparer coûterait trois appels par affichage de liste, sur un
-    // environnement où chacun prend ~3 s.
     //
-    // ⚠️ La catégorie vivait dans `DriverAccount.vehicleType` jusqu'au
-    // 03/08/2026 — une colonne du BFF, donc invisible d'un opérateur.
-    const { zone, point, vehicleType } = await this.driverZone.read(
-      driver.fleetbaseDriverUuid,
-    );
-    const mine = ladder.indexOf(vehicleType ?? '');
-    // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
-    // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
-    // passerait pour « sans exigence » : un transporteur en moto se verrait
-    // proposer une course qui demande un utilitaire, et le découvrirait devant
-    // le colis.
-    const suits = (order: any) => {
-      if (mine < 0) return true;
-      const required = ladder.indexOf(order?.meta?.vehicle_type ?? '');
-      return required < 0 || required <= mine;
-    };
-
-    // Recomplété AVANT le filtre, pas après : `suits()` lit
-    // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
-    // traiter la course comme sans exigence.
-    //
-    // ⚠️ **Le refus se lit désormais SUR la commande**, plus dans une table du
-    // BFF (03/08/2026). L'ordre a donc changé : il fallait auparavant une
-    // requête en base *avant* de recomposer `meta` ; maintenant le refus **est
-    // dans** `meta`, donc il se lit une fois les courses recomposées — sans
-    // aucune entrée/sortie supplémentaire, puisqu'elles sont déjà en main.
-    //
-    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
-    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
-    // reviendrait au rafraîchissement suivant, et l'écran serait indiscernable
-    // d'une fonctionnalité en panne.
-    // ⚠️ Rechargement AVANT `withEffectiveMeta`, pour la même raison que
-    // ci-dessus : `isClaimableAdhoc` se décide sur des champs que la liste
-    // porte (statut, `adhoc`, conducteur), donc il réduit d'abord l'ensemble ;
-    // tout ce qui suit lit `meta`, que seule la lecture unitaire fournit.
-    const adhocFull = await this.fleetbaseClient.hydrateOrders(
-      adhocRaw.filter((o) => this.isClaimableAdhoc(o)),
-    );
-    const adhocHydrated = this.withEffectiveMeta(adhocFull).filter(
-      (o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid),
-    );
+    // ⚠️ **Éligibilité et zone séparées depuis l'optimisation de parcours
+    // (05/09/2026).** `getClaimablePoolOrders` porte tout ce qui décide si CE
+    // transporteur peut réclamer une course (statut, déclin, véhicule) —
+    // partagé avec la route d'optimisation, qui a besoin des mêmes candidats
+    // mais d'un filtre géographique différent (proximité de sa dépose, pas la
+    // zone déclarée). `zoneAllows` reste appliqué ICI, par cet écran
+    // uniquement : c'est lui qui répond à « qu'est-ce que CE transporteur a
+    // déclaré vouloir voir », une question que l'optimisation ne pose pas.
+    const { candidates: poolCandidates, zone, point } =
+      await this.getClaimablePoolOrders(driver, adhocRaw);
 
     // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
     //
@@ -775,9 +752,7 @@ export class TransporteurService {
     // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
     // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
     // sans que personne ne puisse constater ce qui manque.
-    const adhoc = adhocHydrated
-      .filter(suits)
-      .filter((o) => zoneAllows(o, zone, point));
+    const adhoc = poolCandidates.filter((o) => zoneAllows(o, zone, point));
 
     // ⚠️ `cancelled` à deux « l » compris : sans lui, une course annulée par le
     // chemin qui emploie cette orthographe restait dans les courses actives du
@@ -915,6 +890,112 @@ export class TransporteurService {
 
     const [withFailure] = this.attachFailures([order]);
     return withFailure;
+  }
+
+  /**
+   * Depuis une course déjà tenue, suggère d'autres courses du pool proches de
+   * sa dépose, pour enchaîner (`docs/specs_localisation_client_et_optimisation_parcours.md`
+   * §2).
+   *
+   * ── Ce que ce n'est pas ────────────────────────────────────────────────────
+   *
+   * Pas une réservation : lecture seule, aucun verrou. Accepter une
+   * suggestion passe par `acceptOrder()`, avec son verrou `order-accept:${id}`
+   * habituel — un autre transporteur peut la prendre entre la suggestion et
+   * le clic, et `order.already_taken` s'applique sans rien changer ici.
+   *
+   * ── Lecture retenue pour « proche de sa dépose » ──────────────────────────
+   *
+   * La spec ne précise pas quel point d'une course candidate comparer à la
+   * dépose de référence. Seule lecture opérationnelle : le point
+   * d'**enlèvement** du candidat — c'est là que le transporteur devrait se
+   * rendre pour enchaîner. D'où `pickupPoint()`, pas un nouvel accesseur.
+   *
+   * ── Pourquoi la course de référence doit être `mine` ──────────────────────
+   *
+   * `resolveVisibleOrder` autorise aussi une adhoc non réclamée (`mine:
+   * false`) — juste pour la consulter. Optimiser depuis une course qu'on ne
+   * tient pas encore n'a pas de sens : on n'« enchaîne » pas sur une course
+   * qu'on n'a pas commencée. D'où le refus explicite ci-dessous plutôt que de
+   * laisser passer.
+   */
+  async optimizeRoute(driverId: string, orderId: string) {
+    const { order, mine } = await this.resolveVisibleOrder(driverId, orderId);
+    if (!mine) {
+      // Même posture que `assertOrderVisible` : jamais confirmer l'existence
+      // d'une course à qui n'y a pas droit.
+      notFound('order.not_found', 'Order not found');
+    }
+
+    const referenceDropoff = dropoffPoint(order);
+    if (!referenceDropoff) {
+      conflict(
+        'order.optimize_no_reference_point',
+        'Dropoff point unknown for this order',
+      );
+    }
+
+    const driver = await this.getDriverOrFail(driverId);
+    let adhocRaw: any[] = [];
+    try {
+      adhocRaw = await this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true });
+    } catch (error) {
+      this.logger.error(`Route optimization fetch failed for driver ${driverId}: ${error.message}`);
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
+    }
+
+    // Même éligibilité que « Opportunités » (règle 5 — un seul « réclamable »),
+    // mais SANS le filtre de zone déclarée : ce n'est pas la question ici.
+    const { candidates } = await this.getClaimablePoolOrders(driver, adhocRaw);
+
+    const withDistance: { order: any; distanceKm: number }[] = [];
+    for (const candidate of candidates) {
+      // Filet explicite, redondant avec `isOrderClaimable` (une course ciblée
+      // porte déjà `driver_assigned_uuid` ou `facilitator_uuid`, donc est déjà
+      // exclue des `candidates`) — gardé nommé, comme le demande la spec
+      // §2.3/§2.8, pas comme un doublon oublié.
+      if (candidate?.meta?.target_favourite_uuid) continue;
+
+      const candidatePickup = pickupPoint(candidate);
+      // Sans point d'enlèvement, aucune distance n'est calculable. À la
+      // différence du filtre de zone, il n'y a ici aucun repli « on ne sait
+      // pas donc on laisse passer » : la fonctionnalité EST le classement par
+      // distance, pas un filtre parmi d'autres.
+      if (!candidatePickup) continue;
+
+      const d = distanceKm(referenceDropoff, candidatePickup);
+      if (d > DEFAULT_ZONE_RADIUS_KM) continue;
+
+      withDistance.push({ order: candidate, distanceKm: d });
+    }
+
+    withDistance.sort((a, b) => a.distanceKm - b.distanceKm);
+    const top = withDistance.slice(0, MAX_ROUTE_OPTIMIZATION_SUGGESTIONS);
+
+    // Jamais un prix manquant compté comme 0 (règle 10) : un 0 fabriqué se
+    // lirait comme un gain réel plutôt que comme une inconnue.
+    let totalKnownPrice = 0;
+    let unknownPriceCount = 0;
+    for (const entry of top) {
+      const price = entry.order?.meta?.price;
+      if (typeof price === 'number' && Number.isFinite(price)) {
+        totalKnownPrice += price;
+      } else {
+        unknownPriceCount += 1;
+      }
+    }
+
+    const suggestions = top.map((entry) => ({
+      ...projectOrderForDriver(entry.order, { unclaimed: true }),
+      distanceKm: entry.distanceKm,
+    }));
+
+    return {
+      referenceOrderId: orderId,
+      suggestions,
+      totalKnownPrice,
+      unknownPriceCount,
+    };
   }
 
   /**
@@ -1381,6 +1462,89 @@ export class TransporteurService {
 
   private isClaimableAdhoc(order: any): boolean {
     return isOrderClaimable(order);
+  }
+
+  /**
+   * Les courses du pool que CE transporteur a le droit de réclamer —
+   * éligibilité seule, **avant** tout filtre géographique.
+   *
+   * ── Pourquoi cette méthode existe (05/09/2026) ────────────────────────────
+   *
+   * Extraite de `listOrders()` pour l'optimisation de parcours
+   * (`docs/specs_localisation_client_et_optimisation_parcours.md` §2), qui a
+   * besoin des mêmes candidats que l'onglet « Opportunités » mais d'un filtre
+   * géographique différent : proximité de la dépose d'une course déjà tenue,
+   * pas la zone que le transporteur a déclarée. Partager cette étape est ce
+   * que la règle 5 du `CLAUDE.md` demande — sinon deux définitions de
+   * « réclamable » pourraient diverger, exactement le défaut fondateur de
+   * `isOrderClaimable`.
+   *
+   * Prend `adhocRaw` déjà chargé plutôt que de le récupérer lui-même : dans
+   * `listOrders()`, il est acquis en parallèle du côté « mes courses »
+   * (`Promise.all`) — refaire l'appel ici casserait ce parallélisme sans
+   * aucun bénéfice, puisque l'appelant l'a déjà en main.
+   *
+   * Rend aussi `zone`/`point` (lus une seule fois avec `vehicleType`, comme
+   * avant l'extraction) : `listOrders()` en a besoin pour son propre filtre
+   * de zone, appliqué par lui et non par cette méthode.
+   */
+  private async getClaimablePoolOrders(
+    driver: { fleetbaseDriverUuid: string },
+    adhocRaw: any[],
+  ): Promise<{ candidates: any[]; zone: DriverZone | null; point: DriverPoint | null }> {
+    // Une exigence de véhicule est un MINIMUM, pas une égalité : une course
+    // demandant une voiture reste faisable en utilitaire. Et un transporteur
+    // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
+    // champ non rempli serait le pire des défauts silencieux.
+    const ladder = ['moto', 'voiture', 'utilitaire'];
+    // ⚠️ **Une seule lecture Fleetbase pour les trois critères.** Catégorie de
+    // véhicule, zone déclarée et position sortent de la même réponse : les
+    // séparer coûterait trois appels par affichage de liste, sur un
+    // environnement où chacun prend ~3 s.
+    //
+    // ⚠️ La catégorie vivait dans `DriverAccount.vehicleType` jusqu'au
+    // 03/08/2026 — une colonne du BFF, donc invisible d'un opérateur.
+    const { zone, point, vehicleType } = await this.driverZone.read(
+      driver.fleetbaseDriverUuid,
+    );
+    const mine = ladder.indexOf(vehicleType ?? '');
+    // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
+    // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
+    // passerait pour « sans exigence » : un transporteur en moto se verrait
+    // proposer une course qui demande un utilitaire, et le découvrirait devant
+    // le colis.
+    const suits = (order: any) => {
+      if (mine < 0) return true;
+      const required = ladder.indexOf(order?.meta?.vehicle_type ?? '');
+      return required < 0 || required <= mine;
+    };
+
+    // Recomplété AVANT le filtre, pas après : `suits()` lit
+    // `meta.vehicle_type`, et le filtrer sur un `meta` effacé reviendrait à
+    // traiter la course comme sans exigence.
+    //
+    // ⚠️ **Le refus se lit désormais SUR la commande**, plus dans une table du
+    // BFF (03/08/2026). L'ordre a donc changé : il fallait auparavant une
+    // requête en base *avant* de recomposer `meta` ; maintenant le refus **est
+    // dans** `meta`, donc il se lit une fois les courses recomposées — sans
+    // aucune entrée/sortie supplémentaire, puisqu'elles sont déjà en main.
+    //
+    // Les courses que CE transporteur a refusées ne lui sont plus proposées.
+    // Sans ce filtre, le refus n'aurait aucun effet visible : la course
+    // reviendrait au rafraîchissement suivant, et l'écran serait indiscernable
+    // d'une fonctionnalité en panne.
+    // ⚠️ Rechargement AVANT `withEffectiveMeta`, pour la même raison que
+    // ci-dessus : `isClaimableAdhoc` se décide sur des champs que la liste
+    // porte (statut, `adhoc`, conducteur), donc il réduit d'abord l'ensemble ;
+    // tout ce qui suit lit `meta`, que seule la lecture unitaire fournit.
+    const adhocFull = await this.fleetbaseClient.hydrateOrders(
+      adhocRaw.filter((o) => this.isClaimableAdhoc(o)),
+    );
+    const adhocHydrated = this.withEffectiveMeta(adhocFull).filter(
+      (o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid),
+    );
+
+    return { candidates: adhocHydrated.filter(suits), zone, point };
   }
 
   /**

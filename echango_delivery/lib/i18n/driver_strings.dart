@@ -141,6 +141,27 @@ const Map<String, String> _fr = {
       'Sans véhicule déclaré, toutes les courses vous sont proposées.',
   'driver.vehicle.hint.set':
       'Une course exigeant un véhicule plus grand ne vous sera pas proposée.',
+
+  // ── Optimisation de parcours ────────────────────────────────────────────
+  //
+  // Depuis une course déjà tenue, d'autres courses du pool proches de sa
+  // dépose — pour enchaîner (docs/specs_localisation_client_et_optimisation_parcours.md §2).
+  'driver.optimize.action': 'Optimiser',
+  'driver.optimize.title': 'Courses à proximité',
+  'driver.optimize.loading': 'Recherche des courses à proximité…',
+  'driver.optimize.empty': 'Rien à proximité de votre dépose',
+  'driver.optimize.empty.hint':
+      'Aucune course du réseau n’est proche de l’endroit où vous déposez '
+      'cette course. Réessayez après votre livraison, ou plus tard.',
+  'driver.optimize.unavailable': 'Recherche impossible',
+  'driver.optimize.unavailable.hint':
+      'La recherche de courses à proximité n’a pas pu aboutir.',
+  'driver.optimize.retry': 'Réessayer',
+  'driver.optimize.distance': '{km} km',
+  'driver.optimize.total': 'Gain potentiel : {amount}',
+  'driver.optimize.unknown_price':
+      'et {count} course(s) sans prix affiché, non comptée(s) ci-dessus',
+  'driver.optimize.accept': 'Prendre cette course',
 };
 
 const Map<String, String> _ar = {
@@ -234,4 +255,21 @@ const Map<String, String> _ar = {
       'بدون مركبة مصرَّح بها، تُعرض عليك كل المهام.',
   'driver.vehicle.hint.set':
       'لن تُعرض عليك مهمة تتطلب مركبة أكبر.',
+
+  // ── تحسين المسار ──────────────────────────────────────────────────────────
+  'driver.optimize.action': 'تحسين',
+  'driver.optimize.title': 'مهام قريبة',
+  'driver.optimize.loading': 'البحث عن مهام قريبة…',
+  'driver.optimize.empty': 'لا شيء قريب من نقطة تسليمك',
+  'driver.optimize.empty.hint':
+      'لا توجد مهمة في الشبكة قريبة من المكان الذي تسلّم فيه هذه المهمة. '
+      'أعد المحاولة بعد التسليم، أو لاحقًا.',
+  'driver.optimize.unavailable': 'تعذّر البحث',
+  'driver.optimize.unavailable.hint': 'تعذّر البحث عن مهام قريبة.',
+  'driver.optimize.retry': 'إعادة المحاولة',
+  'driver.optimize.distance': '{km} كم',
+  'driver.optimize.total': 'الربح المحتمل: {amount}',
+  'driver.optimize.unknown_price':
+      'و{count} مهمة بدون سعر معروض، غير محتسبة أعلاه',
+  'driver.optimize.accept': 'قبول هذه المهمة',
 };

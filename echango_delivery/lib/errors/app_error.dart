@@ -98,6 +98,11 @@ class AppError {
   static const String orderNotFoundUpstream = 'order.not_found_upstream';
   static const String orderTargetNotFavourite = 'order.target_not_favourite';
   static const String orderRedirectNotAllowed = 'order.redirect_not_allowed';
+  static const String orderOptimizeNoReferencePoint =
+      'order.optimize_no_reference_point';
+  /// Mise à jour de la position de dépose échouée côté Fleetbase (fiche
+  /// client géolocalisée, §1.6).
+  static const String orderPositionUpdateFailed = 'order.position_update_failed';
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   static const String driverNotFound = 'driver.not_found';
@@ -144,6 +149,14 @@ class AppError {
 
   // ── Géocodage ────────────────────────────────────────────────────────────
   static const String geocodingUnavailable = 'geocoding.unavailable';
+
+  // ── Fiche client géolocalisée ────────────────────────────────────────────
+  static const String clientPhoneInvalid = 'client.phone_invalid';
+  static const String clientLinkNotFound = 'client.link_not_found';
+  static const String clientLinkExpired = 'client.link_expired';
+  static const String clientLinkAlreadyUsed = 'client.link_already_used';
+  static const String clientLinkGenerateFailed = 'client.link_generate_failed';
+  static const String clientNoPendingSubmission = 'client.no_pending_submission';
 
   // ── Validation générique ─────────────────────────────────────────────────
   static const String validationInvalidId = 'validation.invalid_id';

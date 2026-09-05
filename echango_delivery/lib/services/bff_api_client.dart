@@ -12,6 +12,7 @@ import '../models/merchant_order.dart';
 import '../models/driver_zone.dart';
 import '../models/fleet_driver_position.dart';
 import '../models/collections.dart';
+import '../models/route_optimization_result.dart';
 
 const _tokenKey = 'echango_session_token';
 
@@ -576,6 +577,16 @@ class BffApiClient {
     await _post('/transporteur/commandes/$orderId/accepter');
   }
 
+  /// Depuis une course déjà tenue, d'autres courses du pool proches de sa
+  /// dépose (`docs/specs_localisation_client_et_optimisation_parcours.md`
+  /// §2). Lecture seule : accepter une suggestion passe par [acceptOrder],
+  /// avec son verrou habituel — la suggestion n'est pas une réservation.
+  Future<RouteOptimizationResult> optimizeRoute(String orderId) async {
+    final data = await _get('/transporteur/commandes/$orderId/optimisation');
+    return RouteOptimizationResult.fromJson(
+        (data ?? <String, dynamic>{}) as Map<String, dynamic>);
+  }
+
   Future<void> startOrder(String orderId) async {
     await _post('/transporteur/commandes/$orderId/demarrer');
   }
@@ -1061,6 +1072,49 @@ class BffApiClient {
   /// l'échéance est déjà dépassée.
   Future<Map<String, dynamic>> getMerchantOrderTemplate(String id) async {
     return (await _get('/commercant/commandes/$id/modele') ?? <String, dynamic>{}) as Map<String, dynamic>;
+  }
+
+  /// Corrige le point de dépose d'une commande déjà créée — typiquement depuis
+  /// une fiche client mise à jour après coup.
+  Future<void> updateMerchantOrderPosition(
+    String orderId, {
+    required double latitude,
+    required double longitude,
+  }) async {
+    await _post('/commercant/commandes/$orderId/position', {
+      'latitude': latitude,
+      'longitude': longitude,
+    });
+  }
+
+  // ── Fiche client géolocalisée ────────────────────────────────────────────
+  //
+  // `docs/specs_localisation_client_et_optimisation_parcours.md` §1. Fiche
+  // platform-wide, indexée par téléphone — n'importe quel commerçant peut
+  // consulter ou proposer une position pour n'importe quel numéro.
+
+  /// Fiche connue pour ce numéro, ou `found: false` si aucune n'existe encore
+  /// (cas courant à la composition d'une commande, pas une erreur).
+  Future<ClientLookup> getClient(String phone) async {
+    final data = await _get('/commercant/clients/${Uri.encodeComponent(phone)}');
+    return ClientLookup.fromJson((data ?? <String, dynamic>{}) as Map<String, dynamic>);
+  }
+
+  /// Génère un lien de localisation (10 minutes, usage unique) à partager
+  /// soi-même via le partage natif du téléphone.
+  Future<LocationLink> generateLocationLink(String phone) async {
+    final data = await _post('/commercant/clients/${Uri.encodeComponent(phone)}/lien-position');
+    return LocationLink.fromJson((data ?? <String, dynamic>{}) as Map<String, dynamic>);
+  }
+
+  /// Applique la position en attente sur la fiche (§1.4 : jamais automatique).
+  Future<void> confirmClientPosition(String phone) async {
+    await _post('/commercant/clients/${Uri.encodeComponent(phone)}/confirmer');
+  }
+
+  /// Rejette la position en attente : la fiche garde son ancienne valeur.
+  Future<void> rejectClientPosition(String phone) async {
+    await _post('/commercant/clients/${Uri.encodeComponent(phone)}/rejeter');
   }
 
   // ── Notifications (commerçant) ─────────────────────────────────────────

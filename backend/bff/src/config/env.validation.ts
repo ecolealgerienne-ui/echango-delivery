@@ -81,6 +81,29 @@ export function validateEnv(config: Record<string, unknown>) {
     );
   }
 
+  // ── PUBLIC_URL obligatoire en production (revue du 05/09/2026) ────────────
+  //
+  // `ClientService.generateLink()` construit le lien de localisation envoyé
+  // par le commerçant à son client (`docs/specs_localisation_client_et_optimisation_parcours.md`
+  // §1.2) à partir de `PUBLIC_URL`, avec un repli sur `http://localhost:3001`
+  // si elle est absente. Ce repli est correct en développement — c'est
+  // l'adresse réelle du service sur ce poste — mais en production il
+  // produirait un lien silencieusement inutilisable : le client le recevrait
+  // par SMS/WhatsApp et cliquerait sur une adresse qui ne pointe que vers
+  // l'intérieur de la machine qui a servi la requête. Rien dans la réponse ne
+  // le signale : le commerçant croit avoir envoyé un lien fonctionnel.
+  //
+  // Même principe que `JWT_SECRET` ci-dessus : une variable dont l'absence
+  // dégraderait silencieusement le service doit empêcher son démarrage, pas
+  // le laisser tourner sur un repli qui ment poliment (règle 10 de CLAUDE.md).
+  if (config.NODE_ENV === 'production' && !String(config.PUBLIC_URL ?? '').trim()) {
+    errors.push(
+      'PUBLIC_URL est absent ou vide en production : les liens de localisation ' +
+        'envoyés aux clients pointeraient vers http://localhost:3001, ' +
+        'inutilisables hors de ce serveur. Poser PUBLIC_URL=https://votre-domaine.tld.',
+    );
+  }
+
   if (errors.length) {
     throw new Error(
       `Configuration invalide, démarrage refusé :\n` +

@@ -62,6 +62,19 @@ const String codGapFee =
 const String confidedFee =
     String.fromEnvironment('TEST_CONFIDED_FEE', defaultValue: '4444');
 
+/// La course de référence de l'optimisation de parcours : confiée au
+/// conducteur comme [confidedFee], mais à un prix distinct — la scène
+/// « rendre une course confiée » ne doit jamais la toucher, sinon les deux
+/// scénarios se disputeraient la même course selon l'ordre d'exécution.
+const String optimizeRefFee =
+    String.fromEnvironment('TEST_OPTIMIZE_REF_FEE', defaultValue: '6161');
+
+/// La suggestion attendue, à ~300 m de la dépose de [optimizeRefFee] — posée
+/// loin de tout autre décor (Tamanrasset) pour ne pas se faire distancer par
+/// les centaines de commandes de test accumulées à Alger.
+const String optimizeSuggestionFee =
+    String.fromEnvironment('TEST_OPTIMIZE_SUGGESTION_FEE', defaultValue: '6262');
+
 /// Le **nom** du conducteur que le décor rattache à l'entreprise, pour qu'elle
 /// ait quelqu'un à désigner. On le reconnaît dans le tiroir de choix par son
 /// nom — une donnée que le décor a posée, pas un libellé traduit.

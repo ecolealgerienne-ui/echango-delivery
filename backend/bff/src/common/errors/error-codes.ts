@@ -142,6 +142,25 @@ export const ErrorCode = {
   ORDER_TARGET_NOT_FAVOURITE: 'order.target_not_favourite',
   /** Redirection refusée : la course a déjà été prise par un transporteur. */
   ORDER_REDIRECT_NOT_ALLOWED: 'order.redirect_not_allowed',
+  /**
+   * Optimisation de parcours demandée sur une course sans point de dépose
+   * connu (§2 de `docs/specs_localisation_client_et_optimisation_parcours.md`).
+   *
+   * Refus explicite plutôt qu'une liste de suggestions vide : sans point de
+   * référence, aucune distance ne peut être calculée, et une liste vide
+   * silencieuse se lirait comme « rien à proximité » alors que la vraie
+   * réponse est « on ne sait pas où vous déposez » (règle 10).
+   */
+  ORDER_OPTIMIZE_NO_REFERENCE_POINT: 'order.optimize_no_reference_point',
+  /**
+   * Mise à jour de la position de dépose échouée côté Fleetbase.
+   *
+   * Refus délibéré plutôt qu'un succès muet : sans lui, le commerçant croit
+   * la position corrigée alors que le lieu Fleetbase n'a pas bougé, et le
+   * transporteur navigue toujours vers l'ancien point
+   * (`docs/specs_localisation_client_et_optimisation_parcours.md` §1.6).
+   */
+  ORDER_POSITION_UPDATE_FAILED: 'order.position_update_failed',
 
   // ── Transporteurs (persona flotte + commerçant) ─────────────────────────
   DRIVER_NOT_FOUND: 'driver.not_found',
@@ -211,6 +230,20 @@ export const ErrorCode = {
 
   // ── Géocodage ────────────────────────────────────────────────────────────
   GEOCODING_UNAVAILABLE: 'geocoding.unavailable',
+
+  // ── Client (fiche géolocalisée, `docs/specs_localisation_client_et_optimisation_parcours.md` §1) ──
+  /** Le numéro fourni ne correspond à aucun format mobile algérien reconnu. */
+  CLIENT_PHONE_INVALID: 'client.phone_invalid',
+  /** Lien de localisation inexistant — mauvais token, ou jamais généré. */
+  CLIENT_LINK_NOT_FOUND: 'client.link_not_found',
+  /** Les 10 minutes de validité du lien sont dépassées. */
+  CLIENT_LINK_EXPIRED: 'client.link_expired',
+  /** Le lien a déjà servi une fois — usage unique. */
+  CLIENT_LINK_ALREADY_USED: 'client.link_already_used',
+  /** La création du lien a échoué côté serveur (écriture Postgres). */
+  CLIENT_LINK_GENERATE_FAILED: 'client.link_generate_failed',
+  /** Confirmer/rejeter alors qu'aucune position n'est en attente sur la fiche. */
+  CLIENT_NO_PENDING_SUBMISSION: 'client.no_pending_submission',
 
   // ── Validation générique ─────────────────────────────────────────────────
   VALIDATION_INVALID_ID: 'validation.invalid_id',

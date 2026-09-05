@@ -20,6 +20,7 @@ import '../../widgets/error_banner.dart';
 import 'status_colors.dart';
 import 'zone_card.dart';
 import '../../widgets/section_card.dart';
+import '../../utils/place_label.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -387,7 +388,7 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 // réclamée (c'est celui du destinataire), et la ligne se
                 // lisait « MAGASIN1 →  » sur chaque opportunité.
                 Text(
-                  '${_placeLabel(order.pickupPlace)} → ${_placeLabel(order.dropoffPlace)}',
+                  '${placeLabel(order.pickupPlace)} → ${placeLabel(order.dropoffPlace)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -666,20 +667,4 @@ class _VehicleTypeCard extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Comment nommer un lieu quand son nom a été retiré.
-///
-/// Sur une course non réclamée, le serveur ne sert plus le nom du destinataire —
-/// il ne le remplace pas non plus par un libellé, il l'omet (31/07/2026). Sans
-/// repli, la ligne affichait « MAGASIN1 →  », un tiret vers rien.
-///
-/// L'ordre suit l'utilité : le nom quand il existe, sinon l'adresse recomposée
-/// à partir des seules composantes structurées, sinon rien plutôt qu'un
-/// point d'interrogation.
-String _placeLabel(Place? place) {
-  if (place == null) return '—';
-  if (place.name.trim().isNotEmpty) return place.name.trim();
-  if (place.address.trim().isNotEmpty) return place.address.trim();
-  return '—';
 }

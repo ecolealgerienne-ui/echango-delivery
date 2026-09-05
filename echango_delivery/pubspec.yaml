@@ -62,6 +62,13 @@ dependencies:
   # Ouverture d'une application de navigation externe
   url_launcher: ^6.3.1
 
+  # Partage natif du lien de localisation (§1.2 de
+  # docs/specs_localisation_client_et_optimisation_parcours.md) — la
+  # plateforme n'envoie rien elle-même, le commerçant partage lui-même via
+  # SMS/WhatsApp/etc. avec le mécanisme de partage déjà présent sur son
+  # téléphone.
+  share_plus: ^10.1.2
+
   # Carte — OpenStreetMap plutôt que Google Maps : pas de clé API, pas de
   # facturation au chargement, cohérent avec le choix d'auto-héberger le reste.
   flutter_map: ^7.0.2

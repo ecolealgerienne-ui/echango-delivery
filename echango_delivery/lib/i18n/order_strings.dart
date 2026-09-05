@@ -83,6 +83,20 @@ const Map<String, String> _fr = {
   'order.form.map.pickup': 'Point de retrait',
   'order.form.map.dropoff': 'Point de livraison',
 
+  // ── Fiche client géolocalisée ──────────────────────────────────────────
+  'order.form.client.link.button': 'Envoyer un lien de localisation',
+  'order.form.client.link.share_text':
+      'Partagez votre position pour votre livraison : {url} (valable 10 minutes)',
+  'order.form.client.link.failed':
+      'Génération du lien de localisation impossible.',
+  'order.form.client.pending.title': 'Nouvelle position reçue',
+  'order.form.client.pending.body':
+      'Le client a partagé une nouvelle position. Confirmer pour l’utiliser ?',
+  'order.form.client.pending.confirm': 'Mettre à jour',
+  'order.form.client.pending.reject': 'Ignorer',
+  'order.form.client.pending.confirmed': 'Position mise à jour.',
+  'order.form.client.pending.rejected': 'Nouvelle position ignorée.',
+
   // ── Véhicule ────────────────────────────────────────────────────────────
   'order.form.vehicle.label': 'Véhicule nécessaire',
   'order.form.vehicle.any': 'Indifférent',
@@ -253,6 +267,12 @@ const Map<String, String> _fr = {
       'Position du transporteur non disponible pour le moment.',
   'order.detail.driver.position.unknown':
       'Dernière position connue, date inconnue',
+  'order.detail.refresh_from_client': 'Mettre à jour depuis la fiche client',
+  'order.detail.refresh_from_client.none':
+      'Aucune position enregistrée pour ce numéro.',
+  'order.detail.refresh_from_client.done': 'Position de dépose mise à jour.',
+  'order.detail.refresh_from_client.failed':
+      'Mise à jour de la position impossible.',
   'order.detail.driver.position.seen': 'Position relevée {when}',
   'order.detail.refresh': 'Actualiser',
 
@@ -593,6 +613,19 @@ const Map<String, String> _ar = {
   'order.form.map.pickup': 'نقطة الاستلام',
   'order.form.map.dropoff': 'نقطة التسليم',
 
+  // ── بطاقة الزبون الجغرافية ────────────────────────────────────────────────
+  'order.form.client.link.button': 'إرسال رابط تحديد الموقع',
+  'order.form.client.link.share_text':
+      'شارك موقعك لأجل توصيل طلبك: {url} (صالح لمدة 10 دقائق)',
+  'order.form.client.link.failed': 'تعذر إنشاء رابط تحديد الموقع.',
+  'order.form.client.pending.title': 'تم استلام موقع جديد',
+  'order.form.client.pending.body':
+      'شارك الزبون موقعًا جديدًا. هل تريد تأكيده لاستخدامه؟',
+  'order.form.client.pending.confirm': 'تحديث',
+  'order.form.client.pending.reject': 'تجاهل',
+  'order.form.client.pending.confirmed': 'تم تحديث الموقع.',
+  'order.form.client.pending.rejected': 'تم تجاهل الموقع الجديد.',
+
   // ── Véhicule ────────────────────────────────────────────────────────────
   'order.form.vehicle.label': 'المركبة المطلوبة',
   'order.form.vehicle.any': 'لا يهم',
@@ -728,6 +761,10 @@ const Map<String, String> _ar = {
   'order.detail.driver.position.unknown': 'آخر موقع معروف، التاريخ مجهول',
   'order.detail.driver.position.seen': 'سُجّل الموقع {when}',
   'order.detail.refresh': 'تحديث',
+  'order.detail.refresh_from_client': 'تحديث من بطاقة الزبون',
+  'order.detail.refresh_from_client.none': 'لا يوجد موقع مسجل لهذا الرقم.',
+  'order.detail.refresh_from_client.done': 'تم تحديث موقع التسليم.',
+  'order.detail.refresh_from_client.failed': 'تعذر تحديث الموقع.',
 
   // ── Fiche de livraison : l'argent ───────────────────────────────────────
   'order.detail.cash.title': 'الدفع عند التسليم',
