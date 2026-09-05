@@ -17,6 +17,7 @@ import '../screens/transporteur/dashboard_screen.dart';
 import '../screens/transporteur/delivery_failure_screen.dart';
 import '../screens/transporteur/my_fleets_screen.dart';
 import '../screens/transporteur/order_detail_screen.dart' as transporteur;
+import '../screens/transporteur/route_optimization_screen.dart';
 import '../state/auth_state.dart';
 
 const _publicPaths = ['/login', '/register'];
@@ -78,6 +79,11 @@ GoRouter buildAppRouter(AuthState authState) {
                 path: 'echec',
                 builder: (_, s) =>
                     DeliveryFailureScreen(orderId: s.pathParameters['id']!),
+              ),
+              GoRoute(
+                path: 'optimisation',
+                builder: (_, s) =>
+                    RouteOptimizationScreen(orderId: s.pathParameters['id']!),
               ),
             ],
           ),

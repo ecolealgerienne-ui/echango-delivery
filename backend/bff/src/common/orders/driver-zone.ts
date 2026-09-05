@@ -126,6 +126,30 @@ export function pickupPoint(order: any): DriverPoint | null {
 }
 
 /**
+ * Le point de dépose, quand la course en porte un.
+ *
+ * ⚠️ **Miroir exact de `pickupPoint()`, pas une fusion avec elle** — même
+ * lecture GeoJSON, même rejet de `[0, 0]` — parce qu'elles répondent à deux
+ * questions différentes : `pickupPoint` sert à décider si UNE course entre
+ * dans la zone déclarée d'un transporteur qui ne la tient pas encore ;
+ * `dropoffPoint` sert, pour l'optimisation de parcours, à situer où UNE
+ * course déjà acceptée dépose — le point de départ d'une recherche de
+ * courses proches, pas un critère d'éligibilité. Les fusionner en un
+ * `orderPoint(order, 'pickup' | 'dropoff')` ajouterait un paramètre modal
+ * sans réduire la duplication réelle (règle 5 : rien ici n'a besoin de
+ * changer sur les deux à la fois).
+ */
+export function dropoffPoint(order: any): DriverPoint | null {
+  const coords =
+    order?.payload?.dropoff?.location?.coordinates ?? order?.dropoff?.location?.coordinates;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+  const [longitude, latitude] = coords;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
+}
+
+/**
  * Deux noms de wilaya désignent-ils la même ?
  *
  * ⚠️ Comparaison **insensible à la casse et aux espaces** : Fleetbase rend les

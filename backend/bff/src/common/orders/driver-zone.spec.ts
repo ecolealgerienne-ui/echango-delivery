@@ -11,6 +11,7 @@ import {
   DriverZone,
   DEFAULT_ZONE_RADIUS_KM,
   distanceKm,
+  dropoffPoint,
   pickupPoint,
   pickupWilaya,
   sameWilaya,
@@ -74,6 +75,37 @@ describe('lire le point d’enlèvement', () => {
   it('rend null quand les coordonnées manquent ou sont incomplètes', () => {
     expect(pickupPoint(order({}))).toBeNull();
     expect(pickupPoint({ payload: { pickup: { location: { coordinates: [3] } } } })).toBeNull();
+  });
+});
+
+describe('lire le point de dépose (optimisation de parcours)', () => {
+  const dropoffOrder = (coords?: [number, number] | null) => ({
+    payload: {
+      dropoff: {
+        location: coords ? { coordinates: coords } : undefined,
+      },
+    },
+  });
+
+  it('rend la position, longitude d’abord côté Fleetbase', () => {
+    expect(dropoffPoint(dropoffOrder([3.0589, 36.7719]))).toEqual(ALGER);
+  });
+
+  it('⚠️ [0, 0] est une ABSENCE, pas un point — même défaut qu’à l’enlèvement', () => {
+    expect(dropoffPoint(dropoffOrder([0, 0]))).toBeNull();
+  });
+
+  it('rend null quand les coordonnées manquent ou sont incomplètes', () => {
+    expect(dropoffPoint(dropoffOrder())).toBeNull();
+    expect(dropoffPoint({ payload: { dropoff: { location: { coordinates: [3] } } } })).toBeNull();
+  });
+
+  it('ne se confond pas avec le point d’enlèvement de la même course', () => {
+    // Les deux accesseurs lisent des chemins différents : une course dont
+    // seul l'enlèvement est connu ne doit jamais faire croire à une dépose.
+    const enlevementSeul = order({ coords: [3.0589, 36.7719] });
+    expect(pickupPoint(enlevementSeul)).toEqual(ALGER);
+    expect(dropoffPoint(enlevementSeul)).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ import '../models/merchant_order.dart';
 import '../models/driver_zone.dart';
 import '../models/fleet_driver_position.dart';
 import '../models/collections.dart';
+import '../models/route_optimization_result.dart';
 
 const _tokenKey = 'echango_session_token';
 
@@ -574,6 +575,16 @@ class BffApiClient {
   /// immédiatement »). Peut échouer si un autre driver a été plus rapide.
   Future<void> acceptOrder(String orderId) async {
     await _post('/transporteur/commandes/$orderId/accepter');
+  }
+
+  /// Depuis une course déjà tenue, d'autres courses du pool proches de sa
+  /// dépose (`docs/specs_localisation_client_et_optimisation_parcours.md`
+  /// §2). Lecture seule : accepter une suggestion passe par [acceptOrder],
+  /// avec son verrou habituel — la suggestion n'est pas une réservation.
+  Future<RouteOptimizationResult> optimizeRoute(String orderId) async {
+    final data = await _get('/transporteur/commandes/$orderId/optimisation');
+    return RouteOptimizationResult.fromJson(
+        (data ?? <String, dynamic>{}) as Map<String, dynamic>);
   }
 
   Future<void> startOrder(String orderId) async {

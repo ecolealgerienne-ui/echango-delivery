@@ -98,6 +98,8 @@ class AppError {
   static const String orderNotFoundUpstream = 'order.not_found_upstream';
   static const String orderTargetNotFavourite = 'order.target_not_favourite';
   static const String orderRedirectNotAllowed = 'order.redirect_not_allowed';
+  static const String orderOptimizeNoReferencePoint =
+      'order.optimize_no_reference_point';
 
   // ── Transporteurs ────────────────────────────────────────────────────────
   static const String driverNotFound = 'driver.not_found';
