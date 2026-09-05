@@ -65,6 +65,10 @@ SCENARIOS=(
   # dépend d'aucun des autres et n'en dérange aucun. Son email est stable, il
   # ne consomme donc une inscription qu'à sa toute première exécution.
   test-wilaya
+  # Fiche client géolocalisée : lien à usage unique, portée plateforme,
+  # confirmation avant écrasement. Ne touche ni au conducteur ni au pool de
+  # courses — placé ici pour la même raison que test-wilaya juste au-dessus.
+  test-fiche-client
   test-multi-appartenance
   # Le filtre wilaya CÔTÉ CONDUCTEUR : une course hors-wilaya lui est cachée,
   # la bonne visible — dans les deux sens. test-wilaya prouve la persistance ;
@@ -92,6 +96,12 @@ SCENARIOS=(
   # La thèse produit : un conducteur sert deux commerçants. Prouvé par l'accès
   # et l'acceptation, pas par la liste géospatiale (voir l'en-tête du script).
   test-pool-mutualise
+  # Optimisation de parcours : depuis une course déjà tenue, les courses du
+  # pool proches de la DÉPOSE apparaissent (triées), les hors-rayon et les
+  # ciblées à un favori non — même éligibilité que le pool ci-dessus, filtre
+  # géographique différent. Rejoue aussi le verrou d'acceptation sur ce
+  # nouveau chemin (§2.8), d'où sa place à côté des bancs de concurrence.
+  test-optimisation-parcours
   # ⚠️ Concurrence : deux acceptations SIMULTANÉES, un seul gagnant. Probabiliste
   # (plusieurs tours) — un banc de course qui « passe » une fois ne prouve rien.
   test-concurrence-acceptation

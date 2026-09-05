@@ -119,21 +119,34 @@ mapi POST /commercant/transporteurs/favoris \
   "$(jq -n --arg u "$Y_UUID" '{fleetbaseDriverUuid:$u, partyType:"driver"}')" >/dev/null
 pass "Y est favori"
 
-# Alger, un point de dépose de référence, et quatre candidats à distances
-# connues (approx. haversine) :
+# Zone délibérément à l'écart d'Alger (décalage +/-2° lat, +1° lon par rapport
+# aux coordonnées « DéPôT DU PARCOURS » réutilisées par tout le reste de la
+# suite) — même géométrie relative, cluster déplacé.
+#
+# ⚠️ **Nécessaire, trouvé en faisant tourner ce banc contre la vraie instance
+# Fleetbase** : à Alger, ce test partage l'espace avec des centaines de
+# commandes de scénarios passés jamais nettoyées (425 commandes « sans
+# conducteur » constatées le 05/09/2026) — dont plusieurs, à moins de 3 km de
+# la dépose de référence historique, prenaient la place de MID dans les 10
+# suggestions les plus proches (plafond `MAX_ROUTE_OPTIMIZATION_SUGGESTIONS`).
+# Ce n'était pas un défaut du tri ni du plafond — les deux fonctionnaient
+# exactement comme prévu — mais un témoin qui ne peut pas être fiable tant
+# qu'il partage sa zone avec un historique non maîtrisé. Un rayon de 15 km
+# loin de toute zone déjà utilisée rend le test indépendant de ce qui traîne.
+#
 #   NEAR  ≈ 0.3 km   MID ≈ 9 km   FAR ≈ 37 km (hors rayon de 15 km)
 step "Course de référence : Z la tient (acceptée), sa dépose sert de repère"
-REF="$(publish 36.7719 3.0589 36.7500 3.0600)"
+REF="$(publish 34.7719 4.0589 34.7500 4.0600)"
 [[ "$REF" == ERR:* ]] && fail "Publication de la course de référence" "$REF"
 acc="$(dapi "$Z_TOKEN" POST "/transporteur/commandes/$REF/accepter" '{}')"
 echo "$acc" | jq -e '.uuid // .id // empty' >/dev/null 2>&1 || fail "Z n'a pas pu accepter la course de référence" "$acc"
-pass "Référence $REF acceptée par Z — dépose (36.7500, 3.0600)"
+pass "Référence $REF acceptée par Z — dépose (34.7500, 4.0600)"
 
 step "Quatre candidats publiés : proche, moyen, loin, et ciblé (proche)"
-NEAR="$(publish 36.7520 3.0620 36.9000 3.2000)"; [[ "$NEAR" == ERR:* ]] && fail "Publication NEAR" "$NEAR"
-MID="$(publish 36.8200 3.0500 36.9000 3.2000)";  [[ "$MID"  == ERR:* ]] && fail "Publication MID" "$MID"
-FAR="$(publish 36.4703 2.8277 36.9000 3.2000)";  [[ "$FAR"  == ERR:* ]] && fail "Publication FAR" "$FAR"
-TARGETED="$(publish 36.7515 3.0615 36.9000 3.2000 "$Y_UUID")"; [[ "$TARGETED" == ERR:* ]] && fail "Publication ciblée" "$TARGETED"
+NEAR="$(publish 34.7520 4.0620 34.9000 4.2000)"; [[ "$NEAR" == ERR:* ]] && fail "Publication NEAR" "$NEAR"
+MID="$(publish 34.8200 4.0500 34.9000 4.2000)";  [[ "$MID"  == ERR:* ]] && fail "Publication MID" "$MID"
+FAR="$(publish 34.4703 3.8277 34.9000 4.2000)";  [[ "$FAR"  == ERR:* ]] && fail "Publication FAR" "$FAR"
+TARGETED="$(publish 34.7515 4.0615 34.9000 4.2000 "$Y_UUID")"; [[ "$TARGETED" == ERR:* ]] && fail "Publication ciblée" "$TARGETED"
 pass "NEAR=${NEAR:0:8}…  MID=${MID:0:8}…  FAR=${FAR:0:8}…  TARGETED=${TARGETED:0:8}… (assignée à Y, hors pool)"
 
 step "GET .../optimisation depuis la course tenue par Z"
@@ -180,18 +193,27 @@ REF2="$(publish 36.7719 3.0589 36.7500 3.0600)"; [[ "$REF2" == ERR:* ]] && fail 
 acc2="$(dapi "$Z_TOKEN" POST "/transporteur/commandes/$REF2/accepter" '{}')"
 echo "$acc2" | jq -e '.uuid // .id // empty' >/dev/null 2>&1 || fail "Z n'a pas pu accepter REF2" "$acc2"
 
-# Mutation du VRAI enregistrement Fleetbase : on relit le payload complet et
-# on retire `dropoff.location`, plutôt qu'un PUT partiel dont on ne sait pas
-# s'il fusionne ou remplace la colonne `payload` entière (même prudence que
-# CLAUDE.md règle 1 sur `meta`).
-FULLPAYLOAD="$(fb_get "/int/v1/orders/$REF2" | jq -c '(.order//.data//.).payload | del(.dropoff.location)')"
-fb_api PUT "/int/v1/orders/$REF2" "$(jq -nc --argjson p "$FULLPAYLOAD" '{order:{payload:$p}}')" >/dev/null \
+# Mutation du VRAI enregistrement Fleetbase — mais PAS via `PUT .../orders/:id`
+# avec un `payload` reconstruit : essayé d'abord, silencieusement ignoré par
+# Fleetbase (200 en retour, `dropoff.location` inchangé au relire) — `payload`
+# n'est pas un champ réassignable en bloc sur l'Order, c'est une relation vers
+# un `Payload`/`Place` qui a son PROPRE endpoint. `fleetbase-api.client.ts:510`
+# (`updatePlace`) le fait déjà pour de vrai côté BFF : `PUT /int/v1/places/:uuid`
+# avec un `location` — on réutilise le même chemin ici, dans l'autre sens.
+#
+# `[0, 0]` plutôt qu'un champ absent : c'est déjà la convention lue par
+# `pickupPoint()`/`dropoffPoint()` (`driver-zone.ts`) pour « aucune position »
+# (un point au large du golfe de Guinée n'est jamais une vraie dépose), et
+# Fleetbase n'a pas montré qu'un `location` puisse être NULL sur un `Place`.
+DROPOFF_PLACE="$(fb_get "/int/v1/orders/$REF2" | jq -r '(.order//.data//.).payload.dropoff.uuid')"
+[ -n "$DROPOFF_PLACE" ] && [ "$DROPOFF_PLACE" != "null" ] || fail "Impossible de trouver le lieu de dépose de REF2"
+fb_api PUT "/int/v1/places/$DROPOFF_PLACE" '{"location":{"type":"Point","coordinates":[0,0]}}' >/dev/null \
   || fail "Mutation (retrait du point de dépose) impossible"
 
 # ⚠️ Règle 8 : une mutation qui ne prend pas ne prouve RIEN. On le vérifie
 # avant de tirer la moindre conclusion du refus (ou de son absence).
-CHECK="$(fb_get "/int/v1/orders/$REF2" | jq -r '(.order//.data//.).payload.dropoff.location // empty')"
-[ -z "$CHECK" ] || fail "La mutation n'a jamais pris effet — l'essai ne prouve RIEN" "location toujours présente: $CHECK"
+CHECK="$(fb_get "/int/v1/orders/$REF2" | jq -c '(.order//.data//.).payload.dropoff.location.coordinates')"
+[ "$CHECK" = "[0,0]" ] || fail "La mutation n'a jamais pris effet — l'essai ne prouve RIEN" "coordonnées toujours réelles: $CHECK"
 
 code="$(curl -sS -o /tmp/optim_noref.json -w '%{http_code}' "$BFF_URL/transporteur/commandes/$REF2/optimisation" -H "Authorization: Bearer $Z_TOKEN")"
 [ "$code" = "409" ] || fail "Attendu 409, reçu $code" "$(cat /tmp/optim_noref.json | head -c 300)"

@@ -137,10 +137,19 @@ URL1B="$(echo "$LINK1B" | jq -r '.url // empty')"
 [ -n "$URL1B" ] || fail "Génération du lien de mise à jour impossible" "$LINK1B"
 TOKEN1B="$(token_of "$URL1B")"
 
-NEWLAT="36.8000"; NEWLNG="3.0800"
+# Pas de zéros de fin : Postgres/Prisma renvoie le nombre JSON normalisé
+# (36.8, pas 36.8000) — comparer à "36.8000" échouerait sur une valeur pourtant
+# correcte, même défaut que le piège `// empty` ci-dessus (une conclusion
+# fausse tirée d'un test mal écrit, pas du code testé).
+NEWLAT="36.8"; NEWLNG="3.08"
 SUBMIT1B="$(curl -sS -X POST "$BFF_URL/public/localisation/$TOKEN1B" \
   -H 'Content-Type: application/json' -d "{\"lat\":$NEWLAT,\"lng\":$NEWLNG}")"
-[ "$(echo "$SUBMIT1B" | jq -r '.applied // empty')" = "false" ] || fail "La nouvelle position aurait dû être mise EN ATTENTE, pas appliquée" "$SUBMIT1B"
+
+# ⚠️ Pas de `// empty` ici : en jq, `false // empty` rend `empty` (false est
+# « faux » pour l'opérateur `//`, au même titre que `null`) — cette copie a
+# fait échouer le témoin sur une réponse pourtant correcte (piège déjà
+# documenté ailleurs dans ce dépôt pour `null`).
+[ "$(echo "$SUBMIT1B" | jq -r '.applied')" = "false" ] || fail "La nouvelle position aurait dû être mise EN ATTENTE, pas appliquée" "$SUBMIT1B"
 pass "Nouvelle position posée en attente (applied:false)"
 
 LOOKUP_PENDING="$(capi GET "/commercant/clients/$PHONE1" "$TA")"
@@ -156,12 +165,20 @@ echo "$CONFIRM" | jq -e '.confirmed == true' >/dev/null || fail "La confirmation
 LOOKUP_AFTER="$(capi GET "/commercant/clients/$PHONE1" "$TA")"
 LAT_AFTER="$(echo "$LOOKUP_AFTER" | jq -r '.latitude')"
 [ "$LAT_AFTER" = "$NEWLAT" ] || fail "La position n'a pas été appliquée après confirmation" "$LOOKUP_AFTER"
-[ "$(echo "$LOOKUP_AFTER" | jq -r '.pending // empty')" = "null" ] || fail "La proposition en attente n'a pas été vidée après confirmation" "$LOOKUP_AFTER"
+
+# Même piège que ci-dessus : `null // empty` rend aussi `empty` en jq.
+[ "$(echo "$LOOKUP_AFTER" | jq -r '.pending')" = "null" ] || fail "La proposition en attente n'a pas été vidée après confirmation" "$LOOKUP_AFTER"
 pass "Confirmée par B (portée plateforme), appliquée pour tous — latitude=$LAT_AFTER"
 
 step "Frontière de projection : la page publique ne renvoie aucune donnée métier"
 echo "$PAGE1" | grep -qi "$MERCHANT_A" && fail "La page publique mentionne l'identité du commerçant"
-echo "$PAGE1" | grep -qi "fleetbaseOrderId\|commande\|order_" && fail "La page publique porte une trace de commande"
+
+# ⚠️ Pas le mot « commande » nu : la page dit légitimement, en clair et pour
+# tout le monde, « un commerçant a besoin de votre position pour livrer votre
+# commande » (§1.2) — c'est une explication générique, pas « le contenu de la
+# commande » que §1.8 interdit (identifiant, prix, adresse). Ne chercher que
+# des formes qui identifieraient VRAIMENT une commande ou une donnée métier.
+echo "$PAGE1" | grep -qi "fleetbaseOrderId\|order_[a-z0-9]" && fail "La page publique porte une trace de commande"
 pass "Aucune donnée commerçant/commande sur la page publique"
 
 echo
