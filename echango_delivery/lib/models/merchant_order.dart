@@ -852,3 +852,107 @@ class OrderQuote extends Equatable {
   @override
   List<Object?> get props => [amount, currency, source, distanceMetres];
 }
+
+/// Une position déjà reçue via un lien, en attente de confirmation par un
+/// commerçant (§1.4 : jamais appliquée automatiquement à la fiche).
+class ClientPendingPosition extends Equatable {
+  final double latitude;
+  final double longitude;
+  final DateTime? submittedAt;
+
+  const ClientPendingPosition({
+    required this.latitude,
+    required this.longitude,
+    this.submittedAt,
+  });
+
+  factory ClientPendingPosition.fromJson(Map<String, dynamic> json) =>
+      ClientPendingPosition(
+        latitude: (json['latitude'] as num).toDouble(),
+        longitude: (json['longitude'] as num).toDouble(),
+        submittedAt: json['submittedAt'] == null
+            ? null
+            : DateTime.parse(json['submittedAt'] as String),
+      );
+
+  @override
+  List<Object?> get props => [latitude, longitude, submittedAt];
+}
+
+/// Fiche client géolocalisée, telle que renvoyée par
+/// `GET /commercant/clients/:telephone`.
+///
+/// [found] à `false` est le cas courant, pas une erreur : la plupart des
+/// numéros tapés à la composition d'une commande n'ont encore aucune fiche.
+class ClientLookup extends Equatable {
+  final bool found;
+  final String? name;
+  final String? addressCity;
+  final String? addressProvince;
+  final String? addressNeighborhood;
+  final double? latitude;
+  final double? longitude;
+  final DateTime? updatedAt;
+  final ClientPendingPosition? pending;
+
+  const ClientLookup({
+    required this.found,
+    this.name,
+    this.addressCity,
+    this.addressProvince,
+    this.addressNeighborhood,
+    this.latitude,
+    this.longitude,
+    this.updatedAt,
+    this.pending,
+  });
+
+  factory ClientLookup.fromJson(Map<String, dynamic> json) {
+    if (json['found'] != true) return const ClientLookup(found: false);
+    return ClientLookup(
+      found: true,
+      name: json['name'] as String?,
+      addressCity: json['addressCity'] as String?,
+      addressProvince: json['addressProvince'] as String?,
+      addressNeighborhood: json['addressNeighborhood'] as String?,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      updatedAt: json['updatedAt'] == null
+          ? null
+          : DateTime.parse(json['updatedAt'] as String),
+      pending: json['pending'] == null
+          ? null
+          : ClientPendingPosition.fromJson(json['pending'] as Map<String, dynamic>),
+    );
+  }
+
+  bool get hasPosition => latitude != null && longitude != null;
+
+  @override
+  List<Object?> get props => [
+        found,
+        name,
+        addressCity,
+        addressProvince,
+        addressNeighborhood,
+        latitude,
+        longitude,
+        pending,
+      ];
+}
+
+/// Lien de localisation généré pour un numéro, valable 10 minutes.
+class LocationLink extends Equatable {
+  final String url;
+  final DateTime expiresAt;
+
+  const LocationLink({required this.url, required this.expiresAt});
+
+  factory LocationLink.fromJson(Map<String, dynamic> json) => LocationLink(
+        url: json['url'] as String,
+        expiresAt: DateTime.parse(json['expiresAt'] as String),
+      );
+
+  @override
+  List<Object?> get props => [url, expiresAt];
+}

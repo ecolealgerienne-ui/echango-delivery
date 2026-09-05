@@ -1862,6 +1862,51 @@ export class CommerçantService {
   }
 
   /**
+   * Corrige le point de dépose d'une commande déjà créée
+   * (`docs/specs_localisation_client_et_optimisation_parcours.md` §1.6).
+   *
+   * Capacité entièrement nouvelle : jusqu'ici aucune route ne modifiait une
+   * commande existante (`annuler`/`publier`/`rediriger` changent un statut ou
+   * une cible, jamais le contenu du lieu). Ownership vérifiée comme
+   * `redirectOrder` — jamais seulement l'authentification (règle 12).
+   *
+   * Un seul système touché (le `Place` Fleetbase référencé par
+   * `payload.dropoff`) : aucune écriture locale associée, donc aucune fenêtre
+   * de compensation à nommer (règle 2 ne s'applique pas ici).
+   */
+  async updateOrderDropoffPosition(
+    merchantId: string,
+    orderId: string,
+    latitude: number,
+    longitude: number,
+  ) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const cached = await this.resolveOwnedOrder(merchantId, orderId);
+    const live = await this.liveOrderDetailed(cached, merchant.fleetbaseVendorUuid);
+
+    const dropoffUuid = live?.payload?.dropoff?.uuid;
+    if (!dropoffUuid) {
+      notFound('order.not_found_upstream', 'Commande introuvable chez Fleetbase');
+    }
+
+    try {
+      await this.fleetbaseClient.updatePlace(dropoffUuid, latitude, longitude);
+    } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(
+        `Mise à jour de la position de dépose de ${cached.id} échouée — ${error.message}`,
+      );
+      badRequest(
+        'order.position_update_failed',
+        error.response?.data?.errors?.[0] || 'Mise à jour de la position impossible',
+      );
+    }
+
+    const [merged] = await this.mergeWithFleetbase([cached], merchant.fleetbaseVendorUuid);
+    return projectOrderForMerchant(merged, { bff_order_id: cached.id });
+  }
+
+  /**
    * Défait l'étape 1 quand le dispatch a échoué.
    *
    * ── Pourquoi ça compte, et ce que ça ne garantit pas ────────────────────────

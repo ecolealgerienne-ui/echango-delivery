@@ -280,7 +280,22 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     const SizedBox(height: AppSpacing.md),
                     _placeCard(_t('order.section.pickup'), order.pickup, order.pickupNotes),
                     const SizedBox(height: AppSpacing.md),
-                    _placeCard(_t('order.section.dropoff'), order.dropoff, order.dropoffNotes),
+                    _placeCard(
+                      _t('order.section.dropoff'),
+                      order.dropoff,
+                      order.dropoffNotes,
+                      // Corriger la position depuis la fiche client n'a de
+                      // sens que tant que la livraison n'a pas encore eu
+                      // lieu, et suppose un numéro à chercher.
+                      onRefreshFromClient: (!order.isFinished &&
+                              order.dropoff?.contactPhone != null &&
+                              order.dropoff!.contactPhone!.isNotEmpty)
+                          ? () => _refreshDropoffFromClient(
+                                orderState,
+                                order.dropoff!.contactPhone!,
+                              )
+                          : null,
+                    ),
                     // Signalements d'échec : le commerçant devra répondre à son
                     // client, et le justificatif n'allait jusqu'ici qu'à celui
                     // qui l'avait produit.
@@ -640,7 +655,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   /// [notes] est la précision d'adresse tapée à la création : elle vit dans
   /// `meta.pickup_notes`/`dropoff_notes`, pas sur le `Place`, et se perdait
   /// pour la même raison.
-  Widget _placeCard(String title, Place? place, String? notes) {
+  Widget _placeCard(
+    String title,
+    Place? place,
+    String? notes, {
+    VoidCallback? onRefreshFromClient,
+  }) {
     final theme = Theme.of(context);
     final contact = place?.contactName;
     final phone = place?.contactPhone;
@@ -686,8 +706,51 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                 ],
               ),
+            // Corrige le point à partir de la fiche client mise à jour
+            // après coup — capacité entièrement nouvelle
+            // (`docs/specs_localisation_client_et_optimisation_parcours.md`
+            // §1.6), puisqu'aucune route ne modifiait une commande existante
+            // avant elle.
+            if (onRefreshFromClient != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              TextButton.icon(
+                onPressed: onRefreshFromClient,
+                icon: const Icon(Icons.my_location, size: 16),
+                label: Text(_t('order.detail.refresh_from_client')),
+              ),
+            ],
           ],
         ),
+    );
+  }
+
+  /// Relit la fiche client pour ce numéro et, si elle porte une position,
+  /// corrige le point de dépose de cette commande.
+  Future<void> _refreshDropoffFromClient(
+    MerchantOrderState orderState,
+    String phone,
+  ) async {
+    final lookup = await orderState.lookupClient(phone);
+    if (!mounted) return;
+
+    if (lookup == null || !lookup.found || !lookup.hasPosition) {
+      showAppError(context, _t('order.detail.refresh_from_client.none'));
+      return;
+    }
+
+    final success = await orderState.updateOrderPosition(
+      widget.orderId,
+      latitude: lookup.latitude!,
+      longitude: lookup.longitude!,
+    );
+    if (!mounted) return;
+
+    showAppOutcome(
+      context,
+      success
+          ? null
+          : orderState.errorMessage ?? _t('order.detail.refresh_from_client.failed'),
+      _t('order.detail.refresh_from_client.done'),
     );
   }
 }

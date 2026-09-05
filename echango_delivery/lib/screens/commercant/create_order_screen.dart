@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../i18n/order_strings.dart';
 import '../../models/merchant_order.dart';
@@ -16,6 +19,7 @@ import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/notice.dart';
+import '../../widgets/section_card.dart';
 
 /// Formulaire de demande de livraison.
 ///
@@ -155,10 +159,17 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   String? _pickupProvince;
   String? _dropoffProvince;
 
+  /// Fiche du client dont le numéro est tapé au champ dropoff — `null` tant
+  /// qu'aucune recherche n'a abouti (§1.3 :
+  /// `docs/specs_localisation_client_et_optimisation_parcours.md`).
+  ClientLookup? _clientLookup;
+  Timer? _clientLookupDebounce;
+
   @override
   void initState() {
     super.initState();
     _applyTemplate();
+    _dropoffPhone.addListener(_onDropoffPhoneChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       final state = context.read<MerchantOrderState>();
@@ -304,6 +315,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   @override
   void dispose() {
+    _clientLookupDebounce?.cancel();
+    _dropoffPhone.removeListener(_onDropoffPhoneChanged);
     for (final c in [
       _pickupName, _pickupAddress, _pickupContact, _pickupPhone,
       _dropoffName, _dropoffAddress, _dropoffContact, _dropoffPhone,
@@ -313,6 +326,196 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  /// Débat pendant la frappe, comme la recherche d'adresse : la même décision
+  /// (`AppRules.searchDebounce`), pour la même raison — éviter une requête par
+  /// caractère tapé.
+  void _onDropoffPhoneChanged() {
+    _clientLookupDebounce?.cancel();
+    final phone = _dropoffPhone.text.trim();
+    if (phone.length < 8) {
+      // Trop court pour être un numéro : pas de requête, et la fiche
+      // affichée (si une recherche précédente en portait une) n'a plus de
+      // sens sur ce numéro tronqué.
+      if (_clientLookup != null) setState(() => _clientLookup = null);
+      return;
+    }
+    _clientLookupDebounce = Timer(AppRules.searchDebounce, () => _lookupClient(phone));
+  }
+
+  /// Recherche la fiche client pour ce numéro et pré-remplit le formulaire
+  /// dropoff si elle existe — §1.3 : dès qu'un commerçant tape un numéro déjà
+  /// connu, nom/adresse/GPS se pré-remplissent automatiquement.
+  Future<void> _lookupClient(String phone) async {
+    final orderState = context.read<MerchantOrderState>();
+    final lookup = await orderState.lookupClient(phone);
+    if (!mounted || _dropoffPhone.text.trim() != phone) return; // réponse périmée
+
+    setState(() {
+      _clientLookup = lookup;
+      if (lookup != null && lookup.found) {
+        if (lookup.name != null && lookup.name!.isNotEmpty) {
+          _dropoffName.text = lookup.name!;
+        }
+        _dropoffCity = lookup.addressCity ?? _dropoffCity;
+        _dropoffProvince = lookup.addressProvince ?? _dropoffProvince;
+        _dropoffNeighborhood = lookup.addressNeighborhood ?? _dropoffNeighborhood;
+        if (lookup.hasPosition) {
+          _dropoffPoint = LatLng(lookup.latitude!, lookup.longitude!);
+        }
+      }
+    });
+  }
+
+  /// Génère un lien de localisation et ouvre le partage natif du téléphone —
+  /// la plateforme n'envoie rien elle-même (§1.2).
+  Future<void> _sendLocationLink() async {
+    final phone = _dropoffPhone.text.trim();
+    if (phone.isEmpty) return;
+
+    final orderState = context.read<MerchantOrderState>();
+    final link = await orderState.generateClientLocationLink(phone);
+    if (!mounted) return;
+
+    if (link == null) {
+      showAppError(
+        context,
+        orderState.errorMessage ?? _t('order.form.client.link.failed'),
+      );
+      return;
+    }
+
+    await Share.share(_t('order.form.client.link.share_text', {'url': link.url}));
+  }
+
+  /// Applique la position en attente sur la fiche, puis met à jour le
+  /// formulaire avec la valeur désormais confirmée.
+  Future<void> _confirmClientPending() async {
+    final lookup = _clientLookup;
+    final pending = lookup?.pending;
+    if (pending == null) return;
+
+    final phone = _dropoffPhone.text.trim();
+    final orderState = context.read<MerchantOrderState>();
+    final success = await orderState.confirmClientPosition(phone);
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        _dropoffPoint = LatLng(pending.latitude, pending.longitude);
+        _clientLookup = ClientLookup(
+          found: true,
+          name: lookup!.name,
+          addressCity: lookup.addressCity,
+          addressProvince: lookup.addressProvince,
+          addressNeighborhood: lookup.addressNeighborhood,
+          latitude: pending.latitude,
+          longitude: pending.longitude,
+          updatedAt: DateTime.now(),
+          pending: null,
+        );
+      });
+    }
+    showAppOutcome(
+      context,
+      success ? null : orderState.errorMessage,
+      _t('order.form.client.pending.confirmed'),
+    );
+  }
+
+  /// Rejette la position en attente : la fiche garde son ancienne valeur.
+  Future<void> _rejectClientPending() async {
+    final lookup = _clientLookup;
+    if (lookup?.pending == null) return;
+
+    final phone = _dropoffPhone.text.trim();
+    final orderState = context.read<MerchantOrderState>();
+    final success = await orderState.rejectClientPosition(phone);
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        _clientLookup = ClientLookup(
+          found: lookup!.found,
+          name: lookup.name,
+          addressCity: lookup.addressCity,
+          addressProvince: lookup.addressProvince,
+          addressNeighborhood: lookup.addressNeighborhood,
+          latitude: lookup.latitude,
+          longitude: lookup.longitude,
+          updatedAt: lookup.updatedAt,
+          pending: null,
+        );
+      });
+    }
+    showAppOutcome(
+      context,
+      success ? null : orderState.errorMessage,
+      _t('order.form.client.pending.rejected'),
+    );
+  }
+
+  /// Bouton d'envoi du lien, et bandeau de confirmation quand une nouvelle
+  /// position est en attente (§1.4 : jamais appliquée sans confirmation).
+  Widget _clientLocationSection() {
+    final pending = _clientLookup?.pending;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // `AnimatedBuilder` plutôt qu'un `setState` à chaque frappe : seul
+          // ce bouton dépend du contenu du champ, pas tout le formulaire.
+          AnimatedBuilder(
+            animation: _dropoffPhone,
+            builder: (context, _) => OutlinedButton.icon(
+              onPressed: _dropoffPhone.text.trim().isEmpty ? null : _sendLocationLink,
+              icon: const Icon(Icons.share_location_outlined, size: 18),
+              label: Text(_t('order.form.client.link.button')),
+            ),
+          ),
+          if (pending != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            AppSectionCard(
+              color: context.semantic.warningContainer,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t('order.form.client.pending.title'),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(color: context.semantic.onWarningContainer),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    _t('order.form.client.pending.body'),
+                    style: TextStyle(color: context.semantic.onWarningContainer),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: _rejectClientPending,
+                        child: Text(_t('order.form.client.pending.reject')),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      FilledButton(
+                        onPressed: _confirmClientPending,
+                        child: Text(_t('order.form.client.pending.confirm')),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   /// Applique une adresse du carnet au formulaire.
@@ -560,6 +763,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _field(_dropoffContact, _t('order.form.dropoff.contact'), Icons.person_outline),
                 _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
                     keyboard: TextInputType.phone),
+                _clientLocationSection(),
                 const SizedBox(height: AppSpacing.xl),
                 _section(_t('order.section.parcel')),
                 _field(_itemDescription, _t('order.form.item.description'),

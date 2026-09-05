@@ -383,6 +383,69 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
         () => _apiClient.redirectMerchantOrder(id, targetFavouriteUuid: targetFavouriteUuid),
       );
 
+  /// Corrige la position de dépose d'une commande déjà créée — typiquement
+  /// depuis une fiche client mise à jour après coup.
+  Future<bool> updateOrderPosition(
+    String id, {
+    required double latitude,
+    required double longitude,
+  }) =>
+      _orderWrite(
+        id,
+        () => _apiClient.updateMerchantOrderPosition(
+          id,
+          latitude: latitude,
+          longitude: longitude,
+        ),
+      );
+
+  // ── Fiche client géolocalisée ──────────────────────────────────────────
+
+  /// Fiche connue pour ce numéro, ou `null` en cas d'échec réseau — traité
+  /// comme « rien à pré-remplir », jamais comme un blocage de la saisie en
+  /// cours de composition d'une commande.
+  Future<ClientLookup?> lookupClient(String phone) async {
+    try {
+      return await _apiClient.getClient(phone);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<LocationLink?> generateClientLocationLink(String phone) async {
+    try {
+      return await _apiClient.generateLocationLink(phone);
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Applique la position en attente sur la fiche (§1.4 : jamais automatique).
+  Future<bool> confirmClientPosition(String phone) async {
+    try {
+      await _apiClient.confirmClientPosition(phone);
+      return true;
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Rejette la position en attente : la fiche garde son ancienne valeur.
+  Future<bool> rejectClientPosition(String phone) async {
+    try {
+      await _apiClient.rejectClientPosition(phone);
+      return true;
+    } catch (e) {
+      _errorMessage = messageForError(e, _localeState.locale);
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// Écrire sur une commande, puis **relire la liste et la fiche ouverte**.
   ///
   /// La relecture n'est pas cosmétique : sans elle, l'écran de détail continue
