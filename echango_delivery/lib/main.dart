@@ -258,6 +258,31 @@ class _EchangoDeliveryAppState extends State<EchangoDeliveryApp>
             GlobalCupertinoLocalizations.delegate,
           ],
           routerConfig: buildAppRouter(widget.authState),
+          // ⚠️ **Bas d'écran peint hors de la zone tactile réelle, sur
+          // Android 15+ (edge-to-edge obligatoire dès l'API 35 — constaté sur
+          // deux émulateurs, API 36 et 37, le 05/09/2026).** Aucun `Scaffold`
+          // de ce dépôt ne réservait l'espace de la gestuelle système en bas
+          // d'écran (`addresses_screen.dart` était la seule exception, avec sa
+          // propre `SafeArea`) : les derniers widgets d'un `Column` — le
+          // bouton « Nouvelle livraison », « Optimiser », etc. — pouvaient
+          // s'y peindre sans jamais recevoir un tap réel, la bande étant
+          // réservée par le système. Invisible aux tests `flutter_drive`, qui
+          // invoquent le gestionnaire du widget via l'arbre sémantique, sans
+          // passer par la fenêtre Android ni ses zones de geste — seul un
+          // test à évènements tactiles réels pouvait le révéler.
+          //
+          // Corrigé une seule fois ici plutôt que sur chaque écran (règle 5) :
+          // toute page poussée par le routeur passe par ce `builder`, donc
+          // aucun écran, présent ou futur, ne peut réintroduire le défaut. Une
+          // `SafeArea` imbriquée ne fait rien de plus (elle ne peut pas
+          // consommer deux fois la même marge) : `addresses_screen.dart`
+          // n'est pas affecté par le doublon.
+          builder: (context, child) => SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: child!,
+          ),
         ),
       ),
     );
