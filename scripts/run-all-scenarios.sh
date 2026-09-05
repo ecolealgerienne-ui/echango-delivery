@@ -69,6 +69,11 @@ SCENARIOS=(
   # confirmation avant écrasement. Ne touche ni au conducteur ni au pool de
   # courses — placé ici pour la même raison que test-wilaya juste au-dessus.
   test-fiche-client
+  # Frontière BFF → echango-geo (bascule du géocodage, 05/09/2026). N'écrit
+  # rien côté course ; ne touche ni au conducteur ni au pool. Nominatim
+  # lui-même est couvert par echango-geo/scripts/. GEO_PANNE=1 y ajoute la
+  # coupure du service — non activée ici (elle arrête un conteneur).
+  test-geocodage
   test-multi-appartenance
   # Le filtre wilaya CÔTÉ CONDUCTEUR : une course hors-wilaya lui est cachée,
   # la bonne visible — dans les deux sens. test-wilaya prouve la persistance ;

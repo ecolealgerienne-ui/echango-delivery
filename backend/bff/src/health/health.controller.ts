@@ -1,6 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
+import { GeocodingService } from '../common/geocoding/geocoding.service';
 import { Public } from '../common/decorators/public.decorator';
 
 /**
@@ -32,6 +33,7 @@ export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fleetbase: FleetbaseApiClient,
+    private readonly geocoding: GeocodingService,
   ) {}
 
   @Public()
@@ -39,9 +41,15 @@ export class HealthController {
   async check() {
     await this.prisma.$queryRaw`SELECT 1`;
 
-    // Sonde courte, qui ne lève jamais : Fleetbase à terre ⇒ `reachable: false`,
-    // pas un `/health` en échec.
-    const fleetbase = await this.fleetbase.ping();
+    // Sondes courtes, qui ne lèvent jamais : un amont à terre ⇒
+    // `reachable: false`, pas un `/health` en échec.
+    const [fleetbase, geo] = await Promise.all([
+      this.fleetbase.ping(),
+      // echango-geo : indispensable aux routes /commercant/geocodage*, mais sa
+      // panne ne rend pas le BFF inutile (commandes, dispatch, carnet
+      // d'adresses continuent). Rapportée, comme Fleetbase.
+      this.geocoding.ping(),
+    ]);
 
     // ── La fraîcheur du réconciliateur, enfin LUE ────────────────────────────
     //
@@ -64,9 +72,9 @@ export class HealthController {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      // La dépendance amont, rapportée sans jamais faire échouer la sonde. Le
-      // déploiement lit `reachable` pour décider ; `status` reste `ok`.
-      dependencies: { fleetbase },
+      // Les dépendances amont, rapportées sans jamais faire échouer la sonde.
+      // Le déploiement lit `reachable` pour décider ; `status` reste `ok`.
+      dependencies: { fleetbase, geo },
       // `null` et non « jamais » : sur une installation neuve, aucune commande
       // n'a encore été réconciliée, et ce n'est pas une panne. Le distinguer
       // d'un âge nul est tout l'intérêt (règle 10).
