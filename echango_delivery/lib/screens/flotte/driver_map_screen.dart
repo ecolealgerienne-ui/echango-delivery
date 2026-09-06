@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
@@ -123,33 +122,24 @@ class _FlotteDriverMapScreenState extends State<FlotteDriverMapScreen> {
       children: [
         Expanded(
           child: AppConsultationMap(
-            // Le barycentre, et un zoom volontairement large : cadrer
-            // exactement la flotte demanderait `CameraFit`, dont l'API de la
-            // version épinglée n'est pas vérifiable ici. Un cadrage approché
-            // qu'on peut ajuster à deux doigts vaut mieux qu'une API supposée.
-            center: _centre(positions),
-            zoom: positions.length == 1 ? 14 : 11,
+            // Toute la flotte tient dans la vue au premier rendu ; un point
+            // unique garde un zoom serré via le `maxZoom` du composant. La
+            // carte reste déplaçable pour ajuster.
+            fitPoints: [
+              for (final p in positions)
+                LatLng(p.position.latitude, p.position.longitude),
+            ],
             markers: [
               for (final p in positions)
-                Marker(
-                  point: LatLng(p.position.latitude, p.position.longitude),
-                  width: 44,
-                  height: 44,
-                  child: GestureDetector(
-                    onTap: () => setState(() => _selected = p.driverUuid),
-                    child: Icon(
-                      Icons.local_shipping,
-                      // Le gris dit « ce point n'est plus frais » sans texte à
-                      // lire. Le repère sélectionné passe en couleur d'accent
-                      // pour qu'on sache lequel la fiche du bas décrit.
-                      color: p.driverUuid == _selected
-                          ? Theme.of(context).colorScheme.tertiary
-                          : p.position.isStale
-                              ? Theme.of(context).colorScheme.outline
-                              : Theme.of(context).colorScheme.primary,
-                      size: 34,
-                    ),
-                  ),
+                consultationMarker(
+                  context,
+                  at: LatLng(p.position.latitude, p.position.longitude),
+                  kind: p.position.isStale
+                      ? MapMarkerKind.stale
+                      : MapMarkerKind.driver,
+                  selected: p.driverUuid == _selected,
+                  size: 44,
+                  onTap: () => setState(() => _selected = p.driverUuid),
                 ),
             ],
           ),
@@ -173,21 +163,6 @@ class _FlotteDriverMapScreenState extends State<FlotteDriverMapScreen> {
     // Le conducteur sélectionné a disparu du rafraîchissement : on ne garde pas
     // une fiche qui décrirait une position qu'on ne montre plus.
     return null;
-  }
-
-  /// Le barycentre des positions.
-  ///
-  /// Suffisant parce que la carte reste déplaçable : ce n'est pas un cadrage,
-  /// c'est un point de départ. Sur une flotte dispersée il tombe entre les
-  /// conducteurs, ce qui est précisément là où l'on veut commencer à regarder.
-  static LatLng _centre(List<FleetDriverPosition> positions) {
-    var lat = 0.0;
-    var lon = 0.0;
-    for (final p in positions) {
-      lat += p.position.latitude;
-      lon += p.position.longitude;
-    }
-    return LatLng(lat / positions.length, lon / positions.length);
   }
 }
 

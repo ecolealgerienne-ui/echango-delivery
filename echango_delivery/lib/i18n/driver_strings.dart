@@ -89,10 +89,25 @@ const Map<String, String> _fr = {
   'driver.state.canceled': 'Annulée',
   'driver.order.card.status': 'Statut : {status}',
 
-  // ── Carte (pas encore construite, et l'écran le dit) ────────────────────
-  'driver.map.unavailable': 'Carte non disponible',
+  // ── Carte des courses en cours ─────────────────────────────────────────
+  'driver.map.empty': 'Aucune course en cours',
+  'driver.map.empty.hint':
+      'Vos livraisons acceptées s’affichent ici, avec leurs points '
+      'd’enlèvement et de livraison.',
+  // ⚠️ Distinct du vide : des courses existent, mais leurs adresses ont été
+  // saisies sans passer par la carte, donc sans coordonnées (règle 10 — pas
+  // de point à [0,0]).
+  'driver.map.no_positions': 'Aucune position à afficher',
+  'driver.map.no_positions.hint':
+      'Vos courses en cours n’ont pas de coordonnées : leurs adresses ont '
+      'été saisies sans être placées sur la carte.',
+  'driver.map.unavailable': 'Carte indisponible',
   'driver.map.unavailable.hint':
-      'La carte des courses n’est pas encore implémentée.',
+      'Impossible de charger vos courses. Réessayez.',
+  'driver.map.retry': 'Réessayer',
+  'driver.map.refresh': 'Rafraîchir',
+  'driver.map.pickup': 'Enlèvement',
+  'driver.map.dropoff': 'Livraison',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'Transporteur',
@@ -162,6 +177,21 @@ const Map<String, String> _fr = {
   'driver.optimize.unknown_price':
       'et {count} course(s) sans prix affiché, non comptée(s) ci-dessus',
   'driver.optimize.accept': 'Prendre cette course',
+  'driver.optimize.accepted': 'Course prise — elle est dans « En cours ».',
+
+  // ── Métriques d'une course (carte d'opportunité, fiche, suggestion) ─────
+  //
+  // Les trois chiffres sur lesquels un transporteur décide, comme sur une
+  // offre Uber : ce que rapporte la course, sa longueur, et le trajet à vide
+  // jusqu'à l'enlèvement. `from_me` est OMIS quand la position n'est pas
+  // connue — jamais un « 0 km » qui se lirait « je suis sur place ».
+  'driver.trip.distance': 'Trajet {km} km',
+  'driver.trip.from_me': 'Enlèvement à {km} km',
+  'driver.trip.from_me.long': 'Enlèvement à {km} km de vous',
+  'driver.trip.duration': '~{min} min',
+  'driver.trip.legend.pickup': 'Enlèvement',
+  'driver.trip.legend.dropoff': 'Livraison',
+  'driver.trip.legend.you': 'Vous',
 };
 
 const Map<String, String> _ar = {
@@ -212,9 +242,19 @@ const Map<String, String> _ar = {
   'driver.state.canceled': 'أُلغيت',
   'driver.order.card.status': 'الحالة: {status}',
 
-  // ── Carte ───────────────────────────────────────────────────────────────
+  // ── الخريطة ─────────────────────────────────────────────────────────────
+  'driver.map.empty': 'لا مهمّة جارية',
+  'driver.map.empty.hint':
+      'تظهر هنا توصيلاتك المقبولة، مع نقاط الاستلام والتسليم.',
+  'driver.map.no_positions': 'لا موقع للعرض',
+  'driver.map.no_positions.hint':
+      'مهمّاتك الجارية بلا إحداثيات: أُدخِلت عناوينها دون تحديدها على الخريطة.',
   'driver.map.unavailable': 'الخريطة غير متاحة',
-  'driver.map.unavailable.hint': 'خريطة المهام لم تُنجَز بعد.',
+  'driver.map.unavailable.hint': 'تعذّر تحميل مهمّاتك. أعد المحاولة.',
+  'driver.map.retry': 'أعد المحاولة',
+  'driver.map.refresh': 'تحديث',
+  'driver.map.pickup': 'الاستلام',
+  'driver.map.dropoff': 'التسليم',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'ناقل',
@@ -272,4 +312,14 @@ const Map<String, String> _ar = {
   'driver.optimize.unknown_price':
       'و{count} مهمة بدون سعر معروض، غير محتسبة أعلاه',
   'driver.optimize.accept': 'قبول هذه المهمة',
+  'driver.optimize.accepted': 'تم قبول المهمة — إنها في «الجارية».',
+
+  // ── مقاييس المهمة ─────────────────────────────────────────────────────────
+  'driver.trip.distance': 'المسافة {km} كم',
+  'driver.trip.from_me': 'الاستلام على بُعد {km} كم',
+  'driver.trip.from_me.long': 'الاستلام على بُعد {km} كم منك',
+  'driver.trip.duration': '~{min} د',
+  'driver.trip.legend.pickup': 'الاستلام',
+  'driver.trip.legend.dropoff': 'التسليم',
+  'driver.trip.legend.you': 'أنت',
 };

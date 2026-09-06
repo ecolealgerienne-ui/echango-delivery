@@ -1,0 +1,30 @@
+# Cache-proxy de tuiles OSM pour le développement local — voir `nginx.conf`.
+#
+#   docker compose -f scripts/local-tiles/docker-compose.yml up -d
+#
+# Puis lancer l'app en visant le proxy plutôt que le CDN public :
+#   flutter build apk --debug \
+#     --dart-define=MAP_TILE_URL=http://10.0.2.2:8082/{z}/{x}/{y}.png
+#
+# `10.0.2.2` est l'alias du loopback de l'hôte vu depuis un émulateur Android
+# (même principe que `BFF_BASE_URL`). Sur un téléphone physique, remplacer par
+# l'IP LAN du poste.
+
+services:
+  osm-tiles:
+    image: nginx:1.27-alpine
+    container_name: echango_dev_osm_tiles
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - osm_tiles_cache:/var/cache/nginx/osm
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  osm_tiles_cache:

@@ -265,6 +265,9 @@ const Map<String, String> _fr = {
   'order.detail.driver.position': 'Voir la position du transporteur',
   'order.detail.driver.position.none':
       'Position du transporteur non disponible pour le moment.',
+  'order.detail.driver.position.none.hint':
+      'Elle apparaîtra ici dès qu’un transporteur aura pris la course et '
+      'partagé sa position.',
   'order.detail.driver.position.unknown':
       'Dernière position connue, date inconnue',
   'order.detail.refresh_from_client': 'Mettre à jour depuis la fiche client',
@@ -758,6 +761,8 @@ const Map<String, String> _ar = {
   'order.detail.driver.call.short': 'اتصال',
   'order.detail.driver.position': 'عرض موقع الناقل',
   'order.detail.driver.position.none': 'موقع الناقل غير متاح حاليًا.',
+  'order.detail.driver.position.none.hint':
+      'سيظهر هنا بمجرد أن يأخذ ناقلٌ المهمّة ويشارك موقعه.',
   'order.detail.driver.position.unknown': 'آخر موقع معروف، التاريخ مجهول',
   'order.detail.driver.position.seen': 'سُجّل الموقع {when}',
   'order.detail.refresh': 'تحديث',

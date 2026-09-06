@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -14,6 +16,7 @@ import '../../utils/place_label.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/notice.dart';
+import '../../widgets/trip_metrics.dart';
 
 /// Depuis une course déjà tenue, d'autres courses du pool proches de sa
 /// dépose — pour enchaîner sans rien réserver
@@ -37,6 +40,11 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> {
   RouteOptimizationResult? _result;
   String? _error;
   bool _loading = true;
+
+  /// L'`id` de la suggestion en cours d'acceptation, ou `null`. Une seule à la
+  /// fois : le geste enchaîne un aller-retour réseau de plusieurs secondes, et
+  /// sans repère l'écran paraît figé (défaut constaté en test manuel).
+  String? _accepting;
 
   String _d(String key, [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
@@ -76,20 +84,24 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> {
   /// « Opportunités ». Un refus (course déjà prise entre-temps) s'affiche par
   /// le mécanisme d'erreur habituel, sans code particulier à ce chemin.
   Future<void> _accept(String suggestionId) async {
+    if (_accepting != null) return;
+    setState(() => _accepting = suggestionId);
     final locale = context.read<LocaleState>().locale;
     try {
       await context.read<BffApiClient>().acceptOrder(suggestionId);
     } catch (e) {
       if (!mounted) return;
+      setState(() => _accepting = null);
       showAppError(context, messageForError(e, locale));
       return;
     }
 
     if (!mounted) return;
-    // La liste du conducteur (En cours/Opportunités) doit refléter la
-    // nouvelle course acceptée dès le retour à l'écran précédent.
-    await context.read<OrderState>().loadOrders();
-    if (!mounted) return;
+    // Retour immédiat + confirmation : le rechargement de la liste
+    // (`GET /transporteur/commandes`, plusieurs secondes sur un conducteur
+    // chargé) part en fond, il n'a pas à retenir l'écran.
+    showAppSnackBar(context, _d('driver.optimize.accepted'));
+    unawaited(context.read<OrderState>().loadOrders());
     context.pop();
   }
 
@@ -128,7 +140,13 @@ class _RouteOptimizationScreenState extends State<RouteOptimizationScreen> {
             _SuggestionCard(
               suggestion: suggestion,
               t: _d,
+              busy: _accepting != null,
+              accepting: _accepting == suggestion.order.id,
               onAccept: () => _accept(suggestion.order.id),
+              onOpen: () {
+                context.read<OrderState>().selectOrder(suggestion.order.id);
+                context.push('/transporteur/commandes/${suggestion.order.id}');
+              },
             ),
         ],
       ),
@@ -164,12 +182,24 @@ class _SuggestionCard extends StatelessWidget {
   const _SuggestionCard({
     required this.suggestion,
     required this.t,
+    required this.busy,
+    required this.accepting,
     required this.onAccept,
+    required this.onOpen,
   });
 
   final RouteSuggestion suggestion;
   final String Function(String key, [Map<String, String>? vars]) t;
+
+  /// Une acceptation est en cours quelque part dans la liste : tout est gelé.
+  final bool busy;
+
+  /// C'est CELLE-CI qu'on accepte — son bouton porte l'indicateur.
+  final bool accepting;
   final VoidCallback onAccept;
+
+  /// Ouvre la fiche de la course, comme un tap depuis « Opportunités ».
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -177,6 +207,7 @@ class _SuggestionCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
       child: ListTile(
+        onTap: busy ? null : onOpen,
         title: Row(
           children: [
             Expanded(
@@ -196,14 +227,27 @@ class _SuggestionCard extends StatelessWidget {
               ),
           ],
         ),
-        subtitle: Text(
-          t('driver.optimize.distance', {
-            'km': suggestion.distanceKm.toStringAsFixed(1),
-          }),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              t('driver.optimize.distance', {
+                'km': suggestion.distanceKm.toStringAsFixed(1),
+              }),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TripMetricsRow(order: order, dense: true),
+          ],
         ),
         trailing: FilledButton(
-          onPressed: onAccept,
-          child: Text(t('driver.optimize.accept')),
+          onPressed: busy ? null : onAccept,
+          child: accepting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(t('driver.optimize.accept')),
         ),
       ),
     );
