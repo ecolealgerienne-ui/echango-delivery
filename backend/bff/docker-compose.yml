@@ -44,6 +44,10 @@ services:
       # substituer un défaut — un secret manquant doit se voir (revue C1).
       JWT_SECRET: "${JWT_SECRET:?manquant. Le generer : openssl rand -base64 48}"
       REDIS_URL: redis://redis:6379
+      # Géocodage via echango-geo (même réseau echango_network). Résolu par le
+      # nom de service ; le jeton doit correspondre à celui d'echango-geo.
+      GEO_SERVICE_URL: ${GEO_SERVICE_URL:-http://geo-api:3000}
+      GEO_INTERNAL_TOKEN: "${GEO_INTERNAL_TOKEN:?manquant. Doit correspondre au GEO_INTERNAL_TOKEN d'echango-geo}"
     ports:
       - "3001:3001"
     extra_hosts:

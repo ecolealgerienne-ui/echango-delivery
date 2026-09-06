@@ -68,11 +68,6 @@ export class CommerçantController {
   }
 
   /**
-   * Recherche d'adresse. Relayée par le BFF et non appelée depuis l'app :
-   * Nominatim exige un User-Agent identifiant et plafonne le débit, deux
-   * choses intenables depuis des milliers d'appareils (voir GeocodingService).
-   */
-  /**
    * Devis d'une course. Appelé par l'app avant validation.
    *
    * Renvoie `amount: null` tant que le barème n'est pas implémenté — l'app
@@ -124,6 +119,12 @@ export class CommerçantController {
     return this.commercantService.removeFavourite(req.user.id, id);
   }
 
+  /**
+   * Recherche d'adresse. Relayée par le BFF et jamais appelée depuis l'app :
+   * `echango-geo` n'est joignable que sur le réseau Docker interne et exige un
+   * jeton de service, ni l'un ni l'autre exposables sur des milliers
+   * d'appareils (voir `GeocodingService`).
+   */
   @Get('geocodage')
   async geocode(@Query() query: GeocodeQueryDto) {
     return { data: await this.geocoding.search(query.q) };

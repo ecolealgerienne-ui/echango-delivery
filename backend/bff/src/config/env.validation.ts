@@ -104,6 +104,27 @@ export function validateEnv(config: Record<string, unknown>) {
     );
   }
 
+  // ── GEO_INTERNAL_TOKEN obligatoire (bascule echango-geo, 06/09/2026) ──────
+  //
+  // Depuis que `GeocodingService` est un client HTTP d'`echango-geo`, tout
+  // géocodage (recherche d'adresse du formulaire commerçant, adresse d'un
+  // point sur la carte) porte l'en-tête `X-Internal-Token`. `echango-geo` le
+  // refuse s'il ne correspond pas. Un jeton absent ne casse rien au
+  // démarrage : chaque géocodage part et revient en `503 geocoding.unavailable`
+  // — une panne silencieuse d'une fonction du parcours de création de course,
+  // du genre exact que ce fichier existe pour empêcher (cf. JWT_SECRET).
+  //
+  // Le `docker-compose.yml` du dépôt le rend déjà obligatoire (`:?`) ; ce
+  // garde couvre le démarrage hors compose et vaut pour tous les
+  // environnements — une instance `echango-geo` locale exige aussi le jeton.
+  if (!String(config.GEO_INTERNAL_TOKEN ?? '').trim()) {
+    errors.push(
+      'GEO_INTERNAL_TOKEN est absent ou vide : tout géocodage repartirait en ' +
+        '503 geocoding.unavailable. Reprendre la valeur du .env.production ' +
+        "d'echango-geo (elle doit être identique des deux côtés).",
+    );
+  }
+
   if (errors.length) {
     throw new Error(
       `Configuration invalide, démarrage refusé :\n` +

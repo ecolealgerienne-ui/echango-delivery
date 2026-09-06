@@ -119,15 +119,16 @@ class AppRules {
 
   /// Attente avant de lancer une recherche pendant la frappe.
   ///
-  /// Protège aussi le géocodeur : Nominatim plafonne à une requête par seconde
-  /// et interdit les usages intensifs (`.env.example`, `NOMINATIM_URL`).
+  /// Évite un appel par frappe sur `/commercant/geocodage`, que le BFF relaie
+  /// vers le service `echango-geo` (Nominatim auto-hébergé). Depuis la bascule
+  /// du 05/09/2026, plus aucune politique d'usage publique à ménager — mais
+  /// une requête par caractère reste du gaspillage réseau et serveur.
   ///
-  /// ⚠️ **C'est bien une décision locale malgré cette contrainte d'amont**, et
-  /// la nuance décide de son emplacement : il n'existe aucun *original*
-  /// numérique à comparer — Nominatim publie une politique d'usage, pas une
-  /// valeur que le BFF appliquerait. 600 ms est notre réponse à cette
-  /// politique, pas une copie. Le jour où le serveur imposerait un délai
-  /// chiffré, la valeur passerait dans `ServerRules` avec son vérificateur.
+  /// ⚠️ **C'est une décision locale** : le BFF n'impose aucun délai chiffré
+  /// (le `@Throttle` d'`echango-geo` protège l'instance, il ne prescrit pas un
+  /// débounce d'interface). 600 ms est notre réglage d'ergonomie, sans
+  /// *original* numérique à comparer. Le jour où le serveur imposerait un
+  /// délai, la valeur passerait dans `ServerRules` avec son vérificateur.
   static const Duration searchDebounce = Duration(milliseconds: 600);
 
   /// Taille d'une page de liste, pour toutes les listes paginées de l'app.

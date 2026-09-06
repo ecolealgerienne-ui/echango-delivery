@@ -144,8 +144,9 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
     }
   }
 
-  /// Recherche différée : sans ce délai, chaque frappe consommerait un appel du
-  /// quota partagé de Nominatim, que le BFF sérialise à une par seconde.
+  /// Recherche différée : sans ce délai, chaque frappe déclencherait un appel
+  /// de géocodage. Le débit n'est plus contraint côté serveur (echango-geo est
+  /// auto-hébergé), mais un appel par lettre reste du gaspillage.
   void _onSearchChanged(String value) {
     _debounce?.cancel();
     if (value.trim().length < ServerRules.addressSearchMinLength) {
