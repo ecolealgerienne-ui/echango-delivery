@@ -89,10 +89,25 @@ const Map<String, String> _fr = {
   'driver.state.canceled': 'Annulée',
   'driver.order.card.status': 'Statut : {status}',
 
-  // ── Carte (pas encore construite, et l'écran le dit) ────────────────────
-  'driver.map.unavailable': 'Carte non disponible',
+  // ── Carte des courses en cours ─────────────────────────────────────────
+  'driver.map.empty': 'Aucune course en cours',
+  'driver.map.empty.hint':
+      'Vos livraisons acceptées s’affichent ici, avec leurs points '
+      'd’enlèvement et de livraison.',
+  // ⚠️ Distinct du vide : des courses existent, mais leurs adresses ont été
+  // saisies sans passer par la carte, donc sans coordonnées (règle 10 — pas
+  // de point à [0,0]).
+  'driver.map.no_positions': 'Aucune position à afficher',
+  'driver.map.no_positions.hint':
+      'Vos courses en cours n’ont pas de coordonnées : leurs adresses ont '
+      'été saisies sans être placées sur la carte.',
+  'driver.map.unavailable': 'Carte indisponible',
   'driver.map.unavailable.hint':
-      'La carte des courses n’est pas encore implémentée.',
+      'Impossible de charger vos courses. Réessayez.',
+  'driver.map.retry': 'Réessayer',
+  'driver.map.refresh': 'Rafraîchir',
+  'driver.map.pickup': 'Enlèvement',
+  'driver.map.dropoff': 'Livraison',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'Transporteur',
@@ -212,9 +227,19 @@ const Map<String, String> _ar = {
   'driver.state.canceled': 'أُلغيت',
   'driver.order.card.status': 'الحالة: {status}',
 
-  // ── Carte ───────────────────────────────────────────────────────────────
+  // ── الخريطة ─────────────────────────────────────────────────────────────
+  'driver.map.empty': 'لا مهمّة جارية',
+  'driver.map.empty.hint':
+      'تظهر هنا توصيلاتك المقبولة، مع نقاط الاستلام والتسليم.',
+  'driver.map.no_positions': 'لا موقع للعرض',
+  'driver.map.no_positions.hint':
+      'مهمّاتك الجارية بلا إحداثيات: أُدخِلت عناوينها دون تحديدها على الخريطة.',
   'driver.map.unavailable': 'الخريطة غير متاحة',
-  'driver.map.unavailable.hint': 'خريطة المهام لم تُنجَز بعد.',
+  'driver.map.unavailable.hint': 'تعذّر تحميل مهمّاتك. أعد المحاولة.',
+  'driver.map.retry': 'أعد المحاولة',
+  'driver.map.refresh': 'تحديث',
+  'driver.map.pickup': 'الاستلام',
+  'driver.map.dropoff': 'التسليم',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'ناقل',
