@@ -499,8 +499,9 @@ class MapScreen extends StatelessWidget {
     return Stack(
       children: [
         AppConsultationMap(
-          center: _barycentre(points),
-          zoom: points.length == 1 ? 14 : 11,
+          // Toutes les courses tiennent dans la vue — sinon, dès qu'une course
+          // est loin des autres, l'écran ne montre que du désert entre elles.
+          fitPoints: [for (final cp in points) cp.at],
           markers: [
             for (final cp in points)
               Marker(
@@ -540,15 +541,6 @@ class MapScreen extends StatelessWidget {
     );
   }
 
-  static LatLng _barycentre(List<_CoursePoint> points) {
-    var lat = 0.0;
-    var lon = 0.0;
-    for (final p in points) {
-      lat += p.at.latitude;
-      lon += p.at.longitude;
-    }
-    return LatLng(lat / points.length, lon / points.length);
-  }
 }
 
 /// Un point porté par une course en cours — enlèvement ou livraison.
