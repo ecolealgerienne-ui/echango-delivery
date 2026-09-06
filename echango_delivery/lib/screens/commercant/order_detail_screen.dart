@@ -833,12 +833,40 @@ class _DriverMapState extends State<_DriverMap> {
 
     final position = _position;
     if (position == null) {
+      // ⚠️ Un bloc visible, pas une ligne de 12 px. `{ position: null }`
+      // couvre trois cas normaux — personne n'a pris la course, le
+      // transporteur n'a rien remonté, sa fiche est momentanément illisible —
+      // et l'ancien texte minuscule se lisait comme « rien ne s'est passé »
+      // après un appui sur le bouton. Le message dit ce qu'on attend et offre
+      // de réessayer.
+      final scheme = Theme.of(context).colorScheme;
       return Padding(
         padding: const EdgeInsets.fromLTRB(
             AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
-        child: Text(
-          _t('order.detail.driver.position.none'),
-          style: const TextStyle(fontSize: 12),
+        child: Column(
+          children: [
+            Icon(Icons.location_off_outlined, size: 40, color: scheme.outline),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              _t('order.detail.driver.position.none'),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              _t('order.detail.driver.position.none.hint'),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: Text(_t('order.detail.refresh')),
+            ),
+          ],
         ),
       );
     }
