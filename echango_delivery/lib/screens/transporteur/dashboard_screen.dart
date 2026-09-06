@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/common_strings.dart';
@@ -10,6 +12,7 @@ import '../../state/auth_state.dart';
 import '../../state/driver_presence_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/order_state.dart';
+import '../../widgets/consultation_map.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -417,45 +420,144 @@ class _OrdersListScreenState extends State<OrdersListScreen>
 
 }
 
-/// Écran de la carte.
+/// La carte des courses EN COURS du conducteur.
+///
+/// ── Ce qu'elle montre, et ce qu'elle ne montre pas ────────────────────────
+///
+/// Les courses acceptées et non closes (`OrderState.activeOrders`), chacune
+/// par ses deux points — enlèvement et livraison —, tapables pour ouvrir la
+/// fiche. **Pas les opportunités du pool** : celles-là se choisissent dans
+/// l'onglet « Courses libres », pas sur une carte d'ensemble.
+///
+/// ── Trois absences, trois messages (règle 10) ────────────────────────────
+///
+/// « aucune course en cours », « des courses mais aucune géolocalisée » (leurs
+/// adresses ont été saisies sans la carte, `Place.latitude` nul) et « le
+/// chargement a échoué » ne disent pas la même chose. Un seul « carte vide »
+/// pour les trois se lirait comme une panne dans les deux cas où c'en est une,
+/// et comme une panne à tort dans le troisième.
+///
+/// ── Pas de rechargement propre ───────────────────────────────────────────
+///
+/// L'état est celui que le tableau de bord tient déjà à jour (montage,
+/// tirer-pour-rafraîchir de l'onglet liste, minuteur de présence). Le bouton
+/// flottant relit à la demande ; il n'y a pas de second chemin de chargement.
 class MapScreen extends StatelessWidget {
-  // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
-  // `context`, contrairement à un `State`. La même signature partout aurait
-  // été plus jolie — elle ne compile pas.
-  String _d(BuildContext context, String key,
-          [Map<String, String>? vars]) =>
-      driverLabel(key, context.read<LocaleState>().locale, vars);
-
   const MapScreen({super.key});
+
+  String _d(BuildContext context, String key, [Map<String, String>? vars]) =>
+      driverLabel(key, context.read<LocaleState>().locale, vars);
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.map_outlined,
-            size: 80,
-            color: Theme.of(context).colorScheme.outline,
+    final state = context.watch<OrderState>();
+    final courses = state.activeOrders;
+
+    // Deux points par course quand ils sont connus. Un lieu saisi sans la
+    // carte a `latitude`/`longitude` nuls — il n'entre pas ici plutôt que
+    // d'atterrir au large du golfe de Guinée.
+    final points = <_CoursePoint>[];
+    for (final o in courses) {
+      final p = o.pickupPlace;
+      if (p?.latitude != null && p?.longitude != null) {
+        points.add(_CoursePoint(o, LatLng(p!.latitude!, p.longitude!), pickup: true));
+      }
+      final d = o.dropoffPlace;
+      if (d?.latitude != null && d?.longitude != null) {
+        points.add(_CoursePoint(o, LatLng(d!.latitude!, d.longitude!), pickup: false));
+      }
+    }
+
+    if (courses.isEmpty) {
+      if (state.isLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (state.errorMessage != null) {
+        return AppEmptyState.unavailable(
+          title: _d(context, 'driver.map.unavailable'),
+          hint: _d(context, 'driver.map.unavailable.hint'),
+          onRetry: () => context.read<OrderState>().loadOrders(),
+        );
+      }
+      return AppEmptyState(
+        icon: Icons.map_outlined,
+        title: _d(context, 'driver.map.empty'),
+        hint: _d(context, 'driver.map.empty.hint'),
+      );
+    }
+
+    if (points.isEmpty) {
+      return AppEmptyState(
+        icon: Icons.wrong_location_outlined,
+        title: _d(context, 'driver.map.no_positions'),
+        hint: _d(context, 'driver.map.no_positions.hint'),
+      );
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+
+    return Stack(
+      children: [
+        AppConsultationMap(
+          center: _barycentre(points),
+          zoom: points.length == 1 ? 14 : 11,
+          markers: [
+            for (final cp in points)
+              Marker(
+                point: cp.at,
+                width: 44,
+                height: 44,
+                child: GestureDetector(
+                  onTap: () {
+                    context.read<OrderState>().selectOrder(cp.order.id);
+                    context.push('/transporteur/commandes/${cp.order.id}');
+                  },
+                  child: Tooltip(
+                    message: cp.pickup
+                        ? _d(context, 'driver.map.pickup')
+                        : _d(context, 'driver.map.dropoff'),
+                    child: Icon(
+                      cp.pickup ? Icons.trip_origin : Icons.place,
+                      color: cp.pickup ? scheme.primary : scheme.tertiary,
+                      size: 32,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        Positioned(
+          right: AppSpacing.md,
+          bottom: AppSpacing.md,
+          child: FloatingActionButton.small(
+            heroTag: 'driver-map-refresh',
+            tooltip: _d(context, 'driver.map.refresh'),
+            onPressed: () => context.read<OrderState>().loadOrders(),
+            child: const Icon(Icons.refresh),
           ),
-          const SizedBox(height: AppSpacing.lg),
-          Text(
-            _d(context, 'driver.map.unavailable'),
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            _d(context, 'driver.map.unavailable.hint'),
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
+
+  static LatLng _barycentre(List<_CoursePoint> points) {
+    var lat = 0.0;
+    var lon = 0.0;
+    for (final p in points) {
+      lat += p.at.latitude;
+      lon += p.at.longitude;
+    }
+    return LatLng(lat / points.length, lon / points.length);
+  }
+}
+
+/// Un point porté par une course en cours — enlèvement ou livraison.
+class _CoursePoint {
+  const _CoursePoint(this.order, this.at, {required this.pickup});
+
+  final Order order;
+  final LatLng at;
+  final bool pickup;
 }
 
 /// Écran de profil avec logout.
