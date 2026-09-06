@@ -1255,9 +1255,9 @@ class BffApiClient {
 
   /// Recherche d'adresse, relayée par le BFF.
   ///
-  /// L'app n'appelle jamais Nominatim directement : sa politique d'usage exige
-  /// un User-Agent identifiant et plafonne le débit, deux choses intenables
-  /// depuis des milliers d'appareils.
+  /// L'app ne géocode jamais elle-même : le BFF passe par `echango-geo`, un
+  /// service interne joignable seulement derrière la frontière réseau et
+  /// protégé par un jeton de service — rien qu'on expose sur des appareils.
   Future<List<GeocodedPlace>> searchAddress(String query) async {
     final data = await _get('/commercant/geocodage?q=${Uri.encodeQueryComponent(query)}');
     return _listOf(data, 'data', GeocodedPlace.fromJson);
