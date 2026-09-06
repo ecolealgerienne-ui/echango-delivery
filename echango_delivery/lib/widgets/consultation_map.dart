@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../config/api_config.dart';
+
 /// Une carte qu'on **regarde**, par opposition à une carte où l'on choisit.
 ///
 /// ── Ce qu'elle tient, et pourquoi ça ne peut pas être recopié ─────────────
@@ -41,7 +43,11 @@ class AppConsultationMap extends StatelessWidget {
   final List<Marker> markers;
   final double zoom;
 
-  static const String _tiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  /// Le CDN public d'OSM par défaut, surchargeable au lancement — voir
+  /// `ApiConfig.mapTileUrl`. Reste **une seule source pour toutes les cartes**
+  /// (règle 5), maintenant tenue par la config plutôt que par une constante
+  /// recopiable.
+  static const String _tiles = ApiConfig.mapTileUrl;
   static const String _userAgent = 'com.echango.echango_delivery';
 
   @override
