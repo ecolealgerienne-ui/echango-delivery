@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
@@ -28,7 +29,25 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   List<Order> _historyOrders = [];
   Order? _selectedOrder;
   List<Map<String, dynamic>> _nextActivities = [];
+
+  // ⚠️ **Deux attentes distinctes, et les confondre gelait la fiche.**
+  //
+  // `_isLoading` est ce qu'un écran regarde pour savoir qu'une opération PORTÉE
+  // PAR L'UTILISATEUR est en cours — charger un détail, accepter, démarrer,
+  // signaler. La fiche transporteur remplace alors ses boutons par un
+  // indicateur (`_buildActionButtons`).
+  //
+  // `_listRefreshing` est le rafraîchissement de fond des trois listes
+  // (`loadOrders`), déclenché par le tableau de bord au montage, par le
+  // « tirer pour rafraîchir », et par le minuteur de présence toutes les 45 s.
+  // Il ne concerne aucun écran de détail. Quand `loadOrders` levait
+  // `_isLoading`, un rafraîchissement de fond — surtout après une acceptation,
+  // qui enchaîne `selectOrder` PUIS `loadOrders` — laissait la fiche sur son
+  // indicateur pendant les 8-15 s que prend `GET /transporteur/commandes` sur
+  // un conducteur chargé, assez pour faire expirer le parcours d'intégration
+  // (06/09/2026). Séparés, la fiche revient dès que `selectOrder` a fini.
   bool _isLoading = false;
+  bool _listRefreshing = false;
   String? _errorMessage;
 
   OrderState({required BffApiClient apiClient, required LocaleState localeState})
@@ -67,7 +86,15 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   /// aucune donnée d'activité (journal §6.9), et coder la machine à états
   /// côté client la ferait diverger de la configuration serveur.
   List<Map<String, dynamic>> get nextActivities => _nextActivities;
+
+  /// Une opération portée par l'utilisateur est en cours sur le détail
+  /// (chargement, écriture). PAS le rafraîchissement de fond des listes — voir
+  /// [_listRefreshing].
   bool get isLoading => _isLoading;
+
+  /// Les trois listes se rafraîchissent en arrière-plan. Le tableau de bord
+  /// peut l'indiquer discrètement ; aucun écran de détail n'y réagit.
+  bool get isRefreshingLists => _listRefreshing;
   String? get errorMessage => _errorMessage;
 
   /// Commandes assignées à ce driver et non terminées.
@@ -96,9 +123,17 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   /// Le filtrage par driver est fait côté BFF, jamais par paramètre serveur —
   /// Fleetbase ignore les filtres non supportés et renverrait toute la
   /// compagnie (journal §2.8/§6.4).
-  Future<void> loadOrders() async {
-    _isLoading = true;
-    _errorMessage = null;
+  /// Recharge les trois listes.
+  ///
+  /// [surfaceErrors] : `true` quand c'est le tableau de bord qui demande
+  /// (montage, tirer-pour-rafraîchir, minuteur de présence) — un échec doit
+  /// alors s'afficher. `false` quand c'est le rafraîchissement de fond qui suit
+  /// une écriture réussie ([_mutateOrder]) — poser `_errorMessage` y
+  /// écraserait le retour de l'action, et alarmerait sur un geste que
+  /// l'utilisateur n'a pas fait. Les listes gardent alors leur contenu.
+  Future<void> loadOrders({bool surfaceErrors = true}) async {
+    _listRefreshing = true;
+    if (surfaceErrors) _errorMessage = null;
     _notify();
 
     try {
@@ -107,9 +142,14 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       _adhocOrders = buckets['adhoc'] ?? [];
       _historyOrders = buckets['history'] ?? [];
     } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
+      if (surfaceErrors) {
+        _errorMessage = messageForError(e, _localeState.locale);
+      } else {
+        debugPrint('loadOrders (fond) a échoué : '
+            '${messageForError(e, _localeState.locale)}');
+      }
     } finally {
-      _isLoading = false;
+      _listRefreshing = false;
       _notify();
     }
   }
@@ -159,10 +199,19 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
     String orderId,
     Future<void> Function() action,
   ) async {
-    return runWrite(action, reload: () async {
-      await selectOrder(orderId);
-      await loadOrders();
-    });
+    // ⚠️ **La relecture BLOQUANTE se limite au détail** — c'est lui que
+    // l'utilisateur regarde, et `selectOrder` est ce qui ramène le statut à
+    // jour et les transitions suivantes. Le rafraîchissement des trois listes
+    // (`GET /transporteur/commandes`, 8-15 s sur un conducteur chargé) part
+    // ENSUITE, sans être attendu : le chaîner ici tenait `isLoading` à `true`
+    // le temps des deux appels, et la fiche restait sur son indicateur
+    // d'attente — assez pour faire expirer le parcours d'intégration
+    // (06/09/2026). `_listRefreshing` porte cette seconde attente, qu'aucun
+    // écran de détail ne regarde ; `surfaceErrors: false` empêche un
+    // hoquet de fond de poser un bandeau sur une action qui, elle, a réussi.
+    final ok = await runWrite(action, reload: () => selectOrder(orderId));
+    if (ok) unawaited(loadOrders(surfaceErrors: false));
+    return ok;
   }
 
   /// Accepte une commande.
