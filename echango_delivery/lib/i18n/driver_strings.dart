@@ -178,6 +178,20 @@ const Map<String, String> _fr = {
       'et {count} course(s) sans prix affiché, non comptée(s) ci-dessus',
   'driver.optimize.accept': 'Prendre cette course',
   'driver.optimize.accepted': 'Course prise — elle est dans « En cours ».',
+
+  // ── Métriques d'une course (carte d'opportunité, fiche, suggestion) ─────
+  //
+  // Les trois chiffres sur lesquels un transporteur décide, comme sur une
+  // offre Uber : ce que rapporte la course, sa longueur, et le trajet à vide
+  // jusqu'à l'enlèvement. `from_me` est OMIS quand la position n'est pas
+  // connue — jamais un « 0 km » qui se lirait « je suis sur place ».
+  'driver.trip.distance': 'Trajet {km} km',
+  'driver.trip.from_me': 'Enlèvement à {km} km',
+  'driver.trip.from_me.long': 'Enlèvement à {km} km de vous',
+  'driver.trip.duration': '~{min} min',
+  'driver.trip.legend.pickup': 'Enlèvement',
+  'driver.trip.legend.dropoff': 'Livraison',
+  'driver.trip.legend.you': 'Vous',
 };
 
 const Map<String, String> _ar = {
@@ -299,4 +313,13 @@ const Map<String, String> _ar = {
       'و{count} مهمة بدون سعر معروض، غير محتسبة أعلاه',
   'driver.optimize.accept': 'قبول هذه المهمة',
   'driver.optimize.accepted': 'تم قبول المهمة — إنها في «الجارية».',
+
+  // ── مقاييس المهمة ─────────────────────────────────────────────────────────
+  'driver.trip.distance': 'المسافة {km} كم',
+  'driver.trip.from_me': 'الاستلام على بُعد {km} كم',
+  'driver.trip.from_me.long': 'الاستلام على بُعد {km} كم منك',
+  'driver.trip.duration': '~{min} د',
+  'driver.trip.legend.pickup': 'الاستلام',
+  'driver.trip.legend.dropoff': 'التسليم',
+  'driver.trip.legend.you': 'أنت',
 };

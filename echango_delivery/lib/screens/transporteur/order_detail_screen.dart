@@ -20,6 +20,7 @@ import 'status_colors.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
+import '../../widgets/trip_metrics.dart';
 
 class OrderDetailScreen extends StatelessWidget {
   // ⚠️ `context` en paramètre : un `StatelessWidget` n'a pas de champ
@@ -200,6 +201,12 @@ class OrderDetailScreen extends StatelessWidget {
                               ),
                             ),
                           ],
+                          const SizedBox(height: AppSpacing.lg),
+                          // Longueur du trajet, durée estimée et distance à vide
+                          // jusqu'à l'enlèvement — les chiffres qui décident de
+                          // prendre ou rendre une course, avant comme après
+                          // acceptation.
+                          TripMetricsRow(order: order),
                           const SizedBox(height: AppSpacing.lg),
                           // ⚠️ `toString()` sans `toLocal()` affichait l'UTC :
                           // « Créée le » était une heure trop tôt, juste

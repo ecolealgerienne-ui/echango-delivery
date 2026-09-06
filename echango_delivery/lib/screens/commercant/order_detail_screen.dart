@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/collections_strings.dart';
+import '../../i18n/driver_strings.dart';
 import '../../state/locale_state.dart';
 import '../../models/merchant_order.dart';
 import '../../i18n/order_strings.dart';
@@ -887,31 +887,32 @@ class _DriverMapState extends State<_DriverMap> {
             // l'autre ne dit pas si la course avance.
             fitPoints: [driver, if (dropoff != null) dropoff],
             markers: [
-              Marker(
-                point: driver,
-                width: 40,
-                height: 40,
-                child: Icon(
-                  Icons.local_shipping,
-                  // Le gris dit « ce point n'est plus frais » sans texte à
-                  // lire : c'est la première chose qu'on voit sur une
-                  // carte, avant la légende.
-                  color: position.isStale
-                      ? Theme.of(context).colorScheme.outline
-                      : Theme.of(context).colorScheme.primary,
-                  size: 32,
-                ),
+              // Le gris (`stale`) dit « ce point n'est plus frais » sans texte
+              // à lire : c'est la première chose qu'on voit sur une carte,
+              // avant la légende.
+              consultationMarker(
+                context,
+                at: driver,
+                kind: position.isStale
+                    ? MapMarkerKind.stale
+                    : MapMarkerKind.driver,
+                tooltip: driverLabel('driver.trip.legend.you',
+                    context.read<LocaleState>().locale),
               ),
               if (dropoff != null)
-                Marker(
-                  point: dropoff,
-                  width: 40,
-                  height: 40,
-                  child: Icon(Icons.flag,
-                      color: Theme.of(context).colorScheme.error, size: 28),
+                consultationMarker(
+                  context,
+                  at: dropoff,
+                  kind: MapMarkerKind.dropoff,
+                  tooltip: driverLabel('driver.trip.legend.dropoff',
+                      context.read<LocaleState>().locale),
                 ),
             ],
           ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+          child: MapLegend(showDriver: true),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, AppSpacing.md),

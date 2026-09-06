@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
@@ -13,6 +12,7 @@ import '../../state/driver_presence_state.dart';
 import '../../state/locale_state.dart';
 import '../../state/order_state.dart';
 import '../../widgets/consultation_map.dart';
+import '../../widgets/trip_metrics.dart';
 import '../../widgets/language_selector.dart';
 import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
@@ -396,6 +396,10 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: AppSpacing.xs),
+                // Longueur du trajet et distance à vide jusqu'à l'enlèvement :
+                // ce qu'un transporteur regarde après le prix pour décider.
+                TripMetricsRow(order: order, dense: true),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   _d('driver.order.card.status', {'status': orderStateLabelForDriver(order, _d)}),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -504,28 +508,32 @@ class MapScreen extends StatelessWidget {
           fitPoints: [for (final cp in points) cp.at],
           markers: [
             for (final cp in points)
-              Marker(
-                point: cp.at,
-                width: 44,
-                height: 44,
-                child: GestureDetector(
-                  onTap: () {
-                    context.read<OrderState>().selectOrder(cp.order.id);
-                    context.push('/transporteur/commandes/${cp.order.id}');
-                  },
-                  child: Tooltip(
-                    message: cp.pickup
-                        ? _d(context, 'driver.map.pickup')
-                        : _d(context, 'driver.map.dropoff'),
-                    child: Icon(
-                      cp.pickup ? Icons.trip_origin : Icons.place,
-                      color: cp.pickup ? scheme.primary : scheme.tertiary,
-                      size: 32,
-                    ),
-                  ),
-                ),
+              consultationMarker(
+                context,
+                at: cp.at,
+                kind: cp.pickup ? MapMarkerKind.pickup : MapMarkerKind.dropoff,
+                tooltip: cp.pickup
+                    ? _d(context, 'driver.map.pickup')
+                    : _d(context, 'driver.map.dropoff'),
+                onTap: () {
+                  context.read<OrderState>().selectOrder(cp.order.id);
+                  context.push('/transporteur/commandes/${cp.order.id}');
+                },
               ),
           ],
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: AppSpacing.md,
+          child: Material(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(AppSpacing.sm),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+              child: MapLegend(),
+            ),
+          ),
         ),
         Positioned(
           right: AppSpacing.md,

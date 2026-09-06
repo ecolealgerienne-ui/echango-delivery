@@ -16,6 +16,7 @@ import '../../utils/place_label.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/notice.dart';
+import '../../widgets/trip_metrics.dart';
 
 /// Depuis une course déjà tenue, d'autres courses du pool proches de sa
 /// dépose — pour enchaîner sans rien réserver
@@ -226,10 +227,17 @@ class _SuggestionCard extends StatelessWidget {
               ),
           ],
         ),
-        subtitle: Text(
-          t('driver.optimize.distance', {
-            'km': suggestion.distanceKm.toStringAsFixed(1),
-          }),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              t('driver.optimize.distance', {
+                'km': suggestion.distanceKm.toStringAsFixed(1),
+              }),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TripMetricsRow(order: order, dense: true),
+          ],
         ),
         trailing: FilledButton(
           onPressed: busy ? null : onAccept,

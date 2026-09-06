@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 
 import '../config/api_config.dart';
+import '../i18n/driver_strings.dart';
+import '../state/locale_state.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_spacing.dart';
 
 /// Une carte qu'on **regarde**, par opposition à une carte où l'on choisit.
@@ -89,6 +93,121 @@ class AppConsultationMap extends StatelessWidget {
       children: [
         TileLayer(urlTemplate: _tiles, userAgentPackageName: _userAgent),
         MarkerLayer(markers: markers),
+      ],
+    );
+  }
+}
+
+/// Ce qu'un repère désigne. La convention est celle de Maps / Uber : le départ
+/// est vert, la destination rouge, « moi » bleu — trois rôles qu'on ne
+/// confond pas. Les teintes de MARQUE (`primary`, `tertiary`) ne portaient
+/// aucun sens et changeaient avec le thème.
+enum MapMarkerKind { pickup, dropoff, driver, stale }
+
+/// L'icône et la couleur d'un rôle de repère — **la seule définition**.
+///
+/// `consultationMarker` la pose sur la carte, `MapLegend` en explique le sens
+/// sous la carte : si l'un montrait un rond vert et l'autre nommait « rouge »,
+/// la légende mentirait. Règle 5, critère « si l'un change, l'autre doit
+/// changer » — donc une fonction, pas deux `switch` recopiés.
+(IconData, Color) markerVisual(BuildContext context, MapMarkerKind kind) {
+  final scheme = Theme.of(context).colorScheme;
+  return switch (kind) {
+    MapMarkerKind.pickup => (Icons.storefront, context.semantic.success),
+    MapMarkerKind.dropoff => (Icons.location_on, scheme.error),
+    MapMarkerKind.driver => (Icons.navigation, scheme.primary),
+    MapMarkerKind.stale => (Icons.local_shipping, scheme.outline),
+  };
+}
+
+/// Un repère de carte homogène : pastille blanche pour le détacher des tuiles,
+/// icône colorée selon le rôle. Le même partout — on ne recopie plus un
+/// `Marker` brut par écran (règle 6).
+Marker consultationMarker(
+  BuildContext context, {
+  required LatLng at,
+  required MapMarkerKind kind,
+  VoidCallback? onTap,
+  String? tooltip,
+  bool selected = false,
+  double size = 40,
+}) {
+  final scheme = Theme.of(context).colorScheme;
+  final (icon, kindColor) = markerVisual(context, kind);
+  // Sur une carte à plusieurs repères de même nature (la flotte), celui que la
+  // fiche du bas décrit passe en couleur d'accent — sinon on ne sait pas
+  // lequel on a touché.
+  final color = selected ? scheme.tertiary : kindColor;
+
+  Widget dot = Container(
+    decoration: BoxDecoration(
+      color: scheme.surface,
+      shape: BoxShape.circle,
+      border: Border.all(color: color, width: selected ? 3 : 2),
+      boxShadow: const [
+        BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1)),
+      ],
+    ),
+    alignment: Alignment.center,
+    child: Icon(icon, color: color, size: size * 0.55),
+  );
+
+  if (tooltip != null) dot = Tooltip(message: tooltip, child: dot);
+  if (onTap != null) dot = GestureDetector(onTap: onTap, child: dot);
+
+  return Marker(point: at, width: size, height: size, child: dot);
+}
+
+/// Légende d'une carte de consultation : dit ce que chaque repère désigne.
+/// Sans elle, deux pastilles de couleur sur des tuiles ne se lisent pas. Les
+/// couleurs viennent de [markerVisual] — jamais recopiées ici.
+class MapLegend extends StatelessWidget {
+  const MapLegend({super.key, this.showDriver = false});
+
+  /// `true` sur la carte « position du transporteur » côté commerçant, où un
+  /// troisième repère — le transporteur — est présent.
+  final bool showDriver;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = context.watch<LocaleState>().locale;
+    String t(String k) => driverLabel(k, locale);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: Wrap(
+        spacing: AppSpacing.md,
+        runSpacing: AppSpacing.xs,
+        children: [
+          _LegendDot(kind: MapMarkerKind.pickup, label: t('driver.trip.legend.pickup')),
+          _LegendDot(kind: MapMarkerKind.dropoff, label: t('driver.trip.legend.dropoff')),
+          if (showDriver)
+            _LegendDot(kind: MapMarkerKind.driver, label: t('driver.trip.legend.you')),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.kind, required this.label});
+
+  final MapMarkerKind kind;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final (_, color) = markerVisual(context, kind);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: AppSpacing.xs),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }

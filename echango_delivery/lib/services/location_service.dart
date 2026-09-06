@@ -17,6 +17,28 @@ class LocationService {
   BffApiClient? _apiClient;
   StreamSubscription<Position>? _subscription;
 
+  /// La dernière position connue, mise à jour par le suivi et par chaque
+  /// `getCurrentPosition()`. Sert aux écrans qui veulent afficher « à X km de
+  /// vous » **sans attendre** un nouveau fix GPS : un chiffre à quelques
+  /// centaines de mètres près vaut mieux qu'un écran qui se fige le temps du
+  /// fix. `null` tant qu'aucune position n'a été obtenue — l'affichage l'omet
+  /// alors, il n'invente pas de distance (règle 10).
+  Position? _lastKnown;
+  Position? get lastKnownPosition => _lastKnown;
+
+  /// Distance à vol d'oiseau, en mètres, entre la dernière position connue et
+  /// un point — ou `null` si la position n'est pas (encore) connue.
+  double? distanceFromMeMetres(double latitude, double longitude) {
+    final me = _lastKnown;
+    if (me == null) return null;
+    return Geolocator.distanceBetween(
+      me.latitude,
+      me.longitude,
+      latitude,
+      longitude,
+    );
+  }
+
   LocationService._internal();
 
   factory LocationService() {
@@ -63,12 +85,14 @@ class LocationService {
     try {
       if (!await requestPermission()) return null;
 
-      return await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
           timeLimit: Duration(seconds: 10),
         ),
       );
+      _lastKnown = position;
+      return position;
     } catch (e) {
       AppLogger.error('LocationService', 'Position indisponible', e);
       return null;
@@ -90,7 +114,10 @@ class LocationService {
           distanceFilter: ApiConfig.locationDistanceThreshold.toInt(),
         ),
       ).listen(
-        _pushPosition,
+        (position) {
+          _lastKnown = position;
+          _pushPosition(position);
+        },
         onError: (Object e) {
           AppLogger.error('LocationService', 'Flux de position interrompu', e);
         },
