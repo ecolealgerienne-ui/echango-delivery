@@ -23,6 +23,22 @@ class ApiConfig {
     defaultValue: 'http://10.0.2.2:3001',
   );
 
+  /// Gabarit d'URL des tuiles de fond de carte (`flutter_map`).
+  ///
+  /// Par défaut le CDN public d'OpenStreetMap. Surchargeable pour viser un
+  /// cache-proxy local quand l'appareil de test ne résout pas le DNS de façon
+  /// fiable (émulateurs de certains postes) :
+  ///
+  ///   flutter run --dart-define=MAP_TILE_URL=http://10.0.2.2:8082/{z}/{x}/{y}.png
+  ///
+  /// Le proxy vit dans `scripts/local-tiles/`. Les jetons `{z}/{x}/{y}` sont
+  /// substitués par `flutter_map`, pas ici — ils traversent le `--dart-define`
+  /// tels quels.
+  static const String mapTileUrl = String.fromEnvironment(
+    'MAP_TILE_URL',
+    defaultValue: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  );
+
   /// Délai maximal d'une requête au BFF, en secondes. Appliqué globalement
   /// par le client HTTP (voir BffApiClient).
   static const int apiTimeout = 30;
