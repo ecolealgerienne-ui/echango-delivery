@@ -1,9 +1,12 @@
+import 'dart:async' show unawaited;
 import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
 
+import '../config/app_rules.dart';
 import '../models/order.dart';
 import '../services/bff_api_client.dart';
+import 'detail_cache.dart';
 import 'locale_state.dart';
 import 'write_envelope.dart';
 import '../errors/error_message.dart';
@@ -28,7 +31,35 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   List<Order> _historyOrders = [];
   Order? _selectedOrder;
   List<Map<String, dynamic>> _nextActivities = [];
+
+  /// Fiches déjà lues, servies au tap sans spinner puis revalidées en fond.
+  /// Une entrée porte la commande ET ses transitions : les boutons d'action
+  /// dépendent des deux, les cacher séparément les désynchroniserait.
+  final DetailCache<({Order order, List<Map<String, dynamic>> activities})>
+      _detailCache = DetailCache(AppRules.orderDetailFreshness);
+
+  /// La fiche en cours de revalidation de fond, s'il y en a une — pour ne pas
+  /// en lancer deux sur la même commande.
+  String? _revalidating;
+
+  // ⚠️ **Deux attentes distinctes, et les confondre gelait la fiche.**
+  //
+  // `_isLoading` est ce qu'un écran regarde pour savoir qu'une opération PORTÉE
+  // PAR L'UTILISATEUR est en cours — charger un détail, accepter, démarrer,
+  // signaler. La fiche transporteur remplace alors ses boutons par un
+  // indicateur (`_buildActionButtons`).
+  //
+  // `_listRefreshing` est le rafraîchissement de fond des trois listes
+  // (`loadOrders`), déclenché par le tableau de bord au montage, par le
+  // « tirer pour rafraîchir », et par le minuteur de présence toutes les 45 s.
+  // Il ne concerne aucun écran de détail. Quand `loadOrders` levait
+  // `_isLoading`, un rafraîchissement de fond — surtout après une acceptation,
+  // qui enchaîne `selectOrder` PUIS `loadOrders` — laissait la fiche sur son
+  // indicateur pendant les 8-15 s que prend `GET /transporteur/commandes` sur
+  // un conducteur chargé, assez pour faire expirer le parcours d'intégration
+  // (06/09/2026). Séparés, la fiche revient dès que `selectOrder` a fini.
   bool _isLoading = false;
+  bool _listRefreshing = false;
   String? _errorMessage;
 
   OrderState({required BffApiClient apiClient, required LocaleState localeState})
@@ -67,7 +98,15 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   /// aucune donnée d'activité (journal §6.9), et coder la machine à états
   /// côté client la ferait diverger de la configuration serveur.
   List<Map<String, dynamic>> get nextActivities => _nextActivities;
+
+  /// Une opération portée par l'utilisateur est en cours sur le détail
+  /// (chargement, écriture). PAS le rafraîchissement de fond des listes — voir
+  /// [_listRefreshing].
   bool get isLoading => _isLoading;
+
+  /// Les trois listes se rafraîchissent en arrière-plan. Le tableau de bord
+  /// peut l'indiquer discrètement ; aucun écran de détail n'y réagit.
+  bool get isRefreshingLists => _listRefreshing;
   String? get errorMessage => _errorMessage;
 
   /// Commandes assignées à ce driver et non terminées.
@@ -96,9 +135,17 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   /// Le filtrage par driver est fait côté BFF, jamais par paramètre serveur —
   /// Fleetbase ignore les filtres non supportés et renverrait toute la
   /// compagnie (journal §2.8/§6.4).
-  Future<void> loadOrders() async {
-    _isLoading = true;
-    _errorMessage = null;
+  /// Recharge les trois listes.
+  ///
+  /// [surfaceErrors] : `true` quand c'est le tableau de bord qui demande
+  /// (montage, tirer-pour-rafraîchir, minuteur de présence) — un échec doit
+  /// alors s'afficher. `false` quand c'est le rafraîchissement de fond qui suit
+  /// une écriture réussie ([_mutateOrder]) — poser `_errorMessage` y
+  /// écraserait le retour de l'action, et alarmerait sur un geste que
+  /// l'utilisateur n'a pas fait. Les listes gardent alors leur contenu.
+  Future<void> loadOrders({bool surfaceErrors = true}) async {
+    _listRefreshing = true;
+    if (surfaceErrors) _errorMessage = null;
     _notify();
 
     try {
@@ -107,41 +154,114 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
       _adhocOrders = buckets['adhoc'] ?? [];
       _historyOrders = buckets['history'] ?? [];
     } catch (e) {
+      if (surfaceErrors) {
+        _errorMessage = messageForError(e, _localeState.locale);
+      } else {
+        debugPrint('loadOrders (fond) a échoué : '
+            '${messageForError(e, _localeState.locale)}');
+      }
+    } finally {
+      _listRefreshing = false;
+      _notify();
+    }
+  }
+
+  /// Charge les détails d'une commande.
+  ///
+  /// ── Cache 5 min, revalidé en fond ────────────────────────────────────────
+  ///
+  /// Une fiche vue il y a moins de [AppRules.orderDetailFreshness] est servie
+  /// **immédiatement, sans spinner**, puis rafraîchie en silence ([_revalidate])
+  /// — l'écran s'affiche instantané et se corrige en une ou deux secondes s'il
+  /// y a lieu. Au-delà, ou fiche jamais vue : lecture bloquante normale.
+  ///
+  /// [force] saute le cache en lecture — utilisé par [_mutateOrder] après une
+  /// écriture, où l'on veut l'état post-action et pas la version d'avant. Le
+  /// résultat réalimente quand même le cache.
+  Future<void> selectOrder(String orderId, {bool force = false}) async {
+    if (!force) {
+      final cached = _detailCache.fresh(orderId);
+      if (cached != null) {
+        _selectedOrder = cached.order;
+        _nextActivities = cached.activities;
+        _isLoading = false;
+        _errorMessage = null;
+        _notify();
+        unawaited(_revalidate(orderId));
+        return;
+      }
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    _notify();
+
+    try {
+      final detail = await _fetchDetail(orderId);
+      _selectedOrder = detail.order;
+      _nextActivities = detail.activities;
+      _detailCache.put(orderId, detail);
+    } catch (e) {
       _errorMessage = messageForError(e, _localeState.locale);
+      // Introuvable ou erreur : ne pas continuer à servir cette fiche.
+      _detailCache.evict(orderId);
     } finally {
       _isLoading = false;
       _notify();
     }
   }
 
-  /// Charge les détails d'une commande.
-  Future<void> selectOrder(String orderId) async {
-    _isLoading = true;
-    _errorMessage = null;
-    _notify();
+  /// Le détail d'une commande et ses transitions serveur, en un objet. **Seul
+  /// endroit** qui compose ces deux requêtes : [selectOrder] (bloquant) et
+  /// [_revalidate] (fond) s'appuient dessus, pour qu'elles ne divergent pas
+  /// (règle 5). Lève si `GET .../commandes/:id` échoue (commande introuvable
+  /// comprise).
+  Future<({Order order, List<Map<String, dynamic>> activities})> _fetchDetail(
+      String orderId) async {
+    final order = await _apiClient.getOrder(orderId);
 
+    var activities = const <Map<String, dynamic>>[];
+    // Une commande adhoc non réclamée n'a pas de transition : elle doit d'abord
+    // être acceptée. Interroger le serveur renverrait une erreur.
+    if (!(order.adhoc && order.driverId == null)) {
+      try {
+        activities = await _apiClient.getNextActivities(orderId);
+      } catch (_) {
+        // Transitions indisponibles : l'écran affiche le détail sans action
+        // plutôt que d'échouer entièrement.
+        activities = const [];
+      }
+    }
+    return (order: order, activities: activities);
+  }
+
+  /// Rafraîchit en fond une fiche servie depuis le cache. Silencieux : un échec
+  /// laisse à l'écran les données en cache (comme `loadOrders(surfaceErrors:
+  /// false)`), il ne pose pas de bandeau sur une fiche que l'utilisateur
+  /// regarde sans avoir rien demandé. N'écrase la sélection courante que si
+  /// c'est toujours cette commande — l'utilisateur a pu revenir à la liste
+  /// entre-temps.
+  Future<void> _revalidate(String orderId) async {
+    if (_revalidating == orderId) return;
+    _revalidating = orderId;
     try {
-      _selectedOrder = await _apiClient.getOrder(orderId);
-
-      // Une commande adhoc non réclamée n'a pas de transition : elle doit
-      // d'abord être acceptée. Interroger le serveur renverrait une erreur.
-      if (_selectedOrder != null &&
-          !(_selectedOrder!.adhoc && _selectedOrder!.driverId == null)) {
-        try {
-          _nextActivities = await _apiClient.getNextActivities(orderId);
-        } catch (_) {
-          // Transitions indisponibles : l'écran affiche le détail sans
-          // action plutôt que d'échouer entièrement.
-          _nextActivities = [];
-        }
-      } else {
-        _nextActivities = [];
+      final detail = await _fetchDetail(orderId);
+      _detailCache.put(orderId, detail);
+      if (_selectedOrder?.id == orderId) {
+        _selectedOrder = detail.order;
+        _nextActivities = detail.activities;
+        _notify();
       }
     } catch (e) {
-      _errorMessage = messageForError(e, _localeState.locale);
+      // La fiche a pu disparaître (course reprise, annulée) : ne plus la
+      // servir depuis le cache. L'écran garde l'affichage courant ; le
+      // prochain `selectOrder` fera une lecture bloquante et remontera
+      // proprement l'erreur.
+      _detailCache.evict(orderId);
+      debugPrint('revalidation fiche $orderId : '
+          '${messageForError(e, _localeState.locale)}');
     } finally {
-      _isLoading = false;
-      _notify();
+      _revalidating = null;
     }
   }
 
@@ -159,10 +279,20 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
     String orderId,
     Future<void> Function() action,
   ) async {
-    return runWrite(action, reload: () async {
-      await selectOrder(orderId);
-      await loadOrders();
-    });
+    // ⚠️ **La relecture BLOQUANTE se limite au détail** — c'est lui que
+    // l'utilisateur regarde, et `selectOrder` est ce qui ramène le statut à
+    // jour et les transitions suivantes. Le rafraîchissement des trois listes
+    // (`GET /transporteur/commandes`, 8-15 s sur un conducteur chargé) part
+    // ENSUITE, sans être attendu : le chaîner ici tenait `isLoading` à `true`
+    // le temps des deux appels, et la fiche restait sur son indicateur
+    // d'attente — assez pour faire expirer le parcours d'intégration
+    // (06/09/2026). `_listRefreshing` porte cette seconde attente, qu'aucun
+    // écran de détail ne regarde ; `surfaceErrors: false` empêche un
+    // hoquet de fond de poser un bandeau sur une action qui, elle, a réussi.
+    final ok =
+        await runWrite(action, reload: () => selectOrder(orderId, force: true));
+    if (ok) unawaited(loadOrders(surfaceErrors: false));
+    return ok;
   }
 
   /// Accepte une commande.
@@ -208,6 +338,8 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
         notes: notes,
       );
       _lastDeclineReleasedToPool = response['releasedToPool'] == true;
+      // La course a quitté ce transporteur : sa fiche en cache est fausse.
+      _detailCache.evict(orderId);
 
       // Les transitions disparaissent — la course n'est plus au transporteur —
       // mais la fiche reste affichée le temps que l'écran se retire de

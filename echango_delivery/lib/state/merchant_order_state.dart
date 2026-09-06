@@ -1,9 +1,12 @@
+import 'dart:async' show unawaited;
 import 'dart:ui' show Locale;
 
 import 'package:flutter/foundation.dart';
 
+import '../config/app_rules.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
+import 'detail_cache.dart';
 import 'locale_state.dart';
 import 'write_envelope.dart';
 import 'paged_list.dart';
@@ -43,6 +46,29 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   Map<String, dynamic>? _tracking;
   bool _isLoading = false;
   String? _errorMessage;
+
+  /// Fiches déjà lues, servies au tap sans spinner puis revalidées en fond.
+  /// Clé : l'identifiant **de route** ([_selectedRequestId]), pas celui du
+  /// modèle — c'est avec lui que la fiche est ouverte.
+  final DetailCache<({MerchantOrder order, Map<String, dynamic>? tracking})>
+      _detailCache = DetailCache(AppRules.orderDetailFreshness);
+  String? _revalidating;
+
+  // ⚠️ Une revalidation de fond ([_revalidate]) part en `unawaited` : elle peut
+  // se résoudre après le retrait du provider, et notifier un `ChangeNotifier`
+  // détruit lève (défaut du 03/08). Ce garde est le seul endroit qui sait que
+  // l'objet ne vaut plus la peine d'être réveillé.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
 
   /// ⚠️ Le carnet a-t-il **échoué**, ou est-il vraiment vide ?
   ///
@@ -234,26 +260,87 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
     }
   }
 
-  Future<void> selectOrder(String id) async {
+  /// Ouvre la fiche d'une commande.
+  ///
+  /// ── Cache 5 min, revalidé en fond ────────────────────────────────────────
+  ///
+  /// Une fiche vue il y a moins de [AppRules.orderDetailFreshness] s'affiche
+  /// **tout de suite, sans spinner**, puis un rafraîchissement silencieux suit
+  /// ([_revalidate]). Au-delà, ou fiche jamais ouverte : lecture bloquante.
+  ///
+  /// [force] saute le cache en lecture — [_orderWrite] s'en sert après une
+  /// publication ou une annulation, où l'on veut l'état d'après.
+  Future<void> selectOrder(String id, {bool force = false}) async {
+    _selectedRequestId = id;
+
+    if (!force) {
+      final cached = _detailCache.fresh(id);
+      if (cached != null) {
+        _selected = cached.order;
+        _tracking = cached.tracking;
+        _isLoading = false;
+        _errorMessage = null;
+        _notify();
+        unawaited(_revalidate(id));
+        return;
+      }
+    }
+
     _isLoading = true;
     _errorMessage = null;
     _tracking = null;
-    notifyListeners();
+    _notify();
     try {
-      _selectedRequestId = id;
-      _selected = await _apiClient.getMerchantOrder(id);
-      // Le suivi n'existe pas tant que la commande n'est pas dispatchée :
-      // son absence est normale, pas une erreur à remonter.
-      try {
-        _tracking = await _apiClient.getMerchantTracking(id);
-      } catch (_) {
-        _tracking = null;
-      }
+      final detail = await _fetchDetail(id);
+      _selected = detail.order;
+      _tracking = detail.tracking;
+      _detailCache.put(id, detail);
     } catch (e) {
       _errorMessage = messageForError(e, _localeState.locale);
+      _detailCache.evict(id);
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
+    }
+  }
+
+  /// La commande et son suivi, en un objet. **Seul endroit** qui compose ces
+  /// deux requêtes : [selectOrder] et [_revalidate] s'appuient dessus pour ne
+  /// pas diverger (règle 5). Le suivi n'existe pas tant que la commande n'est
+  /// pas dispatchée — son absence est normale, pas une erreur. Lève si la
+  /// commande elle-même est introuvable.
+  Future<({MerchantOrder order, Map<String, dynamic>? tracking})> _fetchDetail(
+      String id) async {
+    final order = await _apiClient.getMerchantOrder(id);
+    Map<String, dynamic>? tracking;
+    try {
+      tracking = await _apiClient.getMerchantTracking(id);
+    } catch (_) {
+      tracking = null;
+    }
+    return (order: order, tracking: tracking);
+  }
+
+  /// Rafraîchit en fond une fiche servie depuis le cache. Silencieux : un échec
+  /// laisse à l'écran les données en cache. N'écrase la fiche ouverte que si
+  /// c'est toujours celle-ci — le commerçant a pu revenir à la liste.
+  Future<void> _revalidate(String id) async {
+    if (_revalidating == id) return;
+    _revalidating = id;
+    try {
+      final detail = await _fetchDetail(id);
+      _detailCache.put(id, detail);
+      if (_selectedRequestId == id) {
+        _selected = detail.order;
+        _tracking = detail.tracking;
+        _notify();
+      }
+    } catch (e) {
+      _detailCache.evict(id);
+      debugPrint('revalidation fiche $id : '
+          '${messageForError(e, _localeState.locale)}');
+    } finally {
+      _revalidating = null;
     }
   }
 
@@ -473,7 +560,7 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
         // Aucun test unitaire ne pouvait le voir — les trois identifiants s'y
         // valent, c'est le vrai serveur qui les distingue.
         if (_selectedRequestId == id) {
-          await selectOrder(id);
+          await selectOrder(id, force: true);
         }
       });
 

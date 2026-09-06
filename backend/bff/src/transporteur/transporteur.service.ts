@@ -48,6 +48,21 @@ import {
  */
 const MAX_ROUTE_OPTIMIZATION_SUGGESTIONS = 10;
 
+/**
+ * Combien de courses TERMINÉES l'écran conducteur ramène par chargement.
+ *
+ * `hydrateOrders` recharge chaque course une par une pour ses champs
+ * personnalisés (prix, montant à encaisser). Un transporteur actif depuis
+ * quelques semaines accumule des centaines de courses terminées ; les hydrater
+ * toutes portait `GET /transporteur/commandes` à 12-17 s — assez pour que le
+ * rechargement qui suit une acceptation laisse la fiche sur son indicateur
+ * d'attente, et pour faire expirer le parcours d'intégration (constaté le
+ * 06/09/2026 sur un conducteur à 177 terminées : endpoint à 17 s). L'onglet
+ * « historique » n'a pas de pagination : au-delà d'un écran, c'est du
+ * défilement mort. On garde donc les plus récentes, et on n'hydrate qu'elles.
+ */
+const MAX_DRIVER_HISTORY_ORDERS = 30;
+
 @Injectable()
 export class TransporteurService {
   private readonly logger = new Logger(TransporteurService.name);
@@ -722,9 +737,27 @@ export class TransporteurService {
     //
     // Le filtre d'appartenance passe AVANT : on ne recharge que ce qu'on va
     // servir, jamais toute la compagnie.
-    const assigned = await this.fleetbaseClient.hydrateOrders(
-      assignedRaw.filter((o) => this.isAssignedTo(o, driver.fleetbaseDriverUuid)),
+    //
+    // ⚠️ **Et l'historique est plafonné AVANT l'hydratation** (voir
+    // `MAX_DRIVER_HISTORY_ORDERS`) : le rechargement une-par-une ne tient pas la
+    // durée quand un conducteur a des centaines de courses closes. Les courses
+    // en cours ne sont jamais plafonnées — elles portent une action.
+    const mine = assignedRaw.filter((o) =>
+      this.isAssignedTo(o, driver.fleetbaseDriverUuid),
     );
+    const isFinishedRaw = (o: any) => isTerminalOrderStatus(o?.status);
+    const recentFinished = mine
+      .filter(isFinishedRaw)
+      .sort((a, b) =>
+        String(b?.updated_at ?? b?.created_at ?? '').localeCompare(
+          String(a?.updated_at ?? a?.created_at ?? ''),
+        ),
+      )
+      .slice(0, MAX_DRIVER_HISTORY_ORDERS);
+    const assigned = await this.fleetbaseClient.hydrateOrders([
+      ...mine.filter((o) => !isFinishedRaw(o)),
+      ...recentFinished,
+    ]);
 
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
     // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);
