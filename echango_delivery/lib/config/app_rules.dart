@@ -130,6 +130,18 @@ class AppRules {
   /// chiffré, la valeur passerait dans `ServerRules` avec son vérificateur.
   static const Duration searchDebounce = Duration(milliseconds: 600);
 
+  /// Combien de temps une fiche de commande déjà lue reste affichable sans
+  /// lecture bloquante — au tap, elle s'affiche tout de suite et un
+  /// rafraîchissement silencieux suit (`DetailCache`, `OrderState.selectOrder`
+  /// et `MerchantOrderState.selectOrder`).
+  ///
+  /// ⚠️ **Décision locale, sans contrainte serveur** : le BFF ne dit rien d'une
+  /// durée de cache. 5 min est notre borne de confiance en pure lecture — au
+  /// clic sur une action, le serveur revalide de toute façon la transition, et
+  /// `_mutateOrder` / le reconciliateur forcent une lecture fraîche. Le seul
+  /// écart toléré sur cette fenêtre est un `cod_amount` corrigé en amont.
+  static const Duration orderDetailFreshness = Duration(minutes: 5);
+
   /// Taille d'une page de liste, pour toutes les listes paginées de l'app.
   ///
   /// ⚠️ **Une décision locale, malgré l'apparence.** Le BFF a bien un défaut de
