@@ -883,7 +883,9 @@ class _DriverMapState extends State<_DriverMap> {
           // rester identiques sur toutes les cartes de consultation. Les
           // repères, eux, répondent à la question de cet écran-ci.
           child: AppConsultationMap(
-            center: driver,
+            // Le transporteur ET la dépose dans le cadre : voir l'un sans
+            // l'autre ne dit pas si la course avance.
+            fitPoints: [driver, if (dropoff != null) dropoff],
             markers: [
               Marker(
                 point: driver,

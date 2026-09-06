@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../config/api_config.dart';
+import '../theme/app_spacing.dart';
 
 /// Une carte qu'on **regarde**, par opposition à une carte où l'on choisit.
 ///
@@ -26,22 +27,35 @@ import '../config/api_config.dart';
 /// livraison chez le commerçant, toute une flotte chez l'entreprise. Ce sont
 /// deux questions différentes, pas deux variantes d'une même.
 ///
-/// ⚠️ **N'emploie que des API déjà éprouvées dans ce dépôt** (`MapOptions`,
-/// `TileLayer`, `MarkerLayer`), celles de l'écran commerçant qui compile.
-/// `CameraFit` cadrerait mieux une flotte dispersée, mais l'API de la version
-/// épinglée n'est pas vérifiable ici — et ce projet a pour règle de vérifier
-/// contre la version épinglée plutôt que de supposer.
+/// ── Cadrage : `center`/`zoom`, OU `fitPoints` ────────────────────────────
+///
+/// Un `center` + `zoom` fixe convient quand l'appelant sait où regarder (la
+/// position d'un transporteur). Il ne convient PAS pour « montre-moi tout » :
+/// deux repères éloignés — une course à Alger, une à Tamanrasset — sortent du
+/// cadre et l'écran paraît vide. `fitPoints` cadre alors TOUS les points au
+/// premier rendu via `CameraFit.coordinates`, **vérifié présent dans
+/// `flutter_map` 7.0.2** (`src/map/camera/camera_fit.dart`) — l'ancien
+/// commentaire le disait « non vérifiable », il l'était.
 class AppConsultationMap extends StatelessWidget {
   const AppConsultationMap({
     super.key,
-    required this.center,
     required this.markers,
+    this.center,
     this.zoom = 14,
-  });
+    this.fitPoints,
+  }) : assert(center != null || fitPoints != null,
+            'AppConsultationMap : fournir center OU fitPoints');
 
-  final LatLng center;
   final List<Marker> markers;
+
+  /// Point de départ quand l'appelant choisit lui-même le cadrage. Ignoré si
+  /// [fitPoints] est fourni et non vide.
+  final LatLng? center;
   final double zoom;
+
+  /// Les points à faire tenir tous ensemble dans la vue initiale. Prioritaire
+  /// sur [center] : dès qu'il y en a au moins un, la caméra s'y ajuste.
+  final List<LatLng>? fitPoints;
 
   /// Le CDN public d'OSM par défaut, surchargeable au lancement — voir
   /// `ApiConfig.mapTileUrl`. Reste **une seule source pour toutes les cartes**
@@ -52,10 +66,22 @@ class AppConsultationMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final fit = (fitPoints != null && fitPoints!.isNotEmpty)
+        ? CameraFit.coordinates(
+            coordinates: fitPoints!,
+            padding: const EdgeInsets.all(AppSpacing.xxl),
+            // Sans plafond, un point unique remplit l'écran d'un zoom absurde.
+            maxZoom: 15,
+          )
+        : null;
+
     return FlutterMap(
       options: MapOptions(
-        initialCenter: center,
+        // `initialCameraFit` l'emporte quand il est là ; `initialCenter` reste
+        // exigé par l'API et sert de repli.
+        initialCenter: center ?? fitPoints!.first,
         initialZoom: zoom,
+        initialCameraFit: fit,
         interactionOptions: const InteractionOptions(
           flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
         ),
