@@ -177,6 +177,7 @@ const Map<String, String> _fr = {
   'driver.optimize.unknown_price':
       'et {count} course(s) sans prix affiché, non comptée(s) ci-dessus',
   'driver.optimize.accept': 'Prendre cette course',
+  'driver.optimize.accepted': 'Course prise — elle est dans « En cours ».',
 };
 
 const Map<String, String> _ar = {
@@ -297,4 +298,5 @@ const Map<String, String> _ar = {
   'driver.optimize.unknown_price':
       'و{count} مهمة بدون سعر معروض، غير محتسبة أعلاه',
   'driver.optimize.accept': 'قبول هذه المهمة',
+  'driver.optimize.accepted': 'تم قبول المهمة — إنها في «الجارية».',
 };
