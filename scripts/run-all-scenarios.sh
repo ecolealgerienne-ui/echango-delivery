@@ -82,6 +82,11 @@ SCENARIOS=(
   # e2e (classe du (f:any)). facilitator posé, l'entreprise voit / le pool non,
   # elle affecte son conducteur. Quatre témoins.
   test-ciblage-entreprise
+  # Tri et filtres de « Courses libres » (entreprise) : wilaya, vehicule (egalite
+  # exacte, pas l echelle du pool), sans-encaissement et tri best_paid, appliques
+  # cote serveur AVANT pagination. Temoin positif ET negatif a chaque axe, plus
+  # mutation du vrai code (filtre wilaya neutralise => le banc echoue).
+  test-opportunites-filtre
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
