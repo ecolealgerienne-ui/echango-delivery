@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 
 import { badRequest, conflict, forbidden, notFound, serviceUnavailable } from '../common/errors/http-errors';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
+import { selectDriverOrdersToHydrate } from '../common/orders/driver-history';
 import { findFailure, projectFailures } from '../common/orders/delivery-failures';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -47,21 +48,6 @@ import {
  * côté app, c'est une borne de réponse, pas une règle de validation.
  */
 const MAX_ROUTE_OPTIMIZATION_SUGGESTIONS = 10;
-
-/**
- * Combien de courses TERMINÉES l'écran conducteur ramène par chargement.
- *
- * `hydrateOrders` recharge chaque course une par une pour ses champs
- * personnalisés (prix, montant à encaisser). Un transporteur actif depuis
- * quelques semaines accumule des centaines de courses terminées ; les hydrater
- * toutes portait `GET /transporteur/commandes` à 12-17 s — assez pour que le
- * rechargement qui suit une acceptation laisse la fiche sur son indicateur
- * d'attente, et pour faire expirer le parcours d'intégration (constaté le
- * 06/09/2026 sur un conducteur à 177 terminées : endpoint à 17 s). L'onglet
- * « historique » n'a pas de pagination : au-delà d'un écran, c'est du
- * défilement mort. On garde donc les plus récentes, et on n'hydrate qu'elles.
- */
-const MAX_DRIVER_HISTORY_ORDERS = 30;
 
 @Injectable()
 export class TransporteurService {
@@ -739,25 +725,18 @@ export class TransporteurService {
     // servir, jamais toute la compagnie.
     //
     // ⚠️ **Et l'historique est plafonné AVANT l'hydratation** (voir
-    // `MAX_DRIVER_HISTORY_ORDERS`) : le rechargement une-par-une ne tient pas la
-    // durée quand un conducteur a des centaines de courses closes. Les courses
-    // en cours ne sont jamais plafonnées — elles portent une action.
+    // `selectDriverOrdersToHydrate` / `MAX_DRIVER_HISTORY_ORDERS`) : le
+    // rechargement une-par-une ne tient pas la durée quand un conducteur a des
+    // centaines de courses closes. Les courses en cours ne sont jamais
+    // plafonnées — elles portent une action.
     const mine = assignedRaw.filter((o) =>
       this.isAssignedTo(o, driver.fleetbaseDriverUuid),
     );
-    const isFinishedRaw = (o: any) => isTerminalOrderStatus(o?.status);
-    const recentFinished = mine
-      .filter(isFinishedRaw)
-      .sort((a, b) =>
-        String(b?.updated_at ?? b?.created_at ?? '').localeCompare(
-          String(a?.updated_at ?? a?.created_at ?? ''),
-        ),
-      )
-      .slice(0, MAX_DRIVER_HISTORY_ORDERS);
-    const assigned = await this.fleetbaseClient.hydrateOrders([
-      ...mine.filter((o) => !isFinishedRaw(o)),
-      ...recentFinished,
-    ]);
+    const assigned = await this.fleetbaseClient.hydrateOrders(
+      selectDriverOrdersToHydrate(mine, (o: any) =>
+        isTerminalOrderStatus(o?.status),
+      ),
+    );
 
     // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
     // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);

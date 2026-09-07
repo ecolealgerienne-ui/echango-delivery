@@ -46,7 +46,7 @@ class TripMetricsRow extends StatelessWidget {
     if (metres != null && metres > 0) {
       items.add(_Metric(
         icon: Icons.directions_car_filled_outlined,
-        label: t('driver.trip.distance', {'km': _km(metres)}),
+        label: t('driver.trip.distance', {'km': tripKm(metres)}),
         dense: dense,
       ));
     }
@@ -70,7 +70,7 @@ class TripMetricsRow extends StatelessWidget {
         icon: Icons.my_location,
         label: t(
           dense ? 'driver.trip.from_me' : 'driver.trip.from_me.long',
-          {'km': _km(fromMe)},
+          {'km': tripKm(fromMe)},
         ),
         dense: dense,
         accent: true,
@@ -86,13 +86,19 @@ class TripMetricsRow extends StatelessWidget {
     );
   }
 
-  /// Un chiffre de distance : deux décimales sous 1 km (« 0,80 km » se lit
-  /// mieux que « 800 m » mélangé à des kilomètres), une au-dessus.
-  static String _km(double metres) {
-    final km = metres / 1000;
-    return (km < 1 ? km.toStringAsFixed(2) : km.toStringAsFixed(1))
-        .replaceAll('.', ',');
-  }
+}
+
+/// Un chiffre de distance pour la ligne de métriques : deux décimales sous 1 km
+/// (« 0,80 km » se lit mieux que « 800 m » mélangé à des kilomètres), une
+/// au-dessus. Virgule décimale (locales FR et AR).
+///
+/// ⚠️ Fonction de premier niveau, pas méthode privée : c'est le formatage sur
+/// lequel un transporteur lit un trajet, et la règle 10 s'y joue (« 800 m »
+/// contre « 0,80 km »). Éprouvée directement dans `test/trip_metrics_test.dart`.
+String tripKm(double metres) {
+  final km = metres / 1000;
+  return (km < 1 ? km.toStringAsFixed(2) : km.toStringAsFixed(1))
+      .replaceAll('.', ',');
 }
 
 class _Metric extends StatelessWidget {
