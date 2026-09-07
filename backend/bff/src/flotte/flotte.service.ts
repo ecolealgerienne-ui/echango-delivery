@@ -4,8 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
-import { ListFleetOrdersQueryDto } from './dto/order.dto';
+import { ListClaimableOrdersQueryDto, ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+import {
+  filterOpportunities,
+  opportunityFacets,
+  sortOpportunities,
+} from '../common/orders/opportunity-filters';
 import {
   projectOrderForFleet,
   projectDriverForFleet,
@@ -119,7 +124,7 @@ export class FlotteService {
    * transporteur. L'adresse, les montants et les précisions d'accès restent —
    * ce sont eux qui permettent de décider.
    */
-  async getClaimableOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
+  async getClaimableOrders(fleetId: string, query: ListClaimableOrdersQueryDto) {
     await this.getFleetWithValidation(fleetId);
 
     try {
@@ -127,19 +132,35 @@ export class FlotteService {
         without_driver: true,
       });
 
-      const claimable = free.filter((o: any) => this.isClaimable(o));
+      // ⚠️ **Hydratation AVANT filtre/tri, puis pagination — et non l'inverse.**
+      //
+      // La wilaya d'enlèvement, le type de véhicule et le montant à encaisser
+      // vivent dans `meta` (et dans le payload complet), qu'aucune ressource
+      // d'index Fleetbase ne sert — filtrer sur `claimable` brut reviendrait à
+      // traiter toutes les courses comme « sans exigence » et « sans wilaya ».
+      // C'est le même ordre, et le même coût, que le pool transporteur
+      // (`getClaimablePoolOrders`), borné par `fetchEveryOrder(100, 50)`.
+      const hydrated = (
+        await this.hydratePage(free.filter((o: any) => this.isClaimable(o)))
+      ).map((o: any) => this.withEffectiveMeta(o));
+
+      const filtered = filterOpportunities(hydrated, {
+        wilaya: query.wilaya,
+        vehicleType: query.vehicleType,
+        withoutCod: query.withoutCod === 'true',
+      });
+      const sorted = sortOpportunities(filtered, query.sort);
 
       const page = query.page || 1;
       const limit = query.limit || 25;
-      const total = claimable.length;
-      const paged = await this.hydratePage(
-        claimable.slice((page - 1) * limit, (page - 1) * limit + limit),
-      );
+      const total = sorted.length;
+      const paged = sorted.slice((page - 1) * limit, (page - 1) * limit + limit);
 
       return {
-        data: paged.map((o: any) =>
-          projectOrderForFleet(this.withEffectiveMeta(o), {}, { unclaimed: true }),
-        ),
+        data: paged.map((o: any) => projectOrderForFleet(o, {}, { unclaimed: true })),
+        // Facettes calculées sur l'ensemble AVANT filtrage : les chips de l'app
+        // restent stables (le filtre réduit `data`, jamais `facets`).
+        facets: opportunityFacets(hydrated),
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       };
     } catch (error) {

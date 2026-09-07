@@ -917,8 +917,28 @@ class BffApiClient {
   /// Servies avec l'adresse complète, le prix et le montant à encaisser — ce
   /// sont eux qui permettent de décider. Seule l'identité du destinataire (nom,
   /// téléphone) attend l'engagement.
-  Future<Map<String, dynamic>> getFleetOpportunities({int page = 1, int limit = AppRules.listPageSize}) async {
-    return (await _get('/flotte/opportunites', query: {'page': '$page', 'limit': '$limit'}) ?? <String, dynamic>{}) as Map<String, dynamic>;
+  ///
+  /// `sort` (`soonest` | `best_paid` | `shortest`), `wilaya`, `vehicleType` et
+  /// `withoutCod` sont appliqués **côté serveur, avant pagination** : le `total`
+  /// renvoyé reflète l'ensemble filtré, sans quoi un filtre appliqué page par
+  /// page tronquerait la liste en silence.
+  Future<Map<String, dynamic>> getFleetOpportunities({
+    int page = 1,
+    int limit = AppRules.listPageSize,
+    String? sort,
+    String? wilaya,
+    String? vehicleType,
+    bool withoutCod = false,
+  }) async {
+    final query = <String, String>{'page': '$page', 'limit': '$limit'};
+    if (sort != null && sort.isNotEmpty) query['sort'] = sort;
+    if (wilaya != null && wilaya.isNotEmpty) query['wilaya'] = wilaya;
+    if (vehicleType != null && vehicleType.isNotEmpty) {
+      query['vehicleType'] = vehicleType;
+    }
+    if (withoutCod) query['withoutCod'] = 'true';
+    return (await _get('/flotte/opportunites', query: query) ?? <String, dynamic>{})
+        as Map<String, dynamic>;
   }
 
   /// Prendre une course du pool.

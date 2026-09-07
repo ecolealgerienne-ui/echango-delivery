@@ -115,6 +115,26 @@ const Map<String, String> _fr = {
   'fleet.opportunities.masked':
       'Nom et téléphone du destinataire communiqués une fois la course prise.',
 
+  // ── Tri et filtres de « Courses libres » ────────────────────────────────
+  //
+  // ⚠️ Appliqués côté serveur, avant pagination (voir `FleetOpportunityFilters`).
+  'fleet.opportunities.sort': 'Trier',
+  'fleet.opportunities.sort.recent': 'Plus récentes',
+  'fleet.opportunities.sort.soonest': 'Départ le plus tôt',
+  'fleet.opportunities.sort.best_paid': 'Mieux payées',
+  'fleet.opportunities.sort.shortest': 'Trajet le plus court',
+  'fleet.opportunities.filter.wilaya': 'Wilaya',
+  'fleet.opportunities.filter.vehicle': 'Véhicule',
+  'fleet.opportunities.filter.without_cod': 'Sans encaissement',
+  'fleet.opportunities.filter.clear': 'Tout afficher',
+  // ⚠️ Distinct de `fleet.opportunities.empty` : « aucune course libre » parle du
+  // réseau, celui-ci d'un choix de l'utilisateur. Les confondre ferait croire à
+  // une entreprise que le pool est vide alors qu'elle a juste trop resserré.
+  'fleet.opportunities.filtered_empty':
+      'Aucune course ne correspond à vos filtres.',
+  'fleet.opportunities.filtered_empty.hint':
+      'Élargissez la wilaya ou le type de véhicule, ou affichez tout.',
+
   // ── Fiche d'une course ──────────────────────────────────────────────────
   'fleet.detail.title': 'Détail de la course',
   'fleet.detail.not_found': 'Cette course n’est plus disponible.',
@@ -316,6 +336,19 @@ const Map<String, String> _ar = {
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
   'fleet.opportunities.no_detail': 'لا توجد تفاصيل — افتح البطاقة.',
   'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
+
+  'fleet.opportunities.sort': 'ترتيب',
+  'fleet.opportunities.sort.recent': 'الأحدث',
+  'fleet.opportunities.sort.soonest': 'الأقرب موعداً',
+  'fleet.opportunities.sort.best_paid': 'الأعلى أجراً',
+  'fleet.opportunities.sort.shortest': 'الأقصر مساراً',
+  'fleet.opportunities.filter.wilaya': 'الولاية',
+  'fleet.opportunities.filter.vehicle': 'المركبة',
+  'fleet.opportunities.filter.without_cod': 'بلا تحصيل',
+  'fleet.opportunities.filter.clear': 'عرض الكل',
+  'fleet.opportunities.filtered_empty': 'لا توجد رحلة تطابق عوامل التصفية.',
+  'fleet.opportunities.filtered_empty.hint':
+      'وسّع الولاية أو نوع المركبة، أو اعرض الكل.',
 
   'fleet.detail.title': 'تفاصيل الرحلة',
   'fleet.detail.not_found': 'لم تعد هذه الرحلة متاحة.',

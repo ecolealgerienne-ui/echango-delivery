@@ -15,6 +15,51 @@ class FleetOrderDetail {
   final String? error;
 }
 
+/// Ce que l'entreprise a demandé de voir dans « Courses libres ».
+///
+/// ⚠️ **Appliqué côté serveur, avant pagination.** Filtrer ou trier `opportunities`
+/// ici, dans l'app, ne verrait que la page chargée : « 0 résultat » après filtrage
+/// se lirait comme « le réseau est vide », le défaut que `opportunitiesUnavailable`
+/// avant `empty` corrige déjà. Le tri/filtre voyage donc en paramètres de requête.
+class FleetOpportunityFilters {
+  const FleetOpportunityFilters({
+    this.sort,
+    this.wilaya,
+    this.vehicleType,
+    this.withoutCod = false,
+  });
+
+  /// `null` = ordre naturel (les plus récentes d'abord). Sinon `soonest`,
+  /// `best_paid` ou `shortest` — le serveur ignore toute autre valeur.
+  final String? sort;
+  final String? wilaya;
+  final String? vehicleType;
+  final bool withoutCod;
+
+  bool get isEmpty =>
+      sort == null &&
+      (wilaya == null || wilaya!.isEmpty) &&
+      (vehicleType == null || vehicleType!.isEmpty) &&
+      !withoutCod;
+
+  FleetOpportunityFilters copyWith({
+    String? sort,
+    bool clearSort = false,
+    String? wilaya,
+    bool clearWilaya = false,
+    String? vehicleType,
+    bool clearVehicleType = false,
+    bool? withoutCod,
+  }) {
+    return FleetOpportunityFilters(
+      sort: clearSort ? null : (sort ?? this.sort),
+      wilaya: clearWilaya ? null : (wilaya ?? this.wilaya),
+      vehicleType: clearVehicleType ? null : (vehicleType ?? this.vehicleType),
+      withoutCod: withoutCod ?? this.withoutCod,
+    );
+  }
+}
+
 /// État du profil « entreprise de transport ».
 ///
 /// ── Ce que cette classe répare ──────────────────────────────────────────────
@@ -90,6 +135,15 @@ class FleetState extends ChangeNotifier {
   /// Un indicateur global ferait clignoter toute la liste à chaque geste.
   String? _claimingOrderId;
 
+  /// Tri et filtres de l'onglet « Courses libres ».
+  FleetOpportunityFilters _opportunityFilters = const FleetOpportunityFilters();
+
+  /// Valeurs de filtre réellement présentes dans le pool, servies par le serveur
+  /// **avant** filtrage — pour que les chips de l'écran restent stables quand un
+  /// filtre est posé.
+  List<String> _opportunityWilayas = const [];
+  List<String> _opportunityVehicleTypes = const [];
+
   List<Map<String, dynamic>> get orders => _ordersPage.items;
   List<Map<String, dynamic>> get opportunities => _opportunitiesPage.items;
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
@@ -110,6 +164,12 @@ class FleetState extends ChangeNotifier {
   bool get membershipsUnavailable => _membershipsUnavailable;
   String? get errorMessage => _errorMessage;
   String? get claimingOrderId => _claimingOrderId;
+
+  FleetOpportunityFilters get opportunityFilters => _opportunityFilters;
+  bool get hasOpportunityFilters => !_opportunityFilters.isEmpty;
+  List<String> get opportunityWilayas => List.unmodifiable(_opportunityWilayas);
+  List<String> get opportunityVehicleTypes =>
+      List.unmodifiable(_opportunityVehicleTypes);
 
   Locale get _locale => _localeState.locale;
 
@@ -132,9 +192,7 @@ class FleetState extends ChangeNotifier {
       // des trois listes manque, c'est cacher les deux autres — et le
       // diagnostic devient « l'espace flotte ne marche pas ».
       _opportunitiesUnavailable = false;
-      final opportunitiesPage = await _apiClient
-          .getFleetOpportunities(page: 1, limit: _opportunitiesPage.pageSize)
-          .catchError((_) {
+      final opportunitiesPage = await _fetchOpportunities(page: 1).catchError((_) {
         // Le repli reste — une liste qui manque ne doit pas cacher les deux
         // autres — mais il POSE SON DRAPEAU. Un repli muet ne dit pas « vide »,
         // il dit « je n'ai pas pu savoir », et c'est à l'écran de le distinguer.
@@ -142,6 +200,7 @@ class FleetState extends ChangeNotifier {
         return <String, dynamic>{};
       });
       _opportunitiesPage.reset(_rows(opportunitiesPage), _total(opportunitiesPage));
+      _captureFacets(opportunitiesPage);
 
       _driversUnavailable = false;
       _drivers = await _apiClient.getFleetDrivers().catchError((_) {
@@ -206,16 +265,14 @@ class FleetState extends ChangeNotifier {
     }
   }
 
-  /// Charge la page suivante des courses libres.
+  /// Charge la page suivante des courses libres, **avec les filtres courants** —
+  /// sans quoi la page 2 servirait un ensemble trié autrement que la page 1.
   Future<void> loadMoreOpportunities() async {
     if (!_opportunitiesPage.beginLoadMore()) return;
     notifyListeners();
 
     try {
-      final page = await _apiClient.getFleetOpportunities(
-        page: _opportunitiesPage.nextPage,
-        limit: _opportunitiesPage.pageSize,
-      );
+      final page = await _fetchOpportunities(page: _opportunitiesPage.nextPage);
       _opportunitiesPage.append(_rows(page), _total(page));
     } catch (e) {
       _errorMessage = messageForError(e, _locale);
@@ -223,6 +280,50 @@ class FleetState extends ChangeNotifier {
       _opportunitiesPage.endLoadMore();
       notifyListeners();
     }
+  }
+
+  /// Applique un nouveau tri / de nouveaux filtres et recharge **la seule liste
+  /// des courses libres** — pas les conducteurs ni les courses confiées, qui
+  /// n'en dépendent pas.
+  Future<void> setOpportunityFilters(FleetOpportunityFilters filters) async {
+    _opportunityFilters = filters;
+    _opportunitiesUnavailable = false;
+    notifyListeners();
+
+    try {
+      final page = await _fetchOpportunities(page: 1);
+      _opportunitiesPage.reset(_rows(page), _total(page));
+      _captureFacets(page);
+    } catch (_) {
+      _opportunitiesUnavailable = true;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchOpportunities({required int page}) {
+    return _apiClient.getFleetOpportunities(
+      page: page,
+      limit: _opportunitiesPage.pageSize,
+      sort: _opportunityFilters.sort,
+      wilaya: _opportunityFilters.wilaya,
+      vehicleType: _opportunityFilters.vehicleType,
+      withoutCod: _opportunityFilters.withoutCod,
+    );
+  }
+
+  /// ⚠️ Ne remplace les facettes que si le serveur en a renvoyé : un repli
+  /// `{}` (lecture échouée) ne doit pas vider des chips encore valides.
+  void _captureFacets(Map<String, dynamic> page) {
+    final facets = page['facets'];
+    if (facets is! Map) return;
+    _opportunityWilayas = _stringList(facets['wilayas']);
+    _opportunityVehicleTypes = _stringList(facets['vehicleTypes']);
+  }
+
+  List<String> _stringList(Object? raw) {
+    if (raw is! List) return const [];
+    return raw.whereType<String>().where((s) => s.isNotEmpty).toList();
   }
 
   List<Map<String, dynamic>> _rows(Map<String, dynamic> page) {

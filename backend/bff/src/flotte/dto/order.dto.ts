@@ -1,4 +1,13 @@
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsBooleanString,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ListFleetOrdersQueryDto {
@@ -28,6 +37,47 @@ export class ListFleetOrdersQueryDto {
   @Min(1)
   @Max(100)
   limit?: number;
+}
+
+// Les valeurs de tri reconnues vivent avec la logique qui les applique.
+// ⚠️ Pas de `@IsIn` sur le champ `sort` ci-dessous : une valeur inconnue n'est
+// pas un refus, `sortOpportunities()` retombe sur l'ordre naturel — motif complet
+// dans `opportunity-filters.ts`.
+export { FLEET_OPPORTUNITY_SORTS } from '../../common/orders/opportunity-filters';
+
+/**
+ * Filtres et tri de l'onglet « Courses libres » (entreprise).
+ *
+ * Séparé de `ListFleetOrdersQueryDto` — et non ajouté dedans — parce que ces
+ * champs n'ont aucun sens sur `GET /flotte/commandes` : les y accepter (même
+ * ignorés) brouillerait le contrat. Règle 13 : un `@Query`, une classe décorée
+ * qui dit exactement ce que la route prend.
+ */
+export class ListClaimableOrdersQueryDto extends ListFleetOrdersQueryDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  sort?: string;
+
+  /**
+   * Wilaya d'ENLÈVEMENT. Le filtre réutilise `pickupWilaya`/`sameWilaya` du
+   * module de zone transporteur (règle 5) : c'est là que le conducteur se rend
+   * d'abord, donc la seule des deux qui décide.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  wilaya?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  vehicleType?: string;
+
+  /** `'true'` pour ne garder que les courses sans montant à encaisser à la porte. */
+  @IsOptional()
+  @IsBooleanString()
+  withoutCod?: string;
 }
 
 export class AssignDriverDto {

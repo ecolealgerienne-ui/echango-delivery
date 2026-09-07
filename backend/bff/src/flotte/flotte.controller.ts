@@ -2,7 +2,12 @@ import { Controller, Get, Post, Param, Body, Query, Request } from '@nestjs/comm
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
-import { ListFleetOrdersQueryDto, AssignDriverDto, DriverPositionsQueryDto } from './dto/order.dto';
+import {
+  ListFleetOrdersQueryDto,
+  ListClaimableOrdersQueryDto,
+  AssignDriverDto,
+  DriverPositionsQueryDto,
+} from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
@@ -55,7 +60,7 @@ export class FlotteController {
    * connaître** — donc sans dépendre des favoris polymorphes.
    */
   @Get('opportunites')
-  async getClaimableOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {
+  async getClaimableOrders(@Request() req: any, @Query() query: ListClaimableOrdersQueryDto) {
     return this.flotteService.getClaimableOrders(this.fleetId(req), query);
   }
 

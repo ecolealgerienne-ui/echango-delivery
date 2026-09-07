@@ -276,13 +276,6 @@ class _OpportunitiesTab extends StatelessWidget {
         onRetry: () => context.read<FleetState>().load(),
       );
     }
-    if (state.opportunities.isEmpty) {
-      return AppEmptyState(
-        title: t('fleet.opportunities.empty'),
-        hint: t('fleet.opportunities.empty.hint'),
-      );
-    }
-
     final showMore = state.hasMoreOpportunities;
     // La règle du masquage vaut pour toute la liste : elle se dit **une fois**,
     // en tête. Répétée sur chaque ligne, elle occupait la place des chiffres
@@ -290,8 +283,82 @@ class _OpportunitiesTab extends StatelessWidget {
     // dès la deuxième.
     final masked = state.opportunities.any((o) => o['redacted'] == true);
 
+    // ⚠️ La barre de tri/filtres reste affichée même quand la liste est vide :
+    // sinon, une entreprise qui a trop resserré ses filtres n'a aucun moyen de
+    // les relâcher. Seul « indisponible » (au-dessus) prend tout l'écran.
+    final Widget body;
+    if (state.opportunities.isEmpty) {
+      body = state.hasOpportunityFilters
+          // Distinct de `fleet.opportunities.empty` : ici le pool n'est pas vide,
+          // c'est la sélection qui l'est (règle 10 — deux absences, deux
+          // messages).
+          ? AppEmptyState(
+              icon: Icons.filter_alt_off_outlined,
+              title: t('fleet.opportunities.filtered_empty'),
+              hint: t('fleet.opportunities.filtered_empty.hint'),
+              action: OutlinedButton.icon(
+                onPressed: () => context
+                    .read<FleetState>()
+                    .setOpportunityFilters(const FleetOpportunityFilters()),
+                icon: const Icon(Icons.clear_all),
+                label: Text(t('fleet.opportunities.filter.clear')),
+              ),
+            )
+          : AppEmptyState(
+              title: t('fleet.opportunities.empty'),
+              hint: t('fleet.opportunities.empty.hint'),
+            );
+    } else {
+      body = ListView.separated(
+        itemCount: state.opportunities.length + (showMore ? 1 : 0),
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, i) {
+          if (i == state.opportunities.length) {
+            return AppLoadMore(
+              isLoading: state.isLoadingMoreOpportunities,
+              label: t('fleet.opportunities.more'),
+              onPressed: state.loadMoreOpportunities,
+            );
+          }
+
+          final order = state.opportunities[i];
+          final meta = order['meta'] as Map<String, dynamic>? ?? const {};
+          final uuid = order['uuid'] as String? ?? '';
+          final claiming = state.claimingOrderId == uuid;
+
+          // ── Ce qui permet de décider, et rien d'autre ────────────────────
+          //
+          // ⚠️ La ligne ne portait que la phrase de masquage, **identique sur
+          // toutes les lignes** — cinq fois le même texte, et pas un chiffre.
+          return ListTile(
+            title: Text(_journey(order),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(_opportunityFacts(order, meta, t, locale)),
+            isThreeLine: true,
+            onTap: uuid.isEmpty
+                ? null
+                : () => context.push('/flotte/opportunites/$uuid'),
+            // Même style que l'onglet d'à côté : c'est l'action principale d'une
+            // ligne de liste, pas d'une page.
+            trailing: FilledButton(
+              style: AppButtonStyles.rowAction,
+              onPressed: claiming ? null : () => _claim(context, uuid, t),
+              child: claiming
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(t('fleet.opportunities.take.short')),
+            ),
+          );
+        },
+      );
+    }
+
     return Column(
       children: [
+        _OpportunityFilterBar(t: t, locale: locale),
         if (masked)
           Container(
             width: double.infinity,
@@ -314,65 +381,192 @@ class _OpportunitiesTab extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
-        Expanded(
-          child: ListView.separated(
-      itemCount: state.opportunities.length + (showMore ? 1 : 0),
-      separatorBuilder: (_, __) => const Divider(height: 1),
-      itemBuilder: (context, i) {
-        if (i == state.opportunities.length) {
-          return AppLoadMore(
-            isLoading: state.isLoadingMoreOpportunities,
-            label: t('fleet.opportunities.more'),
-            onPressed: state.loadMoreOpportunities,
-          );
-        }
-
-        final order = state.opportunities[i];
-        final meta = order['meta'] as Map<String, dynamic>? ?? const {};
-        final uuid = order['uuid'] as String? ?? '';
-        final claiming = state.claimingOrderId == uuid;
-
-        // ── Ce qui permet de décider, et rien d'autre ──────────────────────
-        //
-        // ⚠️ La ligne ne portait que la phrase de masquage, **identique sur
-        // toutes les lignes** — cinq fois le même texte, et pas un chiffre. La
-        // question posée le 31/07 (« sur quels critères je dois accepter cette
-        // course ? ») restait donc sans réponse dans la liste, alors que le
-        // serveur sert tout ce qu'il faut depuis le début.
-        //
-        // La phrase est remontée **une fois** en tête de liste : elle décrit la
-        // règle, pas la course, et la répéter mangeait la place des chiffres.
-        return ListTile(
-          title: Text(_journey(order), maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(_opportunityFacts(order, meta, t, locale)),
-          isThreeLine: true,
-          // ⚠️ La question du 31/07 était « sur quels critères je dois accepter
-          // cette course ? ». La liste ne pouvait pas y répondre seule : le
-          // détour, l'accès, l'heure prévue tiennent dans la fiche. Le bouton
-          // « Prendre » reste sur la ligne pour ceux qui n'en ont pas besoin.
-          onTap: uuid.isEmpty ? null : () => context.push('/flotte/opportunites/$uuid'),
-          // Même style que l'onglet d'à côté, et pour la même raison : c'est
-          // l'action principale d'une ligne de liste, pas d'une page.
-          trailing: FilledButton(
-            style: AppButtonStyles.rowAction,
-            onPressed: claiming ? null : () => _claim(context, uuid, t),
-            // Pendant la prise, un indicateur plutôt que « Prise en cours… » :
-            // le texte long change la largeur du bouton au moment précis où la
-            // ligne est en train de disparaître, et c'est ce genre de saut qui
-            // fait toucher la ligne d'à côté.
-            child: claiming
-                ? const SizedBox(
-                    height: 16,
-                    width: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Text(t('fleet.opportunities.take.short')),
-          ),
-        );
-      },
-          ),
-        ),
+        Expanded(child: body),
       ],
+    );
+  }
+}
+
+/// Tri et filtres de « Courses libres ».
+///
+/// ── Pourquoi côté serveur, et pas un `.where()` local ─────────────────────
+///
+/// La liste est paginée. Filtrer ou trier ici ne verrait que la page chargée :
+/// le `total` deviendrait faux, et « 0 résultat » après filtrage se lirait comme
+/// « le réseau est vide » — le défaut que `opportunitiesUnavailable` avant
+/// `empty` corrige déjà. Chaque geste appelle donc
+/// `FleetState.setOpportunityFilters`, qui recharge la page 1 avec les
+/// paramètres.
+///
+/// Les valeurs de wilaya et de véhicule viennent des **facettes** servies par le
+/// serveur sur l'ensemble non filtré : une chip ne disparaît pas parce qu'on
+/// vient de sélectionner une autre valeur.
+class _OpportunityFilterBar extends StatelessWidget {
+  const _OpportunityFilterBar({required this.t, required this.locale});
+
+  final _Translate t;
+  final Locale locale;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<FleetState>();
+    final filters = state.opportunityFilters;
+    final scheme = Theme.of(context).colorScheme;
+
+    void apply(FleetOpportunityFilters next) =>
+        context.read<FleetState>().setOpportunityFilters(next);
+
+    // ── Tri ────────────────────────────────────────────────────────────────
+    // `null` = ordre naturel du serveur ; le libellé le nomme « Plus récentes »
+    // pour ne pas laisser croire à une absence de tri.
+    const sortKeys = <String?, String>{
+      null: 'fleet.opportunities.sort.recent',
+      'soonest': 'fleet.opportunities.sort.soonest',
+      'best_paid': 'fleet.opportunities.sort.best_paid',
+      'shortest': 'fleet.opportunities.sort.shortest',
+    };
+    final sortChip = _MenuChip<String?>(
+      icon: Icons.swap_vert,
+      label: t(sortKeys[filters.sort] ?? sortKeys[null]!),
+      active: filters.sort != null,
+      value: filters.sort,
+      items: [
+        for (final entry in sortKeys.entries)
+          PopupMenuItem<String?>(value: entry.key, child: Text(t(entry.value))),
+      ],
+      onSelected: (v) => apply(filters.copyWith(sort: v, clearSort: v == null)),
+      scheme: scheme,
+    );
+
+    // ── Wilaya (facette) ───────────────────────────────────────────────────
+    final wilayaChip = state.opportunityWilayas.isEmpty
+        ? null
+        : _MenuChip<String?>(
+            icon: Icons.place_outlined,
+            label: filters.wilaya ?? t('fleet.opportunities.filter.wilaya'),
+            active: filters.wilaya != null,
+            value: filters.wilaya,
+            items: [
+              PopupMenuItem<String?>(
+                value: null,
+                child: Text(t('fleet.opportunities.filter.clear')),
+              ),
+              for (final w in state.opportunityWilayas)
+                PopupMenuItem<String?>(value: w, child: Text(w)),
+            ],
+            onSelected: (v) =>
+                apply(filters.copyWith(wilaya: v, clearWilaya: v == null)),
+            scheme: scheme,
+          );
+
+    // ── Véhicule (facette) ─────────────────────────────────────────────────
+    final vehicleChip = state.opportunityVehicleTypes.isEmpty
+        ? null
+        : _MenuChip<String?>(
+            icon: Icons.local_shipping_outlined,
+            label: filters.vehicleType == null
+                ? t('fleet.opportunities.filter.vehicle')
+                : vehicleLabel(filters.vehicleType!, locale),
+            active: filters.vehicleType != null,
+            value: filters.vehicleType,
+            items: [
+              PopupMenuItem<String?>(
+                value: null,
+                child: Text(t('fleet.opportunities.filter.clear')),
+              ),
+              for (final v in state.opportunityVehicleTypes)
+                PopupMenuItem<String?>(
+                    value: v, child: Text(vehicleLabel(v, locale))),
+            ],
+            onSelected: (v) => apply(
+                filters.copyWith(vehicleType: v, clearVehicleType: v == null)),
+            scheme: scheme,
+          );
+
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Column(
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.sm,
+            ),
+            child: Row(
+              children: [
+                sortChip,
+                if (wilayaChip != null) ...[
+                  const SizedBox(width: AppSpacing.sm),
+                  wilayaChip,
+                ],
+                if (vehicleChip != null) ...[
+                  const SizedBox(width: AppSpacing.sm),
+                  vehicleChip,
+                ],
+                const SizedBox(width: AppSpacing.sm),
+                FilterChip(
+                  label: Text(t('fleet.opportunities.filter.without_cod')),
+                  selected: filters.withoutCod,
+                  onSelected: (on) =>
+                      apply(filters.copyWith(withoutCod: on)),
+                ),
+                if (state.hasOpportunityFilters) ...[
+                  const SizedBox(width: AppSpacing.sm),
+                  TextButton.icon(
+                    onPressed: () =>
+                        apply(const FleetOpportunityFilters()),
+                    icon: const Icon(Icons.clear_all, size: 18),
+                    label: Text(t('fleet.opportunities.filter.clear')),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+        ],
+      ),
+    );
+  }
+}
+
+/// Une chip qui ouvre un menu — le motif est réécrit trois fois dans la barre,
+/// il vit donc ici (règle 6).
+class _MenuChip<T> extends StatelessWidget {
+  const _MenuChip({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.value,
+    required this.items,
+    required this.onSelected,
+    required this.scheme,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool active;
+  final T value;
+  final List<PopupMenuEntry<T>> items;
+  final ValueChanged<T> onSelected;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<T>(
+      initialValue: value,
+      onSelected: onSelected,
+      itemBuilder: (_) => items,
+      child: Chip(
+        avatar: Icon(
+          icon,
+          size: 18,
+          color: active ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+        ),
+        label: Text(label),
+        backgroundColor: active ? scheme.secondaryContainer : null,
+        side: active ? BorderSide(color: scheme.secondaryContainer) : null,
+      ),
     );
   }
 }
