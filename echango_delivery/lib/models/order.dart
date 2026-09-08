@@ -29,6 +29,11 @@ class Order extends Equatable {
   final Place? pickupPlace;
   final Place? dropoffPlace;
 
+  /// L'uuid du `Place` de l'arrêt **en cours** d'une tournée, quand Fleetbase
+  /// le suit (`payload.current_waypoint_uuid`). `null` avant le démarrage — on
+  /// retombe alors sur le premier arrêt non honoré (voir [currentWaypoint]).
+  final String? currentWaypointUuid;
+
   /// Les arrêts d'une **tournée** (spec §4), dans l'ordre. Vide pour une course
   /// 1→1 ordinaire.
   ///
@@ -99,6 +104,7 @@ class Order extends Equatable {
     this.pickupPlace,
     this.dropoffPlace,
     this.waypoints = const [],
+    this.currentWaypointUuid,
     this.totalDistance,
     this.estimatedDuration,
     this.deliveryFailure,
@@ -128,6 +134,22 @@ class Order extends Equatable {
   List<Waypoint> get cashStops =>
       waypoints.where((w) => (w.codAmount ?? 0) > 0).toList();
 
+  /// L'arrêt d'une tournée sur lequel le conducteur travaille : celui que
+  /// Fleetbase désigne ([currentWaypointUuid]), sinon le **premier non honoré**,
+  /// sinon le dernier. `null` si ce n'est pas une tournée.
+  Waypoint? get currentWaypoint {
+    if (waypoints.isEmpty) return null;
+    if (currentWaypointUuid != null) {
+      for (final w in waypoints) {
+        if (w.placeUuid == currentWaypointUuid) return w;
+      }
+    }
+    for (final w in waypoints) {
+      if (!w.complete) return w;
+    }
+    return waypoints.last;
+  }
+
   Order copyWith({
     String? id,
     String? publicId,
@@ -144,6 +166,7 @@ class Order extends Equatable {
     Place? pickupPlace,
     Place? dropoffPlace,
     List<Waypoint>? waypoints,
+    String? currentWaypointUuid,
     double? totalDistance,
     int? estimatedDuration,
     DeliveryFailure? deliveryFailure,
@@ -164,6 +187,7 @@ class Order extends Equatable {
       pickupPlace: pickupPlace ?? this.pickupPlace,
       dropoffPlace: dropoffPlace ?? this.dropoffPlace,
       waypoints: waypoints ?? this.waypoints,
+      currentWaypointUuid: currentWaypointUuid ?? this.currentWaypointUuid,
       totalDistance: totalDistance ?? this.totalDistance,
       estimatedDuration: estimatedDuration ?? this.estimatedDuration,
       deliveryFailure: deliveryFailure ?? this.deliveryFailure,
@@ -245,6 +269,11 @@ class Order extends Equatable {
     final dropoff = place('dropoff') ??
         (waypoints.isNotEmpty ? waypoints.last.place : null);
 
+    final payloadJson = json['payload'];
+    final currentWaypointUuid = payloadJson is Map<String, dynamic>
+        ? payloadJson['current_waypoint_uuid'] as String?
+        : null;
+
     return Order(
       // `uuid` est l'identifiant interne, `public_id` celui qu'attendent les
       // routes du BFF. On garde les deux : selon l'endroit, Fleetbase expose
@@ -264,6 +293,7 @@ class Order extends Equatable {
       pickupPlace: pickup,
       dropoffPlace: dropoff,
       waypoints: waypoints,
+      currentWaypointUuid: currentWaypointUuid,
       totalDistance: (json['distance'] as num?)?.toDouble(),
       estimatedDuration: json['estimated_duration'] as int?,
       redacted: json['redacted'] == true,
@@ -314,6 +344,7 @@ class Order extends Equatable {
         pickupPlace,
         dropoffPlace,
         waypoints,
+        currentWaypointUuid,
         totalDistance,
         estimatedDuration,
         deliveryFailure,

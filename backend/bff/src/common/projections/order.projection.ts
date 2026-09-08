@@ -317,6 +317,14 @@ function projectPayload(
           waypoints: waypoints.map((w: any) =>
             projectWaypoint(w, w?.type === 'pickup' ? 'full' : dropoffDetail),
           ),
+          // L'arrêt en cours, quand Fleetbase le suit : l'app conducteur
+          // surligne cet arrêt et lit son COD (et non le total) au moment de
+          // clôturer. Un uuid de `Place`, aucune identité. Absent tant que la
+          // tournée n'a pas démarré — l'app retombe alors sur le premier arrêt
+          // non honoré.
+          ...(payload.current_waypoint_uuid
+            ? { current_waypoint_uuid: payload.current_waypoint_uuid }
+            : {}),
         }
       : {}),
     ...(entities ? { entities } : {}),

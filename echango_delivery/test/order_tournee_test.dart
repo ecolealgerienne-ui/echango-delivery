@@ -25,11 +25,11 @@ Map<String, dynamic> tourneeJson() => {
           {'place_uuid': 'p_d2', 'amount': 800},
         ],
       },
-      'payload': {
+      'payload': <String, dynamic>{
         'pickup': null,
         'dropoff': null,
         // Volontairement dans le désordre : `fromJson` doit trier.
-        'waypoints': [
+        'waypoints': <dynamic>[
           {
             'uuid': 'p_d2',
             'public_id': 'PD2',
@@ -155,5 +155,33 @@ void main() {
     expect(order.waypoints, isEmpty);
     expect(order.pickupPlace?.name, 'Magasin');
     expect(order.dropoffPlace?.name, 'Client');
+    expect(order.currentWaypoint, isNull);
+  });
+
+  group('currentWaypoint', () {
+    test('suit current_waypoint_uuid quand Fleetbase le donne', () {
+      final json = tourneeJson();
+      (json['payload'] as Map)['current_waypoint_uuid'] = 'p_d1';
+      final order = Order.fromJson(json);
+      expect(order.currentWaypoint?.placeUuid, 'p_d1');
+    });
+
+    test('retombe sur le premier arrêt non honoré si aucun uuid courant', () {
+      final json = tourneeJson();
+      // Le premier arrêt est marqué honoré.
+      ((json['payload'] as Map)['waypoints'] as List)
+          .firstWhere((w) => (w as Map)['order'] == 0)['complete'] = true;
+      final order = Order.fromJson(json);
+      expect(order.currentWaypoint?.order, 1);
+    });
+
+    test('retombe sur le dernier arrêt si tous sont honorés', () {
+      final json = tourneeJson();
+      for (final w in (json['payload'] as Map)['waypoints'] as List) {
+        (w as Map)['complete'] = true;
+      }
+      final order = Order.fromJson(json);
+      expect(order.currentWaypoint?.order, 2);
+    });
   });
 }

@@ -162,7 +162,12 @@ class OrderDetailScreen extends StatelessWidget {
                           // erreur possible sur cet écran : l'un est ce que le
                           // transporteur gagne, l'autre ce qu'il transporte
                           // pour le compte du commerçant.
-                          if (order.codAmount != null) ...[
+                          //
+                          // ⚠️ Masqué sur une **tournée** : un total unique
+                          // ici se lirait « à réclamer à la porte », alors que
+                          // l'encaissement se fait arrêt par arrêt. La liste
+                          // d'arrêts porte le montant de chacun.
+                          if (order.codAmount != null && !order.isTournee) ...[
                             const SizedBox(height: AppSpacing.md),
                             Container(
                               width: double.infinity,
@@ -226,23 +231,27 @@ class OrderDetailScreen extends StatelessWidget {
                   const SizedBox(height: AppSpacing.lg),
                   // Locations
                   AppSectionCard(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // L'enlèvement est un commerce : rien n'y est
-                          // masqué, hors son téléphone.
-                          _PlaceBlock(
-                            label: _t(context, 'order.schedule.title'),
-                            place: order.pickupPlace,
+                    child: order.isTournee
+                        // Une tournée : la liste ordonnée des N arrêts, à la
+                        // place des deux blocs enlèvement / livraison.
+                        ? _TourneeStops(order: order)
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // L'enlèvement est un commerce : rien n'y est
+                              // masqué, hors son téléphone.
+                              _PlaceBlock(
+                                label: _t(context, 'order.schedule.title'),
+                                place: order.pickupPlace,
+                              ),
+                              const SizedBox(height: AppSpacing.lg),
+                              _PlaceBlock(
+                                label: _t(context, 'order.section.dropoff'),
+                                place: order.dropoffPlace,
+                                obscured: order.redacted,
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: AppSpacing.lg),
-                          _PlaceBlock(
-                            label: _t(context, 'order.section.dropoff'),
-                            place: order.dropoffPlace,
-                            obscured: order.redacted,
-                          ),
-                        ],
-                      ),
                   ),
                   // Dire pourquoi les contacts manquent. Sans ce message, une
                   // fiche expurgée se lit comme une commande mal saisie, et le
@@ -481,7 +490,18 @@ class OrderDetailScreen extends StatelessWidget {
   ) async {
     final orderId = order.id as String;
     final code = (activity['code'] ?? activity['status'] ?? '') as String;
-    final needsCash = code == 'completed' && order.codAmount != null;
+
+    // Sur une tournée, le montant à percevoir à cette étape est celui de
+    // l'arrêt en cours, pas le total de la course (spec §4). Le montant
+    // **relayé** au serveur reste ce que le conducteur saisit ; la
+    // comptabilisation par arrêt (`declareCollection(waypointUuid)`) est le
+    // point 2 encore ouvert de §4.6 — ici on ne corrige que le montant annoncé.
+    final Waypoint? currentStop = order.isTournee == true
+        ? order.currentWaypoint as Waypoint?
+        : null;
+    final num? expectedCod =
+        currentStop != null ? currentStop.codAmount : order.codAmount as num?;
+    final needsCash = code == 'completed' && expectedCod != null;
 
     _CashDeclaration? cash;
     if (needsCash) {
@@ -494,7 +514,7 @@ class OrderDetailScreen extends StatelessWidget {
         isDismissible: false,
         enableDrag: false,
         builder: (_) => _CashSheet(
-          expected: (order.codAmount as num).toDouble(),
+          expected: expectedCod.toDouble(),
           currency: (order.codCurrency ?? '') as String,
         ),
       );
@@ -806,8 +826,8 @@ class _PlaceBlock extends StatelessWidget {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: theme.textTheme.titleMedium),
-          const SizedBox(height: AppSpacing.xs),
+          if (label.isNotEmpty) Text(label, style: theme.textTheme.titleMedium),
+          if (label.isNotEmpty) const SizedBox(height: AppSpacing.xs),
           Text(_t(context, 'driver.order.place.no_address'), style: theme.textTheme.bodySmall),
         ],
       );
@@ -817,8 +837,11 @@ class _PlaceBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: theme.textTheme.titleMedium),
-        const SizedBox(height: AppSpacing.sm),
+        // ⚠️ `label` vide = bloc réutilisé sous un en-tête déjà posé par
+        // l'appelant (la liste d'arrêts d'une tournée) : ne pas peindre une
+        // ligne de titre vide.
+        if (label.isNotEmpty) Text(label, style: theme.textTheme.titleMedium),
+        if (label.isNotEmpty) const SizedBox(height: AppSpacing.sm),
         // ⚠️ `name` est **absent** sur une course non réclamée (c'est celui du
         // destinataire), donc `Place.fromJson` rend une chaîne vide : le bloc
         // commençait par une ligne vide en gras.
@@ -881,6 +904,171 @@ class _PlaceBlock extends StatelessWidget {
     final ok = await NavigationLauncher.call(phone);
     if (!context.mounted || ok) return;
     showAppError(context, _t(context, 'driver.order.call.failed'));
+  }
+}
+
+/// La liste ordonnée des arrêts d'une **tournée** (spec §4), pour le
+/// conducteur.
+///
+/// Remplace les deux blocs enlèvement / livraison d'une course 1→1. Chaque
+/// arrêt porte son rang, son type, son avancement (honoré / en cours), le
+/// montant à y percevoir (celui de l'arrêt, pas le total de la tournée) et le
+/// nombre de colis. L'arrêt en cours est surligné.
+///
+/// La **progression** ne vit pas ici : elle reste pilotée par les transitions
+/// que le serveur propose (`_buildActionButtons`), qui font avancer Fleetbase
+/// d'un arrêt au suivant. Ce widget n'affiche que l'état.
+class _TourneeStops extends StatelessWidget {
+  String _t(BuildContext context, String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  final Order order;
+
+  const _TourneeStops({required this.order});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = order.currentWaypoint;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(_t(context, 'driver.order.tournee.title'),
+                style: theme.textTheme.titleMedium),
+            const Spacer(),
+            Text(
+              _t(context, 'driver.order.tournee.count',
+                  {'n': '${order.waypoints.length}'}),
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        for (var i = 0; i < order.waypoints.length; i++)
+          _stop(
+            context,
+            order.waypoints[i],
+            i,
+            isCurrent: current != null &&
+                order.waypoints[i].placeUuid == current.placeUuid,
+            isLast: i == order.waypoints.length - 1,
+          ),
+      ],
+    );
+  }
+
+  Widget _stop(
+    BuildContext context,
+    Waypoint w,
+    int index, {
+    required bool isCurrent,
+    required bool isLast,
+  }) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final done = w.complete;
+
+    return Container(
+      margin: EdgeInsets.only(bottom: isLast ? 0 : AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: isCurrent
+          ? BoxDecoration(
+              color: cs.primaryContainer,
+              borderRadius: BorderRadius.circular(AppRadius.control),
+            )
+          : null,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: done || isCurrent
+                ? cs.primary
+                : cs.surfaceContainerHighest,
+            foregroundColor:
+                done || isCurrent ? cs.onPrimary : cs.onSurfaceVariant,
+            child: done
+                ? const Icon(Icons.check, size: 16)
+                : Text('${index + 1}',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      _t(
+                          context,
+                          w.isPickup
+                              ? 'driver.order.tournee.pickup'
+                              : 'driver.order.tournee.dropoff'),
+                      style: theme.textTheme.labelLarge
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    if (isCurrent && !done)
+                      Text(
+                        '· ${_t(context, 'driver.order.tournee.current')}',
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: cs.onPrimaryContainer),
+                      ),
+                    if (done)
+                      Text(
+                        '· ${_t(context, 'driver.order.tournee.done')}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                // Réutilise le bloc lieu (nom, adresse, itinéraire, appel) sans
+                // son titre — l'en-tête est déjà posé ci-dessus.
+                _PlaceBlock(
+                  label: '',
+                  place: w.place,
+                  obscured: order.redacted && !w.isPickup,
+                ),
+                if (w.codAmount != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.account_balance_wallet_outlined,
+                            size: 16),
+                        const SizedBox(width: AppSpacing.xs),
+                        Text(
+                          _t(context, 'driver.order.tournee.cod', {
+                            'amount':
+                                '${w.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'
+                                    .trim(),
+                          }),
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (w.parcels.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.xs),
+                    child: Text(
+                      _t(context, 'driver.order.tournee.parcels',
+                          {'n': '${w.parcels.length}'}),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -133,6 +133,14 @@ describe('tournée non réclamée', () => {
     expect(d1.uuid).toBe('place_d1');
   });
 
+  it('projette l’arrêt en cours quand Fleetbase le suit', () => {
+    const withCurrent = tournee();
+    withCurrent.payload.current_waypoint_uuid = 'place_d1';
+    expect(project(withCurrent).payload.current_waypoint_uuid).toBe('place_d1');
+    // Absent quand Fleetbase ne le pose pas (tournée pas démarrée).
+    expect(project(tournee()).payload).not.toHaveProperty('current_waypoint_uuid');
+  });
+
   it('ne laisse fuir aucun champ brut de waypoint', () => {
     const json = JSON.stringify(project(tournee()).payload.waypoints);
     expect(json).not.toContain('waypoint_xyz');
