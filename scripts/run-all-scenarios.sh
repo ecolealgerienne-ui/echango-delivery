@@ -124,6 +124,12 @@ SCENARIOS=(
   # declaration -> refusee. Mutation : recordStopCollection lit meta.cod_amount
   # (total) au lieu de l'arret -> la 1re livraison reclame 2000.
   test-tournee-conducteur
+  # TOURNEE cote COMMERCANT (spec §4) : POST /commercant/tournees. customer =
+  # son Vendor, ligne Order LOCALE ecrite (sinon invisible du suivi), cible =
+  # un FAVORI. Sans cible -> diffusion au pool (adhoc=true). Un arret peut
+  # pointer un depot du reseau. Mutation : retirer adhocDistance de l'appel
+  # createTournee -> une tournee sans cible nait adhoc=false.
+  test-commercant-tournee
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
