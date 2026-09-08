@@ -20,11 +20,22 @@ Banc `test-tournee-creation.sh` (dans `run-all-scenarios.sh`), 2 mutations
 prouvées. App : `Order.waypoints` (additif), écran flotte « créer une tournée »
 (`POST /flotte/tournees` a un appelant).
 
+**Fiche conducteur à N arrêts (affichage) — FAIT** : `_TourneeStops` (liste
+ordonnée, type, avancement, COD **par arrêt**, arrêt courant surligné, «
+Encaissé : X » une fois honoré). `Order.currentWaypoint` /
+`Order.currentWaypointUuid` ; `payload.current_waypoint_uuid` projeté.
+
+**Encaissement par arrêt — FAIT** : `resolveStopCollection` (noyau pur, 8 cas
+jest) + `recordStopCollection` — la déclaration s'ajoute à
+`meta.stop_collections` (champ perso durable + projeté) sans réécrire les
+autres, `collected_amount` = somme courante ; immuable arrêt par arrêt ; l'app
+transmet `cash.waypointUuid`.
+
 **Phase 2/3 — RESTE À FAIRE** (voir §4.6) : `POST /commercant/tournees` + la
-ligne `Order` locale + l'écran commerçant ; la fiche/carte conducteur à N arrêts
-(progression par waypoint — `getNextActivities(waypoint)` est déjà câblé) ; la
-déclaration d'encaissement **par arrêt** (`declareCollection(waypointUuid)`) ; la
-diffusion d'une tournée au pool (Phase 3, V1 = ciblage seul).
+ligne `Order` locale + l'écran commerçant ; le **scénario émulateur** du
+pas-à-pas conducteur à travers une tournée (progression multi-waypoint réelle +
+déclaration à chaque porte) ; la diffusion d'une tournée au pool (Phase 3, V1 =
+ciblage seul).
 **Date** : 08/09/2026.
 **Origine** : discussion produit sur le positionnement « transporteur national à
 dépôts ». Reprend et débloque le sujet **multi-arrêt / multi-enlèvement** que
@@ -267,7 +278,7 @@ acceptée en bloc.
 | app demandeur (flotte) | écran « créer une tournée » | ✅ `CreateTourneeScreen` + route `/flotte/tournees` + `createFleetTournee` |
 | scénarios | création tournée, cod cumulé, colis rattachés, appartenance, forme | ✅ `test-tournee-creation.sh` (2 mutations prouvées) + jest (`tournee-creation.spec`, `waypoint-projection.spec`) + `order_tournee_test.dart` |
 | **app conducteur** | fiche à N arrêts, progression **par waypoint** | 🟡 **affichage FAIT** (`_TourneeStops` : liste, avancement, COD par arrêt, arrêt courant surligné) ; progression pilotée par les transitions serveur. ⬜ Reste : scénario émulateur de bout en bout |
-| déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ⬜ **RESTE** — le plafond de dette est déjà correct (il lit `meta.cod_amount` = somme) ; ce qui manque est la déclaration indexée par waypoint |
+| déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ✅ **FAIT** — `resolveStopCollection` (noyau pur, 8 cas jest) ; `recordStopCollection` écrit `meta.stop_collections` (`[{place_uuid, collected_amount, collected_at, collection_reason?}]`, champ perso durable + projeté), `collected_amount` = somme courante. Arrêt courant = `cash.waypointUuid` (app) ou `payload.current_waypoint_uuid`. Immuable arrêt par arrêt. App : `_applyActivity` transmet `waypointUuid`, `_TourneeStops` affiche « Encaissé : X ». ⬜ Reste : même scénario émulateur que la fiche |
 | `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ⬜ **RESTE** |
 
 ### 4.3 Ce qui NE bloque plus
@@ -290,11 +301,17 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    un scénario d'intégration émulateur (le pas-à-pas multi-waypoint réel, et la
    « carte » à N repères si on la juge nécessaire). Tests actuels : `Order`
    (`order_tournee_test.dart`, 8 cas) + fiche (`order_detail_tournee_widget_test.dart`).
-2. **Encaissement par arrêt.** `declareCollection` devient
-   `declareCollection(waypointUuid, …)` — `collected_amount/at/reason` indexés
-   par waypoint. Le plafond de dette n'a pas à changer (il somme déjà). *(La
-   fiche annonce déjà le bon montant par arrêt ; ce qui reste est la
-   comptabilisation indexée côté BFF.)*
+2. **Encaissement par arrêt.** ✅ **FAIT** — `resolveStopCollection` (noyau pur
+   dans `common/money/collection.ts`, 8 cas jest dont 4 refus) + `recordStopCollection`
+   dans `transporteur.service`. Sur une tournée, `update-activity` complète
+   l'arrêt courant : sa déclaration s'ajoute à `meta.stop_collections` (champ
+   personnalisé durable + projeté) sans réécrire les autres ; `collected_amount`
+   de la commande porte la somme courante (plafond de dette + commerçant
+   cohérents). Arrêt courant : `cash.waypointUuid` (l'app le passe) ou
+   `payload.current_waypoint_uuid`. Immuable arrêt par arrêt (une 2ᵉ déclaration
+   pour le même arrêt → `order.already_terminal`). App : la fiche affiche
+   « Encaissé : X » sur un arrêt honoré. ⬜ Reste : le pas-à-pas émulateur
+   (même scénario que le point 1).
 3. **`POST /commercant/tournees`.** Même `OrderCreationHelpers.createTournee`,
    mais `customer` = le `Vendor` du commerçant, `targetUuid` = un favori
    (driver/fleet), **et** une ligne `Order` locale (`createOrderCache`) — le
