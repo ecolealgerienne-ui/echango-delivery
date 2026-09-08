@@ -9,6 +9,7 @@ import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
+import '../screens/flotte/depots_screen.dart';
 import '../screens/flotte/driver_map_screen.dart';
 import '../screens/flotte/flotte_home_screen.dart';
 import '../screens/flotte/flotte_order_detail_screen.dart';
@@ -158,6 +159,12 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'carte',
             builder: (_, __) => const FlotteDriverMapScreen(),
+          ),
+          // Une route et non un onglet, pour la même raison que la carte : les
+          // dépôts se chargent à la demande, pas à chaque ouverture de l'espace.
+          GoRoute(
+            path: 'depots',
+            builder: (_, __) => const DepotsScreen(),
           ),
           // Deux chemins pour un écran, et non un drapeau dans l'URL : ils
           // n'interrogent pas la même route serveur et n'obéissent pas à la

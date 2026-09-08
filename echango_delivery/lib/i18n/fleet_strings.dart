@@ -115,6 +115,36 @@ const Map<String, String> _fr = {
   'fleet.opportunities.masked':
       'Nom et téléphone du destinataire communiqués une fois la course prise.',
 
+  // ── Dépôts (spec §3.1) ─────────────────────────────────────────────────
+  'fleet.depots.open': 'Mes dépôts',
+  'fleet.depots.title': 'Mes dépôts',
+  'fleet.depots.add': 'Ajouter un dépôt',
+  'fleet.depots.empty': 'Aucun dépôt déclaré.',
+  'fleet.depots.empty.hint':
+      'Déclarez un dépôt pour recevoir des livraisons de commerçants ou en '
+          'faire partir vers vos clients.',
+  'fleet.depots.unavailable': 'Impossible de charger vos dépôts pour le moment.',
+  'fleet.depots.unavailable.hint':
+      'Vos dépôts sont toujours enregistrés. Réessayez dans un instant.',
+  'fleet.depots.name': 'Nom du dépôt',
+  'fleet.depots.phone': 'Téléphone du dépôt',
+  'fleet.depots.contact': 'Responsable',
+  'fleet.depots.position': 'Emplacement',
+  'fleet.depots.position.set': 'Placer sur la carte',
+  'fleet.depots.position.title': 'Emplacement du dépôt',
+  'fleet.depots.position.missing': 'Placez le dépôt sur la carte avant d’enregistrer.',
+  'fleet.depots.name.required': 'Le nom du dépôt est obligatoire.',
+  'fleet.depots.phone.required':
+      'Un téléphone est obligatoire — le conducteur appelle en arrivant.',
+  'fleet.depots.contact.required': 'Le nom du responsable est obligatoire.',
+  'fleet.depots.no_position': 'Sans emplacement — inutilisable tant qu’il n’est pas placé.',
+  'fleet.depots.save': 'Enregistrer',
+  'fleet.depots.saved': 'Dépôt enregistré.',
+  'fleet.depots.delete': 'Supprimer',
+  'fleet.depots.delete.confirm': 'Supprimer ce dépôt ?',
+  'fleet.depots.deleted': 'Dépôt supprimé.',
+  'fleet.depots.save_failed': 'Impossible d’enregistrer le dépôt. Réessayez.',
+
   // ── Zone de service (Palier 1) ─────────────────────────────────────────
   //
   // ⚠️ Comme la zone du conducteur : un filtre RETIRE des courses, et mal
@@ -359,6 +389,32 @@ const Map<String, String> _ar = {
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
   'fleet.opportunities.no_detail': 'لا توجد تفاصيل — افتح البطاقة.',
   'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
+
+  'fleet.depots.open': 'مستودعاتي',
+  'fleet.depots.title': 'مستودعاتي',
+  'fleet.depots.add': 'إضافة مستودع',
+  'fleet.depots.empty': 'لا يوجد مستودع مُعلن.',
+  'fleet.depots.empty.hint':
+      'أعلن عن مستودع لاستقبال شحنات من التجار أو لإرسالها منه إلى زبائنك.',
+  'fleet.depots.unavailable': 'تعذّر تحميل مستودعاتك حالياً.',
+  'fleet.depots.unavailable.hint': 'مستودعاتك ما زالت مسجّلة. أعد المحاولة بعد قليل.',
+  'fleet.depots.name': 'اسم المستودع',
+  'fleet.depots.phone': 'هاتف المستودع',
+  'fleet.depots.contact': 'المسؤول',
+  'fleet.depots.position': 'الموقع',
+  'fleet.depots.position.set': 'تحديد على الخريطة',
+  'fleet.depots.position.title': 'موقع المستودع',
+  'fleet.depots.position.missing': 'حدّد موقع المستودع على الخريطة قبل الحفظ.',
+  'fleet.depots.name.required': 'اسم المستودع إلزامي.',
+  'fleet.depots.phone.required': 'الهاتف إلزامي — يتّصل السائق عند وصوله.',
+  'fleet.depots.contact.required': 'اسم المسؤول إلزامي.',
+  'fleet.depots.no_position': 'بلا موقع — غير قابل للاستعمال حتى تحديده.',
+  'fleet.depots.save': 'حفظ',
+  'fleet.depots.saved': 'تم حفظ المستودع.',
+  'fleet.depots.delete': 'حذف',
+  'fleet.depots.delete.confirm': 'حذف هذا المستودع؟',
+  'fleet.depots.deleted': 'تم حذف المستودع.',
+  'fleet.depots.save_failed': 'تعذّر حفظ المستودع. أعد المحاولة.',
 
   'fleet.zone.label': 'منطقة الخدمة',
   'fleet.zone.all': 'كل الولايات',

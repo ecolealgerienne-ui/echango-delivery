@@ -132,6 +132,7 @@ class AppError {
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   static const String fleetNotFound = 'fleet.not_found';
   static const String fleetInactive = 'fleet.inactive';
+  static const String depotNotFound = 'depot.not_found';
 
   // ── Commerçant ───────────────────────────────────────────────────────────
   static const String merchantNotFound = 'merchant.not_found';

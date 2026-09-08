@@ -139,6 +139,7 @@ const Map<String, String> _fr = {
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   'fleet.not_found': 'Compte flotte introuvable.',
   'fleet.inactive': 'Compte flotte inactif.',
+  'depot.not_found': 'Ce dépôt n’existe pas, ou n’est pas l’un des vôtres.',
 
   // ── Commerçant ───────────────────────────────────────────────────────────
   'merchant.not_found': 'Compte commerçant introuvable.',
@@ -305,6 +306,7 @@ const Map<String, String> _ar = {
   // ── الأسطول (ملف مدير الأسطول الصغير) ────────────────────────────────────
   'fleet.not_found': 'حساب الأسطول غير موجود.',
   'fleet.inactive': 'حساب الأسطول غير نشط.',
+  'depot.not_found': 'هذا المستودع غير موجود، أو ليس من مستودعاتك.',
 
   // ── التاجر ────────────────────────────────────────────────────────────────
   'merchant.not_found': 'حساب التاجر غير موجود.',

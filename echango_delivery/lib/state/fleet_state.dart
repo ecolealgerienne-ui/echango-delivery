@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Locale;
 
+import '../models/fleet_depot.dart';
 import '../models/fleet_driver_position.dart';
 import '../services/bff_api_client.dart';
 import 'locale_state.dart';
@@ -149,6 +150,14 @@ class FleetState extends ChangeNotifier {
   /// dédié depuis l'éditeur.
   List<String> _serviceZone = const [];
 
+  /// Les dépôts du transporteur (spec §3.1). Chargés à la demande, comme les
+  /// positions — l'écran flotte ne s'en sert pas.
+  List<FleetDepot> _depots = const [];
+  bool _depotsLoading = false;
+  /// La lecture a-t-elle échoué ? Distinct de « aucun dépôt » — un `catchError`
+  /// muet ferait afficher « aucun dépôt » à un transporteur qui en a (règle 10).
+  bool _depotsUnavailable = false;
+
   List<Map<String, dynamic>> get orders => _ordersPage.items;
   List<Map<String, dynamic>> get opportunities => _opportunitiesPage.items;
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
@@ -179,6 +188,10 @@ class FleetState extends ChangeNotifier {
   /// Les wilayas desservies. Vide = toutes.
   List<String> get serviceZone => List.unmodifiable(_serviceZone);
   bool get hasServiceZone => _serviceZone.isNotEmpty;
+
+  List<FleetDepot> get depots => List.unmodifiable(_depots);
+  bool get depotsLoading => _depotsLoading;
+  bool get depotsUnavailable => _depotsUnavailable;
 
   Locale get _locale => _localeState.locale;
 
@@ -335,6 +348,68 @@ class FleetState extends ChangeNotifier {
       _captureFacets(page);
       _opportunitiesUnavailable = false;
       notifyListeners();
+      return null;
+    } catch (e) {
+      return messageForError(e, _locale);
+    }
+  }
+
+  // ── Dépôts (spec §3.1) ────────────────────────────────────────────────────
+
+  /// Charge les dépôts du transporteur. Pose son drapeau d'indisponibilité —
+  /// « je n'ai pas pu lire » ne se dit pas comme « aucun dépôt ».
+  Future<void> loadDepots() async {
+    _depotsLoading = true;
+    _depotsUnavailable = false;
+    notifyListeners();
+    try {
+      _depots = await _apiClient.getFleetDepots();
+    } catch (_) {
+      _depotsUnavailable = true;
+    } finally {
+      _depotsLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Crée un dépôt, ou le met à jour si [id] est fourni. Rend `null` en cas de
+  /// succès, ou le message d'erreur traduit.
+  Future<String?> saveDepot({
+    String? id,
+    required String name,
+    required double latitude,
+    required double longitude,
+    required String phone,
+    required String contactName,
+    String? city,
+    String? neighborhood,
+    String? province,
+    String? postalCode,
+  }) async {
+    try {
+      await _apiClient.saveFleetDepot(
+        id: id,
+        name: name,
+        latitude: latitude,
+        longitude: longitude,
+        phone: phone,
+        contactName: contactName,
+        city: city,
+        neighborhood: neighborhood,
+        province: province,
+        postalCode: postalCode,
+      );
+      await loadDepots();
+      return null;
+    } catch (e) {
+      return messageForError(e, _locale);
+    }
+  }
+
+  Future<String?> deleteDepot(String id) async {
+    try {
+      await _apiClient.deleteFleetDepot(id);
+      await loadDepots();
       return null;
     } catch (e) {
       return messageForError(e, _locale);

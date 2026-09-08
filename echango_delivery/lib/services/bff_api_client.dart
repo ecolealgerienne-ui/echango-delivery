@@ -10,6 +10,7 @@ import '../errors/app_error.dart';
 import '../models/order.dart';
 import '../models/merchant_order.dart';
 import '../models/driver_zone.dart';
+import '../models/fleet_depot.dart';
 import '../models/fleet_driver_position.dart';
 import '../models/collections.dart';
 import '../models/route_optimization_result.dart';
@@ -959,6 +960,53 @@ class BffApiClient {
     final raw = data is Map ? data['wilayas'] : null;
     if (raw is! List) return const [];
     return raw.whereType<String>().where((s) => s.isNotEmpty).toList();
+  }
+
+  // ── Dépôts (spec §3.1) ────────────────────────────────────────────────────
+
+  /// Les dépôts déclarés par ce transporteur.
+  Future<List<FleetDepot>> getFleetDepots() async {
+    final data = await _get('/flotte/depots');
+    final list = (data is Map ? data['data'] : null) as List<dynamic>? ?? const [];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .map(FleetDepot.fromJson)
+        .toList();
+  }
+
+  /// Crée un dépôt, ou le met à jour si [id] est fourni. Rend le dépôt relu
+  /// depuis la réponse serveur.
+  Future<FleetDepot> saveFleetDepot({
+    String? id,
+    required String name,
+    required double latitude,
+    required double longitude,
+    required String phone,
+    required String contactName,
+    String? city,
+    String? neighborhood,
+    String? province,
+    String? postalCode,
+  }) async {
+    final body = <String, dynamic>{
+      'name': name,
+      'latitude': latitude,
+      'longitude': longitude,
+      'phone': phone,
+      'contactName': contactName,
+      if (city != null && city.isNotEmpty) 'city': city,
+      if (neighborhood != null && neighborhood.isNotEmpty) 'neighborhood': neighborhood,
+      if (province != null && province.isNotEmpty) 'province': province,
+      if (postalCode != null && postalCode.isNotEmpty) 'postalCode': postalCode,
+    };
+    final data = id == null
+        ? await _post('/flotte/depots', body)
+        : await _put('/flotte/depots/$id', body);
+    return FleetDepot.fromJson((data as Map<String, dynamic>?) ?? const {});
+  }
+
+  Future<void> deleteFleetDepot(String id) async {
+    await _delete('/flotte/depots/$id');
   }
 
   /// Prendre une course du pool.
