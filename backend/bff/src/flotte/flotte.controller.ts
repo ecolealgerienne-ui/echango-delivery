@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Param, Body, Query, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Query, Request } from '@nestjs/common';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
@@ -9,6 +9,7 @@ import {
   DriverPositionsQueryDto,
   SaveServiceZoneDto,
 } from './dto/order.dto';
+import { SaveDepotDto } from './dto/depot.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
@@ -65,6 +66,39 @@ export class FlotteController {
   @Put('zone')
   async saveServiceZone(@Request() req: any, @Body() body: SaveServiceZoneDto) {
     return this.flotteService.saveServiceZone(this.fleetId(req), body.wilayas);
+  }
+
+  // ── Dépôts (spec §3.1) ────────────────────────────────────────────────────
+  //
+  // `depots` est un segment littéral ; `:id` traverse `FleetbaseIdPipe` (règle
+  // 12 — l'uuid part interpolé dans une URL Fleetbase appelée avec le jeton de
+  // service).
+
+  @Get('depots')
+  async getDepots(@Request() req: any) {
+    return this.flotteService.getDepots(this.fleetId(req));
+  }
+
+  @Post('depots')
+  async createDepot(@Request() req: any, @Body() body: SaveDepotDto) {
+    return this.flotteService.createDepot(this.fleetId(req), body);
+  }
+
+  @Put('depots/:id')
+  async updateDepot(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) depotId: string,
+    @Body() body: SaveDepotDto,
+  ) {
+    return this.flotteService.updateDepot(this.fleetId(req), depotId, body);
+  }
+
+  @Delete('depots/:id')
+  async deleteDepot(
+    @Request() req: any,
+    @Param('id', FleetbaseIdPipe) depotId: string,
+  ) {
+    return this.flotteService.deleteDepot(this.fleetId(req), depotId);
   }
 
   @Get('commandes')

@@ -198,6 +198,8 @@ export const ErrorCode = {
   // ── Flotte (persona petite flotte) ──────────────────────────────────────
   FLEET_NOT_FOUND: 'fleet.not_found',
   FLEET_INACTIVE: 'fleet.inactive',
+  /** Dépôt introuvable, ou pas un dépôt de ce transporteur (règle 12). */
+  DEPOT_NOT_FOUND: 'depot.not_found',
 
   // ── Commerçant ───────────────────────────────────────────────────────────
   MERCHANT_NOT_FOUND: 'merchant.not_found',

@@ -6,6 +6,7 @@ import { AuditService } from '../common/audit/audit.service';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { ListClaimableOrdersQueryDto, ListFleetOrdersQueryDto } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
+import { SaveDepotDto } from './dto/depot.dto';
 import {
   filterOpportunities,
   opportunityFacets,
@@ -60,6 +61,112 @@ export class FlotteService {
     const fleet = await this.getFleetWithValidation(fleetId);
     await this.fleetZone.write(fleet.fleetbaseVendorUuid, wilayas);
     return this.fleetZone.read(fleet.fleetbaseVendorUuid);
+  }
+
+  // ── Dépôts (spec §3.1) ─────────────────────────────────────────────────────
+  //
+  // Un dépôt est un `Place` possédé par le `Vendor` du transporteur, marqué
+  // `meta.is_depot = true` — patron exact du carnet d'adresses commerçant. Zéro
+  // donnée en base BFF (règle 1). Le client Fleetbase (`createOwnedPlace`,
+  // `getOwnedPlaces`, `updateOwnedPlace`, `deletePlace`) est réutilisé tel quel.
+
+  /** Les dépôts déclarés par ce transporteur. */
+  async getDepots(fleetId: string) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    const places = await this.fleetbaseClient.getOwnedPlaces(
+      fleet.fleetbaseVendorUuid,
+    );
+    return {
+      data: places
+        .filter((p: any) => p?.meta?.is_depot === true)
+        .map((p: any) => this.projectDepot(p)),
+    };
+  }
+
+  async createDepot(fleetId: string, dto: SaveDepotDto) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    const created = await this.fleetbaseClient.createOwnedPlace(
+      fleet.fleetbaseVendorUuid,
+      this.depotPlacePayload(dto),
+    );
+    return this.projectDepot(created?.place ?? created);
+  }
+
+  async updateDepot(fleetId: string, depotId: string, dto: SaveDepotDto) {
+    const { vendorUuid, place } = await this.assertOwnsDepot(fleetId, depotId);
+    const updated = await this.fleetbaseClient.updateOwnedPlace(place.uuid, {
+      ...this.depotPlacePayload(dto),
+      // ⚠️ `ownerUuid` REPASSÉ : `PUT /places` remplace l'objet entier, un
+      // `owner_uuid` absent désolidariserait le dépôt de son `Vendor` (piège
+      // documenté dans `updateOwnedPlace`).
+      ownerUuid: vendorUuid,
+    });
+    return this.projectDepot(updated?.place ?? updated);
+  }
+
+  async deleteDepot(fleetId: string, depotId: string) {
+    const { place } = await this.assertOwnsDepot(fleetId, depotId);
+    // ⚠️ **À durcir quand une course pourra pointer un dépôt (spec §3.1)** :
+    // refuser la suppression si des commandes EN COURS le référencent — une
+    // course orpheline d'adresse est pire qu'un dépôt qu'on ne peut pas
+    // supprimer. Aujourd'hui rien ne pointe un dépôt, la suppression est sûre.
+    await this.fleetbaseClient.deletePlace(place.uuid);
+    return { deleted: true };
+  }
+
+  /**
+   * Le `Place` désigné est-il un dépôt de CE transporteur ?
+   *
+   * Introuvable **ou** pas un dépôt ⇒ `depot.not_found` — jamais « la ressource
+   * de quelqu'un d'autre » (règle 12). `getOwnedPlaces` filtre déjà sur
+   * `owner_uuid`, donc un `Place` d'un autre `Vendor` n'y est pas.
+   */
+  private async assertOwnsDepot(fleetId: string, depotId: string) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    const places = await this.fleetbaseClient.getOwnedPlaces(
+      fleet.fleetbaseVendorUuid,
+    );
+    const place = places.find(
+      (p: any) => p?.uuid === depotId && p?.meta?.is_depot === true,
+    );
+    if (!place) {
+      notFound('depot.not_found', 'Depot not found');
+    }
+    return { vendorUuid: fleet.fleetbaseVendorUuid, place };
+  }
+
+  private depotPlacePayload(dto: SaveDepotDto) {
+    return {
+      name: dto.name,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      phone: dto.phone,
+      city: dto.city,
+      neighborhood: dto.neighborhood,
+      province: dto.province,
+      postal_code: dto.postalCode,
+      meta: { is_depot: true, contact_name: dto.contactName },
+    };
+  }
+
+  /** Ce que l'app voit d'un dépôt — stable, pas le `Place` brut. */
+  private projectDepot(place: any) {
+    if (!place) return place;
+    const coords = place?.location?.coordinates;
+    const [longitude, latitude] = Array.isArray(coords) ? coords : [null, null];
+    return {
+      uuid: place.uuid,
+      name: place.name ?? null,
+      address: place.street1 ?? place.address ?? null,
+      city: place.city ?? null,
+      neighborhood: place.neighborhood ?? null,
+      province: place.province ?? null,
+      postal_code: place.postal_code ?? null,
+      phone: place.phone ?? null,
+      contact_name: place?.meta?.contact_name ?? null,
+      latitude: typeof latitude === 'number' && !(latitude === 0 && longitude === 0) ? latitude : null,
+      longitude: typeof longitude === 'number' && !(latitude === 0 && longitude === 0) ? longitude : null,
+    };
   }
 
   /**
