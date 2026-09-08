@@ -98,6 +98,11 @@ SCENARIOS=(
   # owner_uuid qui survit au PUT), appartenance (B -> 404). Mutation : retirer
   # le marqueur is_depot fait echouer le temoin.
   test-depot-crud
+  # Livraison commercant -> depot (spec §3.2) : dropoff = le Place du depot,
+  # course confiee au transporteur (facilitator, hors pool), COD interdit,
+  # depot hors reseau (transporteur non favori) refuse. Mutation : rendre la
+  # resolution permissive fait passer le 'hors reseau' (201 au lieu de 400).
+  test-depot-livraison
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
