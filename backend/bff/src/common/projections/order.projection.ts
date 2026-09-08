@@ -483,6 +483,10 @@ export const PROJECTED_META_FIELDS = [
   // Sert à reproduire la commande et à expliquer la décomposition ; le
   // règlement avec le transporteur, lui, ne change pas (journal §17).
   'cod_includes_delivery',
+  // Le détail des espèces par arrêt d'une tournée (spec §4). `cod_amount`
+  // porte déjà le total ; ceci donne la répartition, pour l'afficher à la
+  // bonne porte. Aucune identité — juste un uuid de lieu et un montant.
+  'stop_cod_amounts',
   // ── Ce qui s'est passé à la porte ────────────────────────────────────────
   //
   // ⚠️ **Ces trois-là ont été ajoutés aux champs personnalisés le 03/08/2026

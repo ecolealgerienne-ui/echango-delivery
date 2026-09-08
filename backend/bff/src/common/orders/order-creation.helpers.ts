@@ -212,11 +212,11 @@ export class OrderCreationHelpers {
    * **cumulé** — `cod_amount` = somme des `codAmount` d'arrêt, `stop_cod_amounts`
    * en portant le détail par `place_uuid`.
    *
-   * ⚠️ `stop_cod_amounts` n'a pas de champ personnalisé : il vit dans `meta`,
-   * donc fragile (une affectation console écrase `meta`, règle 1). Le **total**,
-   * lui, est un champ personnalisé durable — c'est lui que lit le plafond de
-   * dette. Le détail par arrêt est reconstituable depuis `payload.entities[]`
-   * si besoin. Accepté pour la V1 (spec §4.2).
+   * `cod_amount` (le **total**, lu par le plafond de dette) et
+   * `stop_cod_amounts` (le détail `[{ place_uuid, amount }]`) sont **tous deux
+   * des champs personnalisés durables** — une affectation console écraserait
+   * `meta`, pas eux (règle 1). `payload.waypoints` étant lui aussi structurel,
+   * une tournée reste entièrement reconstituable après un tel écrasement.
    */
   buildTourneeMeta(input: TourneeInput): Record<string, any> | undefined {
     const meta: Record<string, any> = {};

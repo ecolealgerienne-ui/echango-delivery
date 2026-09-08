@@ -198,6 +198,16 @@ export const ORDER_CUSTOM_FIELDS: OrderCustomFieldDefinition[] = [
     valueType: 'array',
     decode: asList,
   },
+  {
+    key: 'stop_cod_amounts',
+    description:
+      'Espèces à percevoir par arrêt d\'une tournée (spec §4) : '
+      + '[{ place_uuid, amount }]. Le TOTAL vit dans `cod_amount` (c\'est lui '
+      + 'que lit le plafond de dette). Champ personnalisé — durable, contrairement '
+      + 'à `meta`, qu\'une affectation console écraserait.',
+    valueType: 'array',
+    decode: asList,
+  },
 
   // ── Ce qui s'est passé à la porte ──────────────────────────────────────────
   //

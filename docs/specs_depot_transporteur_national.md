@@ -244,8 +244,12 @@ Phase 1 un préalable sûr.
 
 Une tournée = **une commande Fleetbase** avec `payload.waypoints[]` (liste
 ordonnée de `Place`) et `payload.entities[]` (colis, chacun rattaché à son
-waypoint par `destination_uuid`). **Un `price`** sur la commande. Le `cod_amount`
-de chaque arrêt vit sur son `entity` / dans `meta` indexé par waypoint.
+waypoint par `destination_uuid`). **Un `price`** sur la commande.
+**Implémenté ainsi** : `cod_amount` (champ personnalisé) porte le **total** des
+espèces de la tournée — lu par le plafond de dette sans changement —, et
+`stop_cod_amounts` (champ personnalisé, `[{ place_uuid, amount }]`) porte le
+détail par arrêt. Les deux sont durables (une affectation console écrase `meta`,
+pas les champs personnalisés) ; `payload.waypoints` l'est aussi.
 
 Composée **entièrement par le demandeur** (commerçant via `POST /commercant/tournees`,
 ou transporteur via `POST /flotte/tournees` — même DTO). Offerte en bloc,
