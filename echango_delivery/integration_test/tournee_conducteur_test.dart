@@ -114,14 +114,17 @@ void main() {
         declared.add(amount!);
 
         await tester.enterText(sheetField.first, amount);
-        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump(const Duration(milliseconds: 400));
         final confirm = find.descendant(
             of: find.byType(BottomSheet), matching: find.byType(FilledButton));
-        await tapVisible(tester, confirm);
+        await tester.tap(confirm, warnIfMissed: false);
         await pumpUntilGone(tester, find.byType(BottomSheet),
             reason: 'le tiroir se referme',
+            timeout: const Duration(seconds: 40),
             onTimeout: 'écran : ${visibleTexts()}');
       }
+      // Laisser la fiche se recharger avant la transition suivante.
+      await tester.pump(const Duration(seconds: 2));
     }
 
     // ── Verdict ───────────────────────────────────────────────────────────
@@ -139,14 +142,18 @@ void main() {
 /// Tape la transition suivante (premier `FilledButton` de la fiche), après
 /// avoir attendu que les actions soient revenues du serveur. Rend `false` si
 /// aucune action n'apparaît (fiche sans bouton = course close).
+///
+/// ⚠️ Délais larges : chaque `GET /transporteur/commandes` (et la relecture de
+/// fiche après une transition) fait un `fetchEveryOrder` — ~10-15 s sur l'org
+/// de test, plus la relecture d'activités.
 Future<bool> _tapNextAction(WidgetTester tester) async {
-  final until = DateTime.now().add(const Duration(seconds: 12));
+  final until = DateTime.now().add(const Duration(seconds: 45));
   while (DateTime.now().isBefore(until)) {
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump(const Duration(milliseconds: 300));
     if (find.byType(BottomSheet).evaluate().isNotEmpty) return true;
     final buttons = find.byType(FilledButton);
     if (buttons.evaluate().isNotEmpty) {
-      await tapVisible(tester, buttons.first);
+      await tester.tap(buttons.first, warnIfMissed: false);
       await tester.pump(const Duration(milliseconds: 500));
       return true;
     }
@@ -155,9 +162,9 @@ Future<bool> _tapNextAction(WidgetTester tester) async {
 }
 
 Future<bool> _sheetAppeared(WidgetTester tester, Finder sheetField) async {
-  final until = DateTime.now().add(const Duration(seconds: 3));
+  final until = DateTime.now().add(const Duration(seconds: 10));
   while (DateTime.now().isBefore(until)) {
-    await tester.pump(const Duration(milliseconds: 150));
+    await tester.pump(const Duration(milliseconds: 200));
     if (sheetField.evaluate().isNotEmpty) return true;
   }
   return false;

@@ -321,14 +321,22 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    expurgation par arrêt) + `order_tournee_test.dart` (11 cas de parsing).
    🟡 **Parcours `flutter drive`** écrit et committé
    (`integration_test/tournee_conducteur_test.dart` + décor dans
-   `provision-app-parcours.sh`), franchit connexion + tableau de bord, mais
-   **non exécuté au vert** : sur ce poste, (a) le forwarding localhost
-   WSL2↔Windows est cassé pour `:3001` (contourné par un relai `:3000`), et
-   (b) l'organisation de test traîne ~60 commandes → `GET /transporteur/commandes`
-   (`fetchEveryOrder`) dépasse par intermittence les délais du parcours. À
-   rejouer sur un jeu de données allégé (`test-optimisation-parcours.sh`
-   documente la même contamination). La mécanique, elle, est prouvée par le
-   banc `curl` ci-dessus.
+   `provision-app-parcours.sh`), **franchit connexion → tableau de bord →
+   liste « En cours » → ouverture de la fiche de la tournée** (8 exécutions,
+   chaque blocage levé un par un). Reste non vert : la fiche ne rend pas
+   `TourneeStops` dans la fenêtre du test — **l'organisation Fleetbase de test
+   porte 1 350 commandes**, et chaque appel conducteur au BFF fait un
+   `fetchEveryOrder` (~12-13 s mesuré) ; `_fetchDetail` en enchaîne deux
+   (`getOrder` + `getNextActivities`), soit ~25 s par ouverture de fiche, au
+   bord des délais du parcours. Le BFF **sert pourtant la tournée correctement**
+   (HTTP 200, `payload.waypoints` = 3, types `pickup/dropoff/dropoff`,
+   `current_waypoint_uuid`, `meta.cod_amount` = 2000 — vérifié en `curl`).
+   Contournements posés : relai `:3000` pour le forwarding localhost WSL2↔Windows
+   cassé sur `:3001`, `adb reverse`, nettoyage du bucket « En cours » du
+   conducteur. À rejouer sur une org allégée (même contamination que
+   `test-optimisation-parcours.sh`, qui a trouvé 425 adhoc accumulées). La
+   **mécanique** et le **rendu des écrans** sont prouvés par le banc `curl`
+   ci-dessus et les widget tests.
 2. **Encaissement par arrêt.** ✅ **FAIT + éprouvé serveur** — `resolveStopCollection`
    (noyau pur, `common/money/collection.ts`, 8 cas jest dont 4 refus) +
    `recordStopCollection`. `update-activity` complète l'arrêt courant : la
