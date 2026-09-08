@@ -86,8 +86,11 @@ resp="$(fa POST /flotte/depots "$(jq -n '{
 }')")"
 DEPOT="$(echo "$resp" | jq -r '.uuid // empty')"
 [ -n "$DEPOT" ] || fail "Création dépôt échouée" "$(echo "$resp" | head -c 200)"
-[ "$(echo "$resp" | jq -r '.name')" = "Entrepôt Test Alger-Centre" ] || fail "nom non relu"
-[ "$(echo "$resp" | jq -r '.contact_name')" = "Chef Dépôt" ] || fail "contact non relu"
+# ⚠️ Fleetbase MET EN MAJUSCULES name/address/city/province à l'écriture (même
+# comportement que les libellés de wilaya — cf. sameWilaya). Comparaison
+# insensible à la casse.
+[ "$(echo "$resp" | jq -r '.name | ascii_downcase')" = "entrepôt test alger-centre" ] || fail "nom non relu" "$(echo "$resp" | jq -c '{name}')"
+[ "$(echo "$resp" | jq -r '.contact_name')" = "Chef Dépôt" ] || fail "contact non relu (meta, pas majusculé)"
 pass "dépôt créé : ${DEPOT:0:12}…"
 
 step "Témoin Fleetbase : is_depot posé, owner = Vendor A"
@@ -107,7 +110,7 @@ fa PUT "/flotte/depots/$DEPOT" "$(jq -n '{
   phone:"021555111", contactName:"Nouveau Chef", province:"Alger"
 }')" >/dev/null
 got="$(fa GET /flotte/depots | jq -c --arg u "$DEPOT" '.data[] | select(.uuid==$u)')"
-[ "$(echo "$got" | jq -r '.name')" = "Entrepôt Alger-Centre (rénové)" ] || fail "nom non modifié" "$got"
+[ "$(echo "$got" | jq -r '.name | ascii_downcase')" = "entrepôt alger-centre (rénové)" ] || fail "nom non modifié" "$got"
 [ "$(echo "$got" | jq -r '.phone')" = "021555111" ] || fail "téléphone non modifié"
 owner_now="$(fb_get "/int/v1/places?owner_uuid=$VENDOR_A&limit=100" | jq -r --arg u "$DEPOT" '(.places // .data // []) | map(select(.uuid==$u)) | .[0].owner_uuid // "GONE"')"
 [ "$owner_now" = "$VENDOR_A" ] || fail "owner_uuid perdu après PUT (piège updateOwnedPlace)" "owner_uuid = $owner_now"
@@ -122,7 +125,7 @@ c_del="$(fb_code DELETE "/flotte/depots/$DEPOT")"
 [ "$c_put" = "404" ] || fail "PUT de B sur le dépôt de A : $c_put (attendu 404 depot.not_found, pas 403 ni 200)"
 [ "$c_del" = "404" ] || fail "DELETE de B sur le dépôt de A : $c_del (attendu 404)"
 # le dépôt de A est toujours là, intact
-[ "$(fa GET /flotte/depots | jq -r --arg u "$DEPOT" '.data[] | select(.uuid==$u) | .name')" = "Entrepôt Alger-Centre (rénové)" ] \
+[ "$(fa GET /flotte/depots | jq -r --arg u "$DEPOT" '.data[] | select(.uuid==$u) | .name | ascii_downcase')" = "entrepôt alger-centre (rénové)" ] \
   || fail "le dépôt de A a été altéré par B"
 pass "B ne voit rien, ses PUT/DELETE rendent 404, le dépôt de A est intact"
 

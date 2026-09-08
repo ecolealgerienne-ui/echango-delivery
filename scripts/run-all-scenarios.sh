@@ -93,6 +93,11 @@ SCENARIOS=(
   # reste visible), et persistance (PUT [Oran] -> GET frais rend [Oran]).
   # Mutation : neutraliser filterByServiceZone fait echouer l etape [Alger].
   test-zone-entreprise
+  # Dépôts (spec §3.1) : CRUD depuis l espace flotte. Un depot = un Place
+  # possede par le Vendor, marque meta.is_depot. Temoins Fleetbase (is_depot,
+  # owner_uuid qui survit au PUT), appartenance (B -> 404). Mutation : retirer
+  # le marqueur is_depot fait echouer le temoin.
+  test-depot-crud
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
