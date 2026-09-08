@@ -126,6 +126,12 @@ export const ErrorCode = {
   /** Encaissement de la marchandise seule sans rémunération connue :
    *  impossible de savoir combien réclamer à la porte. */
   ORDER_COD_REQUIRES_PRICE: 'order.cod_requires_price',
+  /** Livraison vers un dépôt avec un encaissement : interdit (spec §3.2 — une
+   *  remise d'espèces à un dépôt est une règle de trésorerie non tranchée). */
+  ORDER_COD_TO_DEPOT_FORBIDDEN: 'order.cod_to_depot_forbidden',
+  /** Le dépôt désigné n'appartient à aucun transporteur du réseau du
+   *  commerçant (ses favoris entreprise). */
+  ORDER_DEPOT_NOT_IN_NETWORK: 'order.depot_not_in_network',
   /** Les champs personnalisés durables n'ont pas pu être déclarés :
    *  refuser plutôt que d'enregistrer une livraison aux montants fragiles. */
   ORDER_CUSTOM_FIELDS_UNAVAILABLE: 'order.custom_fields_unavailable',

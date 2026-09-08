@@ -429,6 +429,49 @@ export class CommerçantService {
   }
 
   /**
+   * Résout un dépôt désigné en destination (spec §3.2).
+   *
+   * ── Portée : les dépôts des transporteurs favoris, et eux seuls (V1) ──────
+   *
+   * On lit les favoris **entreprise** du commerçant, et pour chacun on cherche
+   * le dépôt parmi ses `Place` (`meta.is_depot`). Trouver le dépôt donne du
+   * même coup son **propriétaire** — c'est lui qui devient `facilitator` de la
+   * course. Un `depotUuid` hors de ce périmètre est refusé : on ne confie pas
+   * une livraison à un transporteur que le commerçant n'a pas choisi.
+   *
+   * ⚠️ Coût : un `getOwnedPlaces` par favori entreprise. Ils sont peu nombreux
+   * (un commerçant en a un à trois), et la lecture s'arrête au premier match.
+   */
+  private async resolveDestinationDepot(
+    merchantVendorUuid: string,
+    depotUuid: string,
+  ): Promise<{ placeUuid: string; ownerVendorUuid: string; province: string | null }> {
+    const favourites = await this.favourites.read(merchantVendorUuid);
+    const fleetVendorUuids = favourites
+      .filter((f) => f.party_type === 'fleet')
+      .map((f) => f.party_uuid);
+
+    for (const vendorUuid of fleetVendorUuids) {
+      const places = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
+      const depot = places.find(
+        (p: any) => p?.uuid === depotUuid && p?.meta?.is_depot === true,
+      );
+      if (depot) {
+        return {
+          placeUuid: depot.uuid,
+          ownerVendorUuid: vendorUuid,
+          province: typeof depot.province === 'string' ? depot.province : null,
+        };
+      }
+    }
+
+    badRequest(
+      'order.depot_not_in_network',
+      'Ce dépôt n’appartient à aucun de vos transporteurs favoris',
+    );
+  }
+
+  /**
    * Devis d'une course, avant sa création.
    *
    * ── Pourquoi cet endpoint existe alors qu'aucune formule n'est écrite ───────
@@ -1336,12 +1379,46 @@ export class CommerçantService {
     // La lecture des favoris valide DEUX choses d'un coup : que l'uuid est bien
     // un favori de ce commerçant (on ne cible pas un inconnu), et sa nature
     // (conducteur / entreprise), qui décide comment on l'assigne.
-    const target = dto.targetFavouriteUuid
+    let target = dto.targetFavouriteUuid
       ? await this.resolveTargetFavourite(merchant.fleetbaseVendorUuid, dto.targetFavouriteUuid)
       : null;
     if (target && meta) {
       meta.target_favourite_uuid = target.uuid;
       meta.target_favourite_kind = target.kind;
+    }
+
+    // ── Livraison vers un dépôt (spec §3.2) ────────────────────────────────
+    //
+    // Résolu AVANT le `try`, comme la cible et l'encaissement : le refus doit
+    // tomber avant la première écriture Fleetbase, qui laisserait sinon un
+    // `Place` d'enlèvement orphelin.
+    let depotDropoffUuid: string | null = null;
+    if (dto.destinationType === 'depot') {
+      if (dto.codAmount != null) {
+        badRequest(
+          'order.cod_to_depot_forbidden',
+          'Une livraison vers un dépôt ne peut pas porter d’encaissement',
+        );
+      }
+      if (dto.targetFavouriteUuid) {
+        badRequest(
+          'order.target_not_favourite',
+          'Une livraison vers un dépôt est déjà confiée à son transporteur : ne pas cibler un favori en plus',
+        );
+      }
+      const depot = await this.resolveDestinationDepot(
+        merchant.fleetbaseVendorUuid,
+        dto.depotUuid!,
+      );
+      depotDropoffUuid = depot.placeUuid;
+      // Le dépôt EST le facilitateur : la course lui est confiée d'office, elle
+      // ne part pas au pool. On réutilise la branche `kind: 'fleet'` du payload.
+      target = { uuid: depot.ownerVendorUuid, kind: 'fleet' };
+      if (meta) {
+        meta.target_favourite_uuid = target.uuid;
+        meta.target_favourite_kind = target.kind;
+        if (depot.province) meta.dropoff_province = depot.province;
+      }
     }
 
     try {
@@ -1365,40 +1442,43 @@ export class CommerçantService {
 
       const metaWithoutCustomFields = this.metaOutsideCatalogue(meta);
 
-      const [pickupPlace, dropoffPlace] = await Promise.all([
-        // Les contacts sont bien transmis : ils étaient saisis, validés, puis
-        // jetés (voir createPlace). Un transporteur devant une porte sans
-        // numéro à appeler ne peut que constater l'échec.
-        this.fleetbaseClient.createPlace(
-          dto.pickupLocationName,
-          dto.pickupLatitude,
-          dto.pickupLongitude,
-          {
-            name: dto.pickupContactName,
-            phone: dto.pickupContactPhone,
-            city: dto.pickupCity,
-            // La wilaya voyage enfin jusqu'à la course : c'est elle qui portera
-            // le filtre du transporteur (décision du 02/08/2026).
-            province: dto.pickupProvince,
-            neighborhood: dto.pickupNeighborhood,
-          },
-        ),
-        this.fleetbaseClient.createPlace(
-          dto.dropoffLocationName,
-          dto.dropoffLatitude,
-          dto.dropoffLongitude,
-          {
-            name: dto.dropoffContactName,
-            phone: dto.dropoffContactPhone,
-            // ⚠️ Commune et quartier, jamais la rue : sur une course non
-            // réclamée, ces deux-là suffisent à juger un détour et ne
-            // désignent aucune porte.
-            city: dto.dropoffCity,
-            province: dto.dropoffProvince,
-            neighborhood: dto.dropoffNeighborhood,
-          },
-        ),
-      ]);
+      // ⚠️ Vers un dépôt, **pas de `Place` de livraison créé** : `depotDropoffUuid`
+      // pointe le `Place` du dépôt, qui existe déjà et porte sa propre adresse.
+      // Un seul `createPlace` (l'enlèvement) dans ce cas — donc une seule
+      // écriture à compenser.
+      const pickupPlace = await this.fleetbaseClient.createPlace(
+        dto.pickupLocationName,
+        dto.pickupLatitude,
+        dto.pickupLongitude,
+        {
+          name: dto.pickupContactName,
+          phone: dto.pickupContactPhone,
+          city: dto.pickupCity,
+          // La wilaya voyage enfin jusqu'à la course : c'est elle qui portera
+          // le filtre du transporteur (décision du 02/08/2026).
+          province: dto.pickupProvince,
+          neighborhood: dto.pickupNeighborhood,
+        },
+      );
+      const dropoffPlaceUuid = depotDropoffUuid
+        ? depotDropoffUuid
+        : (
+            await this.fleetbaseClient.createPlace(
+              dto.dropoffLocationName,
+              dto.dropoffLatitude,
+              dto.dropoffLongitude,
+              {
+                name: dto.dropoffContactName,
+                phone: dto.dropoffContactPhone,
+                // ⚠️ Commune et quartier, jamais la rue : sur une course non
+                // réclamée, ces deux-là suffisent à juger un détour et ne
+                // désignent aucune porte.
+                city: dto.dropoffCity,
+                province: dto.dropoffProvince,
+                neighborhood: dto.dropoffNeighborhood,
+              },
+            )
+          ).place.uuid;
 
       // Favori disponible ? On le sollicite ; sinon la course part au pool,
       // **y compris quand elle est encaissée**.
@@ -1450,7 +1530,7 @@ export class CommerçantService {
         type: 'transport',
         payload: {
           pickup_uuid: pickupPlace.place.uuid,
-          dropoff_uuid: dropoffPlace.place.uuid,
+          dropoff_uuid: dropoffPlaceUuid,
         },
         // ⚠️ `meta` ne porte plus que ce qui n'a PAS de champ personnalisé —
         // aujourd'hui `pricing_inputs` seul.
@@ -1500,7 +1580,7 @@ export class CommerçantService {
               : { adhoc: true, adhoc_distance: this.adhocRadiusMetres() }),
         pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
         pod_method: dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
-      }, [pickupPlace.place.uuid, dropoffPlace.place.uuid]);
+      }, depotDropoffUuid ? [pickupPlace.place.uuid] : [pickupPlace.place.uuid, dropoffPlaceUuid]);
 
       const fleetbaseOrder = response.order;
       const fleetbaseOrderId = fleetbaseOrder?.uuid || fleetbaseOrder?.id;

@@ -1,4 +1,4 @@
-import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsISO8601, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 import { FLEETBASE_ID_PATTERN } from '../../common/pipes/fleetbase-id.pipe';
@@ -260,6 +260,31 @@ export class CreateOrderDto {
   @IsOptional()
   @IsBoolean()
   draft?: boolean;
+
+  /**
+   * Où va la livraison (spec §3.2 — dépôts de transporteur national).
+   *
+   * `'client'` (défaut, comportement historique) : les 12 champs `dropoff*`
+   * décrivent une porte. `'depot'` : `depotUuid` désigne un **dépôt** d'un
+   * transporteur du réseau du commerçant, et les `dropoff*` sont **ignorés** —
+   * le dépôt porte sa propre adresse et son propre contact.
+   *
+   * ⚠️ Une course vers un dépôt est **confiée d'office** au transporteur
+   * propriétaire (`facilitator`), jamais diffusée au pool ; et **l'encaissement
+   * y est interdit** (une remise d'espèces à un dépôt est une règle de
+   * trésorerie non tranchée). Ces deux refus vivent dans le service, où les
+   * lectures Fleetbase ont lieu.
+   */
+  @IsOptional()
+  @IsIn(['client', 'depot'])
+  destinationType?: string;
+
+  /** Requis quand `destinationType === 'depot'`. Un dépôt du réseau (un
+   *  transporteur en favori du commerçant). */
+  @ValidateIf((o) => o.destinationType === 'depot')
+  @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'depotUuid invalide' })
+  depotUuid?: string;
 }
 
 export class OrderItemDto {
