@@ -78,7 +78,7 @@ BODY_OK="$(jq -n --arg d "$DEPOT_A" --arg drv "$DRV_A" '{
   dropoffLocationName:"Client Exp", dropoffLatitude:36.7300, dropoffLongitude:3.0700,
   dropoffContactName:"Client Exp", dropoffContactPhone:"0555111222", dropoffProvince:"Alger",
   items:[{description:"colis", quantity:1}], price:800, podMethod:"aucune"
-} + (if ($drv|length) > 0 then {targetDriverUuid:$drv} else {} end))')"
+} + (if ($drv|length) > 0 then {targetDriverUuid:$drv} else {} end)')"
 
 step "Le transporteur crée une course depuis son dépôt A"
 resp="$(curl -sS -X POST "$BFF_URL/flotte/commandes" -H "Content-Type: application/json" -H "Authorization: Bearer $A_TOKEN" -d "$BODY_OK")"
