@@ -266,7 +266,7 @@ acceptée en bloc.
 | **modèle app `Order`** | `+List<Waypoint>` ; `pickupPlace`/`dropoffPlace` = 1ᵉʳ / dernier arrêt | ✅ **additif** — `Order.waypoints`, `Waypoint`, `TourneeParcel` ; corrélation cod/colis dans `Order.fromJson` |
 | app demandeur (flotte) | écran « créer une tournée » | ✅ `CreateTourneeScreen` + route `/flotte/tournees` + `createFleetTournee` |
 | scénarios | création tournée, cod cumulé, colis rattachés, appartenance, forme | ✅ `test-tournee-creation.sh` (2 mutations prouvées) + jest (`tournee-creation.spec`, `waypoint-projection.spec`) + `order_tournee_test.dart` |
-| **app conducteur** | fiche + carte à N arrêts, progression **par waypoint** — `getNextActivities(waypoint)` / `updateActivity(waypointUuid)` **déjà câblés** | ⬜ **RESTE** |
+| **app conducteur** | fiche à N arrêts, progression **par waypoint** | 🟡 **affichage FAIT** (`_TourneeStops` : liste, avancement, COD par arrêt, arrêt courant surligné) ; progression pilotée par les transitions serveur. ⬜ Reste : scénario émulateur de bout en bout |
 | déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ⬜ **RESTE** — le plafond de dette est déjà correct (il lit `meta.cod_amount` = somme) ; ce qui manque est la déclaration indexée par waypoint |
 | `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ⬜ **RESTE** |
 
@@ -278,16 +278,23 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
 
 ### 4.6 Ce qui reste, dans l'ordre
 
-1. **Fiche + carte conducteur à N arrêts.** L'app conducteur affiche
-   aujourd'hui une course 1→1. Une tournée doit montrer la liste ordonnée des
-   arrêts, l'avancement par waypoint, et faire progresser via
-   `getNextActivities(waypoint)` / `updateActivity(waypointUuid)` (déjà câblés
-   côté client). Le modèle `Order.waypoints` est prêt. À éprouver par un
-   scénario d'intégration émulateur (les parcours joués à l'écran, cf.
-   `docs/status_v1.md`).
+1. **Fiche conducteur à N arrêts.** ✅ **FAIT (affichage)** — `_TourneeStops`
+   dans `order_detail_screen.dart` : liste ordonnée, rang, type, avancement
+   (honoré / en cours), COD **de l'arrêt** (pas le total), colis. L'arrêt en
+   cours suit `payload.current_waypoint_uuid` (projeté), sinon le 1ᵉʳ non
+   honoré. Le bandeau COD global est masqué sur une tournée ; la feuille
+   d'encaissement annonce le COD de l'arrêt courant.
+   **La progression** reste pilotée par les transitions serveur
+   (`_buildActionButtons` / `nextActivities`) — Fleetbase avance
+   `current_waypoint_uuid` seul. ⬜ **Reste** : l'éprouver de bout en bout par
+   un scénario d'intégration émulateur (le pas-à-pas multi-waypoint réel, et la
+   « carte » à N repères si on la juge nécessaire). Tests actuels : `Order`
+   (`order_tournee_test.dart`, 8 cas) + fiche (`order_detail_tournee_widget_test.dart`).
 2. **Encaissement par arrêt.** `declareCollection` devient
    `declareCollection(waypointUuid, …)` — `collected_amount/at/reason` indexés
-   par waypoint. Le plafond de dette n'a pas à changer (il somme déjà).
+   par waypoint. Le plafond de dette n'a pas à changer (il somme déjà). *(La
+   fiche annonce déjà le bon montant par arrêt ; ce qui reste est la
+   comptabilisation indexée côté BFF.)*
 3. **`POST /commercant/tournees`.** Même `OrderCreationHelpers.createTournee`,
    mais `customer` = le `Vendor` du commerçant, `targetUuid` = un favori
    (driver/fleet), **et** une ligne `Order` locale (`createOrderCache`) — le
