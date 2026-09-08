@@ -1,7 +1,12 @@
 # Specs — Dépôts de transporteur national, multi-collecte, multi-distribution
 
-**Statut** : spec. Phase 1 en cours d'implémentation ; phases 2-3 spécifiées,
-pas commencées.
+**Statut** : **Phase 1 IMPLÉMENTÉE et vérifiée** (08/09/2026) — §3.1 (CRUD des
+dépôts), §3.2 (livrer vers un dépôt), §3.3 (le dépôt expédie), côté BFF **et**
+app, avec trois bancs rejouables (`test-depot-crud`, `test-depot-livraison`,
+`test-depot-expedition`) dans `run-all-scenarios.sh`, chacun prouvé par mutation.
+Le noyau de création de commande est extrait en
+`common/orders/order-creation.helpers.ts` (partagé commerçant/transporteur,
+règle 5). Phases 2-3 (la tournée multi-arrêt) spécifiées, **pas commencées**.
 **Date** : 08/09/2026.
 **Origine** : discussion produit sur le positionnement « transporteur national à
 dépôts ». Reprend et débloque le sujet **multi-arrêt / multi-enlèvement** que
