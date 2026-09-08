@@ -55,6 +55,7 @@ const Map<String, String> _fr = {
   'order.section.dropoff': 'Livraison',
   'order.section.parcel': 'Colis',
   // Tournée multi-arrêt (spec §4), vue commerçant
+  'order.tournee.open': 'Créer une tournée',
   'order.tournee.title': 'Arrêts de la tournée',
   'order.tournee.count': '{n} arrêts',
   'order.tournee.pickup': 'Enlèvement',
@@ -65,6 +66,12 @@ const Map<String, String> _fr = {
   'order.tournee.collected': 'Encaissé : {amount}',
   'order.tournee.parcels': '{n} colis',
   'order.tournee.contact': 'Contact : {name}',
+  // Composeur de tournée (commerçant)
+  'order.tournee.target.label': 'Confier à',
+  'order.tournee.target.hint':
+      'Un favori, ou laissez vide pour proposer la tournée à tout le réseau.',
+  'order.tournee.target.broadcast': 'Tout le réseau',
+  'order.tournee.target.fleet': 'entreprise',
   'order.form.section.options': 'Options',
 
   // ── Champs ──────────────────────────────────────────────────────────────
@@ -624,6 +631,7 @@ const Map<String, String> _ar = {
   'order.section.dropoff': 'التسليم',
   'order.section.parcel': 'الطرد',
   // جولة متعددة المحطات (المواصفات §4)، عرض التاجر
+  'order.tournee.open': 'إنشاء جولة',
   'order.tournee.title': 'محطات الجولة',
   'order.tournee.count': '{n} محطات',
   'order.tournee.pickup': 'استلام',
@@ -634,6 +642,11 @@ const Map<String, String> _ar = {
   'order.tournee.collected': 'حُصِّل: {amount}',
   'order.tournee.parcels': '{n} طرود',
   'order.tournee.contact': 'جهة الاتصال: {name}',
+  // مُنشئ الجولة (التاجر)
+  'order.tournee.target.label': 'إسناد إلى',
+  'order.tournee.target.hint': 'مفضّل، أو اتركه فارغاً لعرض الجولة على كامل الشبكة.',
+  'order.tournee.target.broadcast': 'كامل الشبكة',
+  'order.tournee.target.fleet': 'شركة',
   'order.form.section.options': 'خيارات',
 
   // ── Champs ──────────────────────────────────────────────────────────────

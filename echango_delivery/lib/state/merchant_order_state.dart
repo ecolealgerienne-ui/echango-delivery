@@ -477,6 +477,25 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
     }
   }
 
+  /// Crée une **tournée multi-arrêt** (spec §4), puis recharge la liste. Rend
+  /// `null` en cas de succès, le message d'erreur traduit sinon (contrat du
+  /// composeur partagé avec la flotte).
+  Future<String?> createTournee(Map<String, dynamic> body) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await _apiClient.createMerchantTournee(body);
+      await loadOrders();
+      return null;
+    } catch (e) {
+      return messageForError(e, _localeState.locale);
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   /// Publie un brouillon : déclenche le dispatch (favori ou pool commun).
   Future<bool> publishOrder(String id) =>
       _orderWrite(id, () => _apiClient.publishMerchantOrder(id));

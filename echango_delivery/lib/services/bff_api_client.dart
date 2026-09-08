@@ -1158,6 +1158,15 @@ class BffApiClient {
         as Map<String, dynamic>;
   }
 
+  /// Le commerçant crée une **tournée multi-arrêt** (spec §4) :
+  /// `{ price, stops: [{ depotUuid | latitude/longitude + contact, type?,
+  /// items?, codAmount? }], targetUuid? }`. Aucune cible ⇒ diffusion au pool.
+  Future<Map<String, dynamic>> createMerchantTournee(
+      Map<String, dynamic> body) async {
+    return (await _post('/commercant/tournees', body) ?? <String, dynamic>{})
+        as Map<String, dynamic>;
+  }
+
   /// Publie un brouillon : déclenche le dispatch (favori ou pool commun) sur
   /// une commande créée sans lui.
   Future<Map<String, dynamic>> publishMerchantOrder(String id) async {

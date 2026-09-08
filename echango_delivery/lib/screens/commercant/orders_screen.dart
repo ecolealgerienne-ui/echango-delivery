@@ -74,6 +74,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
             onPressed: () => context.push('/commercant/transporteurs'),
           ),
           IconButton(
+            tooltip: _t('order.tournee.open'),
+            icon: const Icon(Icons.alt_route),
+            onPressed: () => context.push('/commercant/tournees'),
+          ),
+          IconButton(
             tooltip: _t('order.list.logout'),
             icon: const Icon(Icons.logout),
             onPressed: () async {

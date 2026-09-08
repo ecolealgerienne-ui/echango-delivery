@@ -3,36 +3,61 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/fleet_strings.dart';
-import '../../models/fleet_depot.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../commercant/map_picker_screen.dart';
 
+/// Un choix de cible pour une tournée : un conducteur (flotte) ou un favori
+/// (commerçant). `uuid == null` = diffusion large / décider plus tard.
+typedef TourneeTarget = ({String? uuid, String label});
+
+/// Un dépôt sélectionnable comme arrêt.
+typedef TourneeDepotOption = ({String uuid, String name});
+
+/// Ce qui change d'un persona à l'autre dans le composeur de tournée. Le
+/// formulaire lui-même — arrêts, prix, colis, COD par arrêt — est identique
+/// (règle 6), et ses libellés sont persona-neutres (`fleet.tournee.*`).
+class TourneeComposerConfig {
+  const TourneeComposerConfig({
+    required this.depots,
+    required this.targets,
+    required this.targetLabel,
+    required this.targetHint,
+    required this.submit,
+    required this.loadDependencies,
+  });
+
+  final List<TourneeDepotOption> depots;
+
+  /// La première entrée est la cible « aucune » (diffusion / plus tard).
+  final List<TourneeTarget> targets;
+  final String targetLabel;
+  final String targetHint;
+
+  /// Envoie la tournée. Rend `null` en cas de succès, le message d'erreur
+  /// traduit sinon.
+  final Future<String?> Function(Map<String, dynamic> body) submit;
+
+  final void Function(BuildContext context) loadDependencies;
+}
+
 /// Composer une **tournée multi-arrêt** (spec §4) : N arrêts en une commande,
 /// un seul prix, un encaissement par arrêt.
 ///
-/// ── Ce que l'écran laisse faire, et ce qu'il impose ──────────────────────
-///
-/// Le demandeur compose **entièrement** la tournée : liste ordonnée d'arrêts
-/// (un dépôt à lui, ou une adresse pointée sur la carte), le type de chaque
-/// arrêt (enlèvement / livraison), les colis, un COD par arrêt, un prix unique.
-/// Le conducteur accepte ou refuse **en bloc** — il n'y a pas de composition
-/// côté conducteur, donc rien de tel ici non plus.
-///
-/// Deux arrêts minimum, au moins un enlèvement : le serveur refuse le reste
-/// (`tournee.invalid_shape`), l'écran le dit avant l'envoi pour épargner
-/// l'aller-retour.
-class CreateTourneeScreen extends StatefulWidget {
-  const CreateTourneeScreen({super.key});
+/// Le demandeur compose **entièrement** la tournée ; le conducteur accepte ou
+/// refuse en bloc. Deux arrêts minimum, au moins un enlèvement — le serveur
+/// refuse le reste (`tournee.invalid_shape`), l'écran le dit avant l'envoi.
+class TourneeComposerScreen extends StatefulWidget {
+  const TourneeComposerScreen({super.key, required this.config});
+
+  final TourneeComposerConfig config;
 
   @override
-  State<CreateTourneeScreen> createState() => _CreateTourneeScreenState();
+  State<TourneeComposerScreen> createState() => _TourneeComposerScreenState();
 }
 
-/// L'état d'un arrêt en cours de saisie. Soit [depotUuid] est posé (arrêt =
-/// un dépôt du transporteur), soit [point] l'est (adresse pointée).
 class _StopDraft {
   String type; // 'pickup' | 'dropoff'
   String? depotUuid;
@@ -58,25 +83,23 @@ class _StopDraft {
   }
 }
 
-class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
-  String _t(String key) => fleetLabel(key, context.read<LocaleState>().locale);
+class _TourneeComposerScreenState extends State<TourneeComposerScreen> {
+  String _t(String key) =>
+      fleetLabel('fleet.tournee.$key', context.read<LocaleState>().locale);
 
   final _price = TextEditingController();
   final List<_StopDraft> _stops = [
     _StopDraft(type: 'pickup'),
     _StopDraft(type: 'dropoff'),
   ];
-  String? _driverUuid;
+  String? _targetUuid;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      context.read<FleetState>()
-        ..load()
-        ..loadDepots();
+      if (mounted) widget.config.loadDependencies(context);
     });
   }
 
@@ -93,16 +116,14 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
 
   void _removeStop(int index) {
     if (_stops.length <= 2) return;
-    setState(() {
-      _stops.removeAt(index).dispose();
-    });
+    setState(() => _stops.removeAt(index).dispose());
   }
 
   Future<void> _pickOnMap(_StopDraft stop) async {
     final result = await Navigator.of(context).push<PickedLocation>(
       MaterialPageRoute(
         builder: (_) => MapPickerScreen(
-          title: _t('fleet.tournee.stop.point'),
+          title: _t('stop.point'),
           initial: stop.point,
         ),
       ),
@@ -120,31 +141,30 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
   Future<void> _submit() async {
     final price = double.tryParse(_price.text.trim());
     if (price == null || price <= 0) {
-      showAppError(context, _t('fleet.tournee.price.required'));
+      showAppError(context, _t('price.required'));
       return;
     }
     if (_stops.length < 2) {
-      showAppError(context, _t('fleet.tournee.min_stops'));
+      showAppError(context, _t('min_stops'));
       return;
     }
     if (!_stops.any((s) => s.type == 'pickup')) {
-      showAppError(context, _t('fleet.tournee.need_pickup'));
+      showAppError(context, _t('need_pickup'));
       return;
     }
-    for (var i = 0; i < _stops.length; i++) {
-      final s = _stops[i];
+    for (final s in _stops) {
       if (!s.hasLocation) {
-        showAppError(context, _t('fleet.tournee.stop.location_required'));
+        showAppError(context, _t('stop.location_required'));
         return;
       }
       if (!s.isDepot && s.contactName.text.trim().isEmpty) {
-        showAppError(context, _t('fleet.tournee.stop.contact_required'));
+        showAppError(context, _t('stop.contact_required'));
         return;
       }
       if (s.codAmount.text.trim().isNotEmpty) {
         final cod = double.tryParse(s.codAmount.text.trim());
         if (cod == null || cod < 1) {
-          showAppError(context, _t('fleet.tournee.stop.cod_invalid'));
+          showAppError(context, _t('stop.cod_invalid'));
           return;
         }
       }
@@ -176,10 +196,10 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
     }
 
     setState(() => _saving = true);
-    final error = await context.read<FleetState>().createTournee({
+    final error = await widget.config.submit({
       'price': price,
       'stops': stopsBody,
-      if (_driverUuid != null) 'targetUuid': _driverUuid,
+      if (_targetUuid != null) 'targetUuid': _targetUuid,
     });
     if (!mounted) return;
     if (error != null) {
@@ -188,17 +208,15 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
       return;
     }
     Navigator.of(context).pop();
-    showAppSnackBar(context, _t('fleet.tournee.created'));
+    showAppSnackBar(context, _t('created'));
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<FleetState>();
-    final depots = state.depots;
-    final drivers = state.drivers;
+    final depots = widget.config.depots;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_t('fleet.tournee.title'))),
+      appBar: AppBar(title: Text(_t('title'))),
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.lg),
         children: [
@@ -207,40 +225,35 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
             enabled: !_saving,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: _t('fleet.tournee.price'),
-              helperText: _t('fleet.tournee.price.hint'),
+              labelText: _t('price'),
+              helperText: _t('price.hint'),
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
-          for (var i = 0; i < _stops.length; i++)
-            _stopCard(i, _stops[i], depots),
+          for (var i = 0; i < _stops.length; i++) _stopCard(i, _stops[i], depots),
           const SizedBox(height: AppSpacing.sm),
           OutlinedButton.icon(
             onPressed: _saving ? null : _addStop,
             icon: const Icon(Icons.add),
-            label: Text(_t('fleet.tournee.add_stop')),
+            label: Text(_t('add_stop')),
           ),
           const SizedBox(height: AppSpacing.lg),
           DropdownButtonFormField<String?>(
-            initialValue: _driverUuid,
+            initialValue: _targetUuid,
             isExpanded: true,
             decoration: InputDecoration(
-              labelText: _t('fleet.tournee.driver'),
-              helperText: _t('fleet.tournee.driver.hint'),
+              labelText: widget.config.targetLabel,
+              helperText: widget.config.targetHint,
             ),
             items: [
-              DropdownMenuItem<String?>(
-                value: null,
-                child: Text(_t('fleet.tournee.driver.later')),
-              ),
-              for (final d in drivers)
+              for (final target in widget.config.targets)
                 DropdownMenuItem<String?>(
-                  value: d['uuid'] as String?,
-                  child: Text((d['name'] as String?) ?? '—',
-                      overflow: TextOverflow.ellipsis),
+                  value: target.uuid,
+                  child: Text(target.label, overflow: TextOverflow.ellipsis),
                 ),
             ],
-            onChanged: _saving ? null : (v) => setState(() => _driverUuid = v),
+            onChanged:
+                _saving ? null : (v) => setState(() => _targetUuid = v),
           ),
           const SizedBox(height: AppSpacing.xxl),
           FilledButton(
@@ -251,14 +264,14 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
                     width: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Text(_t('fleet.tournee.submit')),
+                : Text(_t('submit')),
           ),
         ],
       ),
     );
   }
 
-  Widget _stopCard(int index, _StopDraft stop, List<FleetDepot> depots) {
+  Widget _stopCard(int index, _StopDraft stop, List<TourneeDepotOption> depots) {
     final isPickup = stop.type == 'pickup';
     return Card(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -270,13 +283,13 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
             Row(
               children: [
                 Text(
-                  _t('fleet.tournee.stop').replaceFirst('%d', '${index + 1}'),
+                  _t('stop').replaceFirst('%d', '${index + 1}'),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const Spacer(),
                 if (_stops.length > 2)
                   IconButton(
-                    tooltip: _t('fleet.tournee.remove_stop'),
+                    tooltip: _t('remove_stop'),
                     icon: const Icon(Icons.delete_outline),
                     onPressed: _saving ? null : () => _removeStop(index),
                   ),
@@ -284,10 +297,8 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
             ),
             SegmentedButton<String>(
               segments: [
-                ButtonSegment(
-                    value: 'pickup', label: Text(_t('fleet.tournee.pickup'))),
-                ButtonSegment(
-                    value: 'dropoff', label: Text(_t('fleet.tournee.dropoff'))),
+                ButtonSegment(value: 'pickup', label: Text(_t('pickup'))),
+                ButtonSegment(value: 'dropoff', label: Text(_t('dropoff'))),
               ],
               selected: {stop.type},
               onSelectionChanged: _saving
@@ -299,13 +310,12 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
               DropdownButtonFormField<String?>(
                 initialValue: stop.depotUuid,
                 isExpanded: true,
-                decoration: InputDecoration(
-                  labelText: _t('fleet.tournee.stop.depot'),
-                ),
+                decoration:
+                    InputDecoration(labelText: _t('stop.depot')),
                 items: [
                   DropdownMenuItem<String?>(
                     value: null,
-                    child: Text(_t('fleet.tournee.stop.custom')),
+                    child: Text(_t('stop.custom')),
                   ),
                   for (final d in depots)
                     DropdownMenuItem<String?>(
@@ -329,36 +339,35 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
                     : Icons.edit_location_alt),
                 label: Text(
                   stop.point == null
-                      ? _t('fleet.tournee.stop.set_point')
+                      ? _t('stop.set_point')
                       : [stop.neighborhood, stop.city, stop.province]
                           .whereType<String>()
                           .where((e) => e.trim().isNotEmpty)
                           .join(', ')
-                          .ifEmpty(_t('fleet.tournee.stop.set_point')),
+                          .ifEmpty(_t('stop.set_point')),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: stop.contactName,
                 enabled: !_saving,
-                decoration: InputDecoration(
-                    labelText: _t('fleet.tournee.stop.contact_name')),
+                decoration:
+                    InputDecoration(labelText: _t('stop.contact_name')),
               ),
               const SizedBox(height: AppSpacing.sm),
               TextField(
                 controller: stop.contactPhone,
                 enabled: !_saving,
                 keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                    labelText: _t('fleet.tournee.stop.contact_phone')),
+                decoration:
+                    InputDecoration(labelText: _t('stop.contact_phone')),
               ),
             ],
             const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: stop.itemDesc,
               enabled: !_saving,
-              decoration:
-                  InputDecoration(labelText: _t('fleet.tournee.stop.item')),
+              decoration: InputDecoration(labelText: _t('stop.item')),
             ),
             const SizedBox(height: AppSpacing.sm),
             TextField(
@@ -366,10 +375,10 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
               enabled: !_saving,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
-                labelText: _t('fleet.tournee.stop.cod'),
+                labelText: _t('stop.cod'),
                 helperText: isPickup
-                    ? _t('fleet.tournee.stop.cod.pickup_hint')
-                    : _t('fleet.tournee.stop.cod.hint'),
+                    ? _t('stop.cod.pickup_hint')
+                    : _t('stop.cod.hint'),
               ),
             ),
           ],
@@ -381,4 +390,39 @@ class _CreateTourneeScreenState extends State<CreateTourneeScreen> {
 
 extension _IfEmpty on String {
   String ifEmpty(String fallback) => trim().isEmpty ? fallback : this;
+}
+
+/// Composeur de tournée pour l'espace **flotte** : arrêts = ses dépôts, cible =
+/// un de ses conducteurs.
+class CreateTourneeScreen extends StatelessWidget {
+  const CreateTourneeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<FleetState>();
+    final locale = context.read<LocaleState>().locale;
+    String t(String k) => fleetLabel('fleet.tournee.$k', locale);
+
+    return TourneeComposerScreen(
+      config: TourneeComposerConfig(
+        depots: [
+          for (final d in state.depots) (uuid: d.uuid, name: d.name),
+        ],
+        targets: [
+          (uuid: null, label: t('driver.later')),
+          for (final d in state.drivers)
+            (
+              uuid: d['uuid'] as String?,
+              label: (d['name'] as String?) ?? '—',
+            ),
+        ],
+        targetLabel: t('driver'),
+        targetHint: t('driver.hint'),
+        loadDependencies: (ctx) => ctx.read<FleetState>()
+          ..load()
+          ..loadDepots(),
+        submit: (body) => context.read<FleetState>().createTournee(body),
+      ),
+    );
+  }
 }

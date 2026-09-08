@@ -11,8 +11,12 @@ import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.servi
 import { MerchantFavouritesService } from '../fleetbase/merchant-favourites.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { OrderPickup, orderPickup, zoneAllowsPickup } from '../common/orders/driver-zone';
-import { OrderCreationHelpers } from '../common/orders/order-creation.helpers';
+import {
+  OrderCreationHelpers,
+  ResolvedTourneeStop,
+} from '../common/orders/order-creation.helpers';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
+import { CreateTourneeDto } from '../common/orders/dto/create-tournee.dto';
 import { RedirectOrderDto } from './dto/redirect-order.dto';
 import { ZONE_UNSET } from '../fleetbase/driver-zone-fields';
 import { SaveAddressDto } from './dto/address.dto';
@@ -330,17 +334,29 @@ export class CommerçantService {
   private async resolveDestinationDepot(
     merchantVendorUuid: string,
     depotUuid: string,
-  ): Promise<{ placeUuid: string; ownerVendorUuid: string; province: string | null }> {
+  ): Promise<{
+    placeUuid: string;
+    ownerVendorUuid: string;
+    province: string | null;
+    /** `[longitude, latitude]` (GeoJSON), ou `null` si le dépôt n'a pas de
+     *  position — la tournée en a besoin pour le devis. */
+    coordinates: [number, number] | null;
+  }> {
     for (const fleet of await this.networkFleets(merchantVendorUuid)) {
       const places = await this.fleetbaseClient.getOwnedPlaces(fleet.vendorUuid);
       const depot = places.find(
         (p: any) => p?.uuid === depotUuid && p?.meta?.is_depot === true,
       );
       if (depot) {
+        const coords = depot?.location?.coordinates;
         return {
           placeUuid: depot.uuid,
           ownerVendorUuid: fleet.vendorUuid,
           province: typeof depot.province === 'string' ? depot.province : null,
+          coordinates:
+            Array.isArray(coords) && coords.length >= 2
+              ? [coords[0], coords[1]]
+              : null,
         };
       }
     }
@@ -1589,6 +1605,170 @@ export class CommerçantService {
           : 'Failed to create order',
       );
     }
+  }
+
+  /**
+   * Le commerçant crée une **tournée multi-arrêt** (spec §4) : une commande à
+   * N arrêts, un seul prix, un encaissement par arrêt.
+   *
+   * ── Ce qui diffère de la version transporteur (`POST /flotte/tournees`) ────
+   *
+   * Le `customer` est le `Vendor` du commerçant ; le ciblage est un **favori**
+   * (conducteur ou entreprise), pas un conducteur de flotte ; et surtout une
+   * **ligne `Order` locale** est écrite après coup — le modèle Prisma l'exige
+   * (`merchantId`), et sans elle la tournée serait invisible du commerçant, de
+   * ses notifications et de son suivi d'encaissement. La compensation est celle
+   * de `createOrder` : `createOrderCache` annule la commande Fleetbase si
+   * l'écriture locale échoue.
+   *
+   * Un arrêt est soit un **dépôt du réseau** (`depotUuid` — un favori
+   * entreprise, §3.2/§4.5), soit une adresse à créer.
+   */
+  async createTournee(merchantId: string, dto: CreateTourneeDto) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    const vendorUuid = merchant.fleetbaseVendorUuid;
+
+    // Cible résolue AVANT toute écriture Fleetbase (même motif que `createOrder`
+    // : un refus « pas votre favori » ne doit pas laisser de `Place` orphelin).
+    const favourite = dto.targetUuid
+      ? await this.resolveTargetFavourite(vendorUuid, dto.targetUuid)
+      : null;
+
+    const resolved: ResolvedTourneeStop[] = [];
+    const createdPlaceUuids: string[] = [];
+
+    try {
+      for (let i = 0; i < dto.stops.length; i++) {
+        const stop = dto.stops[i];
+        const type: 'pickup' | 'dropoff' =
+          stop.type === 'pickup' || stop.type === 'dropoff'
+            ? stop.type
+            : i === 0
+              ? 'pickup'
+              : 'dropoff';
+
+        if (stop.depotUuid) {
+          const depot = await this.resolveDestinationDepot(
+            vendorUuid,
+            stop.depotUuid,
+          );
+          if (!depot.coordinates) {
+            badRequest(
+              'order.depot_not_in_network',
+              'Ce dépôt n’a pas de position exploitable',
+            );
+          }
+          resolved.push({
+            placeUuid: depot.placeUuid,
+            type,
+            longitude: depot.coordinates[0],
+            latitude: depot.coordinates[1],
+            province: depot.province ?? undefined,
+            notes: stop.notes,
+            items: stop.items,
+            codAmount: stop.codAmount,
+          });
+          continue;
+        }
+
+        if (
+          typeof stop.latitude !== 'number' ||
+          typeof stop.longitude !== 'number'
+        ) {
+          badRequest(
+            'tournee.stop_needs_location',
+            'Chaque arrêt sans dépôt doit porter une position (latitude / longitude)',
+          );
+        }
+
+        const created = await this.fleetbaseClient.createPlace(
+          stop.locationName ?? 'Arrêt de tournée',
+          stop.latitude,
+          stop.longitude,
+          {
+            name: stop.contactName,
+            phone: stop.contactPhone,
+            city: stop.city,
+            province: stop.province,
+            neighborhood: stop.neighborhood,
+          },
+        );
+        createdPlaceUuids.push(created.place.uuid);
+        resolved.push({
+          placeUuid: created.place.uuid,
+          createdPlaceUuid: created.place.uuid,
+          type,
+          longitude: stop.longitude,
+          latitude: stop.latitude,
+          province: stop.province,
+          notes: stop.notes,
+          items: stop.items,
+          codAmount: stop.codAmount,
+        });
+      }
+    } catch (error: any) {
+      for (const uuid of createdPlaceUuids) {
+        await this.fleetbaseClient
+          .deletePlace(uuid)
+          .catch((cleanupError: any) =>
+            this.logger.error(
+              `Arrêt ${uuid} laissé orphelin après un échec de résolution de tournée : ${cleanupError.message}`,
+            ),
+          );
+      }
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`createTournee (résolution) failed: ${error.message}`);
+      badRequest('order.create_failed', 'La tournée n’a pas pu être enregistrée. Réessayez.');
+    }
+
+    const { fleetbaseOrderId, status } = await this.orderHelpers.createTournee({
+      customerUuid: vendorUuid,
+      customerType: 'vendor',
+      // Favori entreprise : la tournée lui est confiée (facilitator posé), elle
+      // ne part pas au pool. Favori conducteur : elle lui est assignée.
+      ...(favourite?.kind === 'fleet'
+        ? {
+            facilitatorUuid: favourite.uuid,
+            facilitatorType: FACILITATOR_TYPE_VENDOR,
+          }
+        : {}),
+      stops: resolved,
+      price: dto.price,
+      scheduledAt: dto.scheduledAt,
+      vehicleType: dto.vehicleType,
+      deliveryInstructions: dto.deliveryInstructions,
+      podMethod: dto.podMethod,
+      targetDriverUuid: favourite?.kind === 'driver' ? favourite.uuid : undefined,
+      // Aucun favori et pas un brouillon : diffusion large au pool. Le
+      // commerçant garde son suivi par la ligne `Order` locale ci-dessous.
+      adhocDistance:
+        !favourite && !dto.draft ? this.adhocRadiusMetres() : undefined,
+      draft: dto.draft,
+    });
+
+    if (!fleetbaseOrderId) {
+      badRequest('order.create_failed', 'La tournée n’a pas pu être créée.');
+    }
+
+    // Seconde moitié de l'écriture en deux systèmes : la ligne locale qui dit à
+    // qui appartient la tournée. `createOrderCache` annule la commande
+    // Fleetbase si elle échoue (règle 2).
+    const order = await this.createOrderCache(
+      {
+        merchantId,
+        fleetbaseOrderId: fleetbaseOrderId as string,
+        status: status ?? 'created',
+        driverAssignedUuid:
+          favourite?.kind === 'driver' ? favourite.uuid : null,
+      },
+      fleetbaseOrderId as string,
+    );
+
+    this.logger.log(
+      `Tournée créée : ${order.id} (${resolved.length} arrêts` +
+        `${favourite ? `, confiée à ${favourite.kind} ${favourite.uuid}` : ', diffusée'})`,
+    );
+    return order;
   }
 
   /**

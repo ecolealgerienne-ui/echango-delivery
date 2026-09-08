@@ -352,10 +352,16 @@ export class OrderCreationHelpers {
             ? { adhoc: false, dispatched: false }
             : input.targetDriverUuid
               ? { driver_assigned_uuid: input.targetDriverUuid, adhoc: false }
-              // Confiée sans conducteur nommé : le demandeur (transporteur)
-              // désignera le sien ensuite. `adhoc` faux — une tournée n'est pas
-              // diffusée au pool en V1 (spec §4.4 point 4).
-              : { adhoc: false }),
+              : input.adhocDistance
+                // Diffusée au pool : n'importe quel conducteur peut la prendre.
+                // Réservé au commerçant, qui garde son suivi par la ligne
+                // `Order` locale ; une tournée transporteur diffusée serait
+                // invisible de son créateur (pas de ligne locale, filtre
+                // `facilitator`).
+                ? { adhoc: true, adhoc_distance: input.adhocDistance }
+                // Confiée sans conducteur nommé : le demandeur désignera le
+                // sien ensuite. `adhoc` faux.
+                : { adhoc: false }),
           pod_required: input.podMethod ? input.podMethod !== 'aucune' : undefined,
           pod_method:
             input.podMethod && input.podMethod !== 'aucune'
@@ -407,7 +413,11 @@ export interface TourneeInput {
   vehicleType?: string;
   deliveryInstructions?: string;
   podMethod?: string;
-  /** Conducteur ciblé (un conducteur du demandeur transporteur). */
+  /** Conducteur ciblé (un conducteur du demandeur transporteur, ou un favori
+   *  conducteur du commerçant). */
   targetDriverUuid?: string;
+  /** Rayon de diffusion au pool, en mètres. Posé ⇒ `adhoc: true` (aucun
+   *  `targetDriverUuid` ni `facilitatorUuid` alors). Réservé au commerçant. */
+  adhocDistance?: number;
   draft?: boolean;
 }

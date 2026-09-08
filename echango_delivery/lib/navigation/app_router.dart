@@ -5,6 +5,7 @@ import '../screens/auth/register_screen.dart';
 import '../screens/commercant/collections_screen.dart';
 import '../screens/commercant/addresses_screen.dart';
 import '../screens/commercant/create_order_screen.dart';
+import '../screens/commercant/create_tournee_screen.dart';
 import '../screens/commercant/order_detail_screen.dart' as commercant;
 import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
@@ -114,6 +115,12 @@ GoRouter buildAppRouter(AuthState authState) {
                   ? s.extra as Map<String, dynamic>
                   : null,
             ),
+          ),
+          // Composer une tournée multi-arrêt (spec §4). Route et non onglet :
+          // rarement ouverte, charge favoris + dépôts réseau à la demande.
+          GoRoute(
+            path: 'tournees',
+            builder: (_, __) => const CreateMerchantTourneeScreen(),
           ),
           GoRoute(
             path: 'adresses',

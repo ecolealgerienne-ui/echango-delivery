@@ -4,6 +4,7 @@ import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { CommerçantService } from './commercant.service';
 import { Persona } from '../common/decorators/persona.decorator';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
+import { CreateTourneeDto } from '../common/orders/dto/create-tournee.dto';
 import { RedirectOrderDto } from './dto/redirect-order.dto';
 import { UpdateOrderPositionDto } from './dto/update-order-position.dto';
 import { SaveAddressDto } from './dto/address.dto';
@@ -169,6 +170,16 @@ export class CommerçantController {
   @Post('commandes')
   async createOrder(@Request() req: any, @Body() dto: CreateOrderDto) {
     return this.commercantService.createOrder(req.user.id, dto);
+  }
+
+  /**
+   * Créer une **tournée multi-arrêt** (spec §4) : N arrêts en une commande, un
+   * seul prix, un encaissement par arrêt. `tournees` est un segment littéral —
+   * distinct de `commandes/:id`.
+   */
+  @Post('tournees')
+  async createTournee(@Request() req: any, @Body() dto: CreateTourneeDto) {
+    return this.commercantService.createTournee(req.user.id, dto);
   }
 
   @Post('commandes/:id/annuler')
