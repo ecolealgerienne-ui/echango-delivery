@@ -103,6 +103,11 @@ SCENARIOS=(
   # depot hors reseau (transporteur non favori) refuse. Mutation : rendre la
   # resolution permissive fait passer le 'hors reseau' (201 au lieu de 400).
   test-depot-livraison
+  # Le dépôt EXPÉDIE une course (spec §3.3) : POST /flotte/commandes, pickup =
+  # le dépôt du transporteur, customer = facilitator = son Vendor, ciblage
+  # conducteur, appartenance (dépôt de B -> 404). Mutation : assertOwnsDepot
+  # permissif -> 201 au lieu de 404.
+  test-depot-expedition
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
