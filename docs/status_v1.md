@@ -169,6 +169,34 @@ déploiement.
 panne. Un client peut en conclure qu'il est inutile de réessayer. **Le code est
 juste, le statut ment.**
 
+### ✅ Trois évolutions récentes avaient atterri sans test — comblé le 08/09/2026
+
+Constaté en relisant les commits `22903fa`→`84218a6` : une seule évolution sur
+cinq (le cache des fiches) avait un test dans le banc. Les autres s'appuyaient
+sur `flutter analyze` + la suite **inchangée** + des scénarios **inchangés** qui
+« passent encore » — rien qui attrape une régression du **nouveau**
+comportement. Comblé :
+
+- **fb4d049** (écran conducteur détaché de l'historique) — le plafond sort en
+  module pur `common/orders/driver-history.ts` (`selectDriverOrdersToHydrate`,
+  9 cas : en cours jamais coupées, terminées gardées par `updated_at`) ; et
+  `order_state_refresh_test.dart` prouve que `loadOrders` ne touche jamais
+  `isLoading`, que `surfaceErrors:false` avale l'échec sans vider les listes, et
+  que `acceptOrder` rend la main sans attendre le rechargement des listes.
+- **4de815d** (`trip_metrics.dart`) — `_km` devient `tripKm`, fonction de
+  premier niveau, `trip_metrics_test.dart` : « 0,80 » sous le km, virgule jamais
+  point ; et pas de « à X km de vous » quand la position est inconnue (règle 10).
+- **4cea1b3** (onglet Carte conducteur) — `map_screen_empty_test.dart` : les
+  trois absences donnent trois messages distincts, aucun ne se recopie.
+
+⚠️ **Un constat en écrivant le test 4cea1b3** : `MapScreen` garde un
+`if (state.isLoading) return spinner`, mais depuis fb4d049 `loadOrders` ne lève
+plus `isLoading` — **cette branche ne se déclenche plus au chargement initial**.
+À froid, l'onglet affiche « Aucune course en cours » (avec sa consigne) pendant
+les ~10 s de `loadOrders`. Pas cassant — cohérent avec l'onglet liste qui n'a
+jamais eu de spinner —, mais soit la ligne doit lire `isRefreshingLists`, soit
+elle est morte et se retire. **À trancher.**
+
 ---
 
 ## Ce qui reste à faire
@@ -490,7 +518,26 @@ Plan d'action d'origine, priorisé : `specs_echango_delivery.md` §9.
 
   **Reste à faire** : **les notifications push**. ⚠️ Rien n'est branché aujourd'hui — le dispatch géospatial est **entièrement celui de Fleetbase** (`adhoc_distance` posé sur la course), et le BFF n'a **aucun chemin de notification vers les conducteurs**. Y ajouter un filtre de zone maintenant créerait du code sans appelant, c'est-à-dire le défaut le plus répété du dépôt (règle 9). À faire **en même temps** que le premier envoi réel, avec `zoneAllowsPickup` déjà prêt — sinon la préférence mentira sur un canal et pas sur l'autre.
 
-  **Un point resté à trancher** : une course qui traverse deux wilayas doit-elle apparaître dans les deux ? Aujourd'hui non — seul l'enlèvement décide.
+  **Un point resté à trancher** : une course qui traverse deux wilayas doit-elle apparaître dans les deux ? Aujourd'hui non — seul l'enlèvement décide. ⚠️ **La zone entreprise (ci-dessous) a fait le même choix**, pour la même raison et via le même `pickupWilaya` : si on ouvre l'un, on ouvre l'autre (règle 5).
+
+- [x] ✅ **« Courses libres » de l'entreprise : tri, filtres et zone de service — fait le 07-08/09/2026**
+
+  **Le manque** : l'onglet servait le **pool national brut**, sans tri ni filtre. Le conducteur avait déjà zone + véhicule + tri côté serveur (item ci-dessus) ; l'entreprise n'avait rien — elle triait 58 wilayas à la main. Règle 9 prise à l'envers : le mécanisme existait d'un côté, pas de l'autre.
+
+  **Deux paliers, une seule fonctionnalité :**
+
+  | | où | vérifié par |
+  |---|---|---|
+  | **Palier 2** — `sort` (`soonest`/`best_paid`/`shortest`), `wilaya`, `vehicleType`, `withoutCod` sur `GET /flotte/opportunites`, appliqués **avant pagination** (sinon `total` faux → « 0 résultat » lu comme « réseau vide ») | `common/orders/opportunity-filters.ts` (pur, 18 tests) · barre de chips + `facets` serveur stables · deux vides distincts (`filtered_empty` ≠ `empty`) | `scripts/test-opportunites-filtre.sh` (WSL réel) + mutation |
+  | **Palier 1** — zone de service **persistante** : liste de wilayas dans un **champ personnalisé du `Vendor`** (règle 1, pas une colonne BFF), qui borne le pool **avant** les chips | `common/orders/fleet-zone.ts` (pur, 20 tests) · `fleetbase/fleet-zone.service.ts` (calque `DriverZoneService`) · `GET`/`PUT /flotte/zone` · app : bandeau toujours visible + éditeur bottom-sheet, `lib/config/wilayas.dart` (58, sélecteur seulement) | `scripts/test-zone-entreprise.sh` (WSL réel) + mutation |
+
+  ⚠️ **Le biais est celui de `zoneAllowsPickup`** : zone vide ⇒ tout, course **sans wilaya connue** ⇒ visible même zone posée. On ne retire que ce qu'on **sait** hors zone.
+
+  ⚠️ **`sort` n'est PAS une liste fermée gardée par `check_closed_lists`** — une valeur inconnue retombe sur l'ordre naturel, jamais un 400. Le pire cas d'une dérive app/serveur est « le tri n'a pas changé ». `wilaya` non plus n'est pas figée (comme `transporteur.dto.ts` : une wilaya renommée ne doit pas être refusée).
+
+  ⚠️ **Le chemin d'écriture Fleetbase — champ perso sur le `Vendor` — n'était vérifiable qu'en réel.** `test-zone-entreprise.sh` le prouve : `PUT [Alger]` → `GET /flotte/zone` rend `[Alger]` (définition auto-provisionnée, `setVendorCustomFieldValues`, relecture), et `PUT [Oran]` puis GET **frais** rend `[Oran]` — c'est stocké, pas un état de session. Le `PUT /int/v1/vendors/:id` accepte l'**uuid** (le PUT driver, lui, exigeait le `public_id`).
+
+  ⚠️ **Ce qui reste léger** : aucun test *widget* sur le bandeau ni l'éditeur de zone — la logique est aux specs BFF et aux bancs WSL. Un parcours émulateur (l'entreprise pose une wilaya, la liste se resserre, « Tout afficher » rouvre) le compléterait.
 
 - [ ] **Responsabilité des espèces — tranché le 02/08/2026 (décision produit, contrat à écrire)**
 
