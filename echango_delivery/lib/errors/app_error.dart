@@ -87,6 +87,8 @@ class AppError {
   static const String orderCodRequiresPrice = 'order.cod_requires_price';
   static const String orderCodToDepotForbidden = 'order.cod_to_depot_forbidden';
   static const String orderDepotNotInNetwork = 'order.depot_not_in_network';
+  static const String tourneeInvalidShape = 'tournee.invalid_shape';
+  static const String tourneeStopNeedsLocation = 'tournee.stop_needs_location';
   static const String orderCustomFieldsUnavailable =
       'order.custom_fields_unavailable';
   static const String orderAlreadyPublished = 'order.already_published';

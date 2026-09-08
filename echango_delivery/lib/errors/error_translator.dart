@@ -98,6 +98,10 @@ const Map<String, String> _fr = {
       'Une livraison vers un dépôt ne peut pas porter d’encaissement.',
   'order.depot_not_in_network':
       'Ce dépôt n’appartient à aucun de vos transporteurs favoris.',
+  'tournee.invalid_shape':
+      'Une tournée demande au moins deux arrêts, dont au moins un enlèvement.',
+  'tournee.stop_needs_location':
+      'Chaque arrêt sans dépôt doit avoir une position sur la carte.',
   'order.custom_fields_unavailable':
       'Enregistrement impossible pour le moment. Réessayez dans un instant.',
   'order.already_published': 'Cette commande a déjà été publiée.',
@@ -273,6 +277,10 @@ const Map<String, String> _ar = {
       'حدّد أجرة الناقل: ستُطلب من المستلم إضافةً إلى ثمن البضاعة.',
   'order.cod_to_depot_forbidden': 'لا يمكن أن يحمل التسليم إلى مستودع تحصيلاً.',
   'order.depot_not_in_network': 'هذا المستودع لا يخصّ أيّاً من ناقليك المفضّلين.',
+  'tournee.invalid_shape':
+      'الجولة تتطلب محطتين على الأقل، منها محطة استلام واحدة على الأقل.',
+  'tournee.stop_needs_location':
+      'كل محطة بدون مستودع يجب أن تحدَّد على الخريطة.',
   'order.custom_fields_unavailable':
       'تعذّر الحفظ في الوقت الحالي. أعد المحاولة بعد قليل.',
   'order.already_published': 'تم نشر هذه الطلبية بالفعل.',
