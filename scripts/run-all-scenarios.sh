@@ -108,6 +108,15 @@ SCENARIOS=(
   # conducteur, appartenance (dépôt de B -> 404). Mutation : assertOwnsDepot
   # permissif -> 201 au lieu de 404.
   test-depot-expedition
+  # TOURNÉE multi-arrêt (spec §4) : POST /flotte/tournees, UNE commande à
+  # payload.waypoints[] ordonné (pickup/dropoff/dropoff, dépôt A en tête),
+  # un seul prix, cod_amount = SOMME des cod d'arrêt (servie par la projection
+  # BFF), colis rattachés par destination_uuid (collecté à l'enlèvement ->
+  # routé vers le dernier arrêt). Appartenance (dépôt de B dans la tournée ->
+  # 404) et forme (1 arrêt -> 400). Deux mutations prouvées : résolution de
+  # dépôt permissive -> 201 au lieu de 404 ; somme des cod remplacée par le
+  # premier -> témoin cod_amount echoue.
+  test-tournee-creation
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
