@@ -244,6 +244,19 @@ class Order extends Equatable {
       }
     }
 
+    // Ce qui a été déclaré perçu à chaque arrêt (`meta.stop_collections`).
+    final stopCollected = <String, num>{};
+    final rawStopCollections = meta?['stop_collections'];
+    if (rawStopCollections is List) {
+      for (final entry in rawStopCollections.whereType<Map>()) {
+        final placeUuid = entry['place_uuid'];
+        final amount = entry['collected_amount'];
+        if (placeUuid is String && amount is num) {
+          stopCollected[placeUuid] = amount;
+        }
+      }
+    }
+
     final parcels =
         readEntitiesJson(json).map(TourneeParcel.fromJson).toList();
 
@@ -259,6 +272,7 @@ class Order extends Equatable {
       waypoints.add(Waypoint.fromJson(
         wj,
         codAmount: stopCods[wpUuid],
+        collectedAmount: stopCollected[wpUuid],
         parcels: here,
       ));
     }
@@ -454,6 +468,11 @@ class Waypoint extends Equatable {
   /// pas d'encaissement ici.
   final num? codAmount;
 
+  /// Ce que le conducteur a **déclaré avoir perçu** à cet arrêt
+  /// (`meta.stop_collections`), une fois l'arrêt honoré. `null` tant que rien
+  /// n'a été déclaré. Peut être `0` : un client qui refuse de payer est un fait.
+  final num? collectedAmount;
+
   /// Les colis déposés ou collectés à cet arrêt.
   final List<TourneeParcel> parcels;
 
@@ -465,6 +484,7 @@ class Waypoint extends Equatable {
     this.status,
     this.complete = false,
     this.codAmount,
+    this.collectedAmount,
     this.parcels = const [],
   });
 
@@ -478,6 +498,7 @@ class Waypoint extends Equatable {
   factory Waypoint.fromJson(
     Map<String, dynamic> json, {
     num? codAmount,
+    num? collectedAmount,
     List<TourneeParcel> parcels = const [],
   }) {
     return Waypoint(
@@ -488,13 +509,23 @@ class Waypoint extends Equatable {
       status: json['status'] as String?,
       complete: json['complete'] == true,
       codAmount: codAmount,
+      collectedAmount: collectedAmount,
       parcels: parcels,
     );
   }
 
   @override
-  List<Object?> get props =>
-      [place, placeUuid, type, order, status, complete, codAmount, parcels];
+  List<Object?> get props => [
+        place,
+        placeUuid,
+        type,
+        order,
+        status,
+        complete,
+        codAmount,
+        collectedAmount,
+        parcels,
+      ];
 }
 
 /// Un colis d'une tournée (`payload.entities[i]`), rattaché à son arrêt par

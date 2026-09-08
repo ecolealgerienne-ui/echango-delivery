@@ -94,6 +94,17 @@ export class CashCollectionDto {
   @IsString()
   @MaxLength(500)
   notes?: string;
+
+  /**
+   * Sur une **tournée** (spec §4) : l'uuid du `Place` de l'arrêt encaissé.
+   * L'app le connaît (`order.currentWaypoint.placeUuid`). Facultatif — le
+   * service retombe sinon sur `payload.current_waypoint_uuid`. Ignoré sur une
+   * course 1→1.
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(FLEETBASE_ID_PATTERN, { message: 'waypointUuid invalide' })
+  waypointUuid?: string;
 }
 
 export class UpdateActivityDto {

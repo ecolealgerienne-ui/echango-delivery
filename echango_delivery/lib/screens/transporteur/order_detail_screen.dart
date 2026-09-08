@@ -531,6 +531,9 @@ class OrderDetailScreen extends StatelessWidget {
       collectedAmount: cash?.amount,
       discrepancyReason: cash?.reason,
       cashNotes: cash?.notes,
+      // Sur une tournée, dire au serveur QUEL arrêt est encaissé — il consigne
+      // la déclaration dans `meta.stop_collections`, sans réécrire les autres.
+      waypointUuid: currentStop?.placeUuid,
     );
     if (!context.mounted) return;
 
@@ -1039,15 +1042,25 @@ class _TourneeStops extends StatelessWidget {
                     padding: const EdgeInsets.only(top: AppSpacing.xs),
                     child: Row(
                       children: [
-                        const Icon(Icons.account_balance_wallet_outlined,
-                            size: 16),
+                        Icon(
+                          w.collectedAmount != null
+                              ? Icons.check_circle_outline
+                              : Icons.account_balance_wallet_outlined,
+                          size: 16,
+                        ),
                         const SizedBox(width: AppSpacing.xs),
                         Text(
-                          _t(context, 'driver.order.tournee.cod', {
-                            'amount':
-                                '${w.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'
-                                    .trim(),
-                          }),
+                          w.collectedAmount != null
+                              ? _t(context, 'driver.order.tournee.collected', {
+                                  'amount':
+                                      '${w.collectedAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'
+                                          .trim(),
+                                })
+                              : _t(context, 'driver.order.tournee.cod', {
+                                  'amount':
+                                      '${w.codAmount!.toStringAsFixed(0)} ${order.codCurrency ?? ''}'
+                                          .trim(),
+                                }),
                           style: theme.textTheme.bodyMedium
                               ?.copyWith(fontWeight: FontWeight.bold),
                         ),

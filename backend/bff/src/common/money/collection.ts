@@ -93,3 +93,99 @@ export function assertCollectedAmount(
 
   return collected;
 }
+
+/** Une déclaration d'encaissement d'arrêt de tournée, telle qu'elle est
+ *  consignée dans `meta.stop_collections` (spec §4). */
+export interface StopCollection {
+  place_uuid: string;
+  collected_amount: number;
+  collected_at: string;
+  collection_reason?: string;
+}
+
+/**
+ * Le noyau **pur** de l'encaissement arrêt par arrêt d'une tournée : décide si
+ * l'arrêt courant appelle une déclaration, la valide, refuse une seconde
+ * déclaration pour le même arrêt, et rend la liste `stop_collections` mise à
+ * jour avec sa somme courante.
+ *
+ * Isolé du service pour la même raison qu'`assertCollectedAmount` : c'est une
+ * règle, pas une écriture, et elle s'éprouve sans décor.
+ *
+ * - `null` ⇒ rien à consigner à cet arrêt (aucun COD), la commande avance.
+ * - lève (`badRequest`) ⇒ arrêt inconnu, déjà encaissé, déclaration manquante,
+ *   ou montant irrecevable.
+ * - objet ⇒ à écrire : `{ stopCollections, runningTotal, collectedAt }`.
+ */
+export function resolveStopCollection(params: {
+  currentWaypointUuid: string | null | undefined;
+  stopCodAmounts: Array<{ place_uuid?: string; amount?: number }> | undefined;
+  existing: StopCollection[] | undefined;
+  cash:
+    | { collectedAmount: number; discrepancyReason?: string }
+    | undefined;
+  currency: string;
+  now?: () => string;
+}): { stopCollections: StopCollection[]; runningTotal: number; collectedAt: string } | null {
+  const { currentWaypointUuid, cash, currency } = params;
+  const stopCods = Array.isArray(params.stopCodAmounts) ? params.stopCodAmounts : [];
+  const already = Array.isArray(params.existing) ? params.existing : [];
+
+  const tourneeHasCod = stopCods.some((c) => (Number(c?.amount) || 0) > 0);
+
+  // Aucune espèce nulle part dans la tournée : rien à consigner, jamais.
+  if (!tourneeHasCod) return null;
+
+  // Il y a des espèces quelque part, mais on ne sait pas à quel arrêt on est —
+  // proceder risquerait de clôturer un arrêt encaissé sans déclaration (règle
+  // 10). L'app passe `waypointUuid` ; Fleetbase pose `current_waypoint_uuid`.
+  if (!currentWaypointUuid) {
+    badRequest(
+      'cash.cod_declaration_required',
+      "Impossible d'identifier l'arrêt de tournée pour l'encaissement.",
+    );
+  }
+
+  const entry = stopCods.find((c) => c?.place_uuid === currentWaypointUuid);
+  const stopCod = Number(entry?.amount) || 0;
+
+  // Cet arrêt-ci n'a rien à percevoir (un enlèvement, une livraison sans COD).
+  if (stopCod <= 0) return null;
+
+  if (already.some((c) => c?.place_uuid === currentWaypointUuid)) {
+    badRequest(
+      'order.already_terminal',
+      "L'encaissement de cet arrêt est déjà déclaré : il ne peut plus être modifié.",
+    );
+  }
+
+  if (!cash) {
+    badRequest(
+      'cash.cod_declaration_required',
+      `Cet arrêt est payé à la réception (${stopCod} ${currency}) : ` +
+        'déclarez le montant encaissé pour le valider.',
+    );
+  }
+
+  const collected = assertCollectedAmount(
+    cash.collectedAmount,
+    stopCod,
+    cash.discrepancyReason,
+    currency,
+  );
+
+  const collectedAt = (params.now ?? (() => new Date().toISOString()))();
+  const stopEntry: StopCollection = {
+    place_uuid: currentWaypointUuid as string,
+    collected_amount: collected,
+    collected_at: collectedAt,
+    ...(collected !== stopCod ? { collection_reason: cash.discrepancyReason } : {}),
+  };
+  const stopCollections = [...already, stopEntry];
+  const runningTotal = stopCollections.reduce(
+    (sum, c) => sum + (Number(c?.collected_amount) || 0),
+    0,
+  );
+
+  return { stopCollections, runningTotal, collectedAt };
+}

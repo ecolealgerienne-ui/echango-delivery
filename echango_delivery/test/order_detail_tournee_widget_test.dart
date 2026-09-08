@@ -23,7 +23,7 @@ Order _tournee() => Order(
       updatedAt: DateTime(2026, 9, 8),
       codAmount: 2000,
       codCurrency: 'DZD',
-      currentWaypointUuid: 'p_d1',
+      currentWaypointUuid: 'p_d2',
       waypoints: const [
         Waypoint(
           place: Place(id: 'p_pick', name: 'Entrepôt Est', address: 'Zone Est'),
@@ -38,6 +38,8 @@ Order _tournee() => Order(
           type: 'dropoff',
           order: 1,
           codAmount: 1200,
+          collectedAmount: 1200,
+          complete: true,
           parcels: [TourneeParcel(id: 'e1', name: 'Colis A')],
         ),
         Waypoint(
@@ -93,13 +95,14 @@ void main() {
     expect(find.text('Mme Yasmine'), findsOneWidget);
     expect(find.text('M. Karim'), findsOneWidget);
 
-    // L'arrêt en cours est nommé, et le premier est honoré.
+    // L'arrêt en cours est nommé ; l'enlèvement et la 1ʳᵉ livraison sont honorés.
     expect(find.textContaining('arrêt en cours'), findsOneWidget);
-    expect(find.textContaining('honoré'), findsOneWidget);
+    expect(find.textContaining('honoré'), findsNWidgets(2));
 
-    // Le COD affiché est celui de CHAQUE arrêt, jamais le total (2000).
-    expect(find.textContaining('1200'), findsOneWidget);
-    expect(find.textContaining('800'), findsOneWidget);
+    // Arrêt honoré + encaissé : « Encaissé : 1200 », jamais le total (2000).
+    expect(find.text('Encaissé : 1200 DZD'), findsOneWidget);
+    // Arrêt pas encore fait : « À percevoir ici : 800 ».
+    expect(find.text('À percevoir ici : 800 DZD'), findsOneWidget);
     expect(find.textContaining('2000'), findsNothing);
 
     // Les colis de l'arrêt 2.

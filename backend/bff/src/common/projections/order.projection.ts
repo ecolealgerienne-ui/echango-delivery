@@ -511,6 +511,9 @@ export const PROJECTED_META_FIELDS = [
   'collected_amount',
   'collected_at',
   'collection_reason',
+  // Le détail des encaissements d'une tournée, arrêt par arrêt (spec §4). Même
+  // public que `collected_amount` : c'est ce qui s'est passé à chaque porte.
+  'stop_collections',
   // Le favori nommé à qui la course est confiée, et sa nature. Projetés parce
   // que le commerçant doit voir « en attente de X », et que la duplication
   // reproduit la cible. Sur une course ciblée, la cible EST le conducteur

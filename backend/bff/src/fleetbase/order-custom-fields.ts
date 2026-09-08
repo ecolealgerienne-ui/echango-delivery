@@ -247,6 +247,16 @@ export const ORDER_CUSTOM_FIELDS: OrderCustomFieldDefinition[] = [
     valueType: 'text',
     decode: asText,
   },
+  {
+    key: 'stop_collections',
+    description:
+      'Encaissements d\'une TOURNÉE, arrêt par arrêt (spec §4) : '
+      + '[{ place_uuid, collected_amount, collected_at, collection_reason? }]. '
+      + '`collected_amount` de la commande porte la somme courante ; ceci en '
+      + 'donne le détail par arrêt. Immuable arrêt par arrêt une fois posé.',
+    valueType: 'array',
+    decode: asList,
+  },
 
   // ── Ce que les transporteurs ont dit de cette course ───────────────────────
   //

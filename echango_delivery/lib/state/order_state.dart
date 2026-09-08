@@ -397,6 +397,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
     double? collectedAmount,
     String? discrepancyReason,
     String? cashNotes,
+    String? waypointUuid,
   }) =>
       _mutateOrder(
         orderId,
@@ -406,6 +407,7 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
           collectedAmount: collectedAmount,
           discrepancyReason: discrepancyReason,
           cashNotes: cashNotes,
+          waypointUuid: waypointUuid,
         ),
       );
 

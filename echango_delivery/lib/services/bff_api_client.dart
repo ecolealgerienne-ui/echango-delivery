@@ -677,7 +677,8 @@ class BffApiClient {
       {String? proof,
       double? collectedAmount,
       String? discrepancyReason,
-      String? cashNotes}) async {
+      String? cashNotes,
+      String? waypointUuid}) async {
     await _post(
       '/transporteur/commandes/$orderId/activite',
       {
@@ -688,6 +689,9 @@ class BffApiClient {
             'collectedAmount': collectedAmount,
             if (discrepancyReason != null) 'discrepancyReason': discrepancyReason,
             if (cashNotes != null && cashNotes.isNotEmpty) 'notes': cashNotes,
+            // Sur une tournée : l'arrêt encaissé, pour que le serveur consigne
+            // la déclaration au bon waypoint (`meta.stop_collections`).
+            if (waypointUuid != null) 'waypointUuid': waypointUuid,
           },
       },
     );

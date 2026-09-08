@@ -1,6 +1,10 @@
 import { HttpException } from '@nestjs/common';
 
-import { COLLECTION_DISCREPANCY_REASONS, assertCollectedAmount } from './collection';
+import {
+  COLLECTION_DISCREPANCY_REASONS,
+  assertCollectedAmount,
+  resolveStopCollection,
+} from './collection';
 
 /**
  * La déclaration d'encaissement à la porte.
@@ -117,5 +121,136 @@ describe('le montant encaissé déclaré', () => {
       COLLECTION_DISCREPANCY_REASONS.length,
     );
     expect(COLLECTION_DISCREPANCY_REASONS).toContain('refus_de_payer');
+  });
+});
+
+/**
+ * L'encaissement **arrêt par arrêt** d'une tournée (spec §4).
+ *
+ * ⚠️ Règle 8 : autant de cas qui refusent que de cas qui passent. Ce noyau
+ * décide s'il faut une déclaration, la valide, refuse une seconde déclaration
+ * pour le même arrêt, et rend la liste `stop_collections` à écrire.
+ */
+describe('resolveStopCollection — encaissement par arrêt de tournée', () => {
+  const refus = (fn: () => unknown): string => {
+    try {
+      fn();
+    } catch (error) {
+      if (error instanceof HttpException) {
+        const body = error.getResponse() as Record<string, any>;
+        return body?.code ?? '';
+      }
+    }
+    return '';
+  };
+
+  const base = {
+    currentWaypointUuid: 'place_d1',
+    stopCodAmounts: [
+      { place_uuid: 'place_d1', amount: 1200 },
+      { place_uuid: 'place_d2', amount: 800 },
+    ],
+    existing: [] as any[],
+    currency: 'DZD',
+    now: () => '2026-09-08T12:00:00.000Z',
+  };
+
+  it('rien à percevoir à cet arrêt ⇒ null (la commande avance)', () => {
+    const r = resolveStopCollection({
+      ...base,
+      currentWaypointUuid: 'place_pick',
+      cash: undefined,
+    });
+    expect(r).toBeNull();
+  });
+
+  it('COD à cet arrêt et aucune déclaration ⇒ refus', () => {
+    expect(refus(() => resolveStopCollection({ ...base, cash: undefined }))).toBe(
+      'cash.cod_declaration_required',
+    );
+  });
+
+  it('consigne la déclaration et la somme courante', () => {
+    const r = resolveStopCollection({
+      ...base,
+      cash: { collectedAmount: 1200 },
+    })!;
+    expect(r.stopCollections).toEqual([
+      {
+        place_uuid: 'place_d1',
+        collected_amount: 1200,
+        collected_at: '2026-09-08T12:00:00.000Z',
+      },
+    ]);
+    expect(r.runningTotal).toBe(1200);
+  });
+
+  it('cumule les arrêts sans réécrire les précédents', () => {
+    const r = resolveStopCollection({
+      ...base,
+      currentWaypointUuid: 'place_d2',
+      existing: [
+        {
+          place_uuid: 'place_d1',
+          collected_amount: 1200,
+          collected_at: '2026-09-08T11:00:00.000Z',
+        },
+      ],
+      cash: { collectedAmount: 800 },
+    })!;
+    expect(r.stopCollections.map((c) => c.place_uuid)).toEqual([
+      'place_d1',
+      'place_d2',
+    ]);
+    expect(r.runningTotal).toBe(2000);
+  });
+
+  it('un arrêt déjà encaissé ne se re-déclare pas', () => {
+    expect(
+      refus(() =>
+        resolveStopCollection({
+          ...base,
+          existing: [
+            {
+              place_uuid: 'place_d1',
+              collected_amount: 1200,
+              collected_at: '2026-09-08T11:00:00.000Z',
+            },
+          ],
+          cash: { collectedAmount: 1200 },
+        }),
+      ),
+    ).toBe('order.already_terminal');
+  });
+
+  it('arrêt courant inconnu alors qu’il y a des espèces ⇒ refus', () => {
+    expect(
+      refus(() =>
+        resolveStopCollection({
+          ...base,
+          currentWaypointUuid: null,
+          cash: { collectedAmount: 1200 },
+        }),
+      ),
+    ).toBe('cash.cod_declaration_required');
+  });
+
+  it('un écart sans motif est refusé, comme sur une course 1→1', () => {
+    expect(
+      refus(() =>
+        resolveStopCollection({ ...base, cash: { collectedAmount: 1000 } }),
+      ),
+    ).toBe('cash.discrepancy_reason_required');
+  });
+
+  it('un écart AVEC motif est consigné', () => {
+    const r = resolveStopCollection({
+      ...base,
+      cash: { collectedAmount: 1000, discrepancyReason: 'somme_incomplete' },
+    })!;
+    expect(r.stopCollections[0]).toMatchObject({
+      collected_amount: 1000,
+      collection_reason: 'somme_incomplete',
+    });
   });
 });

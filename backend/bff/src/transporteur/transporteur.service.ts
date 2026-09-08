@@ -9,7 +9,10 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { assertCollectedAmount } from '../common/money/collection';
+import {
+  assertCollectedAmount,
+  resolveStopCollection,
+} from '../common/money/collection';
 import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
@@ -1379,13 +1382,31 @@ export class TransporteurService {
     }
   }
 
-  private async recordCollectionIfDue(order: any, cash?: CashCollectionDto): Promise<void> {
+  private async recordCollectionIfDue(
+    order: any,
+    cash?: CashCollectionDto,
+    waypointUuid?: string,
+  ): Promise<void> {
     // ⚠️ `meta` recomplété AVANT toute lecture de montant. Une affectation
     // depuis la console l'efface, et lire le `meta` brut donnerait ici
     // `codAmount = 0` : la course se clôturerait sans déclaration, alors que
     // le transporteur tient l'argent.
     const [hydrated] = this.withEffectiveMeta([order]);
     const meta = hydrated?.meta ?? order?.meta;
+
+    // ── Tournée (spec §4) : l'encaissement est ARRÊT PAR ARRÊT ───────────────
+    //
+    // `update-activity` sur une tournée complète l'arrêt courant puis avance
+    // au suivant (Fleetbase, `advanceCurrentServiceStopDestination`). Chaque
+    // arrêt de livraison a son propre COD (`meta.stop_cod_amounts`), et sa
+    // déclaration s'ajoute à `meta.stop_collections` sans réécrire les
+    // précédentes. `meta.cod_amount` (le total) sert au plafond de dette ; on
+    // y tient la **somme courante** des perçus pour que le commerçant et
+    // l'entreprise lisent un montant cohérent.
+    const waypoints = order?.payload?.waypoints;
+    if (Array.isArray(waypoints) && waypoints.length >= 2) {
+      return this.recordStopCollection(order, meta, cash, waypointUuid);
+    }
 
     const codAmount = Number(meta?.cod_amount) || 0;
 
@@ -1430,6 +1451,76 @@ export class TransporteurService {
 
     this.logger.log(
       `Encaissement ${order.uuid} : ${collected} ${currency} perçus sur ${codAmount} annoncés`,
+    );
+  }
+
+  /**
+   * Consigne l'encaissement d'**un arrêt** d'une tournée (spec §4).
+   *
+   * ── Quel arrêt ? ─────────────────────────────────────────────────────────
+   *
+   * `payload.current_waypoint_uuid` désigne l'arrêt que `update-activity` est
+   * en train de compléter (Fleetbase l'avance ensuite). L'app le passe aussi
+   * explicitement (`cash.waypointUuid`) ; on préfère l'indice de l'app quand il
+   * est là, le champ Fleetbase sinon. Les deux sont l'uuid du `Place` de
+   * l'arrêt, qui est aussi la clé de `meta.stop_cod_amounts`.
+   *
+   * ── Immuable arrêt par arrêt ─────────────────────────────────────────────
+   *
+   * `assertNotFinalized` garde la commande entière ; il ne peut rien pour un
+   * arrêt intermédiaire, qui ne rend pas la commande terminale. La garde ici
+   * est la présence de l'arrêt dans `stop_collections` : une seconde
+   * déclaration pour le même arrêt est refusée, comme un second `/terminer`
+   * sur une course 1→1.
+   */
+  private async recordStopCollection(
+    order: any,
+    meta: any,
+    cash?: CashCollectionDto,
+    waypointUuidHint?: string,
+  ): Promise<void> {
+    const currentUuid =
+      waypointUuidHint || order?.payload?.current_waypoint_uuid || null;
+    const currency = platformCurrency(this.configService.get('CURRENCY'));
+
+    const resolved = resolveStopCollection({
+      currentWaypointUuid: currentUuid,
+      stopCodAmounts: meta?.stop_cod_amounts,
+      existing: meta?.stop_collections,
+      cash: cash
+        ? {
+            collectedAmount: cash.collectedAmount,
+            discrepancyReason: cash.discrepancyReason,
+          }
+        : undefined,
+      currency,
+    });
+
+    // Cet arrêt n'a rien à percevoir (un enlèvement, une livraison sans COD) :
+    // rien à consigner, la commande avance normalement.
+    if (!resolved) return;
+
+    const written = await this.orderCustomFields.writeToOrder(
+      this.orderPublicId(order),
+      {
+        stop_collections: resolved.stopCollections,
+        // La somme courante des perçus, pour les lecteurs du total (commerçant,
+        // entreprise, plafond de dette).
+        collected_amount: resolved.runningTotal,
+        collected_at: resolved.collectedAt,
+      },
+    );
+
+    if (!written) {
+      badRequest(
+        'cash.collection_not_recorded',
+        "L'encaissement de cet arrêt n'a pas pu être enregistré. Ne validez pas cet arrêt : réessayez.",
+      );
+    }
+
+    this.logger.log(
+      `Encaissement tournée ${order.uuid} — arrêt ${String(currentUuid).slice(0, 8)}… : ` +
+        `${resolved.stopCollections.length} arrêt(s) consigné(s), total ${resolved.runningTotal} ${currency}`,
     );
   }
 
@@ -1611,9 +1702,11 @@ export class TransporteurService {
     this.assertNotFinalized(order);
 
     // La transition terminale exige la déclaration d'encaissement au même titre
-    // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte.
+    // que `POST /terminer` : c'est ce chemin-ci que l'application emprunte. Sur
+    // une tournée, `complete: true` marque la fin d'un ARRÊT (pas de la
+    // commande) — la déclaration est alors rattachée à cet arrêt.
     if (this.isTerminalActivity(dto.activity)) {
-      await this.recordCollectionIfDue(order, dto.cash);
+      await this.recordCollectionIfDue(order, dto.cash, dto.cash?.waypointUuid);
     }
 
     try {

@@ -399,6 +399,7 @@ const Map<String, String> _fr = {
   'driver.order.tournee.current': 'arrêt en cours',
   'driver.order.tournee.done': 'honoré',
   'driver.order.tournee.cod': 'À percevoir ici : {amount}',
+  'driver.order.tournee.collected': 'Encaissé : {amount}',
   'driver.order.tournee.parcels': '{n} colis',
   'driver.order.nav.none':
       'Aucune application de navigation trouvée sur cet appareil.',
@@ -889,6 +890,7 @@ const Map<String, String> _ar = {
   'driver.order.tournee.current': 'المحطة الحالية',
   'driver.order.tournee.done': 'تمّت',
   'driver.order.tournee.cod': 'يُحصَّل هنا: {amount}',
+  'driver.order.tournee.collected': 'حُصِّل: {amount}',
   'driver.order.tournee.parcels': '{n} طرود',
   'driver.order.nav.none': 'لا يوجد تطبيق ملاحة على هذا الجهاز.',
   'driver.order.call.failed': 'تعذّر إجراء المكالمة.',

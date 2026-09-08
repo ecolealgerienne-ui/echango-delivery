@@ -140,6 +140,30 @@ void main() {
     expect(order.cashStops.map((w) => w.placeUuid), ['p_d1', 'p_d2']);
   });
 
+  test('les encaissements déclarés sont rapprochés depuis meta.stop_collections',
+      () {
+    final json = tourneeJson();
+    (json['meta'] as Map)['stop_collections'] = [
+      {
+        'place_uuid': 'p_d1',
+        'collected_amount': 1200,
+        'collected_at': '2026-09-08T12:00:00Z',
+      },
+      {
+        'place_uuid': 'p_d2',
+        'collected_amount': 0,
+        'collected_at': '2026-09-08T12:30:00Z',
+        'collection_reason': 'refus_de_payer',
+      },
+    ];
+    final order = Order.fromJson(json);
+    final byUuid = {for (final w in order.waypoints) w.placeUuid: w};
+    expect(byUuid['p_d1']!.collectedAmount, 1200);
+    // Zéro est une valeur déclarée, pas « rien déclaré ».
+    expect(byUuid['p_d2']!.collectedAmount, 0);
+    expect(byUuid['p_pick']!.collectedAmount, isNull);
+  });
+
   test('les colis sont rattachés à leur arrêt par destination_uuid', () {
     final order = Order.fromJson(tourneeJson());
     final byUuid = {for (final w in order.waypoints) w.placeUuid: w};
