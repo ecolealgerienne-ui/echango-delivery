@@ -109,6 +109,16 @@ export class CommerçantController {
     return this.commercantService.listKnownDrivers(req.user.id);
   }
 
+  /**
+   * Les dépôts vers lesquels ce commerçant peut faire livrer : ceux de ses
+   * transporteurs favoris (spec §3.2). Alimente le sélecteur « livrer à un
+   * dépôt » du formulaire de commande.
+   */
+  @Get('depots')
+  async listNetworkDepots(@Request() req: any) {
+    return this.commercantService.getNetworkDepots(req.user.id);
+  }
+
   @Post('transporteurs/favoris')
   async addFavourite(@Request() req: any, @Body() dto: AddFavouriteDto) {
     return this.commercantService.addFavourite(

@@ -7,6 +7,7 @@ class FleetDepot {
   const FleetDepot({
     required this.uuid,
     required this.name,
+    this.fleetName,
     this.address,
     this.city,
     this.neighborhood,
@@ -20,6 +21,13 @@ class FleetDepot {
 
   final String uuid;
   final String name;
+
+  /// Le transporteur propriétaire — renseigné seulement quand le dépôt est servi
+  /// au **commerçant** (catalogue `GET /commercant/depots`), pour distinguer
+  /// deux dépôts homonymes de deux transporteurs. Nul dans l'espace flotte (on y
+  /// ne voit que ses propres dépôts).
+  final String? fleetName;
+
   final String? address;
   final String? city;
   final String? neighborhood;
@@ -48,6 +56,7 @@ class FleetDepot {
     return FleetDepot(
       uuid: (json['uuid'] ?? '') as String,
       name: (json['name'] ?? '') as String,
+      fleetName: json['fleet_name'] as String?,
       address: json['address'] as String?,
       city: json['city'] as String?,
       neighborhood: json['neighborhood'] as String?,

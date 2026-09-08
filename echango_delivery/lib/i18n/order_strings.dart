@@ -186,6 +186,16 @@ const Map<String, String> _fr = {
       'Un favori nommé reçoit la course rien que pour lui — elle l’attend même '
           'hors ligne. Vous pourrez toujours basculer en diffusion large.',
 
+  // ── Destination : un client, ou un dépôt de transporteur (spec §3.2) ────
+  'order.form.destination.client': 'Un client',
+  'order.form.destination.depot': 'Un dépôt',
+  'order.form.destination.depot.label': 'Dépôt de destination',
+  'order.form.destination.depot.hint':
+      'La livraison est confiée au transporteur propriétaire du dépôt. '
+          'Pas d’encaissement possible vers un dépôt.',
+  'order.form.destination.depot.unavailable':
+      'Liste des dépôts indisponible — réessayez dans un instant.',
+
   // ── Instructions, brouillon, envoi ──────────────────────────────────────
   'order.form.instructions': 'Instructions pour le transporteur',
   'order.form.draft.notice':
@@ -698,6 +708,14 @@ const Map<String, String> _ar = {
   'order.form.dispatch.hint':
       'المفضّل المُسمّى يتلقّى المهمة وحده — تنتظره حتى وهو غير متصل. '
           'يمكنك دائمًا التحويل إلى البثّ الواسع.',
+
+  'order.form.destination.client': 'زبون',
+  'order.form.destination.depot': 'مستودع',
+  'order.form.destination.depot.label': 'مستودع الوجهة',
+  'order.form.destination.depot.hint':
+      'تُسند الرحلة إلى الناقل صاحب المستودع. لا يمكن التحصيل عند مستودع.',
+  'order.form.destination.depot.unavailable':
+      'قائمة المستودعات غير متاحة — أعد المحاولة بعد قليل.',
 
   // ── Instructions, brouillon, envoi ──────────────────────────────────────
   'order.form.instructions': 'تعليمات للناقل',

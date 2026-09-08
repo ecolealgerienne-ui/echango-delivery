@@ -1287,6 +1287,12 @@ class BffApiClient {
     return _listOf(await _get('/commercant/transporteurs/favoris'), 'data', KnownDriver.fromJson);
   }
 
+  /// Les dépôts vers lesquels ce commerçant peut faire livrer : ceux de ses
+  /// transporteurs favoris (spec §3.2).
+  Future<List<FleetDepot>> getMerchantDepots() async {
+    return _listOf(await _get('/commercant/depots'), 'data', FleetDepot.fromJson);
+  }
+
   /// Met une partie en favori — un transporteur, ou une **entreprise**.
   ///
   /// ⚠️ `partyType` est envoyé même quand il vaut `driver`, sa valeur par

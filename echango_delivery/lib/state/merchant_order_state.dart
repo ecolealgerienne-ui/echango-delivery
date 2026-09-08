@@ -4,6 +4,7 @@ import 'dart:ui' show Locale;
 import 'package:flutter/foundation.dart';
 
 import '../config/app_rules.dart';
+import '../models/fleet_depot.dart';
 import '../models/merchant_order.dart';
 import '../services/bff_api_client.dart';
 import 'detail_cache.dart';
@@ -29,6 +30,8 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   final PagedList<MerchantOrder> _ordersPage = PagedList<MerchantOrder>();
   List<SavedAddress> _addresses = [];
   List<KnownDriver> _favourites = [];
+  List<FleetDepot> _networkDepots = [];
+  bool _networkDepotsUnavailable = false;
   MerchantOrder? _selected;
 
   /// L'identifiant **avec lequel** la fiche ouverte a été demandée.
@@ -149,6 +152,12 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
   /// Transporteurs favoris. Sollicités en premier à la création d'une course,
   /// avec repli automatique sur le pool commun si aucun n'est disponible.
   List<KnownDriver> get favourites => _favourites;
+
+  /// Les dépôts vers lesquels ce commerçant peut faire livrer (spec §3.2) —
+  /// ceux de ses transporteurs favoris.
+  List<FleetDepot> get networkDepots => _networkDepots;
+  bool get networkDepotsUnavailable => _networkDepotsUnavailable;
+
   MerchantOrder? get selected => _selected;
   Map<String, dynamic>? get tracking => _tracking;
   bool get isLoading => _isLoading;
@@ -212,6 +221,19 @@ class MerchantOrderState extends ChangeNotifier with WriteEnvelope {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Charge le catalogue des dépôts du réseau. Garde la liste précédente sur
+  /// échec mais pose le drapeau — un catalogue jamais chargé ne se lit pas
+  /// comme un catalogue vide (règle 10).
+  Future<void> loadNetworkDepots() async {
+    try {
+      _networkDepots = await _apiClient.getMerchantDepots();
+      _networkDepotsUnavailable = false;
+    } catch (_) {
+      _networkDepotsUnavailable = true;
+    }
+    notifyListeners();
   }
 
   Future<void> loadFavourites() async {

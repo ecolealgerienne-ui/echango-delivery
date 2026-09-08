@@ -85,6 +85,8 @@ class AppError {
   static const String orderAlreadyTaken = 'order.already_taken';
   static const String orderClaimFailed = 'order.claim_failed';
   static const String orderCodRequiresPrice = 'order.cod_requires_price';
+  static const String orderCodToDepotForbidden = 'order.cod_to_depot_forbidden';
+  static const String orderDepotNotInNetwork = 'order.depot_not_in_network';
   static const String orderCustomFieldsUnavailable =
       'order.custom_fields_unavailable';
   static const String orderAlreadyPublished = 'order.already_published';
@@ -179,6 +181,7 @@ class AppError {
   /// L'historique des transporteurs déjà employés n'a pas pu être lu.
   static const String merchantKnownDriversUnavailable =
       'merchant.known_drivers_unavailable';
+  static const String merchantDepotsUnavailable = 'merchant.depots_unavailable';
 
   /// Panne non prévue côté serveur — tout ce qui n'est pas un refus délibéré.
   ///

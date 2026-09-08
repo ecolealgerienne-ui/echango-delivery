@@ -103,6 +103,17 @@ mapi POST /commercant/transporteurs/favoris "$(jq -n --arg u "$VENDOR_A" '{fleet
   | jq -e '.added == true' >/dev/null || fail "mise en favori de A refusée"
 pass "A est favori du commerçant"
 
+step "Catalogue GET /commercant/depots : le dépôt de A, pas celui de B"
+cat="$(mapi GET /commercant/depots)"
+echo "$cat" | jq -e --arg d "$DEPOT_A" '[.data[]?.uuid] | index($d)' >/dev/null \
+  || fail "le catalogue ne contient pas le dépôt de A" "$(echo "$cat" | jq -c '[.data[]?.uuid]')"
+if echo "$cat" | jq -e --arg d "$DEPOT_B" '[.data[]?.uuid] | index($d)' >/dev/null 2>&1; then
+  fail "le catalogue contient le dépôt de B (B n'est PAS favori) — fuite de périmètre"
+fi
+[ "$(echo "$cat" | jq -r --arg d "$DEPOT_A" '.data[] | select(.uuid==$d) | .fleet_name // "null"')" != "null" ] \
+  || fail "fleet_name manquant sur le dépôt du catalogue"
+pass "catalogue = dépôts des favoris seulement (A oui, B non), avec fleet_name"
+
 step "Course VERS le dépôt A"
 resp="$(mapi POST /commercant/commandes "$(order_body "$(jq -n --arg d "$DEPOT_A" '{destinationType:"depot", depotUuid:$d}')")")"
 ORD_DEPOT="$(echo "$resp" | jq -r '.fleetbaseOrderId // .uuid // empty')"

@@ -223,6 +223,8 @@ export const ErrorCode = {
   MERCHANT_ADDRESSES_UNAVAILABLE: 'merchant.addresses_unavailable',
   /** L'historique des transporteurs déjà employés n'a pas pu être lu. */
   MERCHANT_KNOWN_DRIVERS_UNAVAILABLE: 'merchant.known_drivers_unavailable',
+  /** Le catalogue des dépôts du réseau n'a pas pu être lu (spec §3.2). */
+  MERCHANT_DEPOTS_UNAVAILABLE: 'merchant.depots_unavailable',
   MERCHANT_FAVOURITE_NOT_FOUND: 'merchant.favourite_not_found',
   MERCHANT_DRIVER_NOT_IN_NETWORK: 'merchant.driver_not_in_network',
   /** L'entreprise visee n'a pas de compte actif chez nous : elle ne peut

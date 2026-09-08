@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../i18n/order_strings.dart';
+import '../../models/fleet_depot.dart';
 import '../../models/merchant_order.dart';
 import '../../models/vehicle_type.dart';
 import '../../services/bff_api_client.dart';
@@ -127,6 +128,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// diffusion au pool réseau.
   String? _targetFavouriteUuid;
 
+  /// Livraison vers un **dépôt** de transporteur (spec §3.2) au lieu d'un
+  /// client. `null` = destination client (comportement historique). Quand
+  /// posé : le bloc adresse de livraison, la tuile « confier à » et
+  /// l'encaissement sont masqués — le dépôt porte sa propre adresse, son
+  /// propriétaire est le transporteur, et le COD y est interdit côté serveur.
+  String? _destinationDepotUuid;
+  bool get _toDepot => _destinationDepotUuid != null;
+
   /// Nulles tant que le commerçant n'a pas désigné de point. Le formulaire
   /// refuse l'envoi dans ce cas plutôt que d'inventer une position.
   LatLng? _pickupPoint;
@@ -175,6 +184,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       final state = context.read<MerchantOrderState>();
       await state.loadAddresses();
       state.loadFavourites();
+      state.loadNetworkDepots();
       if (!mounted) return;
 
       // Préremplit le retrait avec l'adresse principale (décision produit,
@@ -576,10 +586,16 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     final missing = <String>[
       if (_pickupName.text.trim().isEmpty) _t('order.form.missing.pickup_name'),
       if (_pickupPhone.text.trim().isEmpty) _t('order.form.missing.pickup_phone'),
-      if (_dropoffName.text.trim().isEmpty) _t('order.form.missing.dropoff_name'),
-      if (_dropoffPhone.text.trim().isEmpty) _t('order.form.missing.dropoff_phone'),
       if (_pickupPoint == null) _t('order.form.missing.pickup_point'),
-      if (_dropoffPoint == null) _t('order.form.missing.dropoff_point'),
+      // Vers un dépôt : ni adresse, ni contact, ni point de livraison à
+      // renseigner — le dépôt les porte. Seule sa sélection est requise.
+      if (_toDepot)
+        ...const <String>[]
+      else ...[
+        if (_dropoffName.text.trim().isEmpty) _t('order.form.missing.dropoff_name'),
+        if (_dropoffPhone.text.trim().isEmpty) _t('order.form.missing.dropoff_phone'),
+        if (_dropoffPoint == null) _t('order.form.missing.dropoff_point'),
+      ],
     ];
     if (missing.isNotEmpty) {
       showAppError(
@@ -636,34 +652,44 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'pickupContactPhone': _pickupPhone.text.trim(),
       if (_pickupAddress.text.trim().isNotEmpty)
         'pickupNotes': _pickupAddress.text.trim(),
-      'dropoffLocationName': _dropoffName.text.trim(),
-      'dropoffLatitude': _dropoffPoint!.latitude,
-      'dropoffLongitude': _dropoffPoint!.longitude,
-      // Commune et quartier, jamais la rue : c'est ce qui rend une course libre
-      // jugeable sans désigner une porte.
-      if (_dropoffCity != null) 'dropoffCity': _dropoffCity,
-      if (_dropoffProvince != null) 'dropoffProvince': _dropoffProvince,
-      if (_dropoffNeighborhood != null) 'dropoffNeighborhood': _dropoffNeighborhood,
-      'dropoffContactName':
-          _dropoffContact.text.trim().isEmpty ? _dropoffName.text.trim() : _dropoffContact.text.trim(),
-      'dropoffContactPhone': _dropoffPhone.text.trim(),
-      if (_dropoffAddress.text.trim().isNotEmpty)
-        'dropoffNotes': _dropoffAddress.text.trim(),
+      // ── La destination ────────────────────────────────────────────────────
+      //
+      // Vers un dépôt : on n'envoie QUE `destinationType` + `depotUuid`. Le
+      // serveur ignore les `dropoff*` sur cette branche, mais les taire évite
+      // qu'un champ à moitié rempli parte quand même — et une course vers un
+      // dépôt ne se cible pas (son propriétaire EST le facilitateur) et ne
+      // s'encaisse pas (le serveur le refuse).
+      if (_toDepot) ...{
+        'destinationType': 'depot',
+        'depotUuid': _destinationDepotUuid,
+      } else ...{
+        'dropoffLocationName': _dropoffName.text.trim(),
+        'dropoffLatitude': _dropoffPoint!.latitude,
+        'dropoffLongitude': _dropoffPoint!.longitude,
+        // Commune et quartier, jamais la rue : c'est ce qui rend une course
+        // libre jugeable sans désigner une porte.
+        if (_dropoffCity != null) 'dropoffCity': _dropoffCity,
+        if (_dropoffProvince != null) 'dropoffProvince': _dropoffProvince,
+        if (_dropoffNeighborhood != null) 'dropoffNeighborhood': _dropoffNeighborhood,
+        'dropoffContactName': _dropoffContact.text.trim().isEmpty
+            ? _dropoffName.text.trim()
+            : _dropoffContact.text.trim(),
+        'dropoffContactPhone': _dropoffPhone.text.trim(),
+        if (_dropoffAddress.text.trim().isNotEmpty)
+          'dropoffNotes': _dropoffAddress.text.trim(),
+        if (_targetFavouriteUuid != null) 'targetFavouriteUuid': _targetFavouriteUuid,
+        if (_cashOnDelivery && double.tryParse(_codAmount.text.trim()) != null) ...{
+          'codAmount': double.parse(_codAmount.text.trim()),
+          'codIncludesDelivery': _codIncludesDelivery,
+        },
+      },
       if (_instructions.text.trim().isNotEmpty)
         'deliveryInstructions': _instructions.text.trim(),
       if (_scheduledAt != null) 'scheduledAt': _scheduledAt!.toUtc().toIso8601String(),
       if (_vehicleType != null) 'vehicleType': _vehicleType,
       'podMethod': _podMethod,
-      if (_targetFavouriteUuid != null) 'targetFavouriteUuid': _targetFavouriteUuid,
       if (double.tryParse(_price.text.trim()) != null)
         'price': double.parse(_price.text.trim()),
-      // Montant à encaisser, distinct de la rémunération du transporteur : le
-      // premier va du destinataire au commerçant, le second du commerçant au
-      // transporteur. Sens inverses.
-      if (_cashOnDelivery && double.tryParse(_codAmount.text.trim()) != null) ...{
-        'codAmount': double.parse(_codAmount.text.trim()),
-        'codIncludesDelivery': _codIncludesDelivery,
-      },
       // Poids et fragilité sont transmis : le contrat serveur les acceptait
       // déjà, le formulaire n'envoyait qu'une description et `quantity: 1` en
       // dur. Or c'est précisément ce qui permet au transporteur de juger si sa
@@ -757,13 +783,18 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                     keyboard: TextInputType.phone),
                 const SizedBox(height: AppSpacing.xl),
                 _section(_t('order.section.dropoff')),
-                _locationRow(orderState, toPickup: false),
-                _field(_dropoffName, _t('order.form.dropoff.name'), Icons.person_outline),
-                _field(_dropoffAddress, _t('order.form.address'), Icons.place_outlined),
-                _field(_dropoffContact, _t('order.form.dropoff.contact'), Icons.person_outline),
-                _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
-                    keyboard: TextInputType.phone),
-                _clientLocationSection(),
+                _destinationSelector(orderState),
+                if (_toDepot)
+                  _depotPicker(orderState)
+                else ...[
+                  _locationRow(orderState, toPickup: false),
+                  _field(_dropoffName, _t('order.form.dropoff.name'), Icons.person_outline),
+                  _field(_dropoffAddress, _t('order.form.address'), Icons.place_outlined),
+                  _field(_dropoffContact, _t('order.form.dropoff.contact'), Icons.person_outline),
+                  _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
+                      keyboard: TextInputType.phone),
+                  _clientLocationSection(),
+                ],
                 const SizedBox(height: AppSpacing.xl),
                 _section(_t('order.section.parcel')),
                 _field(_itemDescription, _t('order.form.item.description'),
@@ -789,10 +820,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 _pricingSection(),
                 const SizedBox(height: AppSpacing.lg),
                 _section(_t('order.form.section.options')),
-                _codSection(),
+                // Vers un dépôt : pas d'encaissement (refusé côté serveur),
+                // pas de « confier à » (le dépôt désigne son transporteur).
+                if (!_toDepot) _codSection(),
                 _scheduleTile(),
                 _podSelector(),
-                _favouritesTile(orderState),
+                if (!_toDepot) _favouritesTile(orderState),
                 const SizedBox(height: AppSpacing.lg),
                 _field(_instructions, _t('order.form.instructions'),
                     Icons.notes_outlined, maxLines: 3),
@@ -1235,6 +1268,114 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// favori **l'attend**, même hors-ligne — elle ne bascule pas toute seule au
   /// pool. Sans cette phrase, le commerçant croirait sa course diffusée alors
   /// qu'elle patiente (`docs/plan_ciblage_favori.md`).
+  /// Où va la livraison : chez un client, ou dans un dépôt de transporteur
+  /// (spec §3.2). Le choix « dépôt » n'apparaît que si le commerçant a au moins
+  /// un dépôt dans son réseau — sinon la question n'a pas de réponse possible.
+  Widget _destinationSelector(MerchantOrderState orderState) {
+    if (orderState.networkDepots.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: SegmentedButton<bool>(
+        segments: [
+          ButtonSegment(
+            value: false,
+            icon: const Icon(Icons.person_outline),
+            label: Text(_t('order.form.destination.client')),
+          ),
+          ButtonSegment(
+            value: true,
+            icon: const Icon(Icons.warehouse_outlined),
+            label: Text(_t('order.form.destination.depot')),
+          ),
+        ],
+        selected: {_toDepot},
+        onSelectionChanged: (s) => setState(() {
+          if (s.first) {
+            // Passer au dépôt : préselectionne le premier, et efface un
+            // ciblage de favori qui n'a plus de sens (le dépôt désigne son
+            // transporteur).
+            _destinationDepotUuid ??= orderState.networkDepots.first.uuid;
+            _targetFavouriteUuid = null;
+          } else {
+            _destinationDepotUuid = null;
+          }
+        }),
+      ),
+    );
+  }
+
+  /// Le sélecteur de dépôt + la fiche (lecture seule) du dépôt choisi.
+  Widget _depotPicker(MerchantOrderState orderState) {
+    final depots = orderState.networkDepots;
+    FleetDepot? chosen;
+    for (final d in depots) {
+      if (d.uuid == _destinationDepotUuid) {
+        chosen = d;
+        break;
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          child: DropdownButtonFormField<String>(
+            initialValue: _destinationDepotUuid,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: _t('order.form.destination.depot.label'),
+              helperText: _t('order.form.destination.depot.hint'),
+              border: const OutlineInputBorder(),
+            ),
+            items: depots
+                .map(
+                  (d) => DropdownMenuItem<String>(
+                    value: d.uuid,
+                    child: Text(
+                      d.fleetName == null ? d.name : '${d.name} · ${d.fleetName}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) => setState(() => _destinationDepotUuid = v),
+          ),
+        ),
+        if (chosen != null)
+          Card(
+            margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: ListTile(
+              leading: const Icon(Icons.warehouse_outlined),
+              title: Text(chosen.name),
+              subtitle: Text(
+                [
+                  [chosen.neighborhood, chosen.city, chosen.province]
+                      .whereType<String>()
+                      .where((e) => e.trim().isNotEmpty)
+                      .join(', '),
+                  chosen.contactName,
+                  chosen.phone,
+                ].whereType<String>().where((e) => e.trim().isNotEmpty).join(' · '),
+              ),
+            ),
+          ),
+        if (orderState.networkDepotsUnavailable)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: Text(
+              _t('order.form.destination.depot.unavailable'),
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _favouritesTile(MerchantOrderState orderState) {
     final favourites = orderState.favourites;
     if (favourites.isEmpty) return const SizedBox.shrink();

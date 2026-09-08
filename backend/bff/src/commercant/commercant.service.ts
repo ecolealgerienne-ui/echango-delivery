@@ -446,20 +446,15 @@ export class CommerçantService {
     merchantVendorUuid: string,
     depotUuid: string,
   ): Promise<{ placeUuid: string; ownerVendorUuid: string; province: string | null }> {
-    const favourites = await this.favourites.read(merchantVendorUuid);
-    const fleetVendorUuids = favourites
-      .filter((f) => f.party_type === 'fleet')
-      .map((f) => f.party_uuid);
-
-    for (const vendorUuid of fleetVendorUuids) {
-      const places = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
+    for (const fleet of await this.networkFleets(merchantVendorUuid)) {
+      const places = await this.fleetbaseClient.getOwnedPlaces(fleet.vendorUuid);
       const depot = places.find(
         (p: any) => p?.uuid === depotUuid && p?.meta?.is_depot === true,
       );
       if (depot) {
         return {
           placeUuid: depot.uuid,
-          ownerVendorUuid: vendorUuid,
+          ownerVendorUuid: fleet.vendorUuid,
           province: typeof depot.province === 'string' ? depot.province : null,
         };
       }
@@ -469,6 +464,72 @@ export class CommerçantService {
       'order.depot_not_in_network',
       'Ce dépôt n’appartient à aucun de vos transporteurs favoris',
     );
+  }
+
+  /**
+   * Les transporteurs entreprise du réseau du commerçant : ses favoris
+   * `party_type: 'fleet'`. Une seule définition, lue par le catalogue de dépôts
+   * ET par la résolution d'une livraison vers un dépôt (règle 5) — les deux
+   * doivent voir exactement le même périmètre, sans quoi un dépôt proposé dans
+   * le sélecteur serait refusé à la création.
+   */
+  private async networkFleets(
+    merchantVendorUuid: string,
+  ): Promise<{ vendorUuid: string; name: string | null }[]> {
+    const favourites = await this.favourites.read(merchantVendorUuid);
+    return favourites
+      .filter((f) => f.party_type === 'fleet')
+      .map((f) => ({ vendorUuid: f.party_uuid, name: f.party_name ?? null }));
+  }
+
+  /**
+   * Le catalogue des dépôts vers lesquels ce commerçant peut faire livrer :
+   * ceux de ses transporteurs favoris (spec §3.2, §4.5).
+   *
+   * ⚠️ Coût : un `getOwnedPlaces` par favori entreprise — peu nombreux. La
+   * lecture échoue en bloc plutôt que de rendre une liste partielle : un
+   * catalogue tronqué en silence ferait « disparaître » un dépôt que le
+   * commerçant a l'habitude d'utiliser (règle 10).
+   */
+  async getNetworkDepots(merchantId: string) {
+    const merchant = await this.getMerchantWithValidation(merchantId);
+    try {
+      const fleets = await this.networkFleets(merchant.fleetbaseVendorUuid);
+      const depots: any[] = [];
+      for (const fleet of fleets) {
+        const places = await this.fleetbaseClient.getOwnedPlaces(fleet.vendorUuid);
+        for (const p of places) {
+          if (p?.meta?.is_depot !== true) continue;
+          depots.push(this.projectNetworkDepot(p, fleet.name));
+        }
+      }
+      return { data: depots };
+    } catch (error: any) {
+      this.logger.error(`Catalogue de dépôts illisible : ${error.message}`);
+      serviceUnavailable(
+        'merchant.depots_unavailable',
+        'Impossible de charger les dépôts du réseau',
+      );
+    }
+  }
+
+  private projectNetworkDepot(place: any, fleetName: string | null) {
+    const coords = place?.location?.coordinates;
+    const [longitude, latitude] = Array.isArray(coords) ? coords : [null, null];
+    const usable = typeof latitude === 'number' && typeof longitude === 'number'
+      && !(latitude === 0 && longitude === 0);
+    return {
+      uuid: place.uuid,
+      name: place.name ?? null,
+      fleet_name: fleetName,
+      city: place.city ?? null,
+      neighborhood: place.neighborhood ?? null,
+      province: place.province ?? null,
+      phone: place.phone ?? null,
+      contact_name: place?.meta?.contact_name ?? null,
+      latitude: usable ? latitude : null,
+      longitude: usable ? longitude : null,
+    };
   }
 
   /**

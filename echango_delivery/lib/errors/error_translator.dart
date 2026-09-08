@@ -94,6 +94,10 @@ const Map<String, String> _fr = {
   'order.claim_failed': 'Impossible de prendre cette course pour le moment.',
   'order.cod_requires_price':
       'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
+  'order.cod_to_depot_forbidden':
+      'Une livraison vers un dépôt ne peut pas porter d’encaissement.',
+  'order.depot_not_in_network':
+      'Ce dépôt n’appartient à aucun de vos transporteurs favoris.',
   'order.custom_fields_unavailable':
       'Enregistrement impossible pour le moment. Réessayez dans un instant.',
   'order.already_published': 'Cette commande a déjà été publiée.',
@@ -180,6 +184,8 @@ const Map<String, String> _fr = {
       'Impossible de lire votre carnet d’adresses. Réessayez dans un instant.',
   'merchant.known_drivers_unavailable':
       'Impossible de lire vos transporteurs habituels.',
+  'merchant.depots_unavailable':
+      'Impossible de charger les dépôts du réseau. Réessayez dans un instant.',
   'server.unexpected':
       'Le serveur a rencontré un problème. Réessayez dans un instant.',
 
@@ -265,6 +271,8 @@ const Map<String, String> _ar = {
   'order.claim_failed': 'لا يمكن أخذ هذه الرحلة في الوقت الحالي.',
   'order.cod_requires_price':
       'حدّد أجرة الناقل: ستُطلب من المستلم إضافةً إلى ثمن البضاعة.',
+  'order.cod_to_depot_forbidden': 'لا يمكن أن يحمل التسليم إلى مستودع تحصيلاً.',
+  'order.depot_not_in_network': 'هذا المستودع لا يخصّ أيّاً من ناقليك المفضّلين.',
   'order.custom_fields_unavailable':
       'تعذّر الحفظ في الوقت الحالي. أعد المحاولة بعد قليل.',
   'order.already_published': 'تم نشر هذه الطلبية بالفعل.',
@@ -345,6 +353,8 @@ const Map<String, String> _ar = {
       'تعذّرت قراءة دفتر عناوينك. أعد المحاولة بعد لحظات.',
   'merchant.known_drivers_unavailable':
       'تعذّرت قراءة قائمة ناقليك المعتادين.',
+  'merchant.depots_unavailable':
+      'تعذّر تحميل مستودعات الشبكة. أعد المحاولة بعد لحظات.',
   'server.unexpected': 'واجه الخادم مشكلة. أعد المحاولة بعد لحظات.',
 
   // ── ملاحظات جهاز العميل، بدون رمز من الخادم ──────────────────────────────
