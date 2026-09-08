@@ -31,11 +31,20 @@ jest) + `recordStopCollection` — la déclaration s'ajoute à
 autres, `collected_amount` = somme courante ; immuable arrêt par arrêt ; l'app
 transmet `cash.waypointUuid`.
 
-**Phase 2/3 — RESTE À FAIRE** (voir §4.6) : `POST /commercant/tournees` + la
-ligne `Order` locale + l'écran commerçant ; le **scénario émulateur** du
-pas-à-pas conducteur à travers une tournée (progression multi-waypoint réelle +
-déclaration à chaque porte) ; la diffusion d'une tournée au pool (Phase 3, V1 =
-ciblage seul).
+**`POST /commercant/tournees` — FAIT** : `commercant.service.createTournee`
+(customer = son `Vendor`, cible = un favori, arrêt = dépôt réseau ou lieu créé,
+**ligne `Order` locale** via `createOrderCache`). Sans cible ⇒ diffusion au pool.
+`CreateMerchantTourneeScreen` (réutilise `TourneeComposerScreen`). Banc
+`test-commercant-tournee.sh`.
+
+**Pas-à-pas conducteur — ÉPROUVÉ SERVEUR** : `test-tournee-conducteur.sh` (banc
+`curl`) joue accept → start → `update-activity` par arrêt avec déclaration
+d'encaissement ; Fleetbase avance `current_waypoint_uuid`, le BFF consigne
+`meta.stop_collections` sans réécrire, le dernier arrêt clôture. Mutation prouvée.
+
+**Phase 2/3 — RESTE** : jouer le pas-à-pas conducteur **aux écrans**
+(`flutter drive`) ; la diffusion au pool **côté flotte** (bloquée par l'absence
+de ligne `Order` locale — cf. §4.6 point 4).
 **Date** : 08/09/2026.
 **Origine** : discussion produit sur le positionnement « transporteur national à
 dépôts ». Reprend et débloque le sujet **multi-arrêt / multi-enlèvement** que
@@ -279,7 +288,9 @@ acceptée en bloc.
 | scénarios | création tournée, cod cumulé, colis rattachés, appartenance, forme | ✅ `test-tournee-creation.sh` (2 mutations prouvées) + jest (`tournee-creation.spec`, `waypoint-projection.spec`) + `order_tournee_test.dart` |
 | **app conducteur** | fiche à N arrêts, progression **par waypoint** | 🟡 **affichage FAIT** (`_TourneeStops` : liste, avancement, COD par arrêt, arrêt courant surligné) ; progression pilotée par les transitions serveur. ⬜ Reste : scénario émulateur de bout en bout |
 | déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ✅ **FAIT** — `resolveStopCollection` (noyau pur, 8 cas jest) ; `recordStopCollection` écrit `meta.stop_collections` (`[{place_uuid, collected_amount, collected_at, collection_reason?}]`, champ perso durable + projeté), `collected_amount` = somme courante. Arrêt courant = `cash.waypointUuid` (app) ou `payload.current_waypoint_uuid`. Immuable arrêt par arrêt. App : `_applyActivity` transmet `waypointUuid`, `_TourneeStops` affiche « Encaissé : X ». ⬜ Reste : même scénario émulateur que la fiche |
-| `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ⬜ **RESTE** |
+| `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ✅ `commercant.service.createTournee` + `createOrderCache` + `CreateMerchantTourneeScreen` + `test-commercant-tournee.sh` |
+| **conducteur — pas-à-pas serveur** | progression multi-waypoint + encaissement par arrêt, éprouvés | ✅ `test-tournee-conducteur.sh` (banc `curl`, mutation prouvée) ; ⬜ reste le `flutter drive` aux écrans |
+| **diffusion au pool** | `adhoc` sur une tournée | ✅ côté commerçant (`adhocDistance`) ; ⬜ côté flotte (verrou : pas de ligne `Order` locale) |
 
 ### 4.3 Ce qui NE bloque plus
 
@@ -297,26 +308,40 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    d'encaissement annonce le COD de l'arrêt courant.
    **La progression** reste pilotée par les transitions serveur
    (`_buildActionButtons` / `nextActivities`) — Fleetbase avance
-   `current_waypoint_uuid` seul. ⬜ **Reste** : l'éprouver de bout en bout par
-   un scénario d'intégration émulateur (le pas-à-pas multi-waypoint réel, et la
-   « carte » à N repères si on la juge nécessaire). Tests actuels : `Order`
-   (`order_tournee_test.dart`, 8 cas) + fiche (`order_detail_tournee_widget_test.dart`).
-2. **Encaissement par arrêt.** ✅ **FAIT** — `resolveStopCollection` (noyau pur
-   dans `common/money/collection.ts`, 8 cas jest dont 4 refus) + `recordStopCollection`
-   dans `transporteur.service`. Sur une tournée, `update-activity` complète
-   l'arrêt courant : sa déclaration s'ajoute à `meta.stop_collections` (champ
-   personnalisé durable + projeté) sans réécrire les autres ; `collected_amount`
-   de la commande porte la somme courante (plafond de dette + commerçant
-   cohérents). Arrêt courant : `cash.waypointUuid` (l'app le passe) ou
-   `payload.current_waypoint_uuid`. Immuable arrêt par arrêt (une 2ᵉ déclaration
-   pour le même arrêt → `order.already_terminal`). App : la fiche affiche
-   « Encaissé : X » sur un arrêt honoré. ⬜ Reste : le pas-à-pas émulateur
-   (même scénario que le point 1).
-3. **`POST /commercant/tournees`.** Même `OrderCreationHelpers.createTournee`,
-   mais `customer` = le `Vendor` du commerçant, `targetUuid` = un favori
-   (driver/fleet), **et** une ligne `Order` locale (`createOrderCache`) — le
-   modèle Prisma exige un `merchantId`. Puis l'écran commerçant.
-4. **Diffusion d'une tournée au pool** (Phase 3). V1 = ciblage conducteur seul.
+   `current_waypoint_uuid` seul. ✅ **Éprouvé de bout en bout par
+   `scripts/test-tournee-conducteur.sh`** (banc `curl`) : l'entreprise crée une
+   tournée confiée à un conducteur, il démarre, et à chaque arrêt Fleetbase
+   avance `current_waypoint_uuid` (enroute → completed), l'enlèvement se
+   complète sans déclaration, une livraison COD sans déclaration est refusée,
+   le dernier arrêt clôture la commande. Mutation prouvée. ⬜ **Reste** :
+   le jouer aux ÉCRANS (`flutter drive`), pas seulement au serveur.
+   Tests : `order_tournee_test.dart` (11 cas), `order_detail_tournee_widget_test.dart`,
+   `tournee_stops_widget_test.dart`.
+2. **Encaissement par arrêt.** ✅ **FAIT + éprouvé serveur** — `resolveStopCollection`
+   (noyau pur, `common/money/collection.ts`, 8 cas jest dont 4 refus) +
+   `recordStopCollection`. `update-activity` complète l'arrêt courant : la
+   déclaration s'ajoute à `meta.stop_collections` (champ perso durable + projeté)
+   sans réécrire les autres ; `collected_amount` = somme courante. Arrêt courant :
+   `cash.waypointUuid` (app) ou `payload.current_waypoint_uuid`. Immuable arrêt
+   par arrêt. App : « Encaissé : X » sur un arrêt honoré. Prouvé de bout en bout
+   par `test-tournee-conducteur.sh` (1200 puis 800, total 2000). ⬜ Reste : le
+   pas-à-pas aux écrans.
+3. **`POST /commercant/tournees`.** ✅ **FAIT** — `commercant.service.createTournee` :
+   `customer` = le `Vendor` du commerçant, `targetUuid` = un favori (driver/fleet),
+   arrêt = un dépôt du réseau (`resolveDestinationDepot`) ou un lieu créé,
+   **ligne `Order` locale** via `createOrderCache` (compensation : annule la
+   commande Fleetbase si l'écriture locale échoue). Sans cible ⇒ diffusion au
+   pool (`adhoc: true`), suivie par le commerçant grâce à la ligne locale. App :
+   `CreateMerchantTourneeScreen` (réutilise `TourneeComposerScreen`, règle 6) +
+   route `/commercant/tournees`. Banc `test-commercant-tournee.sh` (6 témoins,
+   mutation prouvée).
+4. **Diffusion d'une tournée au pool.** ✅ **côté commerçant** (point 3 :
+   `adhocDistance` ⇒ `adhoc: true`). ⬜ **côté flotte** : bloqué par le même
+   verrou d'architecture — une tournée flotte n'a pas de ligne `Order` locale
+   (`merchantId` obligatoire), donc une tournée flotte diffusée serait
+   **invisible de son créateur** (`isOrderClaimable` exige `!facilitator_uuid`,
+   et le filtre `/flotte/commandes` est sur `facilitator`). À rouvrir si le
+   besoin se confirme — demande `Order.merchantId` nullable + un `Order.fleetId`.
 
 ### 4.4 Point ouvert — la wilaya d'une tournée
 
