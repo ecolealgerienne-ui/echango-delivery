@@ -416,6 +416,18 @@ class FleetState extends ChangeNotifier {
     }
   }
 
+  /// Crée une course depuis un dépôt du transporteur (spec §3.3), puis recharge
+  /// ses courses. Rend `null` en cas de succès, ou le message d'erreur traduit.
+  Future<String?> createFleetOrderFromDepot(Map<String, dynamic> body) async {
+    try {
+      await _apiClient.createFleetOrder(body);
+      await load();
+      return null;
+    } catch (e) {
+      return messageForError(e, _locale);
+    }
+  }
+
   Future<Map<String, dynamic>> _fetchOpportunities({required int page}) {
     return _apiClient.getFleetOpportunities(
       page: page,

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, HttpException } from '@nestjs/common';
 import { badRequest, notFound, forbidden, conflict, serviceUnavailable } from '../common/errors/http-errors';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
@@ -14,6 +14,9 @@ import {
 } from '../common/orders/opportunity-filters';
 import { filterByServiceZone } from '../common/orders/fleet-zone';
 import { FleetZoneService } from '../fleetbase/fleet-zone.service';
+import { OrderCreationHelpers } from '../common/orders/order-creation.helpers';
+import { FACILITATOR_TYPE_VENDOR } from '../fleetbase/fleetbase-api.client';
+import { CreateFleetOrderDto } from './dto/create-fleet-order.dto';
 import {
   projectOrderForFleet,
   projectDriverForFleet,
@@ -38,7 +41,119 @@ export class FlotteService {
     private configService: ConfigService,
     private audit: AuditService,
     private fleetZone: FleetZoneService,
+    private orderHelpers: OrderCreationHelpers,
   ) {}
+
+  /**
+   * Le transporteur crée une course **depuis un de ses dépôts** vers un client
+   * (spec §3.3). Réutilise le noyau de création partagé (`OrderCreationHelpers`,
+   * règle 5) — seule l'origine du `customer_uuid` (le `Vendor` du transporteur)
+   * et du `pickup` (un dépôt à lui) change.
+   *
+   * ⚠️ **Pas de ligne locale `Order`** : le modèle Prisma exige un `merchantId`,
+   * et il n'y a pas de compte marchand derrière. La course est visible du
+   * transporteur par `GET /flotte/commandes`, filtré sur `facilitator` — d'où
+   * `facilitator_uuid` = son propre `Vendor`, en plus de `customer_uuid`.
+   */
+  async createFleetOrder(fleetId: string, dto: CreateFleetOrderDto) {
+    const { vendorUuid, place: depot } = await this.assertOwnsDepot(
+      fleetId,
+      dto.pickupDepotUuid,
+    );
+
+    const coords = depot?.location?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) {
+      badRequest(
+        'depot.not_found',
+        'Ce dépôt n’a pas de position — impossible d’en faire partir une course',
+      );
+    }
+    const [depotLng, depotLat] = coords;
+
+    const meta = this.orderHelpers.buildOrderMeta({
+      deliveryInstructions: dto.deliveryInstructions,
+      vehicleType: dto.vehicleType,
+      items: dto.items,
+      dropoffNotes: dto.dropoffNotes,
+      pickupProvince: typeof depot.province === 'string' ? depot.province : undefined,
+      dropoffProvince: dto.dropoffProvince,
+      pickupLatitude: depotLat,
+      pickupLongitude: depotLng,
+      dropoffLatitude: dto.dropoffLatitude,
+      dropoffLongitude: dto.dropoffLongitude,
+      scheduledAt: dto.scheduledAt,
+      price: dto.price,
+      codAmount: dto.codAmount,
+      codIncludesDelivery: dto.codIncludesDelivery,
+    });
+
+    try {
+      const orderConfigUuid = await this.orderHelpers.defaultOrderConfigUuid();
+      const customFieldValues = await this.orderHelpers.customFieldValues(
+        orderConfigUuid,
+        meta,
+      );
+      this.orderHelpers.assertCustomFieldsComplete(meta, customFieldValues);
+      const metaRest = this.orderHelpers.metaOutsideCatalogue(meta);
+
+      // Un seul `Place` créé — la livraison. Le dépôt préexiste et n'entre
+      // JAMAIS dans la liste de compensation.
+      const dropoffPlace = await this.fleetbaseClient.createPlace(
+        dto.dropoffLocationName,
+        dto.dropoffLatitude,
+        dto.dropoffLongitude,
+        {
+          name: dto.dropoffContactName,
+          phone: dto.dropoffContactPhone,
+          city: dto.dropoffCity,
+          province: dto.dropoffProvince,
+          neighborhood: dto.dropoffNeighborhood,
+        },
+      );
+
+      const response = await this.orderHelpers.createOrderOrCleanUp(
+        {
+          order_config_uuid: orderConfigUuid,
+          customer_uuid: vendorUuid,
+          customer_type: 'vendor',
+          facilitator_uuid: vendorUuid,
+          facilitator_type: FACILITATOR_TYPE_VENDOR,
+          type: 'transport',
+          payload: {
+            pickup_uuid: depot.uuid,
+            dropoff_uuid: dropoffPlace.place.uuid,
+          },
+          meta: metaRest,
+          custom_field_values: customFieldValues,
+          scheduled_at: dto.scheduledAt,
+          ...(dto.draft
+            ? { adhoc: false, dispatched: false }
+            : dto.targetDriverUuid
+              ? { driver_assigned_uuid: dto.targetDriverUuid, adhoc: false }
+              // Confiée : `facilitator` posé, `adhoc` faux — le transporteur
+              // désigne ensuite son conducteur via `/flotte/commandes/:id/assigner`.
+              : { adhoc: false }),
+          pod_required: dto.podMethod ? dto.podMethod !== 'aucune' : undefined,
+          pod_method:
+            dto.podMethod && dto.podMethod !== 'aucune' ? dto.podMethod : undefined,
+        },
+        [dropoffPlace.place.uuid],
+      );
+
+      const order = response?.order ?? response?.data ?? response;
+      return {
+        fleetbaseOrderId: order?.uuid || order?.id || null,
+        status: order?.status ?? 'created',
+      };
+    } catch (error: any) {
+      // Un refus délibéré (dépôt d'autrui, encaissement sans prix, champs
+      // personnalisés incomplets) sort avec son code — il ne doit pas être
+      // réemballé en « création impossible » (règle 3).
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`createFleetOrder failed: ${error.message}`);
+      serviceUnavailable('order.create_failed', 'Failed to create order');
+    }
+  }
 
   /**
    * La zone de service déclarée — les wilayas où cette entreprise prend des

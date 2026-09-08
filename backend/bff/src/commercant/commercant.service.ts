@@ -11,7 +11,7 @@ import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.servi
 import { MerchantFavouritesService } from '../fleetbase/merchant-favourites.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
 import { OrderPickup, orderPickup, zoneAllowsPickup } from '../common/orders/driver-zone';
-import { ORDER_CUSTOM_FIELD_KEYS } from '../fleetbase/order-custom-fields';
+import { OrderCreationHelpers } from '../common/orders/order-creation.helpers';
 import { CreateOrderDto, ListOrdersQueryDto } from './dto/create-order.dto';
 import { RedirectOrderDto } from './dto/redirect-order.dto';
 import { ZONE_UNSET } from '../fleetbase/driver-zone-fields';
@@ -48,6 +48,7 @@ export class CommerçantService {
     private pricing: PricingService,
     private orderCustomFields: OrderCustomFieldsService,
     private driverZone: DriverZoneService,
+    private orderHelpers: OrderCreationHelpers,
   ) {}
 
   /**
@@ -277,127 +278,11 @@ export class CommerçantService {
    * lister les opportunités d'un transporteur.
    */
   private buildOrderMeta(dto: CreateOrderDto): Record<string, any> | undefined {
-    const meta: Record<string, any> = {};
-    if (dto.deliveryInstructions) meta.instructions = dto.deliveryInstructions;
-    if (dto.vehicleType) meta.vehicle_type = dto.vehicleType;
-    if (dto.items?.length) meta.items = dto.items;
-    if (dto.pickupNotes) meta.pickup_notes = dto.pickupNotes;
-    if (dto.dropoffNotes) meta.dropoff_notes = dto.dropoffNotes;
-
-    // ⚠️ **La wilaya d'enlèvement est recopiée ici, et ce n'est pas un état
-    // parallèle (02/08/2026).**
-    //
-    // Elle vit sur le `Place`, qui est sa source. Mais **la liste des commandes
-    // ne la sert pas** : mesuré, la ressource d'index rend un point d'enlèvement
-    // à quinze clés — `city` y est, `province` non — là où la fiche unitaire en
-    // rend trente. C'est la troisième fois que cette ressource allégée nous
-    // coûte, après les prix invisibles côté entreprise et le `meta` réduit à son
-    // drapeau.
-    //
-    // Or c'est **sur la liste** que le filtre du transporteur s'applique.
-    // Hydrater chaque course pour la lire coûterait un aller-retour par course,
-    // à trois secondes pièce sur cet environnement — pour une donnée qui ne
-    // changera jamais : le point d'enlèvement d'une course ne se déplace pas.
-    //
-    // Elle rejoint donc `vehicle_type`, que le même filtre lit déjà depuis la
-    // liste par le même chemin. Ce n'est pas un second vocabulaire au sens de la
-    // règle 1 — c'est la spécification figée à la création, comme
-    // `CashCollection.expectedAmount`, et la fiche reste la source pour tout le
-    // reste.
-    if (dto.pickupProvince) meta.pickup_province = dto.pickupProvince;
-    if (dto.dropoffProvince) meta.dropoff_province = dto.dropoffProvince;
-    // ⚠️ La CIBLE (`target_favourite_uuid`/`_kind`) n'est PAS posée ici : elle
-    // exige de valider que l'uuid est bien un favori du commerçant (lecture
-    // asynchrone), ce que ce constructeur pur n'a pas les moyens de faire. Elle
-    // est résolue et posée dans `createOrder`, où le vendor est connu. La
-    // duplication passe par `createOrder` avec `targetFavouriteUuid` reconstruit,
-    // donc la cible survit à « refaire cette livraison ».
-
-    // Le devis est demandé sur TOUTE commande, même quand le commerçant a
-    // saisi son montant : ce qui est enregistré au passage — distance, horaire,
-    // catégorie de véhicule — sont les entrées de la future formule de calcul.
-    // Elles ne sont pas rattrapables après coup : la distance dépend du
-    // géocodage et du réseau routier du moment, et une commande rejouée plus
-    // tard ne donnerait pas le même chiffre. Sans elles, les courses du pilote
-    // ne serviront pas à calibrer le barème.
-    //
-    // Calculé AVANT le bloc d'encaissement, et pas seulement par commodité :
-    // quand la livraison n'est pas comprise dans le prix de la marchandise,
-    // c'est la rémunération qui s'ajoute au montant réclamé à la porte. Le
-    // second dépend donc du premier.
-    const quote = this.pricing.quote(
-      {
-        pickupLatitude: dto.pickupLatitude,
-        pickupLongitude: dto.pickupLongitude,
-        dropoffLatitude: dto.dropoffLatitude,
-        dropoffLongitude: dto.dropoffLongitude,
-        scheduledAt: dto.scheduledAt,
-        vehicleType: dto.vehicleType,
-      },
-      dto.price,
-    );
-
-    meta.pricing_inputs = quote.inputs;
-
-    if (quote.amount !== null) {
-      meta.price = quote.amount;
-      meta.currency = quote.currency;
-      // L'origine du montant est enregistrée AVEC lui. Sans elle, l'historique
-      // mélangerait prix proposés et prix calculés, et la calibration de la
-      // future formule se ferait sur ses propres résultats.
-      meta.price_source = quote.source;
-    }
-
-    // ── Paiement à la livraison ───────────────────────────────────────────
-    //
-    // Deux montants distincts, et les confondre serait l'erreur fondatrice :
-    // `price` va du commerçant au transporteur, `cod_amount` va du
-    // destinataire au commerçant. Sens inverses.
-    //
-    // ⚠️ **`cod_amount` est ce que le destinataire remet à la porte**, et
-    // rien d'autre. C'est le sens que lui donnent déjà tous ses lecteurs : le
-    // montant annoncé au transporteur avant qu'il accepte, `expectedAmount`
-    // figé dans le registre de caisse, le refus de percevoir plus que dû, et
-    // le plafond de dette. Un seul sens, tenu au point d'écriture, plutôt
-    // qu'un champ que chaque lecteur interprète.
-    //
-    // Le commerçant, lui, saisit le **prix de sa marchandise**. Quand il
-    // décide que la livraison est à la charge du destinataire, la
-    // rémunération s'ajoute : marchandise 1300 + course 650 = 1950 réclamés à
-    // la porte, dont 650 que le transporteur retient et 1300 qu'il remet.
-    // Avant cette addition, le transporteur se voyait annoncer 1300 et le
-    // commerçant n'en récupérait que 650 — il payait la livraison qu'il avait
-    // explicitement mise à la charge de son client.
-    if (dto.codAmount) {
-      const goods = dto.codAmount;
-      const includesDelivery = dto.codIncludesDelivery === true;
-      const fee = includesDelivery ? 0 : (meta.price ?? null);
-
-      // Refus explicite plutôt qu'un repli silencieux : sans rémunération
-      // connue, « la livraison est à la charge du destinataire » n'a pas de
-      // montant, et retomber sur la marchandise seule ferait payer le
-      // commerçant à son insu — exactement ce que ce choix voulait éviter.
-      if (fee === null) {
-        badRequest(
-          'order.cod_requires_price',
-          'Indiquez la rémunération du transporteur : elle sera réclamée au destinataire en plus de la marchandise.',
-        );
-      }
-
-      meta.cod_amount = goods + fee;
-      // Ce que le commerçant a saisi, conservé tel quel. Recalculer
-      // `cod_amount − price` fonctionnerait aujourd'hui, mais « refaire cette
-      // livraison » repartirait alors du total et y rajouterait la course à
-      // chaque duplication — l'erreur se composerait à chaque copie.
-      meta.cod_goods_amount = goods;
-      meta.cod_currency = this.pricing.currency;
-      // Décrit désormais **comment le commerçant a saisi son montant**, et
-      // non ce que contient `cod_amount` : la livraison est comprise dans le
-      // montant réclamé à la porte dans les deux cas.
-      meta.cod_includes_delivery = includesDelivery;
-    }
-
-    return Object.keys(meta).length ? meta : undefined;
+    // Délégué au noyau partagé (règle 5) : le transporteur crée aussi des
+    // commandes depuis ses dépôts (spec §3.3), et la façon d'écrire un prix ou
+    // un encaissement ne doit exister qu'une fois — dans
+    // `common/orders/order-creation.helpers.ts`.
+    return this.orderHelpers.buildOrderMeta(dto);
   }
 
   /**
@@ -2124,36 +2009,14 @@ export class CommerçantService {
   private metaOutsideCatalogue(
     meta: Record<string, any> | undefined,
   ): Record<string, any> | undefined {
-    if (!meta) return undefined;
-
-    const rest: Record<string, any> = {};
-    for (const [key, value] of Object.entries(meta)) {
-      if (!ORDER_CUSTOM_FIELD_KEYS.includes(key)) rest[key] = value;
-    }
-
-    return Object.keys(rest).length ? rest : undefined;
+    return this.orderHelpers.metaOutsideCatalogue(meta);
   }
 
   private assertCustomFieldsComplete(
     meta: Record<string, any> | undefined,
     values: { custom_field_uuid: string }[],
   ): void {
-    const expected = ORDER_CUSTOM_FIELD_KEYS.filter(
-      (key) => meta?.[key] !== undefined && meta?.[key] !== null,
-    );
-
-    if (values.length >= expected.length) return;
-
-    this.logger.error(
-      `Champs personnalisés incomplets : ${values.length}/${expected.length} déclarés. `
-        + 'Création refusée — une commande dont les montants ne sont pas stockés '
-        + 'durablement serait indiscernable d\'une commande saine.',
-    );
-
-    badRequest(
-      'order.custom_fields_unavailable',
-      'Enregistrement impossible pour le moment : réessayez dans un instant.',
-    );
+    this.orderHelpers.assertCustomFieldsComplete(meta, values);
   }
 
   /**
@@ -2168,19 +2031,8 @@ export class CommerçantService {
    * La compensation est best-effort, comme toutes celles de ce projet : si elle
    * échoue à son tour, un log `error` nomme les lieux à reprendre à la main.
    */
-  private async createOrderOrCleanUp(order: any, placeUuids: string[]) {
-    try {
-      return await this.fleetbaseClient.createOrder(order);
-    } catch (error: any) {
-      for (const uuid of placeUuids) {
-        await this.fleetbaseClient.deletePlace(uuid).catch((cleanupError: any) =>
-          this.logger.error(
-            `Lieu ${uuid} laissé orphelin après un échec de création : ${cleanupError.message}`,
-          ),
-        );
-      }
-      throw error;
-    }
+  private createOrderOrCleanUp(order: any, placeUuids: string[]) {
+    return this.orderHelpers.createOrderOrCleanUp(order, placeUuids);
   }
 
   private async createOrderCache(data: any, fleetbaseOrderId: string) {

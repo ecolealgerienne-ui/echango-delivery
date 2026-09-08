@@ -55,6 +55,18 @@ class _DepotsScreenState extends State<DepotsScreen> {
     );
   }
 
+  Future<void> _ship(FleetDepot d) async {
+    final state = context.read<FleetState>();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ChangeNotifierProvider<FleetState>.value(
+          value: state,
+          child: _ShipFromDepotScreen(depot: d),
+        ),
+      ),
+    );
+  }
+
   Future<void> _delete(FleetDepot d) async {
     final ok = await AppConfirmDialog.destructive(
       context,
@@ -137,10 +149,21 @@ class _DepotsScreenState extends State<DepotsScreen> {
                 ],
               ),
               onTap: () => _openForm(d),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline),
-                tooltip: _t('fleet.depots.delete'),
-                onPressed: () => _delete(d),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (d.hasPosition)
+                    IconButton(
+                      icon: const Icon(Icons.local_shipping_outlined),
+                      tooltip: _t('fleet.depots.ship'),
+                      onPressed: () => _ship(d),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: _t('fleet.depots.delete'),
+                    onPressed: () => _delete(d),
+                  ),
+                ],
               ),
             ),
           );
@@ -333,6 +356,246 @@ class _DepotFormScreenState extends State<_DepotFormScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : Text(_t('fleet.depots.save')),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Créer une course **depuis un dépôt** vers un client (spec §3.3).
+///
+/// Formulaire volontairement simple, distinct de l'écran de commande du
+/// commerçant : l'origine est fixée (le dépôt), et le transporteur paie —
+/// `price` est obligatoire. L'encaissement est autorisé (son client règle à la
+/// porte). Il peut assigner d'emblée un de ses conducteurs, ou laisser la
+/// course confiée et l'affecter ensuite.
+class _ShipFromDepotScreen extends StatefulWidget {
+  const _ShipFromDepotScreen({required this.depot});
+
+  final FleetDepot depot;
+
+  @override
+  State<_ShipFromDepotScreen> createState() => _ShipFromDepotScreenState();
+}
+
+class _ShipFromDepotScreenState extends State<_ShipFromDepotScreen> {
+  String _t(String key) =>
+      fleetLabel(key, context.read<LocaleState>().locale);
+
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  final _itemDesc = TextEditingController();
+  final _price = TextEditingController();
+  final _codAmount = TextEditingController();
+
+  LatLng? _point;
+  String? _city;
+  String? _neighborhood;
+  String? _province;
+  bool _cod = false;
+  String? _driverUuid;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<FleetState>().load();
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final c in [_name, _phone, _itemDesc, _price, _codAmount]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _pickOnMap() async {
+    final result = await Navigator.of(context).push<PickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(
+          title: _t('fleet.ship.dropoff.title'),
+          initial: _point,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _point = result.point;
+      _city = result.city;
+      _neighborhood = result.neighborhood;
+      _province = result.province;
+    });
+  }
+
+  Future<void> _submit() async {
+    final name = _name.text.trim();
+    final phone = _phone.text.trim();
+    final price = double.tryParse(_price.text.trim());
+    final cod = _cod ? double.tryParse(_codAmount.text.trim()) : null;
+
+    if (name.isEmpty) {
+      showAppError(context, _t('fleet.ship.name.required'));
+      return;
+    }
+    if (phone.isEmpty) {
+      showAppError(context, _t('fleet.ship.phone.required'));
+      return;
+    }
+    if (_point == null) {
+      showAppError(context, _t('fleet.ship.point.required'));
+      return;
+    }
+    if (price == null || price <= 0) {
+      showAppError(context, _t('fleet.ship.price.required'));
+      return;
+    }
+    if (_cod && (cod == null || cod < 1)) {
+      showAppError(context, _t('fleet.ship.cod.required'));
+      return;
+    }
+
+    setState(() => _saving = true);
+    final error = await context.read<FleetState>().createFleetOrderFromDepot({
+      'pickupDepotUuid': widget.depot.uuid,
+      'dropoffLocationName': name,
+      'dropoffLatitude': _point!.latitude,
+      'dropoffLongitude': _point!.longitude,
+      if (_city != null) 'dropoffCity': _city,
+      if (_province != null) 'dropoffProvince': _province,
+      if (_neighborhood != null) 'dropoffNeighborhood': _neighborhood,
+      'dropoffContactName': name,
+      'dropoffContactPhone': phone,
+      if (_itemDesc.text.trim().isNotEmpty)
+        'items': [
+          {'description': _itemDesc.text.trim(), 'quantity': 1}
+        ],
+      'price': price,
+      if (_cod && cod != null) ...{
+        'codAmount': cod,
+        'codIncludesDelivery': false,
+      },
+      if (_driverUuid != null) 'targetDriverUuid': _driverUuid,
+    });
+    if (!mounted) return;
+    if (error != null) {
+      setState(() => _saving = false);
+      showAppError(context, error);
+      return;
+    }
+    Navigator.of(context).pop();
+    showAppSnackBar(context, _t('fleet.ship.created'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drivers = context.watch<FleetState>().drivers;
+
+    return Scaffold(
+      appBar: AppBar(title: Text(_t('fleet.ship.title'))),
+      body: ListView(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.warehouse_outlined),
+              title: Text(_t('fleet.ship.from', )),
+              subtitle: Text(widget.depot.name),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          TextField(
+            controller: _name,
+            enabled: !_saving,
+            decoration: InputDecoration(labelText: _t('fleet.ship.client.name')),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          TextField(
+            controller: _phone,
+            enabled: !_saving,
+            keyboardType: TextInputType.phone,
+            decoration: InputDecoration(labelText: _t('fleet.ship.client.phone')),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          OutlinedButton.icon(
+            onPressed: _saving ? null : _pickOnMap,
+            icon: Icon(_point == null ? Icons.add_location_alt : Icons.edit_location_alt),
+            label: Text(
+              _point == null
+                  ? _t('fleet.ship.dropoff.set')
+                  : [_neighborhood, _city, _province]
+                      .whereType<String>()
+                      .where((e) => e.trim().isNotEmpty)
+                      .join(', ')
+                      .ifEmpty(_t('fleet.ship.dropoff.set')),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          TextField(
+            controller: _itemDesc,
+            enabled: !_saving,
+            decoration: InputDecoration(labelText: _t('fleet.ship.item')),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          TextField(
+            controller: _price,
+            enabled: !_saving,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: _t('fleet.ship.price'),
+              helperText: _t('fleet.ship.price.hint'),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _cod,
+            onChanged: _saving ? null : (v) => setState(() => _cod = v),
+            title: Text(_t('fleet.ship.cod')),
+          ),
+          if (_cod)
+            TextField(
+              controller: _codAmount,
+              enabled: !_saving,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: _t('fleet.ship.cod.amount')),
+            ),
+          const SizedBox(height: AppSpacing.lg),
+          DropdownButtonFormField<String?>(
+            initialValue: _driverUuid,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: _t('fleet.ship.driver'),
+              helperText: _t('fleet.ship.driver.hint'),
+              border: const OutlineInputBorder(),
+            ),
+            items: [
+              DropdownMenuItem<String?>(
+                value: null,
+                child: Text(_t('fleet.ship.driver.later')),
+              ),
+              for (final d in drivers)
+                DropdownMenuItem<String?>(
+                  value: d['uuid'] as String?,
+                  child: Text((d['name'] as String?) ?? '—',
+                      overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: (v) => setState(() => _driverUuid = v),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+          FilledButton(
+            onPressed: _saving ? null : _submit,
+            child: _saving
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(_t('fleet.ship.submit')),
           ),
         ],
       ),

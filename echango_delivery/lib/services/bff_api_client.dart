@@ -1009,6 +1009,13 @@ class BffApiClient {
     await _delete('/flotte/depots/$id');
   }
 
+  /// Le transporteur crée une course depuis un de ses dépôts (spec §3.3).
+  /// Rend l'identifiant Fleetbase de la course créée.
+  Future<String?> createFleetOrder(Map<String, dynamic> body) async {
+    final data = await _post('/flotte/commandes', body);
+    return (data is Map ? data['fleetbaseOrderId'] : null) as String?;
+  }
+
   /// Prendre une course du pool.
   ///
   /// Le second arrivant reçoit `order.already_taken` : le serveur relit après

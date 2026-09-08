@@ -10,6 +10,7 @@ import {
   SaveServiceZoneDto,
 } from './dto/order.dto';
 import { SaveDepotDto } from './dto/depot.dto';
+import { CreateFleetOrderDto } from './dto/create-fleet-order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
@@ -104,6 +105,16 @@ export class FlotteController {
   @Get('commandes')
   async getOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {
     return this.flotteService.getOrders(this.fleetId(req), query);
+  }
+
+  /**
+   * Le transporteur crée une course **depuis un de ses dépôts** vers un client
+   * (spec §3.3). `customer_uuid` = son `Vendor` ; `pickup` = un dépôt à lui
+   * (`assertOwnsDepot`).
+   */
+  @Post('commandes')
+  async createOrder(@Request() req: any, @Body() body: CreateFleetOrderDto) {
+    return this.flotteService.createFleetOrder(this.fleetId(req), body);
   }
 
   /**
