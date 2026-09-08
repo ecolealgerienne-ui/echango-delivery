@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'driver_picker.dart';
 import 'memberships_tab.dart';
+import '../../config/wilayas.dart';
 import '../../i18n/fleet_strings.dart';
 import '../../models/fleet_order_state.dart';
 import '../../models/vehicle_type.dart';
@@ -358,6 +359,7 @@ class _OpportunitiesTab extends StatelessWidget {
 
     return Column(
       children: [
+        _ServiceZoneBanner(t: t),
         _OpportunityFilterBar(t: t, locale: locale),
         if (masked)
           Container(
@@ -1004,4 +1006,313 @@ Future<void> _pickDriver(
   if (!context.mounted) return;
   if (result.outcome != DriverAssignment.failed) return;
   showAppError(context, result.message ?? t('fleet.detail.not_found'));
+}
+
+/// Le bandeau de zone de service, au-dessus de la barre de tri.
+///
+/// ── Pourquoi toujours visible, et pourquoi ici ────────────────────────────
+///
+/// Un filtre RETIRE des courses. Comme la zone du conducteur (`zone_card.dart`),
+/// mal compris il se lit comme une panne : l'entreprise ouvre l'onglet, voit
+/// peu, et n'a aucun moyen de deviner que c'est elle qui l'a demandé. Le
+/// bandeau dit **toujours** l'état en clair — « Toutes les wilayas » ou la
+/// liste — et donne l'accès au réglage à l'endroit exact où il agit.
+class _ServiceZoneBanner extends StatelessWidget {
+  const _ServiceZoneBanner({required this.t});
+
+  final _Translate t;
+
+  @override
+  Widget build(BuildContext context) {
+    final zone = context.watch<FleetState>().serviceZone;
+    final scheme = Theme.of(context).colorScheme;
+    final label = zone.isEmpty ? t('fleet.zone.all') : zone.join(', ');
+
+    return Material(
+      color: scheme.surface,
+      child: InkWell(
+        onTap: () => _openZoneEditor(context, t),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.place_outlined, size: 18, color: scheme.onSurfaceVariant),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: RichText(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  text: TextSpan(
+                    style: Theme.of(context).textTheme.bodySmall,
+                    children: [
+                      TextSpan(
+                        text: '${t('fleet.zone.label')} : ',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                      TextSpan(
+                        text: label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                t('fleet.zone.edit'),
+                style: TextStyle(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _openZoneEditor(BuildContext context, _Translate t) async {
+  final state = context.read<FleetState>();
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => ChangeNotifierProvider<FleetState>.value(
+      value: state,
+      child: _ServiceZoneEditor(t: t),
+    ),
+  );
+}
+
+/// L'éditeur de zone : la liste des wilayas desservies, en chips retirables,
+/// plus un sélecteur pour en ajouter.
+class _ServiceZoneEditor extends StatefulWidget {
+  const _ServiceZoneEditor({required this.t});
+
+  final _Translate t;
+
+  @override
+  State<_ServiceZoneEditor> createState() => _ServiceZoneEditorState();
+}
+
+class _ServiceZoneEditorState extends State<_ServiceZoneEditor> {
+  late List<String> _selected;
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  _Translate get t => widget.t;
+
+  @override
+  void initState() {
+    super.initState();
+    // Partir de l'état RÉEL du serveur, pas d'un écho de la liste — un refus
+    // silencieux se verrait alors ici (même parti pris que `zone_card.dart`).
+    _selected = List.of(context.read<FleetState>().serviceZone);
+    _load();
+  }
+
+  Future<void> _load() async {
+    final fresh = await context.read<FleetState>().loadServiceZone();
+    if (!mounted) return;
+    setState(() {
+      if (fresh != null) _selected = List.of(fresh);
+      _error = fresh == null ? t('fleet.zone.load_failed') : null;
+      _loading = false;
+    });
+  }
+
+  Future<void> _save(List<String> wilayas) async {
+    setState(() => _saving = true);
+    final error = await context.read<FleetState>().saveServiceZone(wilayas);
+    if (!mounted) return;
+    if (error != null) {
+      setState(() => _saving = false);
+      showAppError(context, error);
+      return;
+    }
+    Navigator.of(context).pop();
+    showAppSnackBar(
+      context,
+      t(wilayas.isEmpty ? 'fleet.zone.cleared' : 'fleet.zone.saved'),
+    );
+  }
+
+  Future<void> _add() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _WilayaPicker(t: t, exclude: _selected),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selected = [..._selected, picked]);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
+        top: AppSpacing.sm,
+        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(t('fleet.zone.title'),
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: AppSpacing.xs),
+          Text(t('fleet.zone.explain'),
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: AppSpacing.md),
+          if (_error != null) ...[
+            AppErrorBanner(message: _error!),
+            const SizedBox(height: AppSpacing.md),
+          ],
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else ...[
+            if (_selected.isEmpty)
+              Text(
+                t('fleet.zone.none_selected'),
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              )
+            else
+              Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.xs,
+                children: [
+                  for (final w in _selected)
+                    InputChip(
+                      label: Text(w),
+                      onDeleted: _saving
+                          ? null
+                          : () => setState(() =>
+                              _selected = _selected.where((x) => x != w).toList()),
+                    ),
+                ],
+              ),
+            const SizedBox(height: AppSpacing.md),
+            OutlinedButton.icon(
+              onPressed: _saving ? null : _add,
+              icon: const Icon(Icons.add, size: 18),
+              label: Text(t('fleet.zone.add')),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _saving ? null : () => _save(_selected),
+                    child: _saving
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(t('fleet.zone.save')),
+                  ),
+                ),
+                if (_selected.isNotEmpty) ...[
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving ? null : () => _save(const []),
+                      child: Text(t('fleet.zone.clear')),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Le sélecteur d'une wilaya : la liste des 58, filtrable, moins celles déjà
+/// choisies. Rend la wilaya choisie via `Navigator.pop`.
+class _WilayaPicker extends StatefulWidget {
+  const _WilayaPicker({required this.t, required this.exclude});
+
+  final _Translate t;
+  final List<String> exclude;
+
+  @override
+  State<_WilayaPicker> createState() => _WilayaPickerState();
+}
+
+class _WilayaPickerState extends State<_WilayaPicker> {
+  final _query = TextEditingController();
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _query.text.trim().toLowerCase();
+    final options = algerianWilayas
+        .where((w) => !widget.exclude.contains(w))
+        .where((w) => q.isEmpty || w.toLowerCase().contains(q))
+        .toList();
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
+        top: AppSpacing.sm,
+        bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _query,
+            autofocus: true,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: widget.t('fleet.zone.search'),
+              prefixIcon: const Icon(Icons.search),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.45,
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: options.length,
+              itemBuilder: (_, i) => ListTile(
+                title: Text(options[i]),
+                onTap: () => Navigator.of(context).pop(options[i]),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Query, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, Request } from '@nestjs/common';
 import { FleetbaseIdPipe } from '../common/pipes/fleetbase-id.pipe';
 import { FlotteService } from './flotte.service';
 import { Persona } from '../common/decorators/persona.decorator';
@@ -7,6 +7,7 @@ import {
   ListClaimableOrdersQueryDto,
   AssignDriverDto,
   DriverPositionsQueryDto,
+  SaveServiceZoneDto,
 } from './dto/order.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
@@ -47,6 +48,24 @@ export class FlotteController {
   // ⚠️ Conséquence assumée : l'entreprise **répond des espèces de ses
   // conducteurs**, et elle en tient le compte chez elle. La plateforme lui dit
   // ce qui a été déclaré à chaque porte, pas ce que chacun lui doit.
+
+  /**
+   * La zone de service — les wilayas où cette entreprise prend des courses
+   * libres. `[]` = toutes.
+   *
+   * ⚠️ `zone` est un segment littéral, pas un identifiant : la garder distincte
+   * de `commandes/:id` évite qu'un jour quelqu'un la transforme en route à
+   * paramètre.
+   */
+  @Get('zone')
+  async getServiceZone(@Request() req: any) {
+    return this.flotteService.getServiceZone(this.fleetId(req));
+  }
+
+  @Put('zone')
+  async saveServiceZone(@Request() req: any, @Body() body: SaveServiceZoneDto) {
+    return this.flotteService.saveServiceZone(this.fleetId(req), body.wilayas);
+  }
 
   @Get('commandes')
   async getOrders(@Request() req: any, @Query() query: ListFleetOrdersQueryDto) {

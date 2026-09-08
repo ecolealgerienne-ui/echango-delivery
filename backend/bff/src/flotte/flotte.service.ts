@@ -11,6 +11,8 @@ import {
   opportunityFacets,
   sortOpportunities,
 } from '../common/orders/opportunity-filters';
+import { filterByServiceZone } from '../common/orders/fleet-zone';
+import { FleetZoneService } from '../fleetbase/fleet-zone.service';
 import {
   projectOrderForFleet,
   projectDriverForFleet,
@@ -34,7 +36,31 @@ export class FlotteService {
     private fleetbaseClient: FleetbaseApiClient,
     private configService: ConfigService,
     private audit: AuditService,
+    private fleetZone: FleetZoneService,
   ) {}
+
+  /**
+   * La zone de service déclarée — les wilayas où cette entreprise prend des
+   * courses libres. `[]` = toutes (aucune préférence).
+   */
+  async getServiceZone(fleetId: string): Promise<{ wilayas: string[] }> {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    return this.fleetZone.read(fleet.fleetbaseVendorUuid);
+  }
+
+  /**
+   * Enregistre la zone de service, puis **relit** — le stockage est chez
+   * Fleetbase, et rendre ce qu'on vient d'envoyer masquerait un refus
+   * silencieux (le mode d'échec habituel de cette API).
+   */
+  async saveServiceZone(
+    fleetId: string,
+    wilayas: string[],
+  ): Promise<{ wilayas: string[] }> {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    await this.fleetZone.write(fleet.fleetbaseVendorUuid, wilayas);
+    return this.fleetZone.read(fleet.fleetbaseVendorUuid);
+  }
 
   /**
    * List orders belonging to this fleet's Vendor.
@@ -125,7 +151,7 @@ export class FlotteService {
    * ce sont eux qui permettent de décider.
    */
   async getClaimableOrders(fleetId: string, query: ListClaimableOrdersQueryDto) {
-    await this.getFleetWithValidation(fleetId);
+    const fleet = await this.getFleetWithValidation(fleetId);
 
     try {
       const free = await this.fleetbaseClient.fetchEveryOrder(100, 50, {
@@ -144,7 +170,16 @@ export class FlotteService {
         await this.hydratePage(free.filter((o: any) => this.isClaimable(o)))
       ).map((o: any) => this.withEffectiveMeta(o));
 
-      const filtered = filterOpportunities(hydrated, {
+      // ── Palier 1 : la zone de service, avant tout le reste ────────────────
+      //
+      // Les wilayas déclarées par l'entreprise bornent d'abord le pool qu'elle
+      // voit ; les chips de tri/filtre (Palier 2) trient ensuite DANS cette
+      // zone. `filterByServiceZone` porte le même biais que `zoneAllowsPickup`
+      // côté conducteur : zone vide ⇒ tout, course sans wilaya connue ⇒ visible.
+      const zone = await this.fleetZone.read(fleet.fleetbaseVendorUuid);
+      const inZone = filterByServiceZone(hydrated, zone.wilayas);
+
+      const filtered = filterOpportunities(inZone, {
         wilaya: query.wilaya,
         vehicleType: query.vehicleType,
         withoutCod: query.withoutCod === 'true',
@@ -158,9 +193,12 @@ export class FlotteService {
 
       return {
         data: paged.map((o: any) => projectOrderForFleet(o, {}, { unclaimed: true })),
-        // Facettes calculées sur l'ensemble AVANT filtrage : les chips de l'app
-        // restent stables (le filtre réduit `data`, jamais `facets`).
-        facets: opportunityFacets(hydrated),
+        // Facettes calculées sur le pool DÉJÀ borné par la zone, mais AVANT les
+        // filtres de chips : proposer une wilaya hors zone de service n'aurait
+        // pas de sens, mais les chips restent stables entre elles.
+        facets: opportunityFacets(inZone),
+        // La zone active, pour que l'écran l'affiche sans un second appel.
+        serviceZone: zone.wilayas,
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       };
     } catch (error) {

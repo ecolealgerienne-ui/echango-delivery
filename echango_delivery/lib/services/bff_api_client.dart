@@ -941,6 +941,26 @@ class BffApiClient {
         as Map<String, dynamic>;
   }
 
+  /// Les wilayas où cette entreprise prend des courses libres. Liste vide =
+  /// toutes.
+  Future<List<String>> getFleetServiceZone() async {
+    final data = await _get('/flotte/zone');
+    return _wilayasOf(data);
+  }
+
+  /// Enregistre la zone de service. Une liste **vide efface** la préférence.
+  /// Relit depuis la réponse serveur — un refus silencieux se verrait là.
+  Future<List<String>> saveFleetServiceZone(List<String> wilayas) async {
+    final data = await _put('/flotte/zone', {'wilayas': wilayas});
+    return _wilayasOf(data);
+  }
+
+  List<String> _wilayasOf(Object? data) {
+    final raw = data is Map ? data['wilayas'] : null;
+    if (raw is! List) return const [];
+    return raw.whereType<String>().where((s) => s.isNotEmpty).toList();
+  }
+
   /// Prendre une course du pool.
   ///
   /// Le second arrivant reçoit `order.already_taken` : le serveur relit après

@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBooleanString,
   IsInt,
   IsOptional,
@@ -83,6 +85,23 @@ export class ListClaimableOrdersQueryDto extends ListFleetOrdersQueryDto {
 export class AssignDriverDto {
   @IsString()
   driverId: string;
+}
+
+/**
+ * La zone de service d'une entreprise : les wilayas où elle prend des courses
+ * libres. Un tableau **vide efface** la préférence (toutes wilayas).
+ *
+ * ⚠️ Pas de liste fermée de wilayas ici, délibérément — comme
+ * `transporteur.dto.ts` : figer les 58 noms dans le DTO ferait refuser une
+ * wilaya renommée ou créée. La borne est la **longueur** (une wilaya au plus
+ * 60 caractères, 58 au plus dans la liste).
+ */
+export class SaveServiceZoneDto {
+  @IsArray()
+  @ArrayMaxSize(58)
+  @IsString({ each: true })
+  @MaxLength(60, { each: true })
+  wilayas: string[];
 }
 
 /**

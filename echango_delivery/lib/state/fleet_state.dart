@@ -144,6 +144,11 @@ class FleetState extends ChangeNotifier {
   List<String> _opportunityWilayas = const [];
   List<String> _opportunityVehicleTypes = const [];
 
+  /// Les wilayas où l'entreprise prend des courses libres (Palier 1). Liste
+  /// vide = toutes. Renseignée par la réponse de la liste, ou par un appel
+  /// dédié depuis l'éditeur.
+  List<String> _serviceZone = const [];
+
   List<Map<String, dynamic>> get orders => _ordersPage.items;
   List<Map<String, dynamic>> get opportunities => _opportunitiesPage.items;
   List<Map<String, dynamic>> get drivers => List.unmodifiable(_drivers);
@@ -170,6 +175,10 @@ class FleetState extends ChangeNotifier {
   List<String> get opportunityWilayas => List.unmodifiable(_opportunityWilayas);
   List<String> get opportunityVehicleTypes =>
       List.unmodifiable(_opportunityVehicleTypes);
+
+  /// Les wilayas desservies. Vide = toutes.
+  List<String> get serviceZone => List.unmodifiable(_serviceZone);
+  bool get hasServiceZone => _serviceZone.isNotEmpty;
 
   Locale get _locale => _localeState.locale;
 
@@ -301,6 +310,37 @@ class FleetState extends ChangeNotifier {
     }
   }
 
+  /// Lit la zone de service depuis le serveur — pour l'éditeur, qui doit partir
+  /// de l'état réel et non d'un écho. Rend `null` en cas d'échec (l'éditeur
+  /// l'affiche), jamais une liste vide qui se confondrait avec « toutes ».
+  Future<List<String>?> loadServiceZone() async {
+    try {
+      _serviceZone = await _apiClient.getFleetServiceZone();
+      notifyListeners();
+      return _serviceZone;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Enregistre la zone de service, puis recharge **la seule liste des courses
+  /// libres** — c'est elle que la zone borne. Rend `null` en cas de succès, ou
+  /// le message d'erreur traduit.
+  Future<String?> saveServiceZone(List<String> wilayas) async {
+    try {
+      _serviceZone = await _apiClient.saveFleetServiceZone(wilayas);
+      notifyListeners();
+      final page = await _fetchOpportunities(page: 1);
+      _opportunitiesPage.reset(_rows(page), _total(page));
+      _captureFacets(page);
+      _opportunitiesUnavailable = false;
+      notifyListeners();
+      return null;
+    } catch (e) {
+      return messageForError(e, _locale);
+    }
+  }
+
   Future<Map<String, dynamic>> _fetchOpportunities({required int page}) {
     return _apiClient.getFleetOpportunities(
       page: page,
@@ -316,9 +356,15 @@ class FleetState extends ChangeNotifier {
   /// `{}` (lecture échouée) ne doit pas vider des chips encore valides.
   void _captureFacets(Map<String, dynamic> page) {
     final facets = page['facets'];
-    if (facets is! Map) return;
-    _opportunityWilayas = _stringList(facets['wilayas']);
-    _opportunityVehicleTypes = _stringList(facets['vehicleTypes']);
+    if (facets is Map) {
+      _opportunityWilayas = _stringList(facets['wilayas']);
+      _opportunityVehicleTypes = _stringList(facets['vehicleTypes']);
+    }
+    // La zone de service voyage avec la liste : le bandeau l'affiche sans un
+    // second appel. Même prudence — on ne l'écrase que si le champ est présent.
+    if (page['serviceZone'] is List) {
+      _serviceZone = _stringList(page['serviceZone']);
+    }
   }
 
   List<String> _stringList(Object? raw) {

@@ -115,6 +115,29 @@ const Map<String, String> _fr = {
   'fleet.opportunities.masked':
       'Nom et téléphone du destinataire communiqués une fois la course prise.',
 
+  // ── Zone de service (Palier 1) ─────────────────────────────────────────
+  //
+  // ⚠️ Comme la zone du conducteur : un filtre RETIRE des courses, et mal
+  // compris il se lit comme une panne. Le bandeau dit toujours l'état en clair,
+  // et le retrait est visible dès qu'une wilaya est choisie.
+  'fleet.zone.label': 'Zone de service',
+  'fleet.zone.all': 'Toutes les wilayas',
+  'fleet.zone.edit': 'Modifier',
+  'fleet.zone.title': 'Wilayas desservies',
+  'fleet.zone.explain':
+      'Seules les courses libres dont l’enlèvement se trouve dans ces wilayas '
+          'vous sont proposées. Aucune choisie : vous les voyez toutes.',
+  'fleet.zone.add': 'Ajouter une wilaya',
+  'fleet.zone.search': 'Chercher une wilaya',
+  'fleet.zone.none_selected':
+      'Aucune wilaya choisie — vous voyez toutes les courses libres.',
+  'fleet.zone.save': 'Enregistrer',
+  'fleet.zone.clear': 'Tout afficher',
+  'fleet.zone.saved': 'Zone enregistrée.',
+  'fleet.zone.cleared': 'Zone effacée — toutes les wilayas.',
+  'fleet.zone.save_failed': 'Impossible d’enregistrer la zone. Réessayez.',
+  'fleet.zone.load_failed': 'Impossible de lire votre zone pour le moment.',
+
   // ── Tri et filtres de « Courses libres » ────────────────────────────────
   //
   // ⚠️ Appliqués côté serveur, avant pagination (voir `FleetOpportunityFilters`).
@@ -336,6 +359,23 @@ const Map<String, String> _ar = {
   'fleet.opportunities.taken': 'تم أخذ الرحلة. عيّن سائقاً.',
   'fleet.opportunities.no_detail': 'لا توجد تفاصيل — افتح البطاقة.',
   'fleet.opportunities.masked': 'يُكشف اسم المستلم ورقم هاتفه بعد أخذ الرحلة.',
+
+  'fleet.zone.label': 'منطقة الخدمة',
+  'fleet.zone.all': 'كل الولايات',
+  'fleet.zone.edit': 'تعديل',
+  'fleet.zone.title': 'الولايات المخدومة',
+  'fleet.zone.explain':
+      'لا تُعرض عليك سوى الرحلات المتاحة التي يقع استلامها في هذه الولايات. '
+          'إن لم تختر أيّاً، تراها كلها.',
+  'fleet.zone.add': 'إضافة ولاية',
+  'fleet.zone.search': 'ابحث عن ولاية',
+  'fleet.zone.none_selected': 'لم تختر أي ولاية — تُعرض عليك كل الرحلات المتاحة.',
+  'fleet.zone.save': 'حفظ',
+  'fleet.zone.clear': 'عرض الكل',
+  'fleet.zone.saved': 'تم حفظ المنطقة.',
+  'fleet.zone.cleared': 'تم مسح المنطقة — كل الولايات.',
+  'fleet.zone.save_failed': 'تعذّر حفظ المنطقة. أعد المحاولة.',
+  'fleet.zone.load_failed': 'تعذّر قراءة منطقتك حالياً.',
 
   'fleet.opportunities.sort': 'ترتيب',
   'fleet.opportunities.sort.recent': 'الأحدث',
