@@ -117,6 +117,13 @@ SCENARIOS=(
   # dépôt permissive -> 201 au lieu de 404 ; somme des cod remplacée par le
   # premier -> témoin cod_amount echoue.
   test-tournee-creation
+  # TOURNÉE, cote CONDUCTEUR (spec §4, points 1 & 2) : il demarre la tournee,
+  # Fleetbase avance current_waypoint_uuid arret par arret, le BFF consigne
+  # chaque encaissement dans meta.stop_collections sans reecrire les
+  # precedents, le dernier arret cloture la commande. Livraison COD sans
+  # declaration -> refusee. Mutation : recordStopCollection lit meta.cod_amount
+  # (total) au lieu de l'arret -> la 1re livraison reclame 2000.
+  test-tournee-conducteur
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
