@@ -117,7 +117,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
         final confirm = find.descendant(
             of: find.byType(BottomSheet), matching: find.byType(FilledButton));
-        await tester.tap(confirm, warnIfMissed: false);
+        await tester.ensureVisible(confirm.first);
+        await tester.pumpAndSettle(const Duration(milliseconds: 200));
+        await tester.tap(confirm.first);
         await pumpUntilGone(tester, find.byType(BottomSheet),
             reason: 'le tiroir se referme',
             timeout: const Duration(seconds: 40),
@@ -153,7 +155,19 @@ Future<bool> _tapNextAction(WidgetTester tester) async {
     if (find.byType(BottomSheet).evaluate().isNotEmpty) return true;
     final buttons = find.byType(FilledButton);
     if (buttons.evaluate().isNotEmpty) {
-      await tester.tap(buttons.first, warnIfMissed: false);
+      final target = buttons.first;
+      // ⚠️ La colonne d'actions est le DERNIER enfant d'une fiche qui défile,
+      // sous la liste des arrêts : son bouton est hors écran. `tester.tap` sans
+      // `ensureVisible` tapait dans le vide (hit-test manqué, silencieux avec
+      // `warnIfMissed: false`) — la tournée n'avançait jamais, l'encaissement
+      // ne s'ouvrait pas. C'est le piège que `scrollUntilFound` documente.
+      try {
+        await tester.ensureVisible(target);
+        await tester.pumpAndSettle(const Duration(milliseconds: 300));
+      } catch (_) {
+        // déjà visible, ou pas de Scrollable : on tape quand même
+      }
+      await tester.tap(target);
       await tester.pump(const Duration(milliseconds: 500));
       return true;
     }

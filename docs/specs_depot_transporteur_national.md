@@ -319,24 +319,25 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    COD **de l'arrêt** jamais le total, l'arrêt courant, « Encaissé » une fois
    honoré) + `tournee_stops_widget_test.dart` (vue suivi vs conducteur,
    expurgation par arrêt) + `order_tournee_test.dart` (11 cas de parsing).
-   🟡 **Parcours `flutter drive`** écrit et committé
-   (`integration_test/tournee_conducteur_test.dart` + décor dans
-   `provision-app-parcours.sh`), **franchit connexion → tableau de bord →
-   liste « En cours » → ouverture de la fiche de la tournée** (8 exécutions,
-   chaque blocage levé un par un). Reste non vert : la fiche ne rend pas
-   `TourneeStops` dans la fenêtre du test — **l'organisation Fleetbase de test
-   porte 1 350 commandes**, et chaque appel conducteur au BFF fait un
-   `fetchEveryOrder` (~12-13 s mesuré) ; `_fetchDetail` en enchaîne deux
-   (`getOrder` + `getNextActivities`), soit ~25 s par ouverture de fiche, au
-   bord des délais du parcours. Le BFF **sert pourtant la tournée correctement**
-   (HTTP 200, `payload.waypoints` = 3, types `pickup/dropoff/dropoff`,
-   `current_waypoint_uuid`, `meta.cod_amount` = 2000 — vérifié en `curl`).
-   Contournements posés : relai `:3000` pour le forwarding localhost WSL2↔Windows
-   cassé sur `:3001`, `adb reverse`, nettoyage du bucket « En cours » du
-   conducteur. À rejouer sur une org allégée (même contamination que
-   `test-optimisation-parcours.sh`, qui a trouvé 425 adhoc accumulées). La
-   **mécanique** et le **rendu des écrans** sont prouvés par le banc `curl`
-   ci-dessus et les widget tests.
+   ✅ **Parcours `flutter drive` VERT** (`integration_test/tournee_conducteur_test.dart`
+   + décor dans `provision-app-parcours.sh`) : le conducteur se connecte,
+   ouvre la tournée dans « En cours », la fiche rend `TourneeStops` (un
+   enlèvement, deux livraisons, COD **de l'arrêt** 1300 puis 700), puis avance
+   arrêt par arrêt via les boutons de transition — à chaque arrêt à COD la
+   feuille d'encaissement s'ouvre et annonce le montant **de l'arrêt** (jamais
+   le total 2000) ; à la fin les trois arrêts portent « honoré » et les deux
+   livraisons « Encaissé : X ».
+   Deux blocages levés pour y arriver :
+   (a) **`resolveOrder` faisait un `fetchEveryOrder`** (~12-13 s sur l'org de
+   test à 1 350 commandes) juste pour traduire `orderId → uuid` — remplacé par
+   une lecture directe `int/v1` (`getById` matche uuid **ou** public_id) :
+   l'ouverture de fiche passe de ~25 s à < 1 s (commit
+   « resolveOrder par lecture directe »).
+   (b) La colonne d'actions est le dernier enfant d'une fiche qui défile : le
+   `tester.tap` du parcours tapait **hors écran** (hit-test manqué, silencieux
+   avec `warnIfMissed: false`) — corrigé par un `ensureVisible` avant chaque tap.
+   Contournements réseau posés : relai `:3000` (forwarding localhost WSL2↔Windows
+   cassé sur `:3001`), `adb reverse`, `--dart-define=BFF_BASE_URL=http://10.0.2.2:3000`.
 2. **Encaissement par arrêt.** ✅ **FAIT + éprouvé serveur** — `resolveStopCollection`
    (noyau pur, `common/money/collection.ts`, 8 cas jest dont 4 refus) +
    `recordStopCollection`. `update-activity` complète l'arrêt courant : la
@@ -344,8 +345,11 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    sans réécrire les autres ; `collected_amount` = somme courante. Arrêt courant :
    `cash.waypointUuid` (app) ou `payload.current_waypoint_uuid`. Immuable arrêt
    par arrêt. App : « Encaissé : X » sur un arrêt honoré. Prouvé de bout en bout
-   par `test-tournee-conducteur.sh` (1200 puis 800, total 2000). ⬜ Reste : le
-   pas-à-pas aux écrans.
+   par `test-tournee-conducteur.sh` (1200 puis 800, total 2000). ✅ **Pas-à-pas
+   aux écrans** éprouvé par `integration_test/tournee_conducteur_test.dart`
+   (`flutter drive`, émulateur) : la feuille d'encaissement s'ouvre à chaque
+   arrêt à COD, annonce le montant de l'arrêt (1300 puis 700), et l'arrêt
+   passe à « Encaissé : X ».
 3. **`POST /commercant/tournees`.** ✅ **FAIT** — `commercant.service.createTournee` :
    `customer` = le `Vendor` du commerçant, `targetUuid` = un favori (driver/fleet),
    arrêt = un dépôt du réseau (`resolveDestinationDepot`) ou un lieu créé,
