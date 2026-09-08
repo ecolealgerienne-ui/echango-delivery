@@ -81,6 +81,14 @@ const String optimizeSuggestionFee =
 const String fleetDriverName = String.fromEnvironment('TEST_FLEET_DRIVER_NAME',
     defaultValue: 'Conducteur Flotte Parcours');
 
+/// Le **prix distinctif** de la TOURNÉE démarrée confiée au conducteur (spec §4).
+/// 3 arrêts, deux avec COD (1300 puis 700). Posée par
+/// `scripts/provision-app-parcours.sh` via `POST /commercant/tournees` +
+/// `targetUuid` + `/demarrer`. Le parcours la reconnaît à ce prix, l'ouvre, et
+/// fait avancer ses arrêts.
+const String tourneeFee =
+    String.fromEnvironment('TEST_TOURNEE_FEE', defaultValue: '5252');
+
 /// Trouve la ligne d'une liste dont un texte contient [needle], casse ignorée.
 ///
 /// ⚠️ Casse ignorée parce que **Fleetbase rend les noms de lieux en

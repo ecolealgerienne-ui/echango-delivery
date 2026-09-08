@@ -689,6 +689,50 @@ else
   pass "Course suggestion publiée près de la dépose — prix $OPTIMIZE_SUGGESTION_FEE"
 fi
 
+# ── Tournée confiée au conducteur, DÉMARRÉE (spec §4) ──────────────────────
+#
+# Le parcours conducteur à N arrêts a besoin d'une tournée EN COURS, au premier
+# arrêt : il ouvre la fiche, voit la liste ordonnée (`TourneeStops`), fait
+# avancer les activités arrêt par arrêt et déclare l'encaissement à chaque
+# porte. Prix distinctif pour la reconnaître ; 3 arrêts, deux avec COD.
+step "Tournée confiée au conducteur (spec §4), démarrée"
+
+TOURNEE_FEE="${TOURNEE_FEE:-5252}"
+
+mapi POST /commercant/transporteurs/favoris \
+  "$(jq -n --arg u "$DRIVER_UUID" '{fleetbaseDriverUuid:$u, partyType:"driver"}')" >/dev/null 2>&1 || true
+
+tournee="$(dapi GET '/transporteur/commandes' \
+  | jq -r --argjson f "$TOURNEE_FEE" 'first((.active // [])[]?
+       | select((.meta.price // .price) == $f)
+       | select(((.payload.waypoints // []) | length) >= 2)
+       | select(.status != "completed" and .status != "canceled" and .status != "cancelled"))
+       | (.public_id // .id // .uuid // empty)' 2>/dev/null || true)"
+if [ -n "$tournee" ] && [ "$tournee" != "null" ]; then
+  info "tournée (prix $TOURNEE_FEE) déjà en cours"
+else
+  body="$(jq -n --arg t "$DRIVER_UUID" --argjson fee "$TOURNEE_FEE" '{
+    price: $fee, podMethod: "aucune", targetUuid: $t,
+    stops: [
+      { type: "pickup", latitude: 36.7550, longitude: 3.0450,
+        contactName: "Mon magasin", contactPhone: "0551020304", province: "Alger",
+        items: [{description: "colis", quantity: 2}] },
+      { type: "dropoff", latitude: 36.7300, longitude: 3.0700,
+        contactName: "Client Tournee Nord", contactPhone: "0551020305", province: "Alger",
+        items: [{description: "colis A", quantity: 1}], codAmount: 1300 },
+      { type: "dropoff", latitude: 36.7000, longitude: 3.1200,
+        contactName: "Client Tournee Sud", contactPhone: "0551020306", province: "Blida",
+        items: [{description: "colis B", quantity: 1}], codAmount: 700 }
+    ] }')"
+  out="$(mapi POST /commercant/tournees "$body")"
+  is_error <<<"$out" && fail "Création de la tournée refusée" "$out"
+  tid="$(jq -r '.fleetbaseOrderId // empty' <<<"$out")"
+  [ -n "$tid" ] || fail "Tournée créée sans identifiant Fleetbase" "$out"
+  # Le conducteur la démarre : le test la trouve EN COURS, au premier arrêt.
+  dapi POST "/transporteur/commandes/$tid/demarrer" '{}' >/dev/null 2>&1 || true
+  pass "Tournée confiée + démarrée — prix $TOURNEE_FEE, 3 arrêts (COD 1300 + 700)"
+fi
+
 # ── Entreprise : un conducteur de flotte + « Mes courses » vide ─────────────
 #
 # ⚠️ Deux manques pour le parcours « l'entreprise réclame puis affecte » :
@@ -759,7 +803,8 @@ cat <<CMD
     --dart-define=TEST_CONFIDED_FEE=$CONFIDED_FEE \\
     --dart-define=TEST_OPTIMIZE_REF_FEE=$OPTIMIZE_REF_FEE \\
     --dart-define=TEST_OPTIMIZE_SUGGESTION_FEE=$OPTIMIZE_SUGGESTION_FEE \\
-    --dart-define=TEST_FLEET_DRIVER_NAME="$FLEET_DRIVER_NAME"
+    --dart-define=TEST_FLEET_DRIVER_NAME="$FLEET_DRIVER_NAME" \\
+    --dart-define=TEST_TOURNEE_FEE=$TOURNEE_FEE
 CMD
 echo
 info "L'application vise déjà http://10.0.2.2:3001 (ApiConfig.bffBaseUrl),"
