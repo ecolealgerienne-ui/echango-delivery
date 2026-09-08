@@ -787,8 +787,34 @@ export class FleetbaseApiClient {
     order_config_uuid: string;
     customer_uuid: string;
     customer_type?: string;
+    /** Le facilitateur (une entreprise de transport) — colonnes natives. */
+    facilitator_uuid?: string;
+    facilitator_type?: string;
     type?: string;
-    payload: { pickup_uuid: string; dropoff_uuid: string };
+    /**
+     * Deux points, OU une **tournée multi-arrêt** (spec §4).
+     *
+     * ⚠️ `CreateOrderRequest` (source `fleetops`) : si `payload.waypoints` est
+     * absent, `pickup_uuid`/`dropoff_uuid` sont requis ; s'il est présent, il
+     * doit avoir **au moins 2** entrées et il n'y a alors ni `pickup_uuid` ni
+     * `dropoff_uuid`. `Payload::setWaypoints()` résout chaque entrée par
+     * `place_uuid` (ou crée un `Place`), avec `type` = `dropoff` par défaut —
+     * le premier arrêt est donc marqué `pickup` explicitement.
+     * `payload.entities[]` porte les colis, chacun rattaché à son arrêt par
+     * `destination_uuid` (= l'uuid du `Place` de l'arrêt).
+     */
+    payload:
+      | { pickup_uuid: string; dropoff_uuid: string }
+      | {
+          waypoints: Array<{ place_uuid: string; type?: 'pickup' | 'dropoff' }>;
+          entities?: Array<{
+            name?: string;
+            description?: string;
+            /** L'uuid du `Place` de l'arrêt où ce colis est déposé/pris. */
+            destination_uuid?: string;
+            [k: string]: any;
+          }>;
+        };
     meta?: Record<string, any>;
     /** Livraison programmée (ISO 8601). Colonne native `scheduled_at`. */
     scheduled_at?: string;

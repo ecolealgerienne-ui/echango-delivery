@@ -168,6 +168,14 @@ export const ErrorCode = {
    */
   ORDER_POSITION_UPDATE_FAILED: 'order.position_update_failed',
 
+  // ── Tournée multi-arrêt (spec §4 depot_transporteur_national) ───────────
+  /** Un arrêt de tournée sans dépôt doit porter sa propre position (lat/lng) :
+   *  sans elle, aucun `Place` ne peut être créé pour ce waypoint. */
+  TOURNEE_STOP_NEEDS_LOCATION: 'tournee.stop_needs_location',
+  /** La liste d'arrêts ne décrit pas une tournée valide : moins de deux points
+   *  distincts, ou aucun enlèvement. */
+  TOURNEE_INVALID_SHAPE: 'tournee.invalid_shape',
+
   // ── Transporteurs (persona flotte + commerçant) ─────────────────────────
   DRIVER_NOT_FOUND: 'driver.not_found',
   DRIVER_FORBIDDEN: 'driver.forbidden',

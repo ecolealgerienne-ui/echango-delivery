@@ -11,6 +11,7 @@ import {
 } from './dto/order.dto';
 import { SaveDepotDto } from './dto/depot.dto';
 import { CreateFleetOrderDto } from './dto/create-fleet-order.dto';
+import { CreateTourneeDto } from '../common/orders/dto/create-tournee.dto';
 import { AddDriverDto } from './dto/driver.dto';
 // Réutilisé du module commerçant : la contrainte est la même — au moins trois
 // caractères, au plus soixante — et en écrire une copie ferait diverger les deux
@@ -115,6 +116,16 @@ export class FlotteController {
   @Post('commandes')
   async createOrder(@Request() req: any, @Body() body: CreateFleetOrderDto) {
     return this.flotteService.createFleetOrder(this.fleetId(req), body);
+  }
+
+  /**
+   * Le transporteur crée une **tournée multi-arrêt** (spec §4) : N arrêts en
+   * une commande (`payload.waypoints[]`), un seul prix, un encaissement par
+   * arrêt. `tournees` est un segment littéral — distinct de `commandes/:id`.
+   */
+  @Post('tournees')
+  async createTournee(@Request() req: any, @Body() body: CreateTourneeDto) {
+    return this.flotteService.createTournee(this.fleetId(req), body);
   }
 
   /**

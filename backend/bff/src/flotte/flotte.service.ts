@@ -14,9 +14,13 @@ import {
 } from '../common/orders/opportunity-filters';
 import { filterByServiceZone } from '../common/orders/fleet-zone';
 import { FleetZoneService } from '../fleetbase/fleet-zone.service';
-import { OrderCreationHelpers } from '../common/orders/order-creation.helpers';
+import {
+  OrderCreationHelpers,
+  ResolvedTourneeStop,
+} from '../common/orders/order-creation.helpers';
 import { FACILITATOR_TYPE_VENDOR } from '../fleetbase/fleetbase-api.client';
 import { CreateFleetOrderDto } from './dto/create-fleet-order.dto';
+import { CreateTourneeDto } from '../common/orders/dto/create-tournee.dto';
 import {
   projectOrderForFleet,
   projectDriverForFleet,
@@ -153,6 +157,146 @@ export class FlotteService {
       this.logger.error(`createFleetOrder failed: ${error.message}`);
       serviceUnavailable('order.create_failed', 'Failed to create order');
     }
+  }
+
+  /**
+   * Le transporteur crée une **tournée multi-arrêt** depuis l'espace flotte
+   * (spec §4). N arrêts en une commande : multi-collecte (N enlèvements → 1
+   * dépôt) ou multi-distribution (1 dépôt → N livraisons), selon la position
+   * des dépôts dans la liste.
+   *
+   * Chaque arrêt est soit **un dépôt à lui** (`depotUuid` — position et wilaya
+   * viennent du `Place`), soit **un lieu à créer** (`latitude`/`longitude` +
+   * contact). Le noyau de construction est partagé
+   * (`OrderCreationHelpers.createTournee`, règle 5) ; ici on ne fait que
+   * résoudre les `Place`, avec compensation si la résolution échoue à
+   * mi-course (règle 2 — pas de transaction entre les deux systèmes).
+   *
+   * ⚠️ Comme `createFleetOrder` : **aucune ligne locale `Order`** (le modèle
+   * Prisma exige un `merchantId`). La tournée est visible du transporteur par
+   * `GET /flotte/commandes`, filtré sur `facilitator` — d'où `facilitator_uuid`
+   * = son propre `Vendor`.
+   */
+  async createTournee(fleetId: string, dto: CreateTourneeDto) {
+    const fleet = await this.getFleetWithValidation(fleetId);
+    const vendorUuid = fleet.fleetbaseVendorUuid;
+
+    // Les dépôts sont chargés **une fois** : `assertOwnsDepot` referait un appel
+    // par arrêt (jusqu'à 25). Le filtre `is_depot` + `owner_uuid` est le même.
+    const ownedPlaces = await this.fleetbaseClient.getOwnedPlaces(vendorUuid);
+    const depotByUuid = new Map<string, any>(
+      ownedPlaces
+        .filter((p: any) => p?.meta?.is_depot === true)
+        .map((p: any) => [p.uuid, p]),
+    );
+
+    const resolved: ResolvedTourneeStop[] = [];
+    const createdPlaceUuids: string[] = [];
+
+    try {
+      for (let i = 0; i < dto.stops.length; i++) {
+        const stop = dto.stops[i];
+        const type: 'pickup' | 'dropoff' =
+          stop.type === 'pickup' || stop.type === 'dropoff'
+            ? stop.type
+            : i === 0
+              ? 'pickup'
+              : 'dropoff';
+
+        if (stop.depotUuid) {
+          const depot = depotByUuid.get(stop.depotUuid);
+          if (!depot) {
+            // Un dépôt inconnu **ou** appartenant à un autre transporteur :
+            // « introuvable », jamais « la ressource de quelqu'un d'autre »
+            // (règle 12).
+            notFound('depot.not_found', 'Depot not found');
+          }
+          const coords = depot.location?.coordinates;
+          if (!Array.isArray(coords) || coords.length < 2) {
+            badRequest(
+              'depot.not_found',
+              'Ce dépôt n’a pas de position — impossible de l’inscrire dans une tournée',
+            );
+          }
+          resolved.push({
+            placeUuid: depot.uuid,
+            type,
+            longitude: coords[0],
+            latitude: coords[1],
+            province:
+              typeof depot.province === 'string' ? depot.province : undefined,
+            notes: stop.notes,
+            items: stop.items,
+            codAmount: stop.codAmount,
+          });
+          continue;
+        }
+
+        if (typeof stop.latitude !== 'number' || typeof stop.longitude !== 'number') {
+          badRequest(
+            'tournee.stop_needs_location',
+            'Chaque arrêt sans dépôt doit porter une position (latitude / longitude)',
+          );
+        }
+
+        const created = await this.fleetbaseClient.createPlace(
+          stop.locationName ?? 'Arrêt de tournée',
+          stop.latitude,
+          stop.longitude,
+          {
+            name: stop.contactName,
+            phone: stop.contactPhone,
+            city: stop.city,
+            province: stop.province,
+            neighborhood: stop.neighborhood,
+          },
+        );
+        createdPlaceUuids.push(created.place.uuid);
+        resolved.push({
+          placeUuid: created.place.uuid,
+          createdPlaceUuid: created.place.uuid,
+          type,
+          longitude: stop.longitude,
+          latitude: stop.latitude,
+          province: stop.province,
+          notes: stop.notes,
+          items: stop.items,
+          codAmount: stop.codAmount,
+        });
+      }
+    } catch (error: any) {
+      // La résolution a échoué après avoir créé des `Place` : les nettoyer
+      // (règle 2). `createTournee` ne peut pas le faire, il n'est pas encore
+      // appelé. Un refus délibéré (`depot.not_found`, `stop_needs_location`)
+      // ressort avec son code.
+      for (const uuid of createdPlaceUuids) {
+        await this.fleetbaseClient
+          .deletePlace(uuid)
+          .catch((cleanupError: any) =>
+            this.logger.error(
+              `Arrêt ${uuid} laissé orphelin après un échec de résolution de tournée : ${cleanupError.message}`,
+            ),
+          );
+      }
+      if (error instanceof HttpException) throw error;
+      this.logger.error(`createTournee (résolution) failed: ${error.message}`);
+      serviceUnavailable('order.create_failed', 'Failed to create tournee');
+    }
+
+    return this.orderHelpers.createTournee({
+      customerUuid: vendorUuid,
+      customerType: 'vendor',
+      facilitatorUuid: vendorUuid,
+      facilitatorType: FACILITATOR_TYPE_VENDOR,
+      stops: resolved,
+      price: dto.price,
+      scheduledAt: dto.scheduledAt,
+      vehicleType: dto.vehicleType,
+      deliveryInstructions: dto.deliveryInstructions,
+      podMethod: dto.podMethod,
+      targetDriverUuid: dto.targetUuid,
+      draft: dto.draft,
+    });
   }
 
   /**

@@ -135,6 +135,28 @@ const PLACE_STRUCTURED_ADDRESS_FIELDS = [
   'province',
 ];
 
+/**
+ * Recompose une adresse à partir des **seules colonnes structurées**, en
+ * dédoublonnant (Alger/Alger…). Extrait de `projectPlace` pour que la
+ * projection d'un arrêt de tournée applique la même règle (règle 5) — la
+ * recopier ferait diverger l'expurgation d'un `Place` et celle d'un waypoint au
+ * premier ajustement.
+ */
+function structuredAddress(source: Record<string, any>): string | undefined {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const field of PLACE_STRUCTURED_ADDRESS_FIELDS) {
+    const value = source[field];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const component = value.trim();
+    const key = component.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(component);
+  }
+  return parts.length ? parts.join(', ') : undefined;
+}
+
 export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   if (!place) return undefined;
 
@@ -172,28 +194,133 @@ export function projectPlace(place: any, detail: PlaceDetail = 'full') {
   // l'adresse se terminait par sa propre fin : « Cité 1er Novembre, Alger,
   // 16000, Alger ». Se dédoublonner côté app est impossible, la répétition étant
   // interne à la chaîne qu'on lui sert.
-  const seen = new Set<string>();
-  const structured: string[] = [];
-
-  for (const field of PLACE_STRUCTURED_ADDRESS_FIELDS) {
-    const value = projected[field];
-    if (typeof value !== 'string' || !value.trim()) continue;
-
-    const component = value.trim();
-    const key = component.toLowerCase();
-    if (seen.has(key)) continue;
-
-    seen.add(key);
-    structured.push(component);
-  }
-
-  if (structured.length) {
-    projected.address = structured.join(', ');
+  const recomposed = structuredAddress(projected);
+  if (recomposed) {
+    projected.address = recomposed;
   } else {
     delete projected.address;
   }
 
   return projected;
+}
+
+/**
+ * Champs d'un **arrêt de tournée** (`payload.waypoints[]`) que l'app sait lire.
+ *
+ * ⚠️ Liste d'autorisation, comme `PLACE_FULL` : un champ ajouté en amont par
+ * Fleetbase ne sort pas tant qu'on ne l'a pas voulu. Le waypoint porte à la
+ * fois l'adresse (colonnes de `Place`) et l'avancement (`status`, `complete`,
+ * `order`) — l'app conducteur en a besoin pour la progression arrêt par arrêt.
+ */
+const WAYPOINT_FULL = [
+  'id',
+  'public_id',
+  // L'uuid du `Place` de l'arrêt. Servi comme sur `pickup`/`dropoff`
+  // (`PLACE_FULL` porte déjà `uuid`) et nécessaire pour rattacher les colis :
+  // `entity.destination_uuid` pointe cet uuid. Aussi la clé des mises à jour
+  // d'activité par arrêt (`updateActivity(waypointUuid)`).
+  'uuid',
+  'name',
+  'address',
+  'street1',
+  'street2',
+  'neighborhood',
+  'city',
+  'district',
+  'postal_code',
+  'province',
+  'country',
+  'location',
+  'phone',
+  'type',
+  'status',
+  'status_code',
+  'complete',
+  'order',
+  'tracking',
+  'eta',
+  'notes',
+];
+
+/**
+ * Projette un arrêt de tournée. `anonymous` retire **l'identité du destinataire
+ * de cet arrêt, et elle seule** — exactement la règle d'un `Place` de livraison
+ * non réclamé (`PlaceDetail`), appliquée arrêt par arrêt : sur une tournée
+ * diffusée, aucun nom ni téléphone de destinataire n'apparaît avant
+ * l'engagement.
+ */
+export function projectWaypoint(waypoint: any, detail: PlaceDetail = 'full') {
+  if (!waypoint) return undefined;
+  const projected: Record<string, any> = pick(waypoint, WAYPOINT_FULL);
+
+  if (detail === 'full') return projected;
+
+  for (const field of PLACE_IDENTITY_FIELDS) delete projected[field];
+
+  const recomposed = structuredAddress(projected);
+  if (recomposed) projected.address = recomposed;
+  else delete projected.address;
+
+  return projected;
+}
+
+/**
+ * Champs d'un colis (`payload.entities[]`) exposés. `destination` corrèle le
+ * colis à son arrêt (= `waypoint.id`), `meta.stop_index` le double. Aucune
+ * identité de destinataire ici — le colis ne porte que sa description.
+ */
+const ENTITY_FULL = [
+  'id',
+  'public_id',
+  'name',
+  'description',
+  // `destination` (public_id de l'arrêt) sur requête publique, `destination_uuid`
+  // (uuid du `Place`) sur requête interne — le BFF lit Fleetbase par `/int/v1`,
+  // donc c'est `destination_uuid` qui arrive. On garde les deux : il corrèle le
+  // colis à `waypoint.uuid`, doublé par `meta.stop_index`.
+  'destination',
+  'destination_uuid',
+  'type',
+  'weight',
+  'weight_unit',
+  'meta',
+];
+
+export function projectEntities(entities: any): any[] | undefined {
+  if (!Array.isArray(entities) || !entities.length) return undefined;
+  return entities.map((entity) => pick(entity, ENTITY_FULL));
+}
+
+/**
+ * Le bloc `payload` d'une commande, projeté selon le niveau d'engagement.
+ *
+ * Une commande 1→1 a `pickup`/`dropoff` ; une **tournée** a `waypoints[]` (et
+ * `pickup`/`dropoff` nuls — Fleetbase ne les pose pas quand `waypoints` est
+ * fourni). Les deux formes cohabitent : l'app retombe sur le 1ᵉʳ / dernier
+ * arrêt pour `pickupPlace`/`dropoffPlace` (spec §4.2).
+ */
+function projectPayload(
+  payload: any,
+  dropoffDetail: PlaceDetail,
+): Record<string, any> | undefined {
+  if (!payload) return undefined;
+  const waypoints = Array.isArray(payload.waypoints) ? payload.waypoints : [];
+  const entities = projectEntities(payload.entities);
+  return {
+    pickup: projectPlace(payload.pickup, 'full'),
+    dropoff: projectPlace(payload.dropoff, dropoffDetail),
+    ...(waypoints.length
+      ? {
+          // Un arrêt d'enlèvement est un commerce : servi en entier même sur
+          // une tournée non réclamée (décision produit du 31/07, `PlaceDetail`).
+          // Seuls les arrêts de livraison sont expurgés de l'identité.
+          waypoints: waypoints.map((w: any) =>
+            projectWaypoint(w, w?.type === 'pickup' ? 'full' : dropoffDetail),
+          ),
+        }
+      : {}),
+    ...(entities ? { entities } : {}),
+  };
 }
 
 /** Champs d'une commande que les apps savent lire. */
@@ -535,12 +662,7 @@ export function projectOrderForDriver(order: any, options: OrderProjectionOption
     ...pick(order, ORDER_FIELDS),
     ...(exposeLinks ? pick(order, ORDER_LINK_FIELDS) : {}),
     meta: projectMeta(order.meta),
-    payload: payload
-      ? {
-          pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, unclaimed ? 'anonymous' : 'full'),
-        }
-      : undefined,
+    payload: projectPayload(payload, unclaimed ? 'anonymous' : 'full'),
     // `redacted` dit à l'app qu'il **manque** quelque chose, et lequel : sans ce
     // drapeau, une fiche sans nom ni téléphone se lit comme une donnée absente,
     // et le transporteur appellerait le commerçant pour la réclamer.
@@ -576,12 +698,7 @@ export function projectOrderForMerchant(order: any, extra: Record<string, any> =
     // l'application en déduit ce qu'elle a besoin d'afficher. Un état de plus
     // ici, c'est un état de plus à garder synchronisé pour toujours.
     meta: projectMeta(order.meta),
-    payload: payload
-      ? {
-          pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, 'full'),
-        }
-      : undefined,
+    payload: projectPayload(payload, 'full'),
     driver_assigned: driver ? pick(driver, ['name', 'phone', 'photo_url']) : undefined,
     ...extra,
   };
@@ -625,12 +742,7 @@ export function projectOrderForFleet(
     // avant de s'être engagé.
     ...(unclaimed ? {} : pick(order, ORDER_LINK_FIELDS)),
     meta: projectMeta(order.meta),
-    payload: payload
-      ? {
-          pickup: projectPlace(payload.pickup, 'full'),
-          dropoff: projectPlace(payload.dropoff, unclaimed ? 'anonymous' : 'full'),
-        }
-      : undefined,
+    payload: projectPayload(payload, unclaimed ? 'anonymous' : 'full'),
     ...(unclaimed ? { redacted: true } : {}),
     // ⚠️ Conditionné par `unclaimed` alors qu'une course libre n'a par
     // définition aucun conducteur (`isClaimable` exige `!driver_assigned_uuid`).
