@@ -6,7 +6,25 @@ app, avec trois bancs rejouables (`test-depot-crud`, `test-depot-livraison`,
 `test-depot-expedition`) dans `run-all-scenarios.sh`, chacun prouvé par mutation.
 Le noyau de création de commande est extrait en
 `common/orders/order-creation.helpers.ts` (partagé commerçant/transporteur,
-règle 5). Phases 2-3 (la tournée multi-arrêt) spécifiées, **pas commencées**.
+règle 5).
+
+**Phase 2 — tournée transporteur : NOYAU LIVRÉ** (08/09/2026). Fait et vérifié :
+`POST /flotte/tournees` (`CreateTourneeDto` + `OrderCreationHelpers.createTournee`
+/ `buildTourneeMeta`) — une commande à `payload.waypoints[]` ordonné, un seul
+`price`, `cod_amount` = **somme** des COD d'arrêt (champ personnalisé durable, lu
+par le plafond de dette), `stop_cod_amounts` en portant le détail ;
+`payload.entities[]` avec `destination_uuid` (colis collecté à un enlèvement →
+routé vers le dernier arrêt). Les 3 projections lisent `payload.waypoints[]` avec
+**expurgation par arrêt** (`projectWaypoint`, un enlèvement reste un commerce).
+Banc `test-tournee-creation.sh` (dans `run-all-scenarios.sh`), 2 mutations
+prouvées. App : `Order.waypoints` (additif), écran flotte « créer une tournée »
+(`POST /flotte/tournees` a un appelant).
+
+**Phase 2/3 — RESTE À FAIRE** (voir §4.6) : `POST /commercant/tournees` + la
+ligne `Order` locale + l'écran commerçant ; la fiche/carte conducteur à N arrêts
+(progression par waypoint — `getNextActivities(waypoint)` est déjà câblé) ; la
+déclaration d'encaissement **par arrêt** (`declareCollection(waypointUuid)`) ; la
+diffusion d'une tournée au pool (Phase 3, V1 = ciblage seul).
 **Date** : 08/09/2026.
 **Origine** : discussion produit sur le positionnement « transporteur national à
 dépôts ». Reprend et débloque le sujet **multi-arrêt / multi-enlèvement** que
@@ -235,24 +253,42 @@ acceptée en bloc.
 
 ### 4.2 Ce qu'il faut construire
 
-| zone | travail |
-|---|---|
-| `CreateTourneeDto` | `stops[]` : `{ place | depotUuid, items[], codAmount? }` ordonnés · `price` · `scheduledAt?` · ciblage optionnel |
-| `createTournee` (BFF) | construit `payload.waypoints[]` + `entities[]`, `price` unique, COD par waypoint · compensation (waypoints = N `Place` à nettoyer si échec) |
-| client Fleetbase | **élargir `createOrder`** : il type le payload en dur `{ pickup_uuid, dropoff_uuid }` ; Fleetbase accepte `waypoints`. Signature à ouvrir. |
-| **3 projections** | **réécriture** : projeter `payload.waypoints[]`, expurgation **par arrêt** (l'identité d'un destinataire n'apparaît qu'à l'engagement, arrêt par arrêt) |
-| **modèle app `Order`** | `+List<Waypoint>` (place, items, cod, statut) ; `pickupPlace`/`dropoffPlace` deviennent le 1ᵉʳ et le dernier arrêt |
-| **app conducteur** | fiche + carte à N arrêts, progression **par waypoint** — endpoints BFF `getNextActivities(waypoint)` / `updateActivity(waypointUuid)` **déjà câblés** ; `waypoint_uuid` déjà sur les échecs de livraison |
-| déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` — `collected_amount/at/reason` deviennent indexés par waypoint |
-| plafond de dette | `canTakeCashOrder` vérifie `meta.cod_amount` ; pour une tournée, **sommer** les COD des arrêts et vérifier le total |
-| app demandeur | écran « créer une tournée » : ajouter des arrêts, un prix, un COD par arrêt |
-| scénarios | création tournée, projection/expurgation par arrêt, progression multi-waypoint, plafond sur COD cumulé |
+| zone | travail | état (08/09/2026) |
+|---|---|---|
+| `CreateTourneeDto` | `stops[]` : `{ place | depotUuid, items[], codAmount?, type? }` ordonnés · `price` · `scheduledAt?` · ciblage optionnel | ✅ `common/orders/dto/create-tournee.dto.ts` |
+| `createTournee` (BFF) | construit `payload.waypoints[]` + `entities[]`, `price` unique, COD par waypoint · compensation | ✅ `OrderCreationHelpers.createTournee` / `buildTourneeMeta` ; `POST /flotte/tournees`. `cod_amount` = **somme** (champ perso durable), `stop_cod_amounts` = détail. Colis d'un enlèvement → `destination_uuid` = dernier arrêt |
+| client Fleetbase | **élargir `createOrder`** pour accepter `waypoints` | ✅ union `{ pickup_uuid, dropoff_uuid } | { waypoints[], entities[] }` |
+| **3 projections** | projeter `payload.waypoints[]`, expurgation **par arrêt** | ✅ `projectPayload` / `projectWaypoint` / `projectEntities` — enlèvement servi entier, livraison expurgée de l'identité ; `structuredAddress` extrait (règle 5) |
+| **modèle app `Order`** | `+List<Waypoint>` ; `pickupPlace`/`dropoffPlace` = 1ᵉʳ / dernier arrêt | ✅ **additif** — `Order.waypoints`, `Waypoint`, `TourneeParcel` ; corrélation cod/colis dans `Order.fromJson` |
+| app demandeur (flotte) | écran « créer une tournée » | ✅ `CreateTourneeScreen` + route `/flotte/tournees` + `createFleetTournee` |
+| scénarios | création tournée, cod cumulé, colis rattachés, appartenance, forme | ✅ `test-tournee-creation.sh` (2 mutations prouvées) + jest (`tournee-creation.spec`, `waypoint-projection.spec`) + `order_tournee_test.dart` |
+| **app conducteur** | fiche + carte à N arrêts, progression **par waypoint** — `getNextActivities(waypoint)` / `updateActivity(waypointUuid)` **déjà câblés** | ⬜ **RESTE** |
+| déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ⬜ **RESTE** — le plafond de dette est déjà correct (il lit `meta.cod_amount` = somme) ; ce qui manque est la déclaration indexée par waypoint |
+| `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ⬜ **RESTE** |
 
 ### 4.3 Ce qui NE bloque plus
 
 Les deux décisions qui gelaient le sujet (`specs_localisation… §3`) sont
-tranchées (§1). La phase 2 est du **travail d'ingénierie**, dont le plus gros
-est l'app conducteur à N arrêts.
+tranchées (§1). Le noyau (création, projection, modèle, écran flotte) est livré ;
+ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
+
+### 4.6 Ce qui reste, dans l'ordre
+
+1. **Fiche + carte conducteur à N arrêts.** L'app conducteur affiche
+   aujourd'hui une course 1→1. Une tournée doit montrer la liste ordonnée des
+   arrêts, l'avancement par waypoint, et faire progresser via
+   `getNextActivities(waypoint)` / `updateActivity(waypointUuid)` (déjà câblés
+   côté client). Le modèle `Order.waypoints` est prêt. À éprouver par un
+   scénario d'intégration émulateur (les parcours joués à l'écran, cf.
+   `docs/status_v1.md`).
+2. **Encaissement par arrêt.** `declareCollection` devient
+   `declareCollection(waypointUuid, …)` — `collected_amount/at/reason` indexés
+   par waypoint. Le plafond de dette n'a pas à changer (il somme déjà).
+3. **`POST /commercant/tournees`.** Même `OrderCreationHelpers.createTournee`,
+   mais `customer` = le `Vendor` du commerçant, `targetUuid` = un favori
+   (driver/fleet), **et** une ligne `Order` locale (`createOrderCache`) — le
+   modèle Prisma exige un `merchantId`. Puis l'écran commerçant.
+4. **Diffusion d'une tournée au pool** (Phase 3). V1 = ciblage conducteur seul.
 
 ### 4.4 Point ouvert — la wilaya d'une tournée
 
