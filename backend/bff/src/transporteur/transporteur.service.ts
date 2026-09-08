@@ -124,21 +124,41 @@ export class TransporteurService {
   }
 
   /**
-   * Resolve an order by whichever identifier the app sent, from the company
-   * order list.
+   * Resolve an order by whichever identifier the app sent.
    *
-   * Why not a direct GET by id: the public `v1` API addresses records by
-   * public_id only — `findRecordOrFail()` matches `public_id`/`internal_id`
-   * and never `uuid` (verified 28/07/2026 in core-api HasApiModelBehavior,
-   * after a 404 on a perfectly valid uuid). Meanwhile `int/v1` works in uuids,
-   * and §2.13 showed its by-id GET ignores the path param entirely. Matching
-   * both identifiers here means the app can send either and neither quirk
-   * leaks into the rest of the module.
+   * ── Lecture unitaire directe, pas un parcours de la liste ─────────────────
    *
-   * Cost: one list fetch per operation. Acceptable at this scale, and the
-   * ownership check below needs the record anyway.
+   * `int/v1` sert sa lecture par id via `HasApiModelBehavior::getById($id)`,
+   * qui matche `where(uuid, $id)->orWhere(public_id, $id)` — vérifié le
+   * 08/09/2026 dans le source `core-api` monté dans le conteneur. L'app peut
+   * donc envoyer l'un ou l'autre : `readOrderFull(orderId)` répond aux deux.
+   * (L'ancien commentaire prétendait qu'`int/v1` ignorait le param de chemin —
+   * `getById` prouve le contraire.)
+   *
+   * ⚠️ **Pourquoi ce n'est pas qu'une optimisation.** L'ancien chemin faisait
+   * un `fetchEveryOrder()` (jusqu'à 5 000 commandes, ~12-13 s sur une org
+   * chargée) rien que pour traduire `orderId → uuid`, sur le chemin chaud de
+   * **toutes** les écritures transporteur (accepter, démarrer, encaisser,
+   * clôturer). La lecture directe est un seul appel borné.
+   *
+   * ⚠️ **Filet, pas repli silencieux.** Si la lecture directe ne trouve rien
+   * (404), on retombe sur le parcours de liste — même portée de visibilité
+   * (`getById` et `/orders` appliquent tous deux le `CompanyScope`), donc en
+   * théorie il ne devrait jamais servir. Un `warn` est émis s'il le fait : ce
+   * serait le signe que `getById` et la liste divergent, ce qu'on veut savoir.
    */
   private async resolveOrder(orderId: string) {
+    try {
+      const direct = await this.fleetbaseClient.readOrderFull(orderId);
+      if (direct?.uuid) return direct;
+    } catch (error: any) {
+      if (error?.response?.status !== 404) {
+        this.logger.error(`Order lookup failed (${orderId}): ${error?.message}`);
+        serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
+      }
+      // 404 → la lecture directe n'a pas résolu l'identifiant : filet ci-dessous.
+    }
+
     let orders: any[];
     try {
       orders = await this.fleetbaseClient.fetchEveryOrder();
@@ -148,12 +168,16 @@ export class TransporteurService {
     }
 
     const found = orders.find((o) => o?.uuid === orderId || o?.public_id === orderId);
+    if (!found?.uuid) return found;
+
+    this.logger.warn(
+      `Commande ${found.uuid} absente de la lecture directe mais présente dans la liste — ` +
+        'getById et /orders divergent, à investiguer',
+    );
 
     // ⚠️ Rechargée avant d'être rendue : la liste ne porte aucun champ
     // personnalisé, donc une fiche servie telle quelle n'aurait ni prix, ni
-    // montant à encaisser, ni signalement d'échec. Une lecture unitaire de plus
-    // sur une fiche est sans conséquence — c'est une commande, pas cinquante.
-    if (!found?.uuid) return found;
+    // montant à encaisser, ni signalement d'échec.
     try {
       return (await this.fleetbaseClient.readOrderFull(found.uuid)) ?? found;
     } catch (error: any) {
