@@ -313,10 +313,22 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    tournée confiée à un conducteur, il démarre, et à chaque arrêt Fleetbase
    avance `current_waypoint_uuid` (enroute → completed), l'enlèvement se
    complète sans déclaration, une livraison COD sans déclaration est refusée,
-   le dernier arrêt clôture la commande. Mutation prouvée. ⬜ **Reste** :
-   le jouer aux ÉCRANS (`flutter drive`), pas seulement au serveur.
-   Tests : `order_tournee_test.dart` (11 cas), `order_detail_tournee_widget_test.dart`,
-   `tournee_stops_widget_test.dart`.
+   le dernier arrêt clôture la commande. Mutation prouvée.
+   **Rendu des écrans** éprouvé par widget tests :
+   `order_detail_tournee_widget_test.dart` (la fiche montre les N arrêts, le
+   COD **de l'arrêt** jamais le total, l'arrêt courant, « Encaissé » une fois
+   honoré) + `tournee_stops_widget_test.dart` (vue suivi vs conducteur,
+   expurgation par arrêt) + `order_tournee_test.dart` (11 cas de parsing).
+   🟡 **Parcours `flutter drive`** écrit et committé
+   (`integration_test/tournee_conducteur_test.dart` + décor dans
+   `provision-app-parcours.sh`), franchit connexion + tableau de bord, mais
+   **non exécuté au vert** : sur ce poste, (a) le forwarding localhost
+   WSL2↔Windows est cassé pour `:3001` (contourné par un relai `:3000`), et
+   (b) l'organisation de test traîne ~60 commandes → `GET /transporteur/commandes`
+   (`fetchEveryOrder`) dépasse par intermittence les délais du parcours. À
+   rejouer sur un jeu de données allégé (`test-optimisation-parcours.sh`
+   documente la même contamination). La mécanique, elle, est prouvée par le
+   banc `curl` ci-dessus.
 2. **Encaissement par arrêt.** ✅ **FAIT + éprouvé serveur** — `resolveStopCollection`
    (noyau pur, `common/money/collection.ts`, 8 cas jest dont 4 refus) +
    `recordStopCollection`. `update-activity` complète l'arrêt courant : la

@@ -36,19 +36,39 @@ void main() {
     // Onglet 1 : les courses en cours (0 = opportunités, 2 = historique).
     await openTab(tester, 1);
 
-    final tourneeRow = rowContaining(tourneeFee);
+    // ⚠️ Timeouts larges : `GET /transporteur/commandes` fait un
+    // `fetchEveryOrder` chez Fleetbase, et l'organisation de test traîne des
+    // dizaines de commandes de runs précédents — le chargement dépasse
+    // largement les 40 s du défaut sur ce jeu de données.
     await pumpUntil(tester, find.byType(ListTile),
-        reason: 'la liste des courses en cours');
-    await scrollUntilFound(tester, tourneeRow);
-    await pumpUntil(tester, tourneeRow,
+        reason: 'la liste des courses en cours',
+        timeout: const Duration(seconds: 120));
+
+    // La tournée est reconnue à son prix (5252) — la seule donnée que le décor
+    // a posée et que la carte affiche. On défile jusqu'à ce que le texte du
+    // prix soit **construit ET rendu**, puis on tape le ListTile qui le porte.
+    final priceText = find.text('$tourneeFee DZD');
+    for (var i = 0; i < 40 && priceText.evaluate().isEmpty; i++) {
+      await tester.dragFrom(
+          tester.getCenter(find.byType(Scaffold).first), const Offset(0, -280));
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+    await pumpUntil(tester, priceText,
         reason: 'la tournée (prix $tourneeFee) dans « En cours »',
+        timeout: const Duration(seconds: 20),
         onTimeout: 'introuvable — le décor ne l’a pas démarrée. '
             'Relancer scripts/provision-app-parcours.sh');
-    await tapVisible(tester, tourneeRow.first);
+
+    final row = find.ancestor(of: priceText, matching: find.byType(ListTile));
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    await tester.tap(row, warnIfMissed: false);
+    await tester.pump(const Duration(seconds: 1));
 
     // ── La fiche : trois arrêts, un enlèvement, deux livraisons ────────────
     await pumpUntil(tester, find.byType(TourneeStops),
         reason: 'la liste des arrêts de la tournée',
+        timeout: const Duration(seconds: 90),
         onTimeout: 'la fiche n’affiche pas TourneeStops — ${visibleTexts()}');
 
     // Les libellés de type viennent de `driver.order.tournee.*`. On vérifie le
