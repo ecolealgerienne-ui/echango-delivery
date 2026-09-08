@@ -87,6 +87,12 @@ SCENARIOS=(
   # cote serveur AVANT pagination. Temoin positif ET negatif a chaque axe, plus
   # mutation du vrai code (filtre wilaya neutralise => le banc echoue).
   test-opportunites-filtre
+  # Zone de service entreprise (Palier 1) : PUT /flotte/zone ecrit les wilayas
+  # dans un champ personnalise du Vendor Fleetbase (auto-provisionne), relu et
+  # applique AVANT les filtres de chips. Temoin +/- , biais (course sans wilaya
+  # reste visible), et persistance (PUT [Oran] -> GET frais rend [Oran]).
+  # Mutation : neutraliser filterByServiceZone fait echouer l etape [Alger].
+  test-zone-entreprise
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.
