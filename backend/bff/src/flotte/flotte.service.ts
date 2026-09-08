@@ -365,10 +365,17 @@ export class FlotteService {
 
   async deleteDepot(fleetId: string, depotId: string) {
     const { place } = await this.assertOwnsDepot(fleetId, depotId);
-    // ⚠️ **À durcir quand une course pourra pointer un dépôt (spec §3.1)** :
-    // refuser la suppression si des commandes EN COURS le référencent — une
-    // course orpheline d'adresse est pire qu'un dépôt qu'on ne peut pas
-    // supprimer. Aujourd'hui rien ne pointe un dépôt, la suppression est sûre.
+    // ⚠️ **Point ouvert — un dépôt peut désormais être un arrêt de course**
+    // (§3.2 livraison vers dépôt, §3.3 expédition, §4 tournée). Une garde
+    // « refuser si une commande EN COURS le référence » demande un balayage
+    // des commandes (`payload.pickup`/`dropoff`/`waypoints[].uuid` == cet
+    // uuid), coûteux et **inter-persona** (un commerçant tiers peut livrer
+    // ici). Non fait dans ce lot.
+    //
+    // Le risque est **borné** : `Place` de Fleetbase est en `SoftDeletes` —
+    // une commande vivante garde ses coordonnées d'arrêt (colonnes du waypoint)
+    // même si le `Place` disparaît ; elle s'affiche dégradée (sans nom), pas
+    // cassée. À durcir avant le pilote (§4.6).
     await this.fleetbaseClient.deletePlace(place.uuid);
     return { deleted: true };
   }

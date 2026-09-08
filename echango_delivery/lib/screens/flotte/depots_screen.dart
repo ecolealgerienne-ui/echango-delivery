@@ -570,7 +570,6 @@ class _ShipFromDepotScreenState extends State<_ShipFromDepotScreen> {
             decoration: InputDecoration(
               labelText: _t('fleet.ship.driver'),
               helperText: _t('fleet.ship.driver.hint'),
-              border: const OutlineInputBorder(),
             ),
             items: [
               DropdownMenuItem<String?>(

@@ -1327,7 +1327,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             decoration: InputDecoration(
               labelText: _t('order.form.destination.depot.label'),
               helperText: _t('order.form.destination.depot.hint'),
-              border: const OutlineInputBorder(),
             ),
             items: depots
                 .map(
@@ -1388,7 +1387,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         decoration: InputDecoration(
           labelText: _t('order.form.dispatch.label'),
           helperText: _t('order.form.dispatch.hint'),
-          border: const OutlineInputBorder(),
         ),
         items: [
           DropdownMenuItem<String?>(
