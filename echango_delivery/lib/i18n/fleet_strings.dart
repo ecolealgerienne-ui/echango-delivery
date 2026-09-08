@@ -200,8 +200,9 @@ const Map<String, String> _fr = {
   'fleet.tournee.stop.cod_invalid': 'Montant à encaisser invalide.',
   'fleet.tournee.driver': 'Conducteur',
   'fleet.tournee.driver.hint':
-      'Laissez vide pour désigner un conducteur plus tard, depuis « Mes courses ».',
-  'fleet.tournee.driver.later': 'Décider plus tard',
+      'Sans conducteur, la tournée est diffusée à tout le réseau — le premier '
+          'transporteur disponible la prend.',
+  'fleet.tournee.driver.broadcast': 'Diffuser au pool',
   'fleet.tournee.submit': 'Créer la tournée',
   'fleet.tournee.created': 'Tournée créée.',
 
@@ -527,8 +528,9 @@ const Map<String, String> _ar = {
   'fleet.tournee.stop.contact_required': 'حدّد اسم جهة اتصال المحطة.',
   'fleet.tournee.stop.cod_invalid': 'مبلغ التحصيل غير صالح.',
   'fleet.tournee.driver': 'السائق',
-  'fleet.tournee.driver.hint': 'اتركه فارغاً لتعيين سائق لاحقاً من «رحلاتي».',
-  'fleet.tournee.driver.later': 'أقرّر لاحقاً',
+  'fleet.tournee.driver.hint':
+      'بدون سائق، تُبثّ الجولة إلى كامل الشبكة — يأخذها أول ناقل متاح.',
+  'fleet.tournee.driver.broadcast': 'بثّ إلى المجمّع',
   'fleet.tournee.submit': 'إنشاء الجولة',
   'fleet.tournee.created': 'تم إنشاء الجولة.',
 

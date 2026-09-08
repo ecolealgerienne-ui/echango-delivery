@@ -10,7 +10,7 @@ import '../../widgets/app_snack_bar.dart';
 import '../commercant/map_picker_screen.dart';
 
 /// Un choix de cible pour une tournée : un conducteur (flotte) ou un favori
-/// (commerçant). `uuid == null` = diffusion large / décider plus tard.
+/// (commerçant). `uuid == null` = aucune cible : diffusion au pool.
 typedef TourneeTarget = ({String? uuid, String label});
 
 /// Un dépôt sélectionnable comme arrêt.
@@ -31,7 +31,7 @@ class TourneeComposerConfig {
 
   final List<TourneeDepotOption> depots;
 
-  /// La première entrée est la cible « aucune » (diffusion / plus tard).
+  /// La première entrée est la cible « aucune » (diffusion au pool).
   final List<TourneeTarget> targets;
   final String targetLabel;
   final String targetHint;
@@ -409,7 +409,7 @@ class CreateTourneeScreen extends StatelessWidget {
           for (final d in state.depots) (uuid: d.uuid, name: d.name),
         ],
         targets: [
-          (uuid: null, label: t('driver.later')),
+          (uuid: null, label: t('driver.broadcast')),
           for (final d in state.drivers)
             (
               uuid: d['uuid'] as String?,
@@ -421,7 +421,12 @@ class CreateTourneeScreen extends StatelessWidget {
         loadDependencies: (ctx) => ctx.read<FleetState>()
           ..load()
           ..loadDepots(),
-        submit: (body) => context.read<FleetState>().createTournee(body),
+        // Aucune cible ⇒ diffusion au pool : le BFF distingue « diffuser » de
+        // « garder pour plus tard » par ce drapeau (une tournée diffusée n'a
+        // pas de facilitator, d'où une ligne locale `Order.fleetId`).
+        submit: (body) => context.read<FleetState>().createTournee(
+              body['targetUuid'] == null ? {...body, 'broadcast': true} : body,
+            ),
       ),
     );
   }

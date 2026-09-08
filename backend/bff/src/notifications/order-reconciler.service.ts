@@ -167,6 +167,23 @@ export class OrderReconcilerService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
 
+    // ⚠️ Une tournée flotte **diffusée** n'a pas de commerçant (`merchantId`
+    // null) : personne à prévenir, et `MerchantNotification` exige un
+    // `merchantId`. On tient quand même le statut à jour pour que le scrutateur
+    // cesse de la réexaminer une fois terminée — l'entreprise la suit par
+    // `GET /flotte/commandes`, qui lit Fleetbase en direct.
+    if (!row.merchantId) {
+      await this.prisma.order.update({
+        where: { id: row.id },
+        data: {
+          status,
+          driverAssignedUuid: driverUuid,
+          lastSyncedAt: new Date(),
+        },
+      });
+      return true;
+    }
+
     const notify = (
       type: any,
       title: string,

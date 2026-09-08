@@ -121,6 +121,16 @@ model FleetAccount {
 
   // Relations — le facilitateur est désormais une partie du registre de caisse.
 
+  /// Les tournées que cette entreprise a **diffusées au pool** (spec §4).
+  ///
+  /// Une tournée diffusée n'a PAS de `facilitator_uuid` (`isOrderClaimable`
+  /// l'exige), donc `GET /flotte/commandes` — filtré sur `facilitator` — ne la
+  /// verrait pas. Cette ligne locale est la seule trace qui relie la diffusion
+  /// à son créateur ; sans elle, l'entreprise diffuserait à l'aveugle. Une
+  /// tournée **confiée** (à un conducteur, ou gardée en brouillon) n'écrit
+  /// rien ici : elle porte un `facilitator_uuid` et se retrouve par lui.
+  orders Order[] @relation("FleetBroadcastOrders")
+
   // Timestamps
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -330,9 +340,21 @@ model DeviceToken {
 
 // Order Representation (cached from Fleetbase, for quick access)
 model Order {
-  id         String          @id @default(cuid())
-  merchantId String
-  merchant   MerchantAccount @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+
+  // ⚠️ **Un `Order` local appartient à UN demandeur : un commerçant OU une
+  // entreprise, jamais les deux, jamais aucun.** Prisma ne sait pas exprimer ce
+  // « exactement un » ; il est tenu à l'écriture (`commercant.createOrderCache`
+  // pose `merchantId`, `flotte.createBroadcastCache` pose `fleetId`).
+  //
+  // `merchantId` était non-null : toute commande passait par un commerçant. La
+  // diffusion d'une tournée **par une entreprise** (spec §4) a ouvert le second
+  // cas — elle n'a pas de commerçant, et sans ligne locale elle serait
+  // invisible de sa créatrice (voir `FleetAccount.orders`).
+  merchantId String?
+  merchant   MerchantAccount? @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  fleetId    String?
+  fleet      FleetAccount?    @relation("FleetBroadcastOrders", fields: [fleetId], references: [id], onDelete: Cascade)
 
   // Reference to Fleetbase
   fleetbaseOrderId String @unique
@@ -416,6 +438,7 @@ model Order {
   updatedAt DateTime @updatedAt
 
   @@index([merchantId])
+  @@index([fleetId])
   @@index([fleetbaseOrderId])
   @@index([status])
 }

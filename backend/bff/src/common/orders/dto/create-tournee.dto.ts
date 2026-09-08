@@ -149,6 +149,17 @@ export class CreateTourneeDto {
   @Matches(FLEETBASE_ID_PATTERN, { message: 'targetUuid invalide' })
   targetUuid?: string;
 
+  /**
+   * **Flotte uniquement** : diffuser la tournée au pool (`adhoc: true`) plutôt
+   * que la garder pour l'affecter plus tard. Sans effet avec `targetUuid` ou
+   * `draft`, et ignoré côté commerçant (là, l'absence de favori vaut déjà
+   * diffusion). Une tournée diffusée n'a pas de `facilitator_uuid` : c'est une
+   * ligne locale `Order.fleetId` qui la relie à son entreprise.
+   */
+  @IsOptional()
+  @IsBoolean()
+  broadcast?: boolean;
+
   @IsOptional()
   @IsBoolean()
   draft?: boolean;

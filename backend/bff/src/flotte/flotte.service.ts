@@ -29,6 +29,7 @@ import { readDriverPosition, readPositionSeenAt } from '../common/geo/driver-pos
 import { effectiveOrderMeta } from '../common/projections/order.projection';
 import { hasFailure } from '../common/orders/delivery-failures';
 import { isOrderClaimable, isTerminalOrderStatus } from '../common/orders/order-status';
+import { adhocRadiusMetres as configuredAdhocRadius } from '../common/orders/adhoc-radius';
 import {
   phoneContains,
   sameIdentifier,
@@ -283,11 +284,29 @@ export class FlotteService {
       serviceUnavailable('order.create_failed', 'Failed to create tournee');
     }
 
-    return this.orderHelpers.createTournee({
+    // ── Confiée, diffusée, ou gardée ? ───────────────────────────────────────
+    //
+    // `broadcast: true` (et ni `targetUuid` ni `draft`) → **diffusée au pool** :
+    // n'importe quel conducteur — ou entreprise — peut la prendre. Elle n'a
+    // alors PAS de `facilitator_uuid` (`isOrderClaimable` l'exige), donc
+    // `GET /flotte/commandes`, filtré sur `facilitator`, ne la verrait pas : une
+    // ligne locale `fleetId` la relie à sa créatrice (voir `FleetAccount.orders`).
+    //
+    // `targetUuid` → **confiée** à ce conducteur. `draft` → brouillon. Sinon
+    // (ni cible, ni diffusion, ni brouillon) → **gardée** : `facilitator_uuid`
+    // posé, l'entreprise l'affectera plus tard par `/flotte/commandes/:id/assigner`.
+    // Ces trois cas portent un facilitator et n'écrivent aucune ligne locale.
+    const broadcast = dto.broadcast === true && !dto.targetUuid && !dto.draft;
+
+    const created = await this.orderHelpers.createTournee({
       customerUuid: vendorUuid,
       customerType: 'vendor',
-      facilitatorUuid: vendorUuid,
-      facilitatorType: FACILITATOR_TYPE_VENDOR,
+      ...(broadcast
+        ? { adhocDistance: this.adhocRadiusMetres() }
+        : {
+            facilitatorUuid: vendorUuid,
+            facilitatorType: FACILITATOR_TYPE_VENDOR,
+          }),
       stops: resolved,
       price: dto.price,
       scheduledAt: dto.scheduledAt,
@@ -297,6 +316,108 @@ export class FlotteService {
       targetDriverUuid: dto.targetUuid,
       draft: dto.draft,
     });
+
+    if (broadcast) {
+      if (created?.fleetbaseOrderId) {
+        // Écriture APRÈS la création Fleetbase, la plus réversible en dernier
+        // (règle 2). En cas d'échec, `createBroadcastCache` annule la commande.
+        await this.createBroadcastCache(
+          fleetId,
+          created.fleetbaseOrderId,
+          created.status,
+        );
+      } else {
+        // Fleetbase a répondu sans identifiant : la tournée est peut-être
+        // diffusée sans qu'on puisse la suivre. Le dire fort plutôt que de
+        // rendre un succès trompeur.
+        this.logger.error(
+          'Tournée diffusée sans identifiant Fleetbase exploitable — ' +
+            'aucune ligne de suivi écrite, elle sera invisible du transporteur',
+        );
+      }
+    }
+
+    return created;
+  }
+
+  private adhocRadiusMetres(): number {
+    return configuredAdhocRadius(this.configService.get('ADHOC_RADIUS_METRES'));
+  }
+
+  /**
+   * Écrit la ligne locale d'une tournée flotte **diffusée**, avec compensation.
+   *
+   * Le pendant de `commercant.createOrderCache`, pour le cas que le modèle
+   * `Order` ne portait pas : une commande sans commerçant. Sans cette ligne, la
+   * tournée diffusée (pas de `facilitator_uuid`) serait invisible de
+   * l'entreprise qui l'a créée — `GET /flotte/commandes` filtre sur
+   * `facilitator`. Si l'écriture échoue, on annule la commande Fleetbase : une
+   * tournée diffusée que personne ne suit est pire qu'une tournée non créée.
+   *
+   * ⚠️ Le client Prisma n'est pas généré dans cet environnement (§ CLAUDE.md) :
+   * `fleetId` traverse un type `any` ici, `tsc` ne vérifie pas cette ligne.
+   * L'annotation du `data` est ce qui reste vérifiable.
+   */
+  private async createBroadcastCache(
+    fleetId: string,
+    fleetbaseOrderId: string,
+    status: string,
+  ): Promise<void> {
+    const data: {
+      fleetId: string;
+      fleetbaseOrderId: string;
+      status: string;
+      driverAssignedUuid: null;
+    } = { fleetId, fleetbaseOrderId, status, driverAssignedUuid: null };
+
+    try {
+      await this.prisma.order.create({ data });
+    } catch (error: any) {
+      this.logger.error(
+        `Cache de tournée diffusée non écrit (${fleetbaseOrderId}) : ${error.message} — ` +
+          'annulation de la commande Fleetbase pour ne pas la laisser sans suivi',
+      );
+      try {
+        await this.fleetbaseClient.cancelOrder(fleetbaseOrderId);
+      } catch (cancelError: any) {
+        this.logger.error(
+          `ANNULATION DE COMPENSATION ÉCHOUÉE — la tournée Fleetbase ` +
+            `${fleetbaseOrderId} est diffusée sans ligne de suivi et doit être ` +
+            `annulée à la main : ${cancelError.message}`,
+        );
+      }
+      badRequest(
+        'order.create_failed',
+        'La tournée n\'a pas pu être diffusée. Réessayez.',
+      );
+    }
+  }
+
+  /**
+   * Les uuid des tournées que cette entreprise a **diffusées** au pool.
+   *
+   * Tous états confondus — une tournée diffusée puis terminée reste dans le
+   * suivi de l'entreprise (son historique). C'est la seule chose qui la relie à
+   * sa créatrice, `facilitator_uuid` étant vide sur une course diffusée.
+   */
+  private async broadcastOrderUuids(fleetId: string): Promise<Set<string>> {
+    const rows = await this.prisma.order.findMany({
+      where: { fleetId },
+      select: { fleetbaseOrderId: true },
+    });
+    return new Set(rows.map((r: any) => r.fleetbaseOrderId as string));
+  }
+
+  /** Cette flotte a-t-elle diffusé cette commande (ligne locale `fleetId`) ? */
+  private async ownsBroadcast(
+    fleetId: string,
+    orderUuid: string,
+  ): Promise<boolean> {
+    const row = await this.prisma.order.findFirst({
+      where: { fleetId, fleetbaseOrderId: orderUuid },
+      select: { id: true },
+    });
+    return !!row;
   }
 
   /**
@@ -453,6 +574,16 @@ export class FlotteService {
    */
   async getOrders(fleetId: string, query: ListFleetOrdersQueryDto) {
     const fleet = await this.getFleetWithValidation(fleetId);
+
+    // Une tournée diffusée n'a pas de facilitator : Fleetbase ne sait pas la
+    // rattacher à cette entreprise, ni la compter. Dès qu'il y en a une, on
+    // quitte la pagination serveur pour le parcours complet — mélanger une page
+    // serveur et un supplément local rendrait la page incomplète et le total
+    // faux (cf. l'avertissement plus bas).
+    const broadcastUuids = await this.broadcastOrderUuids(fleetId);
+    if (broadcastUuids.size > 0) {
+      return this.ordersIncludingBroadcasts(fleet, query, broadcastUuids);
+    }
 
     try {
       const page = query.page || 1;
@@ -779,7 +910,17 @@ export class FlotteService {
         notFound('order.not_found', 'Order not found');
       }
 
-      if (order.facilitator_uuid !== fleet.fleetbaseVendorUuid) {
+      // Deux titres de propriété, et le second n'existe que depuis les tournées
+      // diffusées : `facilitator_uuid` pour une course confiée à cette flotte,
+      // OU une ligne locale `fleetId` pour une tournée qu'elle a diffusée (elle
+      // n'a alors pas de facilitator — voir `createBroadcastCache`). L'un des
+      // deux suffit ; aucun ⇒ ce n'est pas sa course.
+      const ownsByFacilitator =
+        order.facilitator_uuid === fleet.fleetbaseVendorUuid;
+      const ownsByBroadcast =
+        !ownsByFacilitator && (await this.ownsBroadcast(fleetId, order.uuid));
+
+      if (!ownsByFacilitator && !ownsByBroadcast) {
         this.audit.denied({
           actorType: 'fleet',
           actorId: fleetId,
@@ -1540,6 +1681,85 @@ export class FlotteService {
     const total = owned.length;
     const paged = await this.hydratePage(
       owned.slice((page - 1) * limit, (page - 1) * limit + limit),
+    );
+
+    return {
+      data: paged.map((o: any) => projectOrderForFleet(this.withEffectiveMeta(o))),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * La liste des commandes de la flotte **quand elle a des tournées diffusées**.
+   *
+   * ── Pourquoi un chemin à part, et pourquoi il rapatrie tout ────────────────
+   *
+   * Le chemin ordinaire (`getOrders`) laisse Fleetbase paginer et compter,
+   * parce que ses deux seuls critères — `facilitator` et `status` — sont
+   * honorés côté serveur. Une tournée diffusée casse les deux : elle n'a pas de
+   * `facilitator_uuid`, donc Fleetbase ne la rend pas et ne la compte pas. On
+   * revient donc au parcours complet — celui que `getOrders` garde justement
+   * pour « le jour où cette liste gagne un critère que Fleetbase ne sait pas
+   * exprimer ».
+   *
+   * Les diffusées sont lues **une par une** par leur uuid local : une flotte en
+   * a une poignée, et `readOrderFull` les rend déjà complètes (contrairement au
+   * parcours `facilitator`, servi par la ressource d'index).
+   */
+  private async ordersIncludingBroadcasts(
+    fleet: { fleetbaseVendorUuid: string },
+    query: ListFleetOrdersQueryDto,
+    broadcastUuids: Set<string>,
+  ) {
+    const page = query.page || 1;
+    const limit = query.limit || 25;
+
+    const facilitatorOwned = (
+      await this.fetchAllOrders(fleet.fleetbaseVendorUuid)
+    ).filter(
+      (o: any) => o?.facilitator_uuid === fleet.fleetbaseVendorUuid,
+    );
+
+    const broadcastOwned = (
+      await Promise.all(
+        [...broadcastUuids].map((uuid) =>
+          this.fleetbaseClient.readOrderFull(uuid).catch((error: any): any => {
+            // Une diffusée illisible ne fait pas disparaître les autres — mais
+            // elle est signalée : une ligne locale pointant une commande
+            // Fleetbase absente est un état à reprendre.
+            this.logger.warn(
+              `Tournée diffusée ${uuid} illisible : ${error?.message}`,
+            );
+            return null;
+          }),
+        ),
+      )
+    ).filter((o: any): o is any => !!o?.uuid);
+
+    // Dédoublonnage : une diffusée reprise par cette même flotte porterait à la
+    // fois `facilitator_uuid` et une ligne locale.
+    const seen = new Set<string>();
+    let merged = [...facilitatorOwned, ...broadcastOwned].filter((o: any) => {
+      if (seen.has(o.uuid)) return false;
+      seen.add(o.uuid);
+      return true;
+    });
+
+    if (query.status) {
+      merged = merged.filter((o: any) => o?.status === query.status);
+    }
+
+    // Les plus récentes d'abord — l'ordre que la page serveur rendait déjà.
+    merged.sort((a: any, b: any) =>
+      String(b?.created_at ?? '').localeCompare(String(a?.created_at ?? '')),
+    );
+
+    const total = merged.length;
+    // Hydrater la page couvre les deux origines : les `facilitator` viennent de
+    // la ressource d'index (sans champs personnalisés), les diffusées sont déjà
+    // complètes et une relecture est sans effet.
+    const paged = await this.hydratePage(
+      merged.slice((page - 1) * limit, (page - 1) * limit + limit),
     );
 
     return {

@@ -130,6 +130,12 @@ SCENARIOS=(
   # pointer un depot du reseau. Mutation : retirer adhocDistance de l'appel
   # createTournee -> une tournee sans cible nait adhoc=false.
   test-commercant-tournee
+  # TOURNEE DIFFUSEE cote FLOTTE (spec §4.6 pt 4) : POST /flotte/tournees avec
+  # broadcast:true. adhoc=true, PAS de facilitator -> invisible du filtre
+  # facilitator ; une ligne Order.fleetId (merchantId nullable) la relie a sa
+  # creatrice. Contraste : la meme ciblee reste confiee. Mutation : retirer
+  # l'appel createBroadcastCache -> la tournee disparait de /flotte/commandes.
+  test-flotte-tournee-broadcast
   # Refus d'un favori sollicité : la course repart au pool (adhoc=true, sans
   # conducteur) et le commerçant reçoit order.released. La vraie remplaçante de
   # l'ancien repli pickAvailableFavourite, jamais éprouvée.

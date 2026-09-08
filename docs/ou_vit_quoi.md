@@ -119,11 +119,11 @@ sortis des journaux pour cette table.
 
 ### 2.5 Le cache et le curseur — 1 table
 
-`Order` — 7 colonnes :
+`Order` — 8 colonnes :
 
 | colonne | rôle |
 |---|---|
-| `merchantId` | **à qui est cette commande** — la racine de toute l'autorisation |
+| `merchantId` **ou** `fleetId` | **à qui est cette commande** — la racine de toute l'autorisation. Exactement un des deux : un commerçant, ou une entreprise qui a **diffusé** une tournée au pool (spec §4.6 pt 4 — une diffusée n'a pas de `facilitator_uuid`, cette ligne est sa seule trace). Prisma ne dit pas « exactement un » ; c'est tenu à l'écriture. |
 | `status`, `driverAssignedUuid`, `lastSyncedAt` | la mémoire du réconciliateur |
 | `id`, `fleetbaseOrderId`, dates | le lien |
 

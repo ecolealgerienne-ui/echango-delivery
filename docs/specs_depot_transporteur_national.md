@@ -42,9 +42,11 @@ transmet `cash.waypointUuid`.
 d'encaissement ; Fleetbase avance `current_waypoint_uuid`, le BFF consigne
 `meta.stop_collections` sans réécrire, le dernier arrêt clôture. Mutation prouvée.
 
-**Phase 2/3 — RESTE** : jouer le pas-à-pas conducteur **aux écrans**
-(`flutter drive`) ; la diffusion au pool **côté flotte** (bloquée par l'absence
-de ligne `Order` locale — cf. §4.6 point 4).
+**Phase 2/3 — FAIT.** Le pas-à-pas conducteur **aux écrans** est vert
+(`flutter drive integration_test/tournee_conducteur_test.dart`, §4.6 pts 1-2).
+La **diffusion au pool côté flotte** est débloquée (`Order.merchantId` nullable
++ `Order.fleetId`, `broadcast: true` sur `POST /flotte/tournees` — cf. §4.6
+point 4).
 **Date** : 08/09/2026.
 **Origine** : discussion produit sur le positionnement « transporteur national à
 dépôts ». Reprend et débloque le sujet **multi-arrêt / multi-enlèvement** que
@@ -290,7 +292,7 @@ acceptée en bloc.
 | déclaration d'encaissement | **par arrêt** : `declareCollection(waypointUuid, …)` | ✅ **FAIT** — `resolveStopCollection` (noyau pur, 8 cas jest) ; `recordStopCollection` écrit `meta.stop_collections` (`[{place_uuid, collected_amount, collected_at, collection_reason?}]`, champ perso durable + projeté), `collected_amount` = somme courante. Arrêt courant = `cash.waypointUuid` (app) ou `payload.current_waypoint_uuid`. Immuable arrêt par arrêt. App : `_applyActivity` transmet `waypointUuid`, `_TourneeStops` affiche « Encaissé : X ». ⬜ Reste : même scénario émulateur que la fiche |
 | `POST /commercant/tournees` | même noyau, + la ligne `Order` locale (`merchantId`) + écran commerçant | ✅ `commercant.service.createTournee` + `createOrderCache` + `CreateMerchantTourneeScreen` + `test-commercant-tournee.sh` |
 | **conducteur — pas-à-pas serveur** | progression multi-waypoint + encaissement par arrêt, éprouvés | ✅ `test-tournee-conducteur.sh` (banc `curl`, mutation prouvée) ; ⬜ reste le `flutter drive` aux écrans |
-| **diffusion au pool** | `adhoc` sur une tournée | ✅ côté commerçant (`adhocDistance`) ; ⬜ côté flotte (verrou : pas de ligne `Order` locale) |
+| **diffusion au pool** | `adhoc` sur une tournée | ✅ côté commerçant (`adhocDistance`) **et** côté flotte (`broadcast: true`, `Order.fleetId` — `merchantId` nullable) · `test-flotte-tournee-broadcast.sh` |
 
 ### 4.3 Ce qui NE bloque plus
 
@@ -359,13 +361,28 @@ ce qui reste est l'**app conducteur à N arrêts** et l'encaissement par arrêt.
    `CreateMerchantTourneeScreen` (réutilise `TourneeComposerScreen`, règle 6) +
    route `/commercant/tournees`. Banc `test-commercant-tournee.sh` (6 témoins,
    mutation prouvée).
-4. **Diffusion d'une tournée au pool.** ✅ **côté commerçant** (point 3 :
-   `adhocDistance` ⇒ `adhoc: true`). ⬜ **côté flotte** : bloqué par le même
-   verrou d'architecture — une tournée flotte n'a pas de ligne `Order` locale
-   (`merchantId` obligatoire), donc une tournée flotte diffusée serait
-   **invisible de son créateur** (`isOrderClaimable` exige `!facilitator_uuid`,
-   et le filtre `/flotte/commandes` est sur `facilitator`). À rouvrir si le
-   besoin se confirme — demande `Order.merchantId` nullable + un `Order.fleetId`.
+4. **Diffusion d'une tournée au pool.** ✅ **FAIT des deux côtés.**
+   Côté **commerçant** (point 3) : l'absence de favori ⇒ `adhocDistance` ⇒
+   `adhoc: true`, suivi par la ligne `Order` locale (`merchantId`).
+   Côté **flotte** : le verrou d'architecture est levé. `Order.merchantId`
+   devient **nullable** et un `Order.fleetId` est ajouté (`db push`, aucune
+   perte — une colonne non-null → nullable + une colonne facultative). Un
+   `Order` local appartient désormais à **un** demandeur : un commerçant OU une
+   entreprise, jamais les deux (Prisma ne l'exprime pas, tenu à l'écriture).
+   `POST /flotte/tournees` avec **`broadcast: true`** et aucune cible :
+   `flotte.service.createTournee` n'attache pas de facilitator, passe
+   `adhocDistance`, puis `createBroadcastCache(fleetId, …)` écrit la ligne
+   locale (compensation : annule la commande Fleetbase si l'écriture échoue).
+   `getOrders` route par `ordersIncludingBroadcasts` dès qu'une ligne `fleetId`
+   existe — parcours complet + lecture unitaire des diffusées (pas de
+   facilitator à filtrer). `getOrderDetail` reconnaît le second titre de
+   propriété (`ownsBroadcast`). `order-reconciler` saute la notification pour
+   les lignes sans `merchantId` (pas de commerçant à prévenir) tout en tenant
+   le statut à jour. **`targetUuid`** ⇒ confiée à ce conducteur ; ni cible ni
+   `broadcast` ⇒ **gardée** (facilitator posé, l'entreprise l'affecte plus tard).
+   App : l'option « aucune cible » du composeur devient « Diffuser au pool » et
+   envoie `broadcast: true`. Banc `test-flotte-tournee-broadcast.sh` (5 témoins
+   + contraste confié, mutation : retirer `createBroadcastCache`).
 
 ### 4.4 Point ouvert — la wilaya d'une tournée
 
