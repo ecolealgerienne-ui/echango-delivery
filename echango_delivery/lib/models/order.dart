@@ -137,18 +137,8 @@ class Order extends Equatable {
   /// L'arrêt d'une tournée sur lequel le conducteur travaille : celui que
   /// Fleetbase désigne ([currentWaypointUuid]), sinon le **premier non honoré**,
   /// sinon le dernier. `null` si ce n'est pas une tournée.
-  Waypoint? get currentWaypoint {
-    if (waypoints.isEmpty) return null;
-    if (currentWaypointUuid != null) {
-      for (final w in waypoints) {
-        if (w.placeUuid == currentWaypointUuid) return w;
-      }
-    }
-    for (final w in waypoints) {
-      if (!w.complete) return w;
-    }
-    return waypoints.last;
-  }
+  Waypoint? get currentWaypoint =>
+      resolveCurrentWaypoint(waypoints, currentWaypointUuid);
 
   Order copyWith({
     String? id,
@@ -228,65 +218,14 @@ class Order extends Equatable {
       return raw == null ? null : Place.fromJson(raw);
     }
 
-    // ── Arrêts d'une tournée (spec §4) ───────────────────────────────────────
-    //
-    // Les espèces par arrêt vivent dans `meta.stop_cod_amounts`
-    // (`[{place_uuid, amount}]`) ; les colis dans `payload.entities`, rattachés
-    // par `destination_uuid` (l'uuid du `Place` de l'arrêt) et doublés par
-    // `meta.stop_index`. On corrèle ici, une fois, plutôt que dans chaque écran.
-    final stopCods = <String, num>{};
-    final rawStopCods = meta?['stop_cod_amounts'];
-    if (rawStopCods is List) {
-      for (final entry in rawStopCods.whereType<Map>()) {
-        final placeUuid = entry['place_uuid'];
-        final amount = entry['amount'];
-        if (placeUuid is String && amount is num) stopCods[placeUuid] = amount;
-      }
-    }
-
-    // Ce qui a été déclaré perçu à chaque arrêt (`meta.stop_collections`).
-    final stopCollected = <String, num>{};
-    final rawStopCollections = meta?['stop_collections'];
-    if (rawStopCollections is List) {
-      for (final entry in rawStopCollections.whereType<Map>()) {
-        final placeUuid = entry['place_uuid'];
-        final amount = entry['collected_amount'];
-        if (placeUuid is String && amount is num) {
-          stopCollected[placeUuid] = amount;
-        }
-      }
-    }
-
-    final parcels =
-        readEntitiesJson(json).map(TourneeParcel.fromJson).toList();
-
-    final waypoints = <Waypoint>[];
-    for (final wj in readWaypointsJson(json)) {
-      final wpUuid = Waypoint.uuidOf(wj);
-      final wpOrder = (wj['order'] as num?)?.toInt() ?? waypoints.length;
-      final here = parcels
-          .where((p) => p.destinationUuid != null
-              ? p.destinationUuid == wpUuid
-              : p.stopIndex == wpOrder)
-          .toList();
-      waypoints.add(Waypoint.fromJson(
-        wj,
-        codAmount: stopCods[wpUuid],
-        collectedAmount: stopCollected[wpUuid],
-        parcels: here,
-      ));
-    }
-    waypoints.sort((a, b) => a.order.compareTo(b.order));
+    final waypoints = parseTourneeWaypoints(json);
 
     final pickup = place('pickup') ??
         (waypoints.isNotEmpty ? waypoints.first.place : null);
     final dropoff = place('dropoff') ??
         (waypoints.isNotEmpty ? waypoints.last.place : null);
 
-    final payloadJson = json['payload'];
-    final currentWaypointUuid = payloadJson is Map<String, dynamic>
-        ? payloadJson['current_waypoint_uuid'] as String?
-        : null;
+    final currentWaypointUuid = currentWaypointUuidOf(json);
 
     return Order(
       // `uuid` est l'identifiant interne, `public_id` celui qu'attendent les
@@ -565,6 +504,87 @@ class TourneeParcel extends Equatable {
   @override
   List<Object?> get props =>
       [id, name, description, destinationUuid, stopIndex];
+}
+
+/// Corrèle, **une seule fois**, les arrêts d'une tournée avec leurs espèces
+/// (`meta.stop_cod_amounts` / `meta.stop_collections`) et leurs colis
+/// (`payload.entities` par `destination_uuid`, doublé par `meta.stop_index`).
+///
+/// Partagé entre le modèle du transporteur ([Order]) et celui du commerçant
+/// ([MerchantOrder]) : deux copies liraient le même JSON de deux façons
+/// (règle 5). Rend une liste vide pour une course 1→1.
+List<Waypoint> parseTourneeWaypoints(Map<String, dynamic> json) {
+  final meta = json['meta'] is Map<String, dynamic>
+      ? json['meta'] as Map<String, dynamic>
+      : null;
+
+  final stopCods = <String, num>{};
+  final rawStopCods = meta?['stop_cod_amounts'];
+  if (rawStopCods is List) {
+    for (final entry in rawStopCods.whereType<Map>()) {
+      final placeUuid = entry['place_uuid'];
+      final amount = entry['amount'];
+      if (placeUuid is String && amount is num) stopCods[placeUuid] = amount;
+    }
+  }
+
+  final stopCollected = <String, num>{};
+  final rawStopCollections = meta?['stop_collections'];
+  if (rawStopCollections is List) {
+    for (final entry in rawStopCollections.whereType<Map>()) {
+      final placeUuid = entry['place_uuid'];
+      final amount = entry['collected_amount'];
+      if (placeUuid is String && amount is num) stopCollected[placeUuid] = amount;
+    }
+  }
+
+  final parcels = readEntitiesJson(json).map(TourneeParcel.fromJson).toList();
+
+  final waypoints = <Waypoint>[];
+  for (final wj in readWaypointsJson(json)) {
+    final wpUuid = Waypoint.uuidOf(wj);
+    final wpOrder = (wj['order'] as num?)?.toInt() ?? waypoints.length;
+    final here = parcels
+        .where((p) => p.destinationUuid != null
+            ? p.destinationUuid == wpUuid
+            : p.stopIndex == wpOrder)
+        .toList();
+    waypoints.add(Waypoint.fromJson(
+      wj,
+      codAmount: stopCods[wpUuid],
+      collectedAmount: stopCollected[wpUuid],
+      parcels: here,
+    ));
+  }
+  waypoints.sort((a, b) => a.order.compareTo(b.order));
+  return waypoints;
+}
+
+/// L'arrêt de tournée en cours (`payload.current_waypoint_uuid`), ou `null`.
+String? currentWaypointUuidOf(Map<String, dynamic> json) {
+  final payload = json['payload'];
+  return payload is Map<String, dynamic>
+      ? payload['current_waypoint_uuid'] as String?
+      : null;
+}
+
+/// L'arrêt sur lequel travailler : celui que désigne [currentWaypointUuid],
+/// sinon le premier non honoré, sinon le dernier. `null` si [waypoints] est
+/// vide. Partagé transporteur / commerçant (règle 5).
+Waypoint? resolveCurrentWaypoint(
+  List<Waypoint> waypoints,
+  String? currentWaypointUuid,
+) {
+  if (waypoints.isEmpty) return null;
+  if (currentWaypointUuid != null) {
+    for (final w in waypoints) {
+      if (w.placeUuid == currentWaypointUuid) return w;
+    }
+  }
+  for (final w in waypoints) {
+    if (!w.complete) return w;
+  }
+  return waypoints.last;
 }
 
 /// Les motifs d'échec de livraison, **dans l'ordre où on les propose**.

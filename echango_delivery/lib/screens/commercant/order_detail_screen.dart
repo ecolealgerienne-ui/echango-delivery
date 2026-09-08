@@ -23,6 +23,7 @@ import '../../widgets/confirm_dialog.dart';
 import '../../widgets/consultation_map.dart';
 import '../../widgets/notice.dart';
 import '../../widgets/section_card.dart';
+import '../../widgets/tournee_stops.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -278,24 +279,42 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         message: _t('order.detail.state.cancelled'),
                       ),
                     const SizedBox(height: AppSpacing.md),
-                    _placeCard(_t('order.section.pickup'), order.pickup, order.pickupNotes),
-                    const SizedBox(height: AppSpacing.md),
-                    _placeCard(
-                      _t('order.section.dropoff'),
-                      order.dropoff,
-                      order.dropoffNotes,
-                      // Corriger la position depuis la fiche client n'a de
-                      // sens que tant que la livraison n'a pas encore eu
-                      // lieu, et suppose un numéro à chercher.
-                      onRefreshFromClient: (!order.isFinished &&
-                              order.dropoff?.contactPhone != null &&
-                              order.dropoff!.contactPhone!.isNotEmpty)
-                          ? () => _refreshDropoffFromClient(
-                                orderState,
-                                order.dropoff!.contactPhone!,
-                              )
-                          : null,
-                    ),
+                    if (order.isTournee)
+                      // Une tournée : la liste ordonnée des N arrêts, à la place
+                      // des deux blocs. Widget partagé avec le conducteur
+                      // (règle 6) — le commerçant ne montre ni itinéraire ni
+                      // appel, juste le suivi.
+                      AppSectionCard(
+                        child: TourneeStops(
+                          waypoints: order.waypoints,
+                          currentWaypointUuid: order.currentWaypointUuid,
+                          codCurrency: order.codCurrency,
+                          t: (k, [v]) =>
+                              orderLabel('order.tournee.$k',
+                                  context.read<LocaleState>().locale, v),
+                        ),
+                      )
+                    else ...[
+                      _placeCard(_t('order.section.pickup'), order.pickup,
+                          order.pickupNotes),
+                      const SizedBox(height: AppSpacing.md),
+                      _placeCard(
+                        _t('order.section.dropoff'),
+                        order.dropoff,
+                        order.dropoffNotes,
+                        // Corriger la position depuis la fiche client n'a de
+                        // sens que tant que la livraison n'a pas encore eu
+                        // lieu, et suppose un numéro à chercher.
+                        onRefreshFromClient: (!order.isFinished &&
+                                order.dropoff?.contactPhone != null &&
+                                order.dropoff!.contactPhone!.isNotEmpty)
+                            ? () => _refreshDropoffFromClient(
+                                  orderState,
+                                  order.dropoff!.contactPhone!,
+                                )
+                            : null,
+                      ),
+                    ],
                     // Signalements d'échec : le commerçant devra répondre à son
                     // client, et le justificatif n'allait jusqu'ici qu'à celui
                     // qui l'avait produit.

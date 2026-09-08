@@ -8,7 +8,14 @@ import 'fleetbase_json.dart';
 // `DeliveryFailure` est partagé avec le transporteur : c'est le même
 // signalement, vu des deux bouts. Une seconde classe pour le même JSON finirait
 // par le lire de deux façons (revue archi #14).
-import 'order.dart' show DeliveryFailure, Place;
+import 'order.dart'
+    show
+        DeliveryFailure,
+        Place,
+        Waypoint,
+        currentWaypointUuidOf,
+        parseTourneeWaypoints,
+        resolveCurrentWaypoint;
 
 /// Le mot affiché pour un statut de livraison, à un seul endroit.
 ///
@@ -166,6 +173,14 @@ class MerchantOrder extends Equatable {
   /// qu'à celui qui l'avait produit.
   final List<DeliveryFailure> deliveryFailures;
 
+  /// Les arrêts d'une **tournée** (spec §4), dans l'ordre. Vide pour une course
+  /// 1→1. [pickup]/[dropoff] retombent alors sur le 1ᵉʳ / dernier arrêt — les
+  /// écrans qui ne connaissent pas les tournées continuent d'afficher juste.
+  final List<Waypoint> waypoints;
+
+  /// L'arrêt de tournée en cours (`payload.current_waypoint_uuid`), ou `null`.
+  final String? currentWaypointUuid;
+
   const MerchantOrder({
     required this.id,
     required this.publicId,
@@ -196,7 +211,17 @@ class MerchantOrder extends Equatable {
     this.collectedAt,
     this.collectionReason,
     this.deliveryFailures = const [],
+    this.waypoints = const [],
+    this.currentWaypointUuid,
   });
+
+  /// Une tournée multi-arrêt : au moins deux waypoints (spec §4).
+  bool get isTournee => waypoints.length >= 2;
+
+  /// L'arrêt sur lequel la tournée est engagée, ou `null` si ce n'en est pas
+  /// une. Même règle que côté transporteur (règle 5).
+  Waypoint? get currentWaypoint =>
+      resolveCurrentWaypoint(waypoints, currentWaypointUuid);
 
   bool get isCompleted => status == 'completed';
   bool get isCancelled => status == 'canceled';
@@ -253,6 +278,8 @@ class MerchantOrder extends Equatable {
         ? json['meta'] as Map<String, dynamic>
         : null;
 
+    final waypoints = parseTourneeWaypoints(json);
+
     return MerchantOrder(
       id: readId(json),
       publicId: readPublicId(json),
@@ -261,8 +288,12 @@ class MerchantOrder extends Equatable {
       dispatched: json['dispatched'] == true,
       degraded: json['stale'] == true || json['missing'] == true,
       createdAt: readDate(json, 'created_at'),
-      pickup: place('pickup'),
-      dropoff: place('dropoff'),
+      pickup: place('pickup') ??
+          (waypoints.isNotEmpty ? waypoints.first.place : null),
+      dropoff: place('dropoff') ??
+          (waypoints.isNotEmpty ? waypoints.last.place : null),
+      waypoints: waypoints,
+      currentWaypointUuid: currentWaypointUuidOf(json),
       driverName: driver is Map<String, dynamic> ? driver['name'] as String? : null,
       driverPhone: driver is Map<String, dynamic> ? driver['phone'] as String? : null,
       deliveryFailures: json['delivery_failures'] is List

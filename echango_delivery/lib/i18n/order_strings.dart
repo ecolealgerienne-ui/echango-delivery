@@ -54,6 +54,17 @@ const Map<String, String> _fr = {
   'order.section.pickup': 'Retrait',
   'order.section.dropoff': 'Livraison',
   'order.section.parcel': 'Colis',
+  // Tournée multi-arrêt (spec §4), vue commerçant
+  'order.tournee.title': 'Arrêts de la tournée',
+  'order.tournee.count': '{n} arrêts',
+  'order.tournee.pickup': 'Enlèvement',
+  'order.tournee.dropoff': 'Livraison',
+  'order.tournee.current': 'arrêt en cours',
+  'order.tournee.done': 'honoré',
+  'order.tournee.cod': 'À encaisser ici : {amount}',
+  'order.tournee.collected': 'Encaissé : {amount}',
+  'order.tournee.parcels': '{n} colis',
+  'order.tournee.contact': 'Contact : {name}',
   'order.form.section.options': 'Options',
 
   // ── Champs ──────────────────────────────────────────────────────────────
@@ -401,6 +412,8 @@ const Map<String, String> _fr = {
   'driver.order.tournee.cod': 'À percevoir ici : {amount}',
   'driver.order.tournee.collected': 'Encaissé : {amount}',
   'driver.order.tournee.parcels': '{n} colis',
+  'driver.order.tournee.contact': 'Contact : {name}',
+  'driver.order.tournee.route': 'Itinéraire',
   'driver.order.nav.none':
       'Aucune application de navigation trouvée sur cet appareil.',
   'driver.order.call.failed': 'Impossible de lancer l’appel.',
@@ -610,6 +623,17 @@ const Map<String, String> _ar = {
   'order.section.pickup': 'الاستلام',
   'order.section.dropoff': 'التسليم',
   'order.section.parcel': 'الطرد',
+  // جولة متعددة المحطات (المواصفات §4)، عرض التاجر
+  'order.tournee.title': 'محطات الجولة',
+  'order.tournee.count': '{n} محطات',
+  'order.tournee.pickup': 'استلام',
+  'order.tournee.dropoff': 'تسليم',
+  'order.tournee.current': 'المحطة الحالية',
+  'order.tournee.done': 'تمّت',
+  'order.tournee.cod': 'يُحصَّل هنا: {amount}',
+  'order.tournee.collected': 'حُصِّل: {amount}',
+  'order.tournee.parcels': '{n} طرود',
+  'order.tournee.contact': 'جهة الاتصال: {name}',
   'order.form.section.options': 'خيارات',
 
   // ── Champs ──────────────────────────────────────────────────────────────
@@ -892,6 +916,8 @@ const Map<String, String> _ar = {
   'driver.order.tournee.cod': 'يُحصَّل هنا: {amount}',
   'driver.order.tournee.collected': 'حُصِّل: {amount}',
   'driver.order.tournee.parcels': '{n} طرود',
+  'driver.order.tournee.contact': 'جهة الاتصال: {name}',
+  'driver.order.tournee.route': 'المسار',
   'driver.order.nav.none': 'لا يوجد تطبيق ملاحة على هذا الجهاز.',
   'driver.order.call.failed': 'تعذّر إجراء المكالمة.',
   'driver.order.failures.many': '{count} حالات فشل تسليم مُبلَّغ عنها',
