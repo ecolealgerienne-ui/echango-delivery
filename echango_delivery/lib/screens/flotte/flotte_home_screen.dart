@@ -101,6 +101,11 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
             tooltip: t('fleet.depots.open'),
             onPressed: () => context.push('/flotte/depots'),
           ),
+          IconButton(
+            icon: const Icon(Icons.alt_route),
+            tooltip: t('fleet.tournee.open'),
+            onPressed: () => context.push('/flotte/tournees'),
+          ),
           // ⚠️ L'accès à la caisse a été retiré le 03/08/2026 : l'entreprise
           // répond des espèces de ses conducteurs et en tient le compte chez
           // elle (`docs/registre_caisse_precis.md`).

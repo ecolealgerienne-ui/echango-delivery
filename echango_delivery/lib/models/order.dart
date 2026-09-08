@@ -28,6 +28,20 @@ class Order extends Equatable {
   final DateTime updatedAt;
   final Place? pickupPlace;
   final Place? dropoffPlace;
+
+  /// Les arrêts d'une **tournée** (spec §4), dans l'ordre. Vide pour une course
+  /// 1→1 ordinaire.
+  ///
+  /// ── Additif, et pourquoi ─────────────────────────────────────────────────
+  ///
+  /// [pickupPlace] et [dropoffPlace] restent la façon de lire une course simple
+  /// partout dans l'app. Sur une tournée, Fleetbase ne pose ni `payload.pickup`
+  /// ni `payload.dropoff` : [Order.fromJson] les fait alors retomber sur le
+  /// **premier** et le **dernier** arrêt, pour que les ~20 écrans qui lisent ces
+  /// deux champs continuent d'afficher quelque chose de juste sans réécriture.
+  /// Les écrans qui savent gérer N arrêts lisent [waypoints].
+  final List<Waypoint> waypoints;
+
   final double? totalDistance;
   final int? estimatedDuration; // in seconds
   final DeliveryFailure? deliveryFailure;
@@ -84,6 +98,7 @@ class Order extends Equatable {
     required this.updatedAt,
     this.pickupPlace,
     this.dropoffPlace,
+    this.waypoints = const [],
     this.totalDistance,
     this.estimatedDuration,
     this.deliveryFailure,
@@ -106,6 +121,13 @@ class Order extends Equatable {
   bool get isInProgress => !isFinished && !isPending;
   bool get isFailed => status == 'failed';
 
+  /// Une tournée multi-arrêt : au moins deux waypoints (spec §4).
+  bool get isTournee => waypoints.length >= 2;
+
+  /// Les arrêts de livraison d'une tournée qui portent des espèces à percevoir.
+  List<Waypoint> get cashStops =>
+      waypoints.where((w) => (w.codAmount ?? 0) > 0).toList();
+
   Order copyWith({
     String? id,
     String? publicId,
@@ -121,6 +143,7 @@ class Order extends Equatable {
     DateTime? updatedAt,
     Place? pickupPlace,
     Place? dropoffPlace,
+    List<Waypoint>? waypoints,
     double? totalDistance,
     int? estimatedDuration,
     DeliveryFailure? deliveryFailure,
@@ -140,6 +163,7 @@ class Order extends Equatable {
       updatedAt: updatedAt ?? this.updatedAt,
       pickupPlace: pickupPlace ?? this.pickupPlace,
       dropoffPlace: dropoffPlace ?? this.dropoffPlace,
+      waypoints: waypoints ?? this.waypoints,
       totalDistance: totalDistance ?? this.totalDistance,
       estimatedDuration: estimatedDuration ?? this.estimatedDuration,
       deliveryFailure: deliveryFailure ?? this.deliveryFailure,
@@ -180,6 +204,47 @@ class Order extends Equatable {
       return raw == null ? null : Place.fromJson(raw);
     }
 
+    // ── Arrêts d'une tournée (spec §4) ───────────────────────────────────────
+    //
+    // Les espèces par arrêt vivent dans `meta.stop_cod_amounts`
+    // (`[{place_uuid, amount}]`) ; les colis dans `payload.entities`, rattachés
+    // par `destination_uuid` (l'uuid du `Place` de l'arrêt) et doublés par
+    // `meta.stop_index`. On corrèle ici, une fois, plutôt que dans chaque écran.
+    final stopCods = <String, num>{};
+    final rawStopCods = meta?['stop_cod_amounts'];
+    if (rawStopCods is List) {
+      for (final entry in rawStopCods.whereType<Map>()) {
+        final placeUuid = entry['place_uuid'];
+        final amount = entry['amount'];
+        if (placeUuid is String && amount is num) stopCods[placeUuid] = amount;
+      }
+    }
+
+    final parcels =
+        readEntitiesJson(json).map(TourneeParcel.fromJson).toList();
+
+    final waypoints = <Waypoint>[];
+    for (final wj in readWaypointsJson(json)) {
+      final wpUuid = Waypoint.uuidOf(wj);
+      final wpOrder = (wj['order'] as num?)?.toInt() ?? waypoints.length;
+      final here = parcels
+          .where((p) => p.destinationUuid != null
+              ? p.destinationUuid == wpUuid
+              : p.stopIndex == wpOrder)
+          .toList();
+      waypoints.add(Waypoint.fromJson(
+        wj,
+        codAmount: stopCods[wpUuid],
+        parcels: here,
+      ));
+    }
+    waypoints.sort((a, b) => a.order.compareTo(b.order));
+
+    final pickup = place('pickup') ??
+        (waypoints.isNotEmpty ? waypoints.first.place : null);
+    final dropoff = place('dropoff') ??
+        (waypoints.isNotEmpty ? waypoints.last.place : null);
+
     return Order(
       // `uuid` est l'identifiant interne, `public_id` celui qu'attendent les
       // routes du BFF. On garde les deux : selon l'endroit, Fleetbase expose
@@ -196,8 +261,9 @@ class Order extends Equatable {
       notes: json['notes'] as String?,
       createdAt: readDate(json, 'created_at'),
       updatedAt: readDate(json, 'updated_at'),
-      pickupPlace: place('pickup'),
-      dropoffPlace: place('dropoff'),
+      pickupPlace: pickup,
+      dropoffPlace: dropoff,
+      waypoints: waypoints,
       totalDistance: (json['distance'] as num?)?.toDouble(),
       estimatedDuration: json['estimated_duration'] as int?,
       redacted: json['redacted'] == true,
@@ -247,6 +313,7 @@ class Order extends Equatable {
         updatedAt,
         pickupPlace,
         dropoffPlace,
+        waypoints,
         totalDistance,
         estimatedDuration,
         deliveryFailure,
@@ -310,6 +377,132 @@ class Place extends Equatable {
         contactName,
         contactPhone,
       ];
+}
+
+/// Un arrêt d'une **tournée** (spec §4) : un lieu, sa position dans la route,
+/// son avancement, les espèces à y percevoir et les colis qui y sont
+/// déposés/collectés.
+///
+/// ── Ce qui vient d'où ─────────────────────────────────────────────────────
+///
+/// [place], [type], [order], [status], [complete] viennent de
+/// `payload.waypoints[i]`. [codAmount] est rapproché depuis
+/// `meta.stop_cod_amounts` par uuid de lieu (le `meta` de la commande n'a
+/// qu'un `cod_amount` **cumulé**, qui sert au plafond de dette). [parcels]
+/// vient de `payload.entities` filtré sur `destination_uuid`.
+class Waypoint extends Equatable {
+  final Place place;
+
+  /// L'uuid du `Place` de l'arrêt, **brut** — la clé des mises à jour
+  /// d'activité par arrêt (`getNextActivities(waypoint)` /
+  /// `updateActivity(waypointUuid)`) et du rattachement des colis
+  /// (`entity.destination_uuid`) et des espèces
+  /// (`meta.stop_cod_amounts[].place_uuid`).
+  ///
+  /// ⚠️ Distinct de `place.id`, qui préfère `public_id` (règle de
+  /// [readAnyId]) : l'amont corrèle sur l'`uuid`, pas sur le `public_id`.
+  final String placeUuid;
+
+  /// `pickup` (on y enlève) ou `dropoff` (on y livre). Le premier arrêt est un
+  /// enlèvement, les suivants des livraisons — sauf composition explicite.
+  final String type;
+
+  /// Rang dans la route, à partir de 0.
+  final int order;
+
+  /// Statut Fleetbase de cet arrêt (`created`, `started`, `completed`…), ou
+  /// `null` si l'amont ne le sert pas. Jamais figé en énumération, comme
+  /// [Order.status].
+  final String? status;
+
+  /// L'arrêt a été honoré.
+  final bool complete;
+
+  /// Espèces à percevoir **à cet arrêt** — marchandise seule (la rémunération
+  /// du conducteur est le prix unique de la tournée, réglé à part). `null` =
+  /// pas d'encaissement ici.
+  final num? codAmount;
+
+  /// Les colis déposés ou collectés à cet arrêt.
+  final List<TourneeParcel> parcels;
+
+  const Waypoint({
+    required this.place,
+    required this.placeUuid,
+    required this.type,
+    required this.order,
+    this.status,
+    this.complete = false,
+    this.codAmount,
+    this.parcels = const [],
+  });
+
+  bool get isPickup => type == 'pickup';
+
+  /// L'uuid du `Place` d'un arrêt tel que l'amont l'expose — `uuid` en priorité
+  /// (requête interne), `public_id` sinon.
+  static String uuidOf(Map<String, dynamic> json) =>
+      (json['uuid'] ?? json['public_id'] ?? json['id'] ?? '').toString();
+
+  factory Waypoint.fromJson(
+    Map<String, dynamic> json, {
+    num? codAmount,
+    List<TourneeParcel> parcels = const [],
+  }) {
+    return Waypoint(
+      place: Place.fromJson(json),
+      placeUuid: uuidOf(json),
+      type: (json['type'] ?? 'dropoff') as String,
+      order: (json['order'] as num?)?.toInt() ?? 0,
+      status: json['status'] as String?,
+      complete: json['complete'] == true,
+      codAmount: codAmount,
+      parcels: parcels,
+    );
+  }
+
+  @override
+  List<Object?> get props =>
+      [place, placeUuid, type, order, status, complete, codAmount, parcels];
+}
+
+/// Un colis d'une tournée (`payload.entities[i]`), rattaché à son arrêt par
+/// [destinationUuid] (= [Waypoint.placeUuid]) ou, à défaut, par [stopIndex].
+class TourneeParcel extends Equatable {
+  final String id;
+  final String name;
+  final String? description;
+
+  /// L'uuid du `Place` de l'arrêt de destination. `null` si l'amont ne le sert
+  /// pas — on retombe alors sur [stopIndex].
+  final String? destinationUuid;
+
+  /// Rang de l'arrêt (0-based), déposé dans `meta.stop_index` à la création.
+  final int? stopIndex;
+
+  const TourneeParcel({
+    required this.id,
+    required this.name,
+    this.description,
+    this.destinationUuid,
+    this.stopIndex,
+  });
+
+  factory TourneeParcel.fromJson(Map<String, dynamic> json) {
+    final meta = json['meta'];
+    return TourneeParcel(
+      id: readAnyId(json),
+      name: (json['name'] ?? '') as String,
+      description: json['description'] as String?,
+      destinationUuid:
+          (json['destination_uuid'] ?? json['destination']) as String?,
+      stopIndex: meta is Map ? (meta['stop_index'] as num?)?.toInt() : null,
+    );
+  }
+
+  @override
+  List<Object?> get props =>
+      [id, name, description, destinationUuid, stopIndex];
 }
 
 /// Les motifs d'échec de livraison, **dans l'ordre où on les propose**.

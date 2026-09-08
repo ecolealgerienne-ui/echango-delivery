@@ -428,6 +428,19 @@ class FleetState extends ChangeNotifier {
     }
   }
 
+  /// Crée une **tournée multi-arrêt** (spec §4) via `POST /flotte/tournees`,
+  /// puis recharge les courses. Rend `null` en cas de succès, ou le message
+  /// d'erreur traduit.
+  Future<String?> createTournee(Map<String, dynamic> body) async {
+    try {
+      await _apiClient.createFleetTournee(body);
+      await load();
+      return null;
+    } catch (e) {
+      return messageForError(e, _locale);
+    }
+  }
+
   Future<Map<String, dynamic>> _fetchOpportunities({required int page}) {
     return _apiClient.getFleetOpportunities(
       page: page,

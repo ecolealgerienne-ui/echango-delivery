@@ -58,6 +58,29 @@ Map<String, dynamic>? readPlaceJson(Map<String, dynamic> json, String key) {
   return raw is Map<String, dynamic> ? raw : null;
 }
 
+/// Les arrêts d'une **tournée**, sous `payload.waypoints`. Liste vide pour une
+/// course 1→1 ordinaire — le champ n'apparaît que sur une commande à
+/// `payload.waypoints[]` (spec §4). Additif : rien ne casse si le serveur ne
+/// le sert pas.
+List<Map<String, dynamic>> readWaypointsJson(Map<String, dynamic> json) {
+  final payload = json['payload'];
+  if (payload is! Map<String, dynamic>) return const [];
+  final raw = payload['waypoints'];
+  if (raw is! List) return const [];
+  return raw.whereType<Map<String, dynamic>>().toList();
+}
+
+/// Les colis d'une commande, sous `payload.entities`. Sur une tournée, chacun
+/// porte un `destination_uuid` (= l'uuid du `Place` de son arrêt) et
+/// `meta.stop_index`.
+List<Map<String, dynamic>> readEntitiesJson(Map<String, dynamic> json) {
+  final payload = json['payload'];
+  if (payload is! Map<String, dynamic>) return const [];
+  final raw = payload['entities'];
+  if (raw is! List) return const [];
+  return raw.whereType<Map<String, dynamic>>().toList();
+}
+
 /// Coordonnées d'un lieu, au format GeoJSON.
 ///
 /// ⚠️ `location.coordinates` est `[longitude, latitude]` — l'ordre inverse de

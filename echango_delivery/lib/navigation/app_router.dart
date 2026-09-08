@@ -10,6 +10,7 @@ import '../screens/commercant/favourite_drivers_screen.dart';
 import '../screens/commercant/notifications_screen.dart';
 import '../screens/commercant/orders_screen.dart';
 import '../screens/flotte/depots_screen.dart';
+import '../screens/flotte/create_tournee_screen.dart';
 import '../screens/flotte/driver_map_screen.dart';
 import '../screens/flotte/flotte_home_screen.dart';
 import '../screens/flotte/flotte_order_detail_screen.dart';
@@ -165,6 +166,12 @@ GoRouter buildAppRouter(AuthState authState) {
           GoRoute(
             path: 'depots',
             builder: (_, __) => const DepotsScreen(),
+          ),
+          // Composer une tournée multi-arrêt (spec §4). Route et non onglet :
+          // rarement ouverte, et elle charge dépôts + conducteurs à la demande.
+          GoRoute(
+            path: 'tournees',
+            builder: (_, __) => const CreateTourneeScreen(),
           ),
           // Deux chemins pour un écran, et non un drapeau dans l'URL : ils
           // n'interrogent pas la même route serveur et n'obéissent pas à la

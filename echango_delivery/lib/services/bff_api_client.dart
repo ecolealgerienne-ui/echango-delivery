@@ -1016,6 +1016,15 @@ class BffApiClient {
     return (data is Map ? data['fleetbaseOrderId'] : null) as String?;
   }
 
+  /// Le transporteur crée une **tournée multi-arrêt** (spec §4) :
+  /// `{ price, stops: [{ depotUuid | latitude/longitude + contact, type?,
+  /// items?, codAmount? }], targetUuid?, scheduledAt?, ... }`.
+  /// Rend l'identifiant Fleetbase de la tournée créée.
+  Future<String?> createFleetTournee(Map<String, dynamic> body) async {
+    final data = await _post('/flotte/tournees', body);
+    return (data is Map ? data['fleetbaseOrderId'] : null) as String?;
+  }
+
   /// Prendre une course du pool.
   ///
   /// Le second arrivant reçoit `order.already_taken` : le serveur relit après
