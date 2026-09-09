@@ -736,11 +736,19 @@ export class TransporteurService {
     const wantsAdhoc = !query.type || query.type === 'adhoc';
 
     // La zone est lue AVANT le fetch adhoc : c'est son point d'ancrage qui
-    // décide quoi demander à Fleetbase (`nearby`). Une seule lecture, partagée
-    // avec le filtre véhicule/refus plus bas.
+    // décide s'il faut interroger Fleetbase. Une seule lecture, partagée avec
+    // le filtre véhicule/refus plus bas.
     const zoneReading = wantsAdhoc
       ? await this.driverZone.read(driver.fleetbaseDriverUuid)
       : null;
+
+    // ⚠️ **Panne de lecture ≠ pas de point d'ancrage.** Une zone `null` fait
+    // court-circuiter la branche adhoc (voir plus bas) ; si c'est Fleetbase qui
+    // est injoignable, ce court-circuit masquerait l'incident derrière un `200`
+    // vide. `readOk: false` ⇒ on répond `503`, comme le ferait le fetch.
+    if (wantsAdhoc && zoneReading && !zoneReading.readOk) {
+      serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
+    }
 
     // ⚠️ **Point d'ancrage absent ⇒ liste d'opportunités vide, et l'écran
     // invite à en poser un** (règle 10 : deux absences, deux messages). On ne

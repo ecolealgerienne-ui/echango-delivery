@@ -35,6 +35,18 @@ export interface DriverZoneReading {
   /** Nom et téléphone tels que Fleetbase les porte — la seule source. */
   name: string | null;
   phone: string | null;
+  /**
+   * La lecture Fleetbase a-t-elle abouti ? `false` = Fleetbase injoignable ou
+   * en erreur, **pas** « rien de réglé ».
+   *
+   * ⚠️ La plupart des appelants (`readZone`, `getProfile`) l'ignorent et
+   * dégradent en douceur. Mais `listOrders` doit distinguer les deux : depuis
+   * le 09/09/2026, une zone `null` fait **court-circuiter** la branche adhoc
+   * (« pas de point d'ancrage ⇒ liste vide »). Sur une panne Fleetbase, ce
+   * court-circuit masquerait l'incident derrière un `200` vide, là où la liste
+   * doit répondre `503` (`test-resilience-degradee`).
+   */
+  readOk: boolean;
 }
 
 /**
@@ -104,7 +116,7 @@ export class DriverZoneService {
 
       const values = driver?.custom_field_values;
       if (!Array.isArray(values) || !values.length) {
-        return { zone: null, point, vehicleType: null, ...identity };
+        return { zone: null, point, vehicleType: null, readOk: true, ...identity };
       }
 
       const byName = new Map<string, any>();
@@ -117,9 +129,9 @@ export class DriverZoneService {
       const center = readCenter(byName.get('zone_center'));
       const radiusKm = readRadiusKm(byName.get('zone_radius_km'));
       if (!center && radiusKm == null) {
-        return { zone: null, point, vehicleType, ...identity };
+        return { zone: null, point, vehicleType, readOk: true, ...identity };
       }
-      return { zone: { center, radiusKm }, point, vehicleType, ...identity };
+      return { zone: { center, radiusKm }, point, vehicleType, readOk: true, ...identity };
     } catch (error) {
       this.logger.warn(
         `Zone du conducteur ${driverUuid} illisible (${error?.message}) — `
@@ -128,7 +140,7 @@ export class DriverZoneService {
       // ⚠️ Tout à `null` — « je n'ai pas pu savoir », pas « rien de déclaré ».
       // L'appelant du filtre traite l'absence comme « aucun filtrage », ce qui
       // montre trop de courses plutôt que d'en cacher (règle 10).
-      return { zone: null, point: null, vehicleType: null, name: null, phone: null };
+      return { zone: null, point: null, vehicleType: null, name: null, phone: null, readOk: false };
     }
   }
 
