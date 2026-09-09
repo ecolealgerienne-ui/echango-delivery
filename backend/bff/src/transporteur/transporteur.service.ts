@@ -764,8 +764,8 @@ export class TransporteurService {
           : Promise.resolve([]),
         // Filtre spatial NATIF Fleetbase (`GET /v1/orders?nearby&radius`,
         // ST_Distance_Sphere sur son index) — le BFF ne calcule aucune
-        // distance ici. `meta` en revient déjà hydraté : pas de rechargement
-        // unitaire pour cette branche, contrairement à « mes courses ».
+        // distance ici. Les objets repassent par l'hydratation habituelle
+        // (`getClaimablePoolOrders`) pour retrouver la forme `/int/v1`.
         anchor
           ? this.fleetbaseClient.fetchNearbyUnclaimedOrders(anchor, radiusMetres)
           : Promise.resolve([]),

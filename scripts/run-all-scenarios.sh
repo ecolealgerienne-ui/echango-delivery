@@ -70,10 +70,12 @@ SCENARIOS=(
   # courses — placé ici pour la même raison que test-wilaya juste au-dessus.
   test-fiche-client
   test-multi-appartenance
-  # Le filtre wilaya CÔTÉ CONDUCTEUR : une course hors-wilaya lui est cachée,
-  # la bonne visible — dans les deux sens. test-wilaya prouve la persistance ;
-  # celui-ci prouve le filtre, conducteur connecté.
-  test-filtre-wilaya
+  # Le filtre RAYON CÔTÉ CONDUCTEUR : une course hors du rayon du point
+  # d'ancrage lui est cachée, la bonne visible — dans les deux sens ; et SANS
+  # point d'ancrage, la liste est vide + `anchorMissing` (pas une panne). Le
+  # filtre spatial est délégué à Fleetbase (`/v1/orders?nearby&radius`) ; ce
+  # banc le prouve conducteur connecté, avec sa mutation documentée.
+  test-filtre-rayon
   test-sorties-de-course
   # Le ciblage d'un favori nommé : ciblé = invisible aux autres, redirection
   # réversible. Deux transporteurs, témoin positif à chaque pas (règle 8).

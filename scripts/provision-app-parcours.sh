@@ -404,6 +404,18 @@ dapi() { # méthode chemin [corps]
 # `UNBLOCK=1` libère, comme pour les scénarios.
 require_free_driver
 
+# ── Point d'ancrage du conducteur ──────────────────────────────────────────
+#
+# ⚠️ Depuis le 09/09/2026, **sans point d'ancrage la liste des opportunités
+# est vide** (le filtre géo est délégué à Fleetbase `nearby`). Le parcours
+# transporteur prend une course dans « Courses libres » : il lui faut donc un
+# point d'ancrage qui couvre les enlèvements du décor. Alger-Centre + 200 km —
+# large à dessein, pour que rien du décor ne soit écarté par la distance.
+dapi PUT /transporteur/zone \
+  '{"centerLat":36.7538,"centerLng":3.0588,"radiusKm":200}' >/dev/null \
+  && info "Point d'ancrage conducteur : Alger-Centre, rayon 200 km" \
+  || info "⚠️ Point d'ancrage non posé — les opportunités pourraient être vides"
+
 # ⚠️ **Le soldage du registre a disparu le 03/08/2026 avec le registre
 # lui-même** (`docs/registre_caisse_precis.md`). Il existait parce que les
 # parcours d'argent déclaraient un encaissement à chaque exécution sans que

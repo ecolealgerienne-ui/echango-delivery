@@ -167,34 +167,39 @@ void main() {
   });
 
   testWidgets(
-      'conducteur — la zone (wilaya + rayon) fait l’aller-retour serveur',
+      'conducteur — la zone (point de base + rayon) fait l’aller-retour serveur',
       (tester) async {
     requireCredentials({'TEST_DRIVER_EMAIL': driverEmail});
     app.main();
     await loginAs(tester, email: driverEmail, home: Home.driver);
 
     // La zone vit sur le PROFIL — la barre du bas (pas les onglets), icône
-    // « person ». Un filtre RETIRE des courses : mal réglé il fait croire à une
-    // panne, d'où l'aller-retour qui prouve qu'il persiste vraiment.
+    // « person ». Sans point de base la liste des opportunités est VIDE : d'où
+    // l'aller-retour qui prouve que le point posé persiste vraiment.
     await tapVisible(tester, find.byIcon(Icons.person));
 
-    // Tout est scopé à la carte de zone, reconnue par l'icône du champ wilaya
-    // (unique sur le profil) : le profil porte d'autres AppSectionCard (véhicule)
-    // et d'autres FilledButton (déconnexion).
-    final wilayaIcon = find.byIcon(Icons.map_outlined);
-    await pumpUntil(tester, wilayaIcon,
+    // Tout est scopé à la carte de zone, reconnue par l'icône du champ
+    // latitude (`my_location_outlined`, unique sur le profil) : le profil porte
+    // d'autres AppSectionCard (véhicule) et d'autres FilledButton (déconnexion).
+    final latIcon = find.byIcon(Icons.my_location_outlined);
+    await pumpUntil(tester, latIcon,
         reason: 'la carte de zone sur le profil',
         onTimeout: 'profil : ${visibleTexts()}');
-    final wilayaField =
-        find.ancestor(of: wilayaIcon, matching: find.byType(TextField));
+    final zoneCard =
+        find.ancestor(of: latIcon, matching: find.byType(AppSectionCard));
+    final latField =
+        find.ancestor(of: latIcon, matching: find.byType(TextField));
+    // Le champ longitude est le 2e TextField de la Row (pas d'icône propre).
+    final lngField = find
+        .descendant(of: zoneCard, matching: find.byType(TextField))
+        .at(1);
     final radiusField = find.ancestor(
         of: find.byIcon(Icons.social_distance_outlined),
         matching: find.byType(TextField));
-    final zoneCard =
-        find.ancestor(of: wilayaIcon, matching: find.byType(AppSectionCard));
 
-    await tester.ensureVisible(wilayaField);
-    await tester.enterText(wilayaField, 'Blida');
+    await tester.ensureVisible(latField);
+    await tester.enterText(latField, '36.47');
+    await tester.enterText(lngField, '2.83');
     await tester.enterText(radiusField, '20');
     await tester.pump(const Duration(milliseconds: 200));
 
@@ -202,31 +207,34 @@ void main() {
     await tapVisible(
         tester, find.descendant(of: zoneCard, matching: find.byType(FilledButton)));
 
-    // Le serveur a le dernier mot : l'état affiché RELIT sa réponse. « Blida » à
-    // l'écran prouve qu'il l'a accepté, pas seulement que le champ a été rempli.
-    await pumpUntil(tester, find.textContaining('Blida'),
-        reason: 'l’état de zone reflète Blida après enregistrement',
+    // Le serveur a le dernier mot : l'état affiché RELIT sa réponse. « 20 km »
+    // dans la phrase d'état prouve qu'il a accepté le point + rayon, pas
+    // seulement que les champs ont été remplis.
+    await pumpUntil(tester, find.textContaining('20 km'),
+        reason: 'l’état de zone reflète le rayon 20 km après enregistrement',
         onTimeout: 'zone : ${visibleTexts(40)}');
 
     // ── L'aller-retour ───────────────────────────────────────────────────────
     // Quitter le profil et y revenir reconstruit la carte, qui RELIT la zone
-    // depuis le serveur (getZone à l'initState). « Blida » toujours là = le
-    // serveur l'a persistée, ce n'est pas un simple écho du champ.
+    // depuis le serveur (getZone à l'initState). « 20 km » toujours là = le
+    // serveur l'a persistée, ce n'est pas un simple écho des champs.
     await tapVisible(tester, find.byIcon(Icons.list)); // onglet « Commandes »
     await tester.pump(const Duration(milliseconds: 400));
     await tapVisible(tester, find.byIcon(Icons.person)); // retour au profil
-    await pumpUntil(tester, find.textContaining('Blida'),
-        reason: 'la wilaya rechargée depuis le serveur (aller-retour)',
+    await pumpUntil(tester, find.textContaining('20 km'),
+        reason: 'le point de base rechargé depuis le serveur (aller-retour)',
         onTimeout:
             'profil : ${visibleTexts(40)} — la zone n’a pas survécu au '
             'rechargement, le serveur ne l’a pas persistée');
 
     // ── Nettoyage ET preuve du retrait ───────────────────────────────────────
-    // Sans zone, les autres parcours voient TOUTES les opportunités : ce test
-    // doit repartir filtre vide. Le bouton « retirer » n'existe que si une zone
-    // est posée — sa disparition prouve le retrait.
-    final zoneCard2 =
-        find.ancestor(of: find.byIcon(Icons.map_outlined), matching: find.byType(AppSectionCard));
+    // ⚠️ Ce test DOIT retirer le point de base en fin : sinon les autres
+    // parcours de ce conducteur verraient leurs opportunités filtrées par un
+    // rayon de 20 km autour de Blida. Le bouton « retirer » n'existe que si une
+    // zone est posée — sa disparition prouve le retrait.
+    final zoneCard2 = find.ancestor(
+        of: find.byIcon(Icons.my_location_outlined),
+        matching: find.byType(AppSectionCard));
     final clear =
         find.descendant(of: zoneCard2, matching: find.byType(OutlinedButton));
     await pumpUntil(tester, clear,

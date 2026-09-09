@@ -1035,11 +1035,14 @@ export class FleetbaseApiClient {
    *   - **plafonne à 100 par page** — d'où le parcours de pages jusqu'à une
    *     page courte, borné à `maxPages` ;
    *   - nomme l'identifiant **`id`** (il porte le `order_…`) : ni `uuid` ni
-   *     `public_id` séparés. `normalizeV1Order` les recompose pour que la suite
-   *     du pipeline transporteur (réclamabilité, refus, véhicule, projection)
-   *     travaille sur la forme habituelle ;
-   *   - sert **`meta` déjà hydraté** (prix, montant à encaisser, `vehicle_type`) :
-   *     aucun rechargement unitaire à faire, contrairement au chemin `/int/v1`.
+   *     `public_id` séparés. `normalizeV1Order` pose `uuid = public_id = id`
+   *     pour que `isOrderClaimable` puis `hydrateOrders` aient une clé — et
+   *     `GET /int/v1/orders/{order_…}` accepte le `public_id` (`getById` matche
+   *     uuid OU public_id). Après `hydrateOrders`, l'appelant retrouve un objet
+   *     `/int/v1` complet (vrai `uuid`, `custom_field_values`).
+   *
+   * Ce chemin ne sert donc que le **filtrage spatial** ; la forme des données
+   * reste celle de `/int/v1`, via l'hydratation habituelle.
    *
    * `without_driver` est passé aussi (au cas où `/v1` l'honore), mais la
    * réclamabilité est **revérifiée en mémoire** par l'appelant : le filtre

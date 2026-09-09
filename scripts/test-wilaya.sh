@@ -6,13 +6,14 @@
 #
 # ── Pourquoi ce scénario existe (02/08/2026) ────────────────────────────────
 #
-# La wilaya porte le filtre du transporteur (décision du 02/08/2026 : « le
-# transporteur choisit ce qu'il voit, wilaya d'abord »). Une course qui ne la
-# transporte pas est **invisible** à qui filtre — et rien ne le signale : pas
-# d'erreur, pas de journal, une liste simplement plus courte.
-#
-# C'est le mode de défaut le plus coûteux de ce dépôt, celui qu'on ne voit qu'en
-# le cherchant.
+# ⚠️ **Le CONDUCTEUR ne filtre plus par wilaya depuis le 09/09/2026** (point
+# d'ancrage + rayon, filtre spatial Fleetbase — voir test-filtre-rayon.sh). Ce
+# champ `province` sur la commande sert désormais la zone de service ENTREPRISE
+# (`test-zone-entreprise.sh`, `test-opportunites-filtre.sh`), qui reste une
+# liste de wilayas. Ce banc reste utile : il prouve que `province` **traverse
+# la chaîne et survit à une duplication**, sans quoi le filtre entreprise
+# déciderait sur du vide — et Fleetbase abandonne un champ inconnu sans rien
+# dire.
 #
 # ── Ce que ce scénario vérifie, et que les autres ne peuvent pas ────────────
 #
