@@ -17,10 +17,11 @@
  * **rayon**. Le filtre : l'enlèvement d'une course est-il à moins de `radiusKm`
  * de `center` ?
  *
- * Le calcul spatial lui-même est délégué à Fleetbase — `GET /v1/orders?nearby`
- * applique `ST_Distance_Sphere` sur son index. `distanceKm` ci-dessous ne sert
- * plus qu'à l'optimisation de parcours, qui compare à la dépose d'une course
- * déjà tenue.
+ * ⚠️ **Le calcul est en mémoire (`distanceKm` / `pickupWithinZone`), pas
+ * délégué à Fleetbase.** `GET /v1/orders?nearby` existe mais **n'accepte pas de
+ * rayon par requête** — mesuré le 09/09/2026 : il n'applique que
+ * `company.options.fleetops.adhoc_distance` (6 km, valeur d'org). Un rayon par
+ * conducteur ne peut donc pas y être poussé.
  *
  * ── L'absence ne cache jamais du travail ───────────────────────────────────
  *

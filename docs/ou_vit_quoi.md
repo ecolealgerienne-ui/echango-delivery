@@ -54,8 +54,9 @@ clé du catalogue soit oubliée dans un sens ou dans l'autre.
 
 ⚠️ **`zone_wilaya` a été remplacé par `zone_center` le 09/09/2026.** La zone de
 travail du conducteur n'est plus une wilaya mais un **point d'ancrage + un
-rayon**, et le filtrage des opportunités est délégué à Fleetbase
-(`GET /v1/orders?nearby&radius`). `zone_wilaya` sur d'anciens conducteurs
+rayon**. Le filtrage des opportunités se fait **en mémoire** (`pickupWithinZone`) :
+`GET /v1/orders?nearby` n'accepte pas de rayon par requête (il n'applique que
+l'`adhoc_distance` d'org, mesuré). `zone_wilaya` sur d'anciens conducteurs
 devient un champ mort — `DriverZoneService` ne supprime jamais, il cesse de
 lire. (La zone de service **entreprise** reste une liste de wilayas.)
 

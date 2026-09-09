@@ -748,10 +748,6 @@ export class TransporteurService {
     // ne lui déverse pas non plus tout le réseau.
     const anchor = zoneReading?.zone?.center ?? null;
     const adhocAnchorMissing = wantsAdhoc && !anchor;
-    const radiusMetres =
-      zoneReading?.zone?.radiusKm != null
-        ? zoneReading.zone.radiusKm * 1000
-        : this.adhocRadiusMetres();
 
     let assignedRaw: any[] = [];
     let adhocRaw: any[] = [];
@@ -762,12 +758,16 @@ export class TransporteurService {
               driver: driver.fleetbaseDriverUuid,
             })
           : Promise.resolve([]),
-        // Filtre spatial NATIF Fleetbase (`GET /v1/orders?nearby&radius`,
-        // ST_Distance_Sphere sur son index) — le BFF ne calcule aucune
-        // distance ici. Les objets repassent par l'hydratation habituelle
-        // (`getClaimablePoolOrders`) pour retrouver la forme `/int/v1`.
+        // ⚠️ **Le filtre géographique se fait EN MÉMOIRE** (`pickupWithinZone`
+        // plus bas), pas côté Fleetbase. `GET /v1/orders?nearby` **n'accepte
+        // pas de rayon par requête** — mesuré le 09/09/2026 : le
+        // `OrderController` de `/v1` ignore un `radius` et n'applique que
+        // `company.options.fleetops.adhoc_distance` (6 km, valeur d'org). Un
+        // rayon **par conducteur** ne peut donc pas y être délégué. On garde
+        // donc le parcours `/int/v1` (« c'est un coût, pas un défaut ») ; il
+        // n'est lancé que si un point d'ancrage existe.
         anchor
-          ? this.fleetbaseClient.fetchNearbyUnclaimedOrders(anchor, radiusMetres)
+          ? this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true })
           : Promise.resolve([]),
       ]);
     } catch (error) {
@@ -812,13 +812,13 @@ export class TransporteurService {
       ? await this.getClaimablePoolOrders(driver, adhocRaw, zoneReading as DriverZoneReading)
       : { candidates: [] as any[] };
 
-    // ⚠️ **Revérification en mémoire du rayon** — le serveur allège, le code
-    // décide. `nearby` matche aussi les points d'étape ; ici on ne garde que si
-    // l'ENLÈVEMENT est dans le rayon du point d'ancrage. C'est aussi la ligne
-    // qu'un banc mute pour prouver que le filtre existe. Course sans
-    // coordonnées, ou transporteur sans point d'ancrage ⇒ laissée passer
+    // ⚠️ **Le filtre géographique, ici et nulle part ailleurs.** Fleetbase ne
+    // sait pas filtrer une liste de commandes par un rayon donné par requête
+    // (voir le fetch ci-dessus). On garde donc si l'ENLÈVEMENT est dans le
+    // rayon du point d'ancrage — course sans coordonnées, ou transporteur sans
+    // point d'ancrage (déjà écarté plus haut par `anchor`) ⇒ laissée passer
     // (`common/orders/driver-zone.ts` : on ne retire que ce qu'on sait hors
-    // zone).
+    // zone). C'est la ligne qu'un banc mute pour prouver que le filtre existe.
     const adhoc = poolCandidates.filter((o) =>
       pickupWithinZone(o, zoneReading?.zone ?? null),
     );

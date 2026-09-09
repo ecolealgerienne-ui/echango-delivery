@@ -5,12 +5,14 @@
 #
 # ── Ce que ce banc éprouve ───────────────────────────────────────────────────
 #
-# Le filtre géographique des opportunités est délégué à Fleetbase
-# (`GET /v1/orders?nearby&radius`, ST_Distance_Sphere). Le BFF fournit le point
-# d'ancrage du conducteur et le rayon ; `pickupWithinZone` revérifie en mémoire.
-# Ce chemin n'a jamais été joué de bout en bout, conducteur connecté — or c'est
-# là qu'est le risque le plus redouté du dépôt : une liste plus courte, sans
-# erreur ni journal, est indiscernable d'une panne (règle 10).
+# Le filtre géographique des opportunités est calculé EN MÉMOIRE par le BFF
+# (`pickupWithinZone` : l'enlèvement est-il à moins de `radiusKm` du point
+# d'ancrage ?). ⚠️ Fleetbase ne sait PAS filtrer une liste de commandes par un
+# rayon donné par requête — `GET /v1/orders?nearby` n'applique que
+# `adhoc_distance` (6 km, valeur d'org), mesuré le 09/09/2026. Ce chemin n'a
+# jamais été joué de bout en bout, conducteur connecté — or c'est là qu'est le
+# risque le plus redouté du dépôt : une liste plus courte, sans erreur ni
+# journal, est indiscernable d'une panne (règle 10).
 #
 # ⚠️ **Changement de sémantique depuis la wilaya** : SANS point d'ancrage, la
 # liste des opportunités est **VIDE** (la wilaya absente montrait tout), et la
@@ -30,11 +32,8 @@
 #
 # ── Mutation qui doit faire ÉCHOUER ce banc (règle 8) ────────────────────────
 #
-#   1. `common/orders/driver-zone.ts` : `pickupWithinZone` → `return true;`
-#      ⇒ l'étape « rayon 15 » verrait Blida (revérification en mémoire morte).
-#   2. `fleetbase-api.client.ts` : retirer `nearby`/`radius` de
-#      `fetchNearbyUnclaimedOrders` ⇒ toute la compagnie revient, l'étape
-#      « rayon 15 » verrait Blida (le filtre serveur ne filtre plus).
+#   `common/orders/driver-zone.ts` : `pickupWithinZone` → `return true;`
+#   ⇒ l'étape « rayon 15 » verrait Blida (le seul filtre géographique est mort).
 #
 # ── Usage ───────────────────────────────────────────────────────────────────
 #
