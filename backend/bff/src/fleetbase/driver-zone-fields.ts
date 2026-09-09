@@ -30,7 +30,7 @@
  * la relation `customFields()` filtre sur `subject_uuid`. Coût assumé et connu.
  */
 
-export type DriverZoneFieldName = 'zone_wilaya' | 'zone_radius_km' | 'vehicle_type';
+export type DriverZoneFieldName = 'zone_center' | 'zone_radius_km' | 'vehicle_type';
 
 export interface DriverZoneFieldDefinition {
   /** Clé stable, jamais affichée — c'est elle qui fait le rattachement. */
@@ -49,16 +49,18 @@ export interface DriverZoneFieldDefinition {
  */
 export const DRIVER_ZONE_FIELDS: DriverZoneFieldDefinition[] = [
   {
-    name: 'zone_wilaya',
-    label: 'Wilaya de travail',
+    name: 'zone_center',
+    label: 'Point de base (latitude,longitude)',
     type: 'text',
     helpText:
-      'Les courses proposées à ce transporteur sont celles dont l’enlèvement '
-      + 'se trouve dans cette wilaya. Vide : toutes les wilayas.',
+      'Centre du rayon de travail de ce transporteur, au format « lat,lng » '
+      + '(ex. « 36.7538,3.0588 »). Les courses proposées sont celles dont '
+      + 'l’enlèvement est à moins du rayon ci-dessous de ce point. '
+      + 'Vide : aucune limite de zone.',
   },
   {
     name: 'zone_radius_km',
-    label: 'Rayon autour de sa position (km)',
+    label: 'Rayon autour du point de base (km)',
     // ⚠️ **`text` et non `number`, et ce n'est pas une négligence (02/08/2026).**
     //
     // Un champ personnalisé de type `number` **refuse une chaîne vide** :
@@ -76,8 +78,8 @@ export const DRIVER_ZONE_FIELDS: DriverZoneFieldDefinition[] = [
     // `readRadiusKm` analyse la chaîne, donc rien n'est perdu côté lecture.
     type: 'text',
     helpText:
-      'Affine la liste autour de la position du transporteur. Sans position '
-      + 'connue, ce rayon ne s’applique pas — la wilaya reste seule à filtrer. '
+      'Distance maximale, en kilomètres, entre le point de base et l’enlèvement '
+      + 'd’une course. Sans point de base, ce rayon ne s’applique pas. '
       + 'Laisser vide pour ne pas limiter.',
   },
   {
@@ -135,11 +137,41 @@ export function readRadiusKm(raw: unknown): number | null {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-/** La wilaya lue depuis une valeur de champ personnalisé. */
-export function readWilaya(raw: unknown): string | null {
+/**
+ * Le point d'ancrage lu depuis une valeur de champ personnalisé (« lat,lng »).
+ *
+ * ⚠️ **Une valeur illisible rend `null`, jamais un point de repli** — même
+ * raison que `readRadiusKm` : un centre fabriqué filtrerait sur une zone que
+ * personne n'a choisie. Sont rejetés : une chaîne mal formée, un couple hors
+ * bornes géographiques, et `0,0` (une absence, pas une position — cf.
+ * `readDriverPosition`, `pickupPoint`).
+ */
+export function readCenter(
+  raw: unknown,
+): { latitude: number; longitude: number } | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
-  return trimmed && trimmed !== ZONE_UNSET ? trimmed : null;
+  if (!trimmed || trimmed === ZONE_UNSET) return null;
+  const parts = trimmed.split(',');
+  if (parts.length !== 2) return null;
+  const latitude = Number(parts[0].trim());
+  const longitude = Number(parts[1].trim());
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    return null;
+  }
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
+}
+
+/**
+ * La forme stockée d'un point d'ancrage : « lat,lng », ou la sentinelle
+ * d'effacement quand il n'y en a pas (Fleetbase refuse la chaîne vide).
+ */
+export function formatCenter(
+  center: { latitude: number; longitude: number } | null,
+): string {
+  return center ? `${center.latitude},${center.longitude}` : ZONE_UNSET;
 }
 
 /**

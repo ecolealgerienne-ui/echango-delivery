@@ -1,50 +1,44 @@
 /**
- * La zone de travail d'un transporteur : sa wilaya, et un rayon autour de lui.
+ * La zone de travail d'un transporteur : un point d'ancrage et un rayon autour.
  *
- * ── La décision produit, prise le 02/08/2026 ────────────────────────────────
+ * ── La décision produit ─────────────────────────────────────────────────────
  *
  * **C'est le transporteur qui choisit sa course**, pas le rayon de diffusion
  * qui choisit pour lui. La liste des courses libres n'a donc pas à s'aligner
  * sur `adhoc_distance`, qui gouverne les sollicitations ; elle s'aligne sur ce
  * que le transporteur a **déclaré vouloir voir**.
  *
- * Deux filtres, et ils ne jouent pas le même rôle :
+ * ── Un seul concept, deux nombres, aucune géographie administrative ─────────
  *
- * - **la wilaya** est le filtre structurel. Elle est déclarée, elle ne dépend
- *   d'aucun capteur, et c'est l'unité dans laquelle un transporteur algérien
- *   raisonne. Sans elle, il verrait les courses des cinquante-huit wilayas.
- * - **le rayon** est un raffinement opportuniste — « chercher autour ». Il
- *   exige une position, qui peut manquer.
+ * La wilaya a été retirée (09/09/2026) : elle imposait une liste des
+ * cinquante-huit à tenir accordée avec l'administration algérienne, et couplait
+ * le produit à un seul pays. Reste **un point d'ancrage** (`center`, choisi par
+ * le transporteur — pas sa position GPS vive, qui peut manquer) et un
+ * **rayon**. Le filtre : l'enlèvement d'une course est-il à moins de `radiusKm`
+ * de `center` ?
  *
- * Les hiérarchiser dans cet ordre supprime le trou d'une conception à rayon
- * seul : un transporteur dont on ignore la position ne verrait **aucune
- * course**, ce qui est le pire résultat possible pour une fonctionnalité censée
- * l'aider à choisir.
+ * Le calcul spatial lui-même est délégué à Fleetbase — `GET /v1/orders?nearby`
+ * applique `ST_Distance_Sphere` sur son index. `distanceKm` ci-dessous ne sert
+ * plus qu'à l'optimisation de parcours, qui compare à la dépose d'une course
+ * déjà tenue.
  *
- * ── Deux absences, et elles ne se traitent pas pareil ───────────────────────
+ * ── L'absence ne cache jamais du travail ───────────────────────────────────
  *
- * ⚠️ **Ce qu'on ignore ne doit jamais cacher du travail.** C'est le même biais
- * que `isOrderClaimable` pour les statuts inconnus, et pour la même raison :
- * une course offerte puis refusée est un désagrément, une course jamais montrée
- * est un manque à gagner que personne ne peut constater.
- *
- * Donc, systématiquement :
- *
- * - une course **sans wilaya** reste visible. Le champ vient du géocodage
- *   inverse, jamais d'une saisie : l'absence dit « on ne sait pas », pas
- *   « ailleurs ». Le carnet d'adresses la porte, mais une course créée
- *   autrement peut ne pas l'avoir.
- * - une course **sans coordonnées** reste visible, pour la même raison.
- * - un transporteur **sans préférence** voit tout, jusqu'à ce qu'il choisisse.
- * - un transporteur **sans position** garde son filtre wilaya et perd le
- *   rayon — au lieu de tout perdre.
+ * ⚠️ Même biais que `isOrderClaimable` pour les statuts inconnus : une course
+ * offerte puis refusée est un désagrément, une course jamais montrée est un
+ * manque à gagner que personne ne peut constater. Un transporteur **sans point
+ * d'ancrage** ne subit aucun filtre de zone — l'écran l'invite à en poser un
+ * plutôt que de filtrer sur une valeur qu'il n'a pas choisie.
  */
 
 /** Ce qu'un transporteur a déclaré vouloir voir. */
 export interface DriverZone {
-  /** Wilaya de travail. `null` = aucune préférence, donc aucun filtrage. */
-  wilaya: string | null;
-  /** Rayon en kilomètres autour de sa position. `null` = pas de limite. */
+  /**
+   * Point d'ancrage — le centre du rayon de travail, choisi par le
+   * transporteur. `null` = aucune préférence, donc aucun filtrage de zone.
+   */
+  center: DriverPoint | null;
+  /** Rayon en kilomètres autour du point d'ancrage. `null` = pas de limite. */
   radiusKm: number | null;
 }
 
@@ -89,26 +83,6 @@ export function pickupWilaya(order: any): string | null {
     ?? order?.payload?.pickup?.province
     ?? order?.pickup?.province;
   return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
-}
-
-/**
- * D'où part la course : sa wilaya et son point, quand on les connaît.
- *
- * Existe parce que **deux chemins posent la même question sans avoir la même
- * chose en main**. La liste des opportunités tient une commande Fleetbase
- * complète ; la sollicitation d'un favori, elle, se décide **avant** que la
- * commande existe — il n'y a que le formulaire du commerçant. Les deux doivent
- * pourtant appliquer la même règle, sans quoi un transporteur serait écarté
- * d'une liste et assigné d'office à la même course (règle 5).
- */
-export interface OrderPickup {
-  wilaya: string | null;
-  point: DriverPoint | null;
-}
-
-/** Ce qu'on sait du départ d'une course déjà créée. */
-export function orderPickup(order: any): OrderPickup {
-  return { wilaya: pickupWilaya(order), point: pickupPoint(order) };
 }
 
 /** Le point d'enlèvement, quand la course en porte un. */
@@ -183,50 +157,24 @@ export function distanceKm(a: DriverPoint, b: DriverPoint): number {
 }
 
 /**
- * Cette course entre-t-elle dans la zone que le transporteur a déclarée ?
+ * L'enlèvement de cette course est-il dans le rayon d'ancrage du transporteur ?
  *
- * Rend `true` quand rien ne s'y oppose — c'est le sens du biais décrit en tête
- * de fichier : on ne retire de la liste que ce qu'on **sait** être hors zone.
+ * ⚠️ **Le filtre spatial de production, c'est Fleetbase** (`GET /v1/orders?
+ * nearby&radius`). Cette fonction est la **revérification en mémoire** faite
+ * après coup, dans la ligne du dépôt « le serveur allège, le code décide » :
+ * `nearby` matche aussi les points d'étape, ici on ne regarde que l'enlèvement.
+ * C'est aussi le point qu'un banc mute pour prouver qu'un filtre existe.
+ *
+ * Rend `true` quand rien ne s'y oppose — on ne retire que ce qu'on **sait**
+ * être hors zone : pas de point d'ancrage, pas de rayon, ou course sans
+ * coordonnées ⇒ visible.
  */
-export function zoneAllows(
+export function pickupWithinZone(
   order: any,
   zone: DriverZone | null | undefined,
-  driverPoint: DriverPoint | null | undefined,
 ): boolean {
-  return zoneAllowsPickup(orderPickup(order), zone, driverPoint);
-}
-
-/**
- * La même règle, à partir de ce qu'on sait du départ.
- *
- * ⚠️ **C'est ici que la décision vit, et nulle part ailleurs.** Deux chemins
- * l'appliquent — la liste des opportunités et la sollicitation d'un favori — et
- * ils ne doivent pas pouvoir diverger : un transporteur écarté d'une liste et
- * assigné d'office à la même course serait pire que l'absence de filtre, parce
- * que la course lui **resterait** (`driver_assigned_uuid` la sort du pool).
- *
- * Rend `true` quand rien ne s'y oppose — même biais qu'au-dessus : on ne
- * retire que ce qu'on **sait** être hors zone.
- */
-export function zoneAllowsPickup(
-  pickup: OrderPickup,
-  zone: DriverZone | null | undefined,
-  driverPoint: DriverPoint | null | undefined,
-): boolean {
-  if (!zone) return true;
-
-  // ── La wilaya ─────────────────────────────────────────────────────────────
-  // Course sans wilaya : on ne sait pas, donc on laisse passer.
-  if (zone.wilaya && pickup.wilaya && !sameWilaya(pickup.wilaya, zone.wilaya)) {
-    return false;
-  }
-
-  // ── Le rayon ──────────────────────────────────────────────────────────────
-  // Course sans point, ou transporteur sans position : on ne sait pas, donc on
-  // laisse passer — et seule la wilaya aura filtré.
-  if (zone.radiusKm != null && driverPoint && pickup.point) {
-    if (distanceKm(driverPoint, pickup.point) > zone.radiusKm) return false;
-  }
-
-  return true;
+  if (!zone || !zone.center || zone.radiusKm == null) return true;
+  const point = pickupPoint(order);
+  if (!point) return true;
+  return distanceKm(zone.center, point) <= zone.radiusKm;
 }

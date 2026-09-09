@@ -1022,6 +1022,68 @@ export class FleetbaseApiClient {
   }
 
   /**
+   * Les commandes du pool proches d'un point, par le filtre spatial NATIF de
+   * Fleetbase (`GET /v1/orders?nearby&radius` → `ST_Distance_Sphere` sur son
+   * index). Le BFF ne calcule aucune distance ici.
+   *
+   * ── Route `/v1`, pas `/int/v1` — c'est mesuré, pas supposé (09/09/2026) ────
+   *
+   * ⚠️ `nearby` est honoré par `Http/Controllers/Api/v1/OrderController` et
+   * **ignoré en silence** par le filtre de `/int/v1` (témoin : `meta.total`
+   * inchangé). En contrepartie `/v1/orders` :
+   *   - rend un **tableau nu** (pas d'enveloppe `data`, pas de `meta.total`) ;
+   *   - **plafonne à 100 par page** — d'où le parcours de pages jusqu'à une
+   *     page courte, borné à `maxPages` ;
+   *   - nomme l'identifiant **`id`** (il porte le `order_…`) : ni `uuid` ni
+   *     `public_id` séparés. `normalizeV1Order` les recompose pour que la suite
+   *     du pipeline transporteur (réclamabilité, refus, véhicule, projection)
+   *     travaille sur la forme habituelle ;
+   *   - sert **`meta` déjà hydraté** (prix, montant à encaisser, `vehicle_type`) :
+   *     aucun rechargement unitaire à faire, contrairement au chemin `/int/v1`.
+   *
+   * `without_driver` est passé aussi (au cas où `/v1` l'honore), mais la
+   * réclamabilité est **revérifiée en mémoire** par l'appelant : le filtre
+   * serveur allège, le code décide.
+   */
+  async fetchNearbyUnclaimedOrders(
+    center: { latitude: number; longitude: number },
+    radiusMetres: number,
+    pageSize = 100,
+    maxPages = 20,
+  ): Promise<any[]> {
+    const all: any[] = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const response = await this.callFleetOpsPublic('GET', '/orders', undefined, {
+        nearby: `${center.latitude},${center.longitude}`,
+        radius: Math.round(radiusMetres),
+        without_driver: true,
+        limit: pageSize,
+        page,
+      });
+      const rows: any[] = Array.isArray(response?.data) ? response.data : [];
+      if (rows.length === 0) break;
+      all.push(...rows.map((o) => this.normalizeV1Order(o)));
+      if (rows.length < pageSize) break;
+      if (page === maxPages) {
+        this.logger.warn(
+          `fetchNearbyUnclaimedOrders a atteint ${maxPages} pages — liste tronquée`,
+        );
+      }
+    }
+    return all;
+  }
+
+  /**
+   * Recompose `uuid` / `public_id` depuis le seul `id` que sert `/v1/orders`,
+   * pour que le reste du code transporteur n'ait pas à connaître deux formes.
+   * `id` porte le `order_…` ; `resolveOrder` accepte l'un comme l'autre.
+   */
+  private normalizeV1Order(o: any): any {
+    const id = o?.id ?? o?.public_id ?? o?.uuid ?? null;
+    return { ...o, uuid: o?.uuid ?? id, public_id: o?.public_id ?? id };
+  }
+
+  /**
    * Get a single order by uuid. Confirmed working (used for tracking, see
    * commercant.service.ts getOrderTracking).
    */

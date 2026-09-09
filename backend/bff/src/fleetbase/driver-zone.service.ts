@@ -7,7 +7,8 @@ import {
   readOptionalText,
   DriverZoneFieldName,
   readRadiusKm,
-  readWilaya,
+  readCenter,
+  formatCenter,
   ZONE_UNSET,
 } from './driver-zone-fields';
 
@@ -113,12 +114,12 @@ export class DriverZoneService {
       }
 
       const vehicleType = readOptionalText(byName.get('vehicle_type'));
-      const wilaya = readWilaya(byName.get('zone_wilaya'));
+      const center = readCenter(byName.get('zone_center'));
       const radiusKm = readRadiusKm(byName.get('zone_radius_km'));
-      if (!wilaya && radiusKm == null) {
+      if (!center && radiusKm == null) {
         return { zone: null, point, vehicleType, ...identity };
       }
-      return { zone: { wilaya, radiusKm }, point, vehicleType, ...identity };
+      return { zone: { center, radiusKm }, point, vehicleType, ...identity };
     } catch (error) {
       this.logger.warn(
         `Zone du conducteur ${driverUuid} illisible (${error?.message}) — `
@@ -189,7 +190,7 @@ export class DriverZoneService {
     // ⚠️ Jamais de chaîne vide : Fleetbase la refuse sur tout champ
     // personnalisé (400). `ZONE_UNSET` porte l'absence — motif complet dans
     // `driver-zone-fields.ts`.
-    push('zone_wilaya', zone.wilaya ?? ZONE_UNSET);
+    push('zone_center', formatCenter(zone.center));
     push('zone_radius_km', zone.radiusKm == null ? ZONE_UNSET : String(zone.radiusKm));
 
     if (!payload.length) return;

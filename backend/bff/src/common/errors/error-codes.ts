@@ -197,6 +197,12 @@ export const ErrorCode = {
   /// pour une seule personne, avec position et historique désynchronisés.
   DRIVER_ALREADY_IN_NETWORK: 'driver.already_in_network',
 
+  // ── Zone de travail (point d'ancrage + rayon) ────────────────────────────
+  /// Latitude sans longitude, ou l'inverse : un demi-point ne veut rien dire.
+  ZONE_CENTER_INCOMPLETE: 'zone.center_incomplete',
+  /// Point d'ancrage refusé — `0,0` est une absence, pas une position.
+  ZONE_CENTER_INVALID: 'zone.center_invalid',
+
   // ── Adhésions conducteur ↔ entreprise ────────────────────────────────────
   MEMBERSHIP_NOT_FOUND: 'membership.not_found',
   MEMBERSHIP_ALREADY_EXISTS: 'membership.already_exists',

@@ -278,32 +278,37 @@ export class UpdateVehicleTypeDto {
 }
 
 /**
- * La zone de travail qu'un transporteur déclare.
+ * La zone de travail qu'un transporteur déclare : un point d'ancrage et un
+ * rayon autour. Aucune notion administrative — deux nombres, valables partout.
  *
- * ⚠️ **Les deux champs sont facultatifs, et l'absence a un sens précis** :
- * `null` ou vide **efface** la préférence, donc rétablit « je vois tout ».
- * C'est ce qui permet à quelqu'un de revenir en arrière sans nous demander —
- * un réglage qu'on ne peut pas défaire est un piège, pas un choix.
+ * ⚠️ **Tous les champs sont facultatifs, et l'absence a un sens précis** :
+ * `null` **efface** la préférence, donc rétablit « je vois tout ». Un réglage
+ * qu'on ne peut pas défaire est un piège, pas un choix.
  *
- * ⚠️ Aucune liste fermée de wilayas ici, délibérément. En figer une dans le DTO
- * en ferait une copie à tenir accordée avec la réalité administrative — et une
- * wilaya renommée ou créée refuserait alors des réglages parfaitement valides.
- * La valeur vient du géocodage inverse, qui est notre source ; c'est le filtre
- * qui compare, et il compare sans casse.
+ * ⚠️ `centerLat` et `centerLng` vont **ensemble** : le service refuse un seul
+ * des deux (un demi-point ne veut rien dire).
  */
 export class DriverZoneDto {
   @IsOptional()
-  @IsString()
-  @MaxLength(120)
-  wilaya?: string | null;
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  centerLat?: number | null;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  centerLng?: number | null;
 
   /**
-   * Rayon en kilomètres. `null` retire la limite.
+   * Rayon en kilomètres autour du point d'ancrage. `null` retire la limite.
    *
    * Bornes larges à dessein : `@Min(1)` parce qu'un rayon nul ne montrerait
-   * rien, et `@Max(2000)` parce que l'Algérie tient dedans — au-delà, la valeur
-   * ne veut plus rien dire et vaut mieux être refusée que silencieusement
-   * inopérante.
+   * rien, et `@Max(2000)` parce qu'au-delà la valeur ne veut plus rien dire et
+   * vaut mieux être refusée que silencieusement inopérante.
    */
   @IsOptional()
   @Type(() => Number)

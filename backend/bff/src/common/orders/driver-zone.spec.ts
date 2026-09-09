@@ -3,19 +3,22 @@
  * savoir**.
  *
  * La moitié des cas sont donc des cas où le filtre doit **laisser passer** —
- * absence de wilaya, absence de position, absence de préférence. Ce sont eux
+ * pas de point d'ancrage, pas de rayon, course sans coordonnées. Ce sont eux
  * qui comptent : un filtre trop large se remarque et s'ajuste, un filtre trop
  * étroit vide une liste sans que personne ne puisse constater ce qui manque.
+ *
+ * ⚠️ Le filtre spatial de production est celui de Fleetbase (`nearby`/`radius`).
+ * `pickupWithinZone` est la revérification en mémoire faite après coup — et le
+ * point qu'un banc d'intégration mute pour prouver que le filtre existe.
  */
 import {
-  DriverZone,
   DEFAULT_ZONE_RADIUS_KM,
   distanceKm,
   dropoffPoint,
   pickupPoint,
   pickupWilaya,
+  pickupWithinZone,
   sameWilaya,
-  zoneAllows,
 } from './driver-zone';
 
 const order = (opts: {
@@ -34,22 +37,19 @@ const order = (opts: {
 const ALGER = { latitude: 36.7719, longitude: 3.0589 };
 const BLIDA = { latitude: 36.4703, longitude: 2.8277 };
 
+// `pickupWilaya`/`sameWilaya` restent exportés : la zone de service ENTREPRISE
+// (`flotte`) est toujours une liste de wilayas. Seule la zone CONDUCTEUR est
+// passée au point d'ancrage. Ces lectures sont donc encore couvertes.
 describe('lire la wilaya d’une course', () => {
   it('la trouve sous le point d’enlèvement', () => {
     expect(pickupWilaya(order({ province: 'Alger' }))).toBe('Alger');
   });
 
   it('⚠️ la lit d’abord dans `meta` — la LISTE ne sert pas le payload complet', () => {
-    // Mesuré : la ressource d'index rend un point d'enlèvement à quinze clés,
-    // `province` absente, là où la fiche unitaire en rend trente. Le filtre
-    // s'appliquant sur la liste, sans cette copie il ne verrait jamais rien —
-    // et laisserait donc tout passer, en silence.
     expect(pickupWilaya({ meta: { pickup_province: 'Blida' } })).toBe('Blida');
   });
 
   it('retombe sur le payload quand `meta` ne la porte pas', () => {
-    // Les courses créées avant que la copie existe, et tout appelant qui
-    // travaille sur une fiche complète.
     expect(pickupWilaya({ ...order({ province: 'Oran' }), meta: {} })).toBe('Oran');
   });
 
@@ -66,9 +66,6 @@ describe('lire le point d’enlèvement', () => {
   });
 
   it('⚠️ [0, 0] est une ABSENCE, pas un point', () => {
-    // Le défaut déjà corrigé ailleurs : un couple nul est un point au large du
-    // golfe de Guinée. Le prendre pour une position ferait filtrer sur une
-    // distance imaginaire — et cacherait toutes les courses à ce transporteur.
     expect(pickupPoint(order({ coords: [0, 0] }))).toBeNull();
   });
 
@@ -101,8 +98,6 @@ describe('lire le point de dépose (optimisation de parcours)', () => {
   });
 
   it('ne se confond pas avec le point d’enlèvement de la même course', () => {
-    // Les deux accesseurs lisent des chemins différents : une course dont
-    // seul l'enlèvement est connu ne doit jamais faire croire à une dépose.
     const enlevementSeul = order({ coords: [3.0589, 36.7719] });
     expect(pickupPoint(enlevementSeul)).toEqual(ALGER);
     expect(dropoffPoint(enlevementSeul)).toBeNull();
@@ -137,23 +132,17 @@ describe('la distance', () => {
   });
 });
 
-describe('ce que la zone laisse passer', () => {
-  const dansAlger = order({ province: 'ALGER', coords: [3.0589, 36.7719] });
-  const dansBlida = order({ province: 'BLIDA', coords: [2.8277, 36.4703] });
+describe('ce que pickupWithinZone laisse passer', () => {
+  const dansAlger = order({ coords: [3.0589, 36.7719] });
+  const dansBlida = order({ coords: [2.8277, 36.4703] });
 
-  it('filtre sur la wilaya déclarée', () => {
-    // ⚠️ Type explicite : un `null` nu dans un littéral déclenche TS7018,
-    // « implicitly has an 'any' type ». Le piège est documenté dans CLAUDE.md
-    // et m'a attrapé deux fois dans la même session.
-    const zone: DriverZone = { wilaya: 'Alger', radiusKm: null };
-    expect(zoneAllows(dansAlger, zone, null)).toBe(true);
-    expect(zoneAllows(dansBlida, zone, null)).toBe(false);
+  it('garde une course dont l’enlèvement est dans le rayon du point d’ancrage', () => {
+    expect(pickupWithinZone(dansAlger, { center: ALGER, radiusKm: 20 })).toBe(true);
   });
 
-  it('filtre sur le rayon quand on connaît la position', () => {
-    const zone: DriverZone = { wilaya: null, radiusKm: 20 };
-    expect(zoneAllows(dansAlger, zone, ALGER)).toBe(true);
-    expect(zoneAllows(dansBlida, zone, ALGER)).toBe(false);
+  it('écarte une course dont l’enlèvement est hors du rayon', () => {
+    // Témoin du cas précédent : sans lui, « écarte toujours » passerait.
+    expect(pickupWithinZone(dansBlida, { center: ALGER, radiusKm: 20 })).toBe(false);
   });
 
   // ── Les cas qui doivent LAISSER PASSER ────────────────────────────────────
@@ -161,44 +150,30 @@ describe('ce que la zone laisse passer', () => {
   // Ils sont la raison d'être de ce banc. Chacun décrit une chose qu'on ignore,
   // et dans chacun le filtre doit s'abstenir plutôt que de trancher.
 
-  it('⚠️ aucune préférence ⇒ tout passe', () => {
-    expect(zoneAllows(dansBlida, null, ALGER)).toBe(true);
-    const aucune: DriverZone = { wilaya: null, radiusKm: null };
-    expect(zoneAllows(dansBlida, aucune, ALGER)).toBe(true);
+  it('⚠️ pas de point d’ancrage ⇒ tout passe', () => {
+    expect(pickupWithinZone(dansBlida, null)).toBe(true);
+    expect(pickupWithinZone(dansBlida, undefined)).toBe(true);
+    expect(pickupWithinZone(dansBlida, { center: null, radiusKm: 20 })).toBe(true);
   });
 
-  it('⚠️ course SANS wilaya ⇒ elle passe, même si une wilaya est exigée', () => {
-    // La wilaya vient du géocodage, jamais d'une saisie : son absence dit
-    // « on ne sait pas », pas « ailleurs ». La cacher retirerait du travail
-    // pour un champ que le commerçant n'a pas rempli.
-    const sansWilaya = order({ coords: [2.8277, 36.4703] });
-    const zone: DriverZone = { wilaya: 'Alger', radiusKm: null };
-    expect(zoneAllows(sansWilaya, zone, null)).toBe(true);
+  it('⚠️ point d’ancrage mais pas de rayon ⇒ tout passe', () => {
+    expect(pickupWithinZone(dansBlida, { center: ALGER, radiusKm: null })).toBe(true);
   });
 
-  it('⚠️ transporteur SANS position ⇒ le rayon ne s’applique pas', () => {
-    // Sinon un transporteur dont on ignore la position ne verrait AUCUNE
-    // course — le pire résultat pour une fonctionnalité censée l'aider.
-    const zone: DriverZone = { wilaya: null, radiusKm: 5 };
-    expect(zoneAllows(dansBlida, zone, null)).toBe(true);
-  });
-
-  it('⚠️ course SANS coordonnées ⇒ le rayon ne s’applique pas', () => {
+  it('⚠️ course SANS coordonnées ⇒ elle passe, même sous un rayon serré', () => {
+    // Le point vient du géocodage : son absence dit « on ne sait pas », pas
+    // « ailleurs ». La cacher retirerait du travail pour un champ non rempli.
     const sansPoint = order({ province: 'ALGER' });
-    const zone: DriverZone = { wilaya: null, radiusKm: 1 };
-    expect(zoneAllows(sansPoint, zone, ALGER)).toBe(true);
+    expect(pickupWithinZone(sansPoint, { center: ALGER, radiusKm: 1 })).toBe(true);
   });
 
   it('⚠️ course dont le point vaut [0, 0] ⇒ elle passe', () => {
-    const nulPart = order({ province: 'ALGER', coords: [0, 0] });
-    expect(zoneAllows(nulPart, { wilaya: 'Alger', radiusKm: 1 }, ALGER)).toBe(true);
+    const nulPart = order({ coords: [0, 0] });
+    expect(pickupWithinZone(nulPart, { center: ALGER, radiusKm: 1 })).toBe(true);
   });
 
-  it('les deux filtres se cumulent : il faut satisfaire l’un ET l’autre', () => {
-    const zone: DriverZone = { wilaya: 'Alger', radiusKm: 20 };
-    // Bonne wilaya mais trop loin — un point d'Alger à 100 km au large.
-    const loinDansAlger = order({ province: 'ALGER', coords: [4.5, 37.4] });
-    expect(zoneAllows(loinDansAlger, zone, ALGER)).toBe(false);
+  it('la limite est inclusive : l’enlèvement pile au point d’ancrage ⇒ gardé', () => {
+    expect(pickupWithinZone(dansAlger, { center: ALGER, radiusKm: 0.5 })).toBe(true);
   });
 });
 
@@ -209,9 +184,8 @@ describe('le rayon par défaut', () => {
 
   it('⚠️ n’est PAS appliqué à qui n’a rien choisi', () => {
     // Le défaut est une proposition d'écran. L'appliquer en silence ferait
-    // disparaître du travail pour des gens qui n'ont jamais ouvert le réglage,
-    // et « le choix revient au transporteur » cesserait d'être vrai pour eux.
-    const treslLoin = order({ province: 'TAMANRASSET', coords: [5.52, 22.78] });
-    expect(zoneAllows(treslLoin, null, ALGER)).toBe(true);
+    // disparaître du travail pour des gens qui n'ont jamais ouvert le réglage.
+    const tresLoin = order({ coords: [5.52, 22.78] }); // Tamanrasset
+    expect(pickupWithinZone(tresLoin, null)).toBe(true);
   });
 });

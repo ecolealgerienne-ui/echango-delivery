@@ -16,16 +16,14 @@ import {
 import { platformCurrency } from '../common/money/currency';
 import { FleetbaseApiClient } from '../fleetbase/fleetbase-api.client';
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
-import { DriverZoneService } from '../fleetbase/driver-zone.service';
+import { DriverZoneService, DriverZoneReading } from '../fleetbase/driver-zone.service';
 import { ResourceLockService } from '../common/concurrency/resource-lock.service';
 import {
   DEFAULT_ZONE_RADIUS_KM,
-  zoneAllows,
+  pickupWithinZone,
   dropoffPoint,
   pickupPoint,
   distanceKm,
-  DriverZone,
-  DriverPoint,
 } from '../common/orders/driver-zone';
 import {
   effectiveOrderMeta,
@@ -578,34 +576,57 @@ export class TransporteurService {
   /**
    * La zone déclarée, et le rayon **proposé** à qui n'a rien réglé.
    *
-   * ⚠️ `suggestedRadiusKm` n'est pas `radiusKm`, et les confondre viderait la
+   * ⚠️ `suggested_radius_km` n'est pas `radius_km`, et les confondre viderait la
    * liste de tous ceux qui n'ont jamais ouvert le réglage. Le premier est une
    * valeur d'écran, le second une décision de l'utilisateur — seul le second
    * filtre quoi que ce soit.
+   *
+   * ⚠️ `anchor_set` sépare « pas de point de base » (l'écran invite à en poser
+   * un, la liste des opportunités est vide) de « point de base illisible » —
+   * deux absences, deux messages (règle 10).
    */
   async readZone(driverId: string) {
     const driver = await this.getDriverOrFail(driverId);
     const { zone, point } = await this.driverZone.read(driver.fleetbaseDriverUuid);
     return {
-      wilaya: zone?.wilaya ?? null,
+      center: zone?.center ?? null,
       radius_km: zone?.radiusKm ?? null,
       suggested_radius_km: DEFAULT_ZONE_RADIUS_KM,
-      // Dire si la position est connue : sans elle le rayon ne s'applique pas,
-      // et l'écran doit pouvoir l'expliquer plutôt que de laisser croire à un
-      // filtre qui ne filtre rien.
+      anchor_set: zone?.center != null,
+      // La position GPS vive : sert à pré-remplir la carte au premier réglage,
+      // pas à filtrer (c'est le point de base sauvegardé qui filtre).
       position_known: point != null,
+      position: point,
     };
   }
 
-  async saveZone(driverId: string, dto: { wilaya?: string | null; radiusKm?: number | null }) {
+  async saveZone(
+    driverId: string,
+    dto: { centerLat?: number | null; centerLng?: number | null; radiusKm?: number | null },
+  ) {
     const driver = await this.getDriverOrFail(driverId);
-    const wilaya = typeof dto.wilaya === 'string' && dto.wilaya.trim() ? dto.wilaya.trim() : null;
+
+    const hasLat = typeof dto.centerLat === 'number';
+    const hasLng = typeof dto.centerLng === 'number';
+    if (hasLat !== hasLng) {
+      badRequest(
+        'zone.center_incomplete',
+        'Le point de base demande une latitude ET une longitude.',
+      );
+    }
+    const center =
+      hasLat && hasLng
+        ? { latitude: dto.centerLat as number, longitude: dto.centerLng as number }
+        : null;
+    if (center && center.latitude === 0 && center.longitude === 0) {
+      badRequest('zone.center_invalid', 'Point de base invalide (0,0).');
+    }
     const radiusKm = typeof dto.radiusKm === 'number' ? dto.radiusKm : null;
 
     // L'identifiant public est indispensable à l'écriture (voir `write`) ; il
     // est résolu et mémorisé par ce helper, donc il ne coûte qu'une fois.
     const publicId = await this.getDriverPublicId(driver);
-    await this.driverZone.write(driver.fleetbaseDriverUuid, publicId, { wilaya, radiusKm });
+    await this.driverZone.write(driver.fleetbaseDriverUuid, publicId, { center, radiusKm });
 
     // Relu plutôt que déduit : le stockage est chez Fleetbase, et rendre ce
     // qu'on vient d'envoyer masquerait un refus silencieux — le mode d'échec
@@ -714,6 +735,24 @@ export class TransporteurService {
     const wantsAssigned = query.type !== 'adhoc';
     const wantsAdhoc = !query.type || query.type === 'adhoc';
 
+    // La zone est lue AVANT le fetch adhoc : c'est son point d'ancrage qui
+    // décide quoi demander à Fleetbase (`nearby`). Une seule lecture, partagée
+    // avec le filtre véhicule/refus plus bas.
+    const zoneReading = wantsAdhoc
+      ? await this.driverZone.read(driver.fleetbaseDriverUuid)
+      : null;
+
+    // ⚠️ **Point d'ancrage absent ⇒ liste d'opportunités vide, et l'écran
+    // invite à en poser un** (règle 10 : deux absences, deux messages). On ne
+    // filtre pas sur une valeur que le transporteur n'a pas choisie — mais on
+    // ne lui déverse pas non plus tout le réseau.
+    const anchor = zoneReading?.zone?.center ?? null;
+    const adhocAnchorMissing = wantsAdhoc && !anchor;
+    const radiusMetres =
+      zoneReading?.zone?.radiusKm != null
+        ? zoneReading.zone.radiusKm * 1000
+        : this.adhocRadiusMetres();
+
     let assignedRaw: any[] = [];
     let adhocRaw: any[] = [];
     try {
@@ -723,12 +762,12 @@ export class TransporteurService {
               driver: driver.fleetbaseDriverUuid,
             })
           : Promise.resolve([]),
-        // `without_driver` couvre aussi l'exclusion des états terminaux
-        // (completed/canceled/expired), que le filtre en mémoire ci-dessous
-        // refaisait partiellement. Les deux sont conservés : le serveur allège,
-        // le code décide.
-        wantsAdhoc
-          ? this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true })
+        // Filtre spatial NATIF Fleetbase (`GET /v1/orders?nearby&radius`,
+        // ST_Distance_Sphere sur son index) — le BFF ne calcule aucune
+        // distance ici. `meta` en revient déjà hydraté : pas de rechargement
+        // unitaire pour cette branche, contrairement à « mes courses ».
+        anchor
+          ? this.fleetbaseClient.fetchNearbyUnclaimedOrders(anchor, radiusMetres)
           : Promise.resolve([]),
       ]);
     } catch (error) {
@@ -765,33 +804,24 @@ export class TransporteurService {
       ),
     );
 
-    // Adhoc opportunities: broadcast, not yet claimed by anyone. Fleetbase's
-    // geospatial dispatch decides who gets pinged (specs_echango_delivery §3.2);
-    // the BFF only avoids showing orders already taken.
-    //
-    // ⚠️ **Éligibilité et zone séparées depuis l'optimisation de parcours
-    // (05/09/2026).** `getClaimablePoolOrders` porte tout ce qui décide si CE
-    // transporteur peut réclamer une course (statut, déclin, véhicule) —
-    // partagé avec la route d'optimisation, qui a besoin des mêmes candidats
-    // mais d'un filtre géographique différent (proximité de sa dépose, pas la
-    // zone déclarée). `zoneAllows` reste appliqué ICI, par cet écran
-    // uniquement : c'est lui qui répond à « qu'est-ce que CE transporteur a
-    // déclaré vouloir voir », une question que l'optimisation ne pose pas.
-    const { candidates: poolCandidates, zone, point } =
-      await this.getClaimablePoolOrders(driver, adhocRaw);
+    // Opportunités : diffusées, pas encore réclamées. Le filtre spatial est
+    // déjà passé (Fleetbase `nearby`). `getClaimablePoolOrders` ajoute ce qui
+    // décide si CE transporteur peut réclamer — statut, refus, véhicule —, rien
+    // de géographique. Partagé avec l'optimisation de parcours (règle 5).
+    const { candidates: poolCandidates } = wantsAdhoc
+      ? await this.getClaimablePoolOrders(driver, adhocRaw, zoneReading as DriverZoneReading)
+      : { candidates: [] as any[] };
 
-    // ⚠️ **La zone du transporteur filtre APRÈS le véhicule, et jamais avant.**
-    //
-    // C'est lui qui choisit sa course (décision produit du 02/08/2026) : la
-    // liste ne s'aligne donc pas sur `adhoc_distance`, qui gouverne les
-    // sollicitations, mais sur ce qu'il a **déclaré vouloir voir**.
-    //
-    // `zoneAllows` laisse passer tout ce qu'il ignore — course sans wilaya,
-    // course sans point, transporteur sans position, transporteur sans
-    // préférence. Motif complet dans `common/orders/driver-zone.ts` : un filtre
-    // trop large se remarque et s'ajuste, un filtre trop étroit vide une liste
-    // sans que personne ne puisse constater ce qui manque.
-    const adhoc = poolCandidates.filter((o) => zoneAllows(o, zone, point));
+    // ⚠️ **Revérification en mémoire du rayon** — le serveur allège, le code
+    // décide. `nearby` matche aussi les points d'étape ; ici on ne garde que si
+    // l'ENLÈVEMENT est dans le rayon du point d'ancrage. C'est aussi la ligne
+    // qu'un banc mute pour prouver que le filtre existe. Course sans
+    // coordonnées, ou transporteur sans point d'ancrage ⇒ laissée passer
+    // (`common/orders/driver-zone.ts` : on ne retire que ce qu'on sait hors
+    // zone).
+    const adhoc = poolCandidates.filter((o) =>
+      pickupWithinZone(o, zoneReading?.zone ?? null),
+    );
 
     // ⚠️ `cancelled` à deux « l » compris : sans lui, une course annulée par le
     // chemin qui emploie cette orthographe restait dans les courses actives du
@@ -806,7 +836,9 @@ export class TransporteurService {
     // de la prendre.
     const publicAdhoc = adhoc.map((o) => projectOrderForDriver(o, { unclaimed: true }));
 
-    if (query.type === 'adhoc') return { orders: publicAdhoc };
+    if (query.type === 'adhoc') {
+      return { orders: publicAdhoc, anchorMissing: adhocAnchorMissing };
+    }
     if (query.type === 'history') {
       return { orders: this.attachFailures(assigned.filter(isFinished)) };
     }
@@ -817,6 +849,7 @@ export class TransporteurService {
     return {
       active: this.attachFailures(assigned.filter((o) => !isFinished(o))),
       adhoc: publicAdhoc,
+      adhocAnchorMissing,
       history: this.attachFailures(assigned.filter(isFinished)),
     };
   }
@@ -976,16 +1009,26 @@ export class TransporteurService {
 
     const driver = await this.getDriverOrFail(driverId);
     let adhocRaw: any[] = [];
+    let zoneReading!: DriverZoneReading;
     try {
-      adhocRaw = await this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true });
+      [adhocRaw, zoneReading] = await Promise.all([
+        this.fleetbaseClient.fetchEveryOrder(100, 50, { without_driver: true }),
+        this.driverZone.read(driver.fleetbaseDriverUuid),
+      ]);
     } catch (error) {
       this.logger.error(`Route optimization fetch failed for driver ${driverId}: ${error.message}`);
       serviceUnavailable('order.fetch_failed', 'Failed to fetch orders');
     }
 
     // Même éligibilité que « Opportunités » (règle 5 — un seul « réclamable »),
-    // mais SANS le filtre de zone déclarée : ce n'est pas la question ici.
-    const { candidates } = await this.getClaimablePoolOrders(driver, adhocRaw);
+    // mais SANS le filtre de zone déclarée : ici c'est la proximité de la
+    // dépose de référence qui classe, plus bas. `zoneReading` ne sert qu'au
+    // filtre véhicule porté par `getClaimablePoolOrders`.
+    const { candidates } = await this.getClaimablePoolOrders(
+      driver,
+      adhocRaw,
+      zoneReading!,
+    );
 
     const withDistance: { order: any; distanceKm: number }[] = [];
     for (const candidate of candidates) {
@@ -1606,35 +1649,27 @@ export class TransporteurService {
    * « réclamable » pourraient diverger, exactement le défaut fondateur de
    * `isOrderClaimable`.
    *
-   * Prend `adhocRaw` déjà chargé plutôt que de le récupérer lui-même : dans
-   * `listOrders()`, il est acquis en parallèle du côté « mes courses »
-   * (`Promise.all`) — refaire l'appel ici casserait ce parallélisme sans
-   * aucun bénéfice, puisque l'appelant l'a déjà en main.
+   * Prend `adhocRaw` déjà chargé plutôt que de le récupérer lui-même : les deux
+   * appelants n'ont pas le même ensemble de départ — `listOrders()` fournit les
+   * courses proches du point d'ancrage (filtre spatial natif Fleetbase),
+   * `optimizeRoute()` fournit tout le pool (il classera par proximité de sa
+   * dépose). Cette méthode ne pose donc AUCUN filtre géographique.
    *
-   * Rend aussi `zone`/`point` (lus une seule fois avec `vehicleType`, comme
-   * avant l'extraction) : `listOrders()` en a besoin pour son propre filtre
-   * de zone, appliqué par lui et non par cette méthode.
+   * Prend aussi `zoneReading` déjà lu : l'appelant en a besoin avant d'appeler
+   * (pour décider quoi charger), donc le relire ici serait un second appel
+   * Fleetbase pour rien.
    */
   private async getClaimablePoolOrders(
     driver: { fleetbaseDriverUuid: string },
     adhocRaw: any[],
-  ): Promise<{ candidates: any[]; zone: DriverZone | null; point: DriverPoint | null }> {
+    zoneReading: DriverZoneReading,
+  ): Promise<{ candidates: any[] }> {
     // Une exigence de véhicule est un MINIMUM, pas une égalité : une course
     // demandant une voiture reste faisable en utilitaire. Et un transporteur
     // qui n'a pas déclaré son véhicule voit tout — être écarté du réseau par un
     // champ non rempli serait le pire des défauts silencieux.
     const ladder = ['moto', 'voiture', 'utilitaire'];
-    // ⚠️ **Une seule lecture Fleetbase pour les trois critères.** Catégorie de
-    // véhicule, zone déclarée et position sortent de la même réponse : les
-    // séparer coûterait trois appels par affichage de liste, sur un
-    // environnement où chacun prend ~3 s.
-    //
-    // ⚠️ La catégorie vivait dans `DriverAccount.vehicleType` jusqu'au
-    // 03/08/2026 — une colonne du BFF, donc invisible d'un opérateur.
-    const { zone, point, vehicleType } = await this.driverZone.read(
-      driver.fleetbaseDriverUuid,
-    );
-    const mine = ladder.indexOf(vehicleType ?? '');
+    const mine = ladder.indexOf(zoneReading.vehicleType ?? '');
     // ⚠️ Le filtre lit le `meta` **recomplété**, pas le brut. Sur une commande
     // dont `meta` a été écrasé, `vehicle_type` serait absent et la course
     // passerait pour « sans exigence » : un transporteur en moto se verrait
@@ -1671,7 +1706,7 @@ export class TransporteurService {
       (o) => !this.hasDeclined(o, driver.fleetbaseDriverUuid),
     );
 
-    return { candidates: adhocHydrated.filter(suits), zone, point };
+    return { candidates: adhocHydrated.filter(suits) };
   }
 
   /**

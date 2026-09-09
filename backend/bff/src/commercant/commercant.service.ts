@@ -10,7 +10,6 @@ import { FACILITATOR_TYPE_VENDOR, FleetbaseApiClient } from '../fleetbase/fleetb
 import { OrderCustomFieldsService } from '../fleetbase/order-custom-fields.service';
 import { MerchantFavouritesService } from '../fleetbase/merchant-favourites.service';
 import { DriverZoneService } from '../fleetbase/driver-zone.service';
-import { OrderPickup, orderPickup, zoneAllowsPickup } from '../common/orders/driver-zone';
 import {
   OrderCreationHelpers,
   ResolvedTourneeStop,
