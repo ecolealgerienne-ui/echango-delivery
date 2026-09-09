@@ -50,7 +50,14 @@ clé du catalogue soit oubliée dans un sens ou dans l'autre.
 
 ### 1.2 Sur le conducteur — 3 champs personnalisés
 
-`zone_wilaya`, `zone_radius_km`, `vehicle_type`.
+`zone_center` (« lat,lng »), `zone_radius_km`, `vehicle_type`.
+
+⚠️ **`zone_wilaya` a été remplacé par `zone_center` le 09/09/2026.** La zone de
+travail du conducteur n'est plus une wilaya mais un **point d'ancrage + un
+rayon**, et le filtrage des opportunités est délégué à Fleetbase
+(`GET /v1/orders?nearby&radius`). `zone_wilaya` sur d'anciens conducteurs
+devient un champ mort — `DriverZoneService` ne supprime jamais, il cesse de
+lire. (La zone de service **entreprise** reste une liste de wilayas.)
 
 ⚠️ Les définitions sont attachées **au conducteur lui-même** (`subject_uuid` =
 son uuid), pas à une configuration partagée : il y en a donc trois **par
