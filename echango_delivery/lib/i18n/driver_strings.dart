@@ -57,6 +57,11 @@ const Map<String, String> _fr = {
   'driver.empty.opportunities': 'Aucune opportunité à proximité',
   'driver.empty.opportunities.hint':
       'Vérifier que vous êtes en ligne : le dispatch est géographique.',
+  'driver.empty.opportunities.no_anchor':
+      'Posez votre point de base pour voir des opportunités',
+  'driver.empty.opportunities.no_anchor.hint':
+      'Ouvrez « Ma zone de travail » et indiquez où vous travaillez : sans '
+      'point de base, aucune course ne peut vous être proposée.',
   'driver.empty.active': 'Aucune commande en cours',
   'driver.empty.active.hint':
       'Acceptez une course depuis l’onglet « Opportunités » pour la voir '
@@ -126,26 +131,30 @@ const Map<String, String> _fr = {
   // tant qu'on n'a rien choisi, et quand la position est inconnue.
   'driver.zone.title': 'Ma zone de travail',
   'driver.zone.subtitle':
-      'Choisissez où vous voulez voir des courses. Tant que rien n’est '
-      'enregistré, vous les voyez toutes.',
-  'driver.zone.wilaya': 'Wilaya',
-  'driver.zone.wilaya.hint':
-      'Seules les courses dont l’enlèvement est dans cette wilaya vous seront '
-      'proposées. Laissez vide pour toutes les voir.',
-  'driver.zone.radius': 'Rayon autour de moi',
+      'Un point de base et un rayon. Vous voyez les courses dont l’enlèvement '
+      'est à portée. Sans point de base, aucune opportunité ne s’affiche.',
+  'driver.zone.center': 'Point de base',
+  'driver.zone.center.hint':
+      'Le centre de votre rayon de recherche. Posez-le là où vous travaillez.',
+  'driver.zone.lat': 'Latitude',
+  'driver.zone.lng': 'Longitude',
+  'driver.zone.use_position': 'Utiliser ma position actuelle',
+  'driver.zone.center_incomplete':
+      'Indiquez une latitude ET une longitude, ou laissez les deux vides.',
+  'driver.zone.radius': 'Rayon',
   'driver.zone.radius.hint':
-      'Affine la liste autour de votre position actuelle.',
-  'driver.zone.radius.no_position':
-      'Votre position n’est pas connue : ce rayon ne s’applique pas pour '
-      'l’instant. Seule la wilaya filtre.',
+      'Distance maximale entre votre point de base et l’enlèvement d’une course.',
   'driver.zone.km': 'km',
-  'driver.zone.state.none': 'Aucun filtre : vous voyez toutes les courses.',
-  'driver.zone.state.active': 'Filtre actif — wilaya : {wilaya}.',
-  'driver.zone.all_wilayas': 'toutes',
+  'driver.zone.state.none':
+      'Aucun point de base : posez-en un pour voir des opportunités.',
+  'driver.zone.state.active':
+      'Actif — {radius} km autour de votre point de base.',
   'driver.zone.save': 'Enregistrer',
-  'driver.zone.clear': 'Tout voir',
+  'driver.zone.clear': 'Retirer',
   'driver.zone.saved': 'Zone enregistrée.',
-  'driver.zone.cleared': 'Filtre retiré : vous voyez toutes les courses.',
+  'driver.zone.cleared':
+      'Point de base retiré : vos opportunités ne s’afficheront plus tant que '
+      'vous n’en posez pas un.',
   'driver.zone.load_failed': 'Impossible de lire votre zone de travail.',
   'driver.zone.save_failed': 'Zone non enregistrée. Réessayez.',
   'driver.vehicle.none': 'Non déclaré',
@@ -225,6 +234,11 @@ const Map<String, String> _ar = {
   'driver.empty.opportunities': 'لا توجد فرصة قريبة',
   'driver.empty.opportunities.hint':
       'تأكّد من أنك متصل: التوزيع يعتمد على الموقع الجغرافي.',
+  'driver.empty.opportunities.no_anchor':
+      'ضع نقطة أساسك لرؤية الفرص',
+  'driver.empty.opportunities.no_anchor.hint':
+      'افتح «منطقة عملي» وحدّد أين تعمل: بدون نقطة أساس، لا يمكن اقتراح أي '
+      'رحلة عليك.',
   'driver.empty.active': 'لا توجد مهمة جارية',
   'driver.empty.active.hint':
       'اقبل مهمة من تبويب «الفرص» لتظهر هنا.',
@@ -268,23 +282,27 @@ const Map<String, String> _ar = {
   // ── منطقة عملي ────────────────────────────────────────────────────────────
   'driver.zone.title': 'منطقة عملي',
   'driver.zone.subtitle':
-      'اختر أين تريد رؤية الرحلات. ما لم تسجّل شيئاً، فأنت ترى كل الرحلات.',
-  'driver.zone.wilaya': 'الولاية',
-  'driver.zone.wilaya.hint':
-      'لن تُعرض عليك إلا الرحلات التي يقع الاستلام فيها بهذه الولاية. اتركه '
-      'فارغاً لرؤيتها كلها.',
-  'driver.zone.radius': 'النطاق حولي',
-  'driver.zone.radius.hint': 'يضيّق القائمة حول موقعك الحالي.',
-  'driver.zone.radius.no_position':
-      'موقعك غير معروف: هذا النطاق لا يُطبَّق حالياً. الولاية وحدها تصفّي.',
+      'نقطة أساس ونطاق. ترى الرحلات التي يقع استلامها ضمن المدى. بدون نقطة '
+      'أساس، لا تُعرض أي فرصة.',
+  'driver.zone.center': 'نقطة الأساس',
+  'driver.zone.center.hint': 'مركز نطاق بحثك. ضعها حيث تعمل.',
+  'driver.zone.lat': 'خط العرض',
+  'driver.zone.lng': 'خط الطول',
+  'driver.zone.use_position': 'استخدام موقعي الحالي',
+  'driver.zone.center_incomplete':
+      'أدخل خط العرض وخط الطول معاً، أو اترك كليهما فارغين.',
+  'driver.zone.radius': 'النطاق',
+  'driver.zone.radius.hint':
+      'أقصى مسافة بين نقطة أساسك ومكان استلام الرحلة.',
   'driver.zone.km': 'كم',
-  'driver.zone.state.none': 'لا تصفية: أنت ترى كل الرحلات.',
-  'driver.zone.state.active': 'تصفية مفعّلة — الولاية: {wilaya}.',
-  'driver.zone.all_wilayas': 'الكل',
+  'driver.zone.state.none':
+      'لا نقطة أساس: ضع واحدة لرؤية الفرص.',
+  'driver.zone.state.active': 'مفعّل — {radius} كم حول نقطة أساسك.',
   'driver.zone.save': 'حفظ',
-  'driver.zone.clear': 'عرض الكل',
+  'driver.zone.clear': 'إزالة',
   'driver.zone.saved': 'تم حفظ المنطقة.',
-  'driver.zone.cleared': 'أُزيلت التصفية: أنت ترى كل الرحلات.',
+  'driver.zone.cleared':
+      'أُزيلت نقطة الأساس: لن تُعرض فرصك حتى تضع واحدة.',
   'driver.zone.load_failed': 'تعذّرت قراءة منطقة عملك.',
   'driver.zone.save_failed': 'لم تُحفظ المنطقة. أعد المحاولة.',
   'driver.vehicle.none': 'غير مصرَّح بها',

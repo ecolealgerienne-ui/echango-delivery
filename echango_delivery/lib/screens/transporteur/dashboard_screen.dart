@@ -289,8 +289,15 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             children: [
               _buildOrdersList(
                 context.watch<OrderState>().adhocOrders,
-                emptyLabel: _d('driver.empty.opportunities'),
-                emptyHint: _d('driver.empty.opportunities.hint'),
+                // Pas de point de base ⇒ aucune opportunité ne PEUT être
+                // servie : on invite à en poser un, message distinct d'une
+                // liste réellement vide (règle 10).
+                emptyLabel: context.watch<OrderState>().adhocAnchorMissing
+                    ? _d('driver.empty.opportunities.no_anchor')
+                    : _d('driver.empty.opportunities'),
+                emptyHint: context.watch<OrderState>().adhocAnchorMissing
+                    ? _d('driver.empty.opportunities.no_anchor.hint')
+                    : _d('driver.empty.opportunities.hint'),
               ),
               _buildOrdersList(
                 context.watch<OrderState>().activeOrders,

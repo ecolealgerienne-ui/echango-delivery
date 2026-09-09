@@ -36,17 +36,22 @@ class _FakeApi extends BffApiClient {
 
   /// Si posé, `getOrderBuckets` attend ce verrou — pour observer l'état
   /// PENDANT le rechargement de fond.
-  Completer<Map<String, List<Order>>>? bucketsGate;
+  Completer<DriverOrderBuckets>? bucketsGate;
   Object? bucketsError;
   int bucketsCalls = 0;
   Map<String, List<Order>> buckets = {'active': [], 'adhoc': [], 'history': []};
 
   @override
-  Future<Map<String, List<Order>>> getOrderBuckets() async {
+  Future<DriverOrderBuckets> getOrderBuckets() async {
     bucketsCalls++;
     if (bucketsGate != null) return bucketsGate!.future;
     if (bucketsError != null) throw bucketsError!;
-    return buckets;
+    return (
+      active: buckets['active'] ?? const [],
+      adhoc: buckets['adhoc'] ?? const [],
+      history: buckets['history'] ?? const [],
+      adhocAnchorMissing: false,
+    );
   }
 
   @override
@@ -81,7 +86,7 @@ void main() {
     expect(state.isLoading, isFalse,
         reason: 'isLoading est réservé aux opérations de l’utilisateur');
 
-    api.bucketsGate!.complete({'active': [], 'adhoc': [], 'history': []});
+    api.bucketsGate!.complete((active: <Order>[], adhoc: <Order>[], history: <Order>[], adhocAnchorMissing: false));
     await future;
 
     expect(state.isRefreshingLists, isFalse);
@@ -138,7 +143,7 @@ void main() {
     expect(api.bucketsGate!.isCompleted, isFalse);
 
     // ménage : libérer le verrou pour ne pas laisser un future en suspens
-    api.bucketsGate!.complete({'active': [], 'adhoc': [], 'history': []});
+    api.bucketsGate!.complete((active: <Order>[], adhoc: <Order>[], history: <Order>[], adhocAnchorMissing: false));
     await Future<void>.delayed(Duration.zero);
   });
 }

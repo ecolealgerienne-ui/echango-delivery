@@ -10,24 +10,17 @@ import '../../widgets/app_snack_bar.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/section_card.dart';
 
-/// Où ce transporteur veut voir des courses.
+/// Où ce transporteur veut voir des courses : un point de base et un rayon.
 ///
 /// ── Ce que cet écran doit rendre évident, sous peine d'être nuisible ───────
 ///
-/// Un filtre **retire** des courses de la liste. Mal compris, il fait croire à
-/// une panne : le transporteur ouvre l'application, voit peu ou rien, et n'a
-/// aucun moyen de deviner que c'est lui qui l'a demandé. Trois partis pris en
-/// découlent, et ils comptent plus que la mise en page :
-///
-/// - **rien n'est filtré tant qu'il n'a rien choisi.** Le rayon proposé (15 km)
-///   pré-remplit le champ, il ne s'applique pas. Un défaut appliqué en silence
-///   ferait disparaître du travail pour quelqu'un qui n'a jamais ouvert ce
-///   réglage.
+/// - **sans point de base, la liste des opportunités est VIDE** — c'est un
+///   changement par rapport à la wilaya (dont l'absence montrait tout). L'écran
+///   doit donc inviter à en poser un, pas laisser croire à une panne.
 /// - **le réglage se défait**, et le bouton pour le faire est visible dès qu'un
-///   filtre existe. Un réglage qu'on ne peut pas annuler est un piège.
-/// - **l'écran dit quand le rayon n'agit pas.** Sans position connue, il ne
-///   filtre rien ; le taire laisserait croire à un filtre actif et rendrait
-///   incompréhensible le nombre de courses affichées.
+///   point de base existe.
+/// - **la position GPS pré-remplit, elle ne filtre pas.** C'est le point
+///   enregistré qui filtre — un point sauvegardé ne dépend pas du tracking.
 class ZoneCard extends StatefulWidget {
   const ZoneCard({super.key});
 
@@ -36,7 +29,8 @@ class ZoneCard extends StatefulWidget {
 }
 
 class _ZoneCardState extends State<ZoneCard> {
-  final _wilaya = TextEditingController();
+  final _lat = TextEditingController();
+  final _lng = TextEditingController();
   final _radius = TextEditingController();
 
   DriverZone? _zone;
@@ -55,9 +49,16 @@ class _ZoneCardState extends State<ZoneCard> {
 
   @override
   void dispose() {
-    _wilaya.dispose();
+    _lat.dispose();
+    _lng.dispose();
     _radius.dispose();
     super.dispose();
+  }
+
+  void _fill(DriverZone zone) {
+    _lat.text = zone.center?.latitude.toString() ?? '';
+    _lng.text = zone.center?.longitude.toString() ?? '';
+    _radius.text = '${zone.radiusKm ?? zone.suggestedRadiusKm}';
   }
 
   Future<void> _load() async {
@@ -70,11 +71,7 @@ class _ZoneCardState extends State<ZoneCard> {
       if (!mounted) return;
       setState(() {
         _zone = zone;
-        _wilaya.text = zone.wilaya ?? '';
-        // ⚠️ Le champ est **pré-rempli** avec la proposition quand rien n'est
-        // choisi — mais tant que le transporteur n'enregistre pas, aucun
-        // filtrage n'a lieu. Le texte sous le champ le dit explicitement.
-        _radius.text = '${zone.radiusKm ?? zone.suggestedRadiusKm}';
+        _fill(zone);
         _loading = false;
       });
     } catch (e) {
@@ -86,25 +83,40 @@ class _ZoneCardState extends State<ZoneCard> {
     }
   }
 
+  void _usePosition() {
+    final pos = _zone?.position;
+    if (pos == null) return;
+    setState(() {
+      _lat.text = pos.latitude.toString();
+      _lng.text = pos.longitude.toString();
+    });
+  }
+
   Future<void> _save({required bool clear}) async {
+    final lat = double.tryParse(_lat.text.trim());
+    final lng = double.tryParse(_lng.text.trim());
+    if (!clear && (lat == null) != (lng == null)) {
+      showAppError(context, _d('driver.zone.center_incomplete'));
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      final wilaya = _wilaya.text.trim();
-      final radius = int.tryParse(_radius.text.trim());
       final zone = await context.read<BffApiClient>().setZone(
-            wilaya: clear || wilaya.isEmpty ? null : wilaya,
-            radiusKm: clear ? null : radius,
+            centerLat: clear ? null : lat,
+            centerLng: clear ? null : lng,
+            radiusKm: clear ? null : int.tryParse(_radius.text.trim()),
           );
       if (!mounted) return;
       setState(() {
         _zone = zone;
-        _wilaya.text = zone.wilaya ?? '';
-        _radius.text = '${zone.radiusKm ?? zone.suggestedRadiusKm}';
+        _fill(zone);
         _saving = false;
       });
       // Relu depuis la réponse du serveur, jamais depuis la saisie : c'est lui
       // qui a le dernier mot, et un refus silencieux se verrait ici.
-      showAppSnackBar(context, _d(clear ? 'driver.zone.cleared' : 'driver.zone.saved'));
+      showAppSnackBar(
+          context, _d(clear ? 'driver.zone.cleared' : 'driver.zone.saved'));
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -140,29 +152,60 @@ class _ZoneCardState extends State<ZoneCard> {
               child: Center(child: CircularProgressIndicator()),
             )
           else ...[
-            TextField(
-              controller: _wilaya,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                labelText: _d('driver.zone.wilaya'),
-                helperText: _d('driver.zone.wilaya.hint'),
-                helperMaxLines: 2,
-                prefixIcon: const Icon(Icons.map_outlined),
-              ),
+            Text(_d('driver.zone.center'),
+                style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: AppSpacing.xs),
+            Text(_d('driver.zone.center.hint'),
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _lat,
+                    enabled: !_saving,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true, signed: true),
+                    decoration: InputDecoration(
+                      labelText: _d('driver.zone.lat'),
+                      prefixIcon: const Icon(Icons.my_location_outlined),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: TextField(
+                    controller: _lng,
+                    enabled: !_saving,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true, signed: true),
+                    decoration: InputDecoration(
+                      labelText: _d('driver.zone.lng'),
+                    ),
+                  ),
+                ),
+              ],
             ),
+            if (zone?.positionKnown == true) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: _saving ? null : _usePosition,
+                  icon: const Icon(Icons.gps_fixed, size: 18),
+                  label: Text(_d('driver.zone.use_position')),
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.lg),
+
             TextField(
               controller: _radius,
               enabled: !_saving,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText: _d('driver.zone.radius'),
-                // ⚠️ Le texte d'aide **change** selon que la position est
-                // connue : annoncer un rayon qui ne filtre rien rendrait le
-                // nombre de courses affichées incompréhensible.
-                helperText: zone?.positionKnown == false
-                    ? _d('driver.zone.radius.no_position')
-                    : _d('driver.zone.radius.hint'),
+                helperText: _d('driver.zone.radius.hint'),
                 helperMaxLines: 3,
                 prefixIcon: const Icon(Icons.social_distance_outlined),
                 suffixText: _d('driver.zone.km'),
@@ -171,13 +214,13 @@ class _ZoneCardState extends State<ZoneCard> {
             const SizedBox(height: AppSpacing.lg),
 
             // Dire l'état courant en une phrase, plutôt que de le laisser
-            // déduire de deux champs : c'est cette phrase qui empêche de
-            // prendre un filtre pour une panne.
+            // déduire de trois champs : c'est cette phrase qui empêche de
+            // prendre une liste vide pour une panne.
             Text(
-              zone == null || zone.isUnset
+              zone == null || !zone.anchorSet
                   ? _d('driver.zone.state.none')
                   : _d('driver.zone.state.active', {
-                      'wilaya': zone.wilaya ?? _d('driver.zone.all_wilayas'),
+                      'radius': '${zone.radiusKm ?? zone.suggestedRadiusKm}',
                     }),
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -197,9 +240,7 @@ class _ZoneCardState extends State<ZoneCard> {
                         : Text(_d('driver.zone.save')),
                   ),
                 ),
-                // Le retrait n'apparaît que s'il y a quelque chose à retirer —
-                // un bouton « tout voir » sur un écran qui ne filtre rien ne
-                // ferait qu'ajouter une question.
+                // Le retrait n'apparaît que s'il y a quelque chose à retirer.
                 if (zone != null && !zone.isUnset) ...[
                   const SizedBox(width: AppSpacing.md),
                   Expanded(

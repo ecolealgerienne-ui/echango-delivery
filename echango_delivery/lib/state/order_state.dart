@@ -117,6 +117,12 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
   /// une vue filtrée sur les commandes du driver ne les montrerait jamais.
   List<Order> get adhocOrders => _adhocOrders;
 
+  /// Le transporteur n'a pas de point de base : aucune opportunité ne peut lui
+  /// être servie. L'écran l'invite à en poser un plutôt que d'afficher une
+  /// liste vide qui se lirait comme une panne (règle 10).
+  bool _adhocAnchorMissing = false;
+  bool get adhocAnchorMissing => _adhocAnchorMissing;
+
   /// Commandes terminées ou annulées.
   List<Order> get historyOrders => _historyOrders;
 
@@ -150,9 +156,10 @@ class OrderState extends ChangeNotifier with WriteEnvelope {
 
     try {
       final buckets = await _apiClient.getOrderBuckets();
-      _orders = buckets['active'] ?? [];
-      _adhocOrders = buckets['adhoc'] ?? [];
-      _historyOrders = buckets['history'] ?? [];
+      _orders = buckets.active;
+      _adhocOrders = buckets.adhoc;
+      _historyOrders = buckets.history;
+      _adhocAnchorMissing = buckets.adhocAnchorMissing;
     } catch (e) {
       if (surfaceErrors) {
         _errorMessage = messageForError(e, _localeState.locale);

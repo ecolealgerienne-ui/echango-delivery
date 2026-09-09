@@ -37,9 +37,14 @@ class _FakeApi extends BffApiClient {
   Map<String, List<Order>> buckets = {'active': [], 'adhoc': [], 'history': []};
 
   @override
-  Future<Map<String, List<Order>>> getOrderBuckets() async {
+  Future<DriverOrderBuckets> getOrderBuckets() async {
     if (error != null) throw error!;
-    return buckets;
+    return (
+      active: buckets['active'] ?? const [],
+      adhoc: buckets['adhoc'] ?? const [],
+      history: buckets['history'] ?? const [],
+      adhocAnchorMissing: false,
+    );
   }
 }
 

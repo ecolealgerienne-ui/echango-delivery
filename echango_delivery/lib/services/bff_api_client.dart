@@ -17,6 +17,14 @@ import '../models/route_optimization_result.dart';
 
 const _tokenKey = 'echango_session_token';
 
+/// Les trois listes du transporteur, plus le drapeau « pas de point de base ».
+typedef DriverOrderBuckets = ({
+  List<Order> active,
+  List<Order> adhoc,
+  List<Order> history,
+  bool adhocAnchorMissing,
+});
+
 /// Client HTTP qui borne chaque requête dans le temps.
 ///
 /// `package:http` n'applique aucun délai maximal : une requête partie vers un
@@ -531,9 +539,20 @@ class BffApiClient {
   /// Sans [type], le BFF renvoie les trois catégories d'un coup
   /// (active/adhoc/history) — c'est ce qu'attend l'écran liste (§4.1).
   /// Avec [type], une seule liste à plat.
-  Future<Map<String, List<Order>>> getOrderBuckets() async {
+  ///
+  /// [adhocAnchorMissing] : le transporteur n'a pas de point de base, donc
+  /// aucune opportunité ne peut lui être servie. À distinguer d'une liste
+  /// vraiment vide — l'écran invite alors à en poser un (règle 10).
+  Future<DriverOrderBuckets> getOrderBuckets() async {
     final data = await _get('/transporteur/commandes');
-    if (data == null) return {'active': [], 'adhoc': [], 'history': []};
+    if (data == null) {
+      return (
+        active: <Order>[],
+        adhoc: <Order>[],
+        history: <Order>[],
+        adhocAnchorMissing: false,
+      );
+    }
 
     List<Order> parse(String key) {
       final raw = data[key];
@@ -543,11 +562,12 @@ class BffApiClient {
           .toList();
     }
 
-    return {
-      'active': parse('active'),
-      'adhoc': parse('adhoc'),
-      'history': parse('history'),
-    };
+    return (
+      active: parse('active'),
+      adhoc: parse('adhoc'),
+      history: parse('history'),
+      adhocAnchorMissing: data['adhocAnchorMissing'] == true,
+    );
   }
 
   Future<List<Order>> getOrders({String type = 'assigned'}) async {
@@ -1357,20 +1377,24 @@ class BffApiClient {
     await _post('/transporteur/vehicule', {if (vehicleType != null) 'vehicleType': vehicleType});
   }
 
-  /// La zone de travail déclarée : sa wilaya, son rayon.
+  /// La zone de travail déclarée : son point d'ancrage, son rayon.
   Future<DriverZone> getZone() async {
     return DriverZone.fromJson(await _get('/transporteur/zone') ?? const {});
   }
 
-  /// Enregistre la zone. `null` sur un champ **efface** la préférence.
+  /// Enregistre la zone. `null` sur un champ **efface** la préférence — un
+  /// réglage qu'on ne peut pas défaire est un piège, pas un choix.
   ///
-  /// ⚠️ Les deux clés sont envoyées **même à `null`**, et c'est nécessaire :
-  /// le serveur distingue « ne touche pas » de « efface » par leur présence.
-  /// Les omettre quand elles sont nulles rendrait le réglage impossible à
-  /// défaire — un réglage qu'on ne peut pas annuler est un piège, pas un choix.
-  Future<DriverZone> setZone({String? wilaya, int? radiusKm}) async {
+  /// ⚠️ `centerLat` et `centerLng` vont ensemble : le serveur refuse un seul
+  /// des deux (`zone.center_incomplete`).
+  Future<DriverZone> setZone({
+    double? centerLat,
+    double? centerLng,
+    int? radiusKm,
+  }) async {
     final data = await _put('/transporteur/zone', {
-      'wilaya': wilaya,
+      'centerLat': centerLat,
+      'centerLng': centerLng,
       'radiusKm': radiusKm,
     });
     return DriverZone.fromJson((data as Map<String, dynamic>?) ?? const {});
