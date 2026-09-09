@@ -80,6 +80,12 @@ for d in "${DRV[@]}"; do
     && { Z_TOKEN="$DRIVER_TOKEN"; break; }
 done
 [ -n "$Z_TOKEN" ] || fail "Aucun conducteur connectable pour le témoin 503"
+# ⚠️ Depuis le 09/09/2026, la liste adhoc n'interroge Fleetbase QUE si le
+# conducteur a un point d'ancrage — sans lui elle rend `{orders:[], anchorMissing}`
+# sans appel amont, et le témoin 503 ne pourrait pas se produire. On en pose un.
+curl -sS -X PUT "$BFF_URL/transporteur/zone" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $Z_TOKEN" \
+  -d '{"centerLat":36.7538,"centerLng":3.0588,"radiusKm":500}' >/dev/null
 pass "Commerçant + deux courses (O=${O:0:8}…, P=${P:0:8}…) + un conducteur"
 
 # ── health rapporte la joignabilité de Fleetbase (Fleetbase EN LIGNE) ───────

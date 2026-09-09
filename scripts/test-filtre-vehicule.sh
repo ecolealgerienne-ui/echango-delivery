@@ -5,14 +5,15 @@
 # ── Ce que ce banc éprouve, et comment il isole le véhicule ───────────────
 #
 # La visibilité d'une opportunité dépend de trois choses : le véhicule exigé, la
-# wilaya, et l'état de la course. Pour ne mesurer QUE le véhicule, on garde tout
-# le reste fixe — même conducteur, même course sans wilaya — et on **bascule le
-# véhicule déclaré du conducteur**. La course apparaît ou disparaît ; le seul
-# variant est le véhicule.
+# zone (point d'ancrage + rayon), et l'état de la course. Pour ne mesurer QUE le
+# véhicule, on garde tout le reste fixe — même conducteur, **point d'ancrage
+# large centré sur l'enlèvement** — et on **bascule le véhicule déclaré du
+# conducteur**. La course apparaît ou disparaît ; le seul variant est le
+# véhicule.
 #
-# ⚠️ **La liste adhoc n'est PAS filtrée par la position** (le BFF prend toutes
-# les courses sans conducteur, puis filtre véhicule + wilaya) — c'est ce qui
-# rend ce test propre, sans confond géospatial.
+# ⚠️ **Depuis le 09/09/2026, sans point d'ancrage la liste adhoc est VIDE.** On
+# en pose donc un, assez large pour que le rayon ne filtre rien et que seul le
+# véhicule décide.
 #
 # ⚠️ L'exigence est un MINIMUM, pas une égalité : « utilitaire » exige un
 # utilitaire ; « voiture » l'accepte aussi (voiture < utilitaire dans l'échelle
@@ -65,12 +66,16 @@ for u in $(fb_get "/int/v1/orders?limit=100" | jq -r --arg d "$Z_UUID" '[.orders
 done
 obtain_driver_token "$Z_UUID" >/dev/null 2>&1 || fail "Jeton Z impossible" "${DRIVER_SESSION_ERROR:-}"
 Z_TOKEN="$DRIVER_TOKEN"
-# Zone effacée : sans wilaya, `zoneAllows` laisse tout passer, et seul le
-# véhicule filtre.
-dapi PUT /transporteur/zone '{"wilaya":null,"radiusKm":null}' >/dev/null
-pass "Commerçant + conducteur Z (${Z_UUID:0:8}…), zone effacée"
+# Point d'ancrage large centré sur l'enlèvement de la course d'essai (même
+# coordonnées, distance 0) : le rayon ne filtre rien, seul le véhicule décide.
+# Sans point d'ancrage, la liste adhoc serait vide (règle « anchorMissing »).
+# La zone de Z est sauvegardée et restaurée en fin — on ne laisse rien derrière.
+SAVED_ZONE="$(dapi GET /transporteur/zone)"
+SZ="$(echo "$SAVED_ZONE" | jq -c '{centerLat:.center.latitude, centerLng:.center.longitude, radiusKm:.radius_km}')"
+dapi PUT /transporteur/zone '{"centerLat":36.7538,"centerLng":3.0588,"radiusKm":500}' >/dev/null
+pass "Commerçant + conducteur Z (${Z_UUID:0:8}…), point d'ancrage large posé"
 
-step "Une course qui exige un UTILITAIRE (diffusée, sans wilaya)"
+step "Une course qui exige un UTILITAIRE (diffusée)"
 o="$(mapi POST /commercant/commandes "$(jq -n '{
   pickupLocationName:"Dépôt Véhicule", pickupLatitude:36.7538, pickupLongitude:3.0588,
   pickupContactName:"Commerce", pickupContactPhone:"+213555000000",
@@ -98,8 +103,10 @@ dapi POST /transporteur/vehicule '{"vehicleType":"voiture"}' >/dev/null
 sees_it "$C" && fail "Une « voiture » ne suffit pas pour une exigence « utilitaire »"
 pass "voiture : ne voit pas (une voiture ne fait pas un utilitaire)"
 
-# ── Ménage : annuler la course, remettre Z sans exigence ───────────────────
+# ── Ménage : annuler la course, retirer le véhicule et le point d'ancrage ──
 fb_api PUT "/int/v1/orders/$C" '{"order":{"status":"canceled"}}' >/dev/null 2>&1 || true
+dapi POST /transporteur/vehicule '{}' >/dev/null 2>&1 || true
+dapi PUT /transporteur/zone "$SZ" >/dev/null 2>&1 || true
 
 echo
 echo "════════════════════════════════════════════════════════════════"
