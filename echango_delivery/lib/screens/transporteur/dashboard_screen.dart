@@ -25,6 +25,8 @@ import 'status_colors.dart';
 import 'zone_card.dart';
 import '../../widgets/section_card.dart';
 import '../../utils/place_label.dart';
+import '../../utils/go_there.dart';
+import '../../services/navigation_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -388,7 +390,20 @@ class _OrdersListScreenState extends State<OrdersListScreen>
                 ),
               ],
             ),
-            trailing: const Icon(Icons.arrow_forward_ios),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // « Y aller » sans ouvrir la fiche : le geste le plus fréquent
+                // du transporteur. Absent si la course ne porte aucune position.
+                if (NavigationLauncher.relevantPlace(order) != null)
+                  IconButton(
+                    tooltip: _d('driver.action.navigate'),
+                    icon: const Icon(Icons.navigation_outlined),
+                    onPressed: () => goThere(context, order),
+                  ),
+                const Icon(Icons.arrow_forward_ios, size: 16),
+              ],
+            ),
             onTap: () {
               context.read<OrderState>().selectOrder(order.id);
               context.push('/transporteur/commandes/${order.id}');
@@ -492,10 +507,7 @@ class MapScreen extends StatelessWidget {
                 tooltip: cp.pickup
                     ? _d(context, 'driver.map.pickup')
                     : _d(context, 'driver.map.dropoff'),
-                onTap: () {
-                  context.read<OrderState>().selectOrder(cp.order.id);
-                  context.push('/transporteur/commandes/${cp.order.id}');
-                },
+                onTap: () => _courseSheet(context, cp.order),
               ),
           ],
         ),
@@ -526,6 +538,48 @@ class MapScreen extends StatelessWidget {
     );
   }
 
+}
+
+/// Une épingle touchée sur la carte : « Y aller » d'abord (le geste courant),
+/// « Ouvrir la fiche » ensuite.
+void _courseSheet(BuildContext context, Order order) {
+  final locale = context.read<LocaleState>().locale;
+  String d(String k, [Map<String, String>? v]) => driverLabel(k, locale, v);
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(d('driver.order.card.number', {'id': order.publicId})),
+          ),
+          if (NavigationLauncher.relevantPlace(order) != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg, vertical: AppSpacing.xs),
+              child: FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  goThere(context, order);
+                },
+                icon: const Icon(Icons.navigation_outlined),
+                label: Text(d('driver.action.navigate')),
+              ),
+            ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(sheetContext);
+              context.read<OrderState>().selectOrder(order.id);
+              context.push('/transporteur/commandes/${order.id}');
+            },
+            child: Text(d('driver.map.open_detail')),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Un point porté par une course en cours — enlèvement ou livraison.

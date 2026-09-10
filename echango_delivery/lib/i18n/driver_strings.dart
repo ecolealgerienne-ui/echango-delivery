@@ -113,6 +113,8 @@ const Map<String, String> _fr = {
   'driver.map.refresh': 'Rafraîchir',
   'driver.map.pickup': 'Enlèvement',
   'driver.map.dropoff': 'Livraison',
+  'driver.map.open_detail': 'Ouvrir la fiche',
+  'driver.action.navigate': 'Y aller',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'Transporteur',
@@ -269,6 +271,8 @@ const Map<String, String> _ar = {
   'driver.map.refresh': 'تحديث',
   'driver.map.pickup': 'الاستلام',
   'driver.map.dropoff': 'التسليم',
+  'driver.map.open_detail': 'فتح البطاقة',
+  'driver.action.navigate': 'الذهاب',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'ناقل',

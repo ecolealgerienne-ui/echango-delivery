@@ -10,6 +10,19 @@ import '../utils/logger.dart';
 /// ce que ce produit apporte, et le transporteur utilise déjà l'application
 /// qu'il connaît.
 class NavigationLauncher {
+  /// Le lieu vers lequel guider selon l'avancement de la course : l'enlèvement
+  /// tant qu'elle n'a pas démarré, la livraison ensuite. Rend `null` si aucun
+  /// des deux ne porte de position — l'appelant masque alors le bouton plutôt
+  /// que de l'offrir pour rien.
+  static Place? relevantPlace(Order order) {
+    final primary = order.isInProgress ? order.dropoffPlace : order.pickupPlace;
+    if (primary?.latitude != null && primary?.longitude != null) return primary;
+    final fallback = order.isInProgress ? order.pickupPlace : order.dropoffPlace;
+    return (fallback?.latitude != null && fallback?.longitude != null)
+        ? fallback
+        : null;
+  }
+
   /// Ouvre l'itinéraire vers [place].
   ///
   /// Renvoie `false` si aucune application ne peut le prendre en charge —
