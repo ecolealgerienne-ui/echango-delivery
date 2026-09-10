@@ -73,6 +73,13 @@ const Map<String, String> _fr = {
   'order.tournee.target.broadcast': 'Tout le réseau',
   'order.tournee.target.fleet': 'entreprise',
   'order.form.section.options': 'Options',
+  // Formulaire raccourci (C3) : l'enlèvement (pré-rempli) et les options
+  // avancées sont repliés — ~5 champs visibles au lieu de ~12.
+  'order.form.section.options.hint':
+      'Contenu du colis, véhicule, preuve, programmation, favori, adresse détaillée',
+  'order.form.section.price': 'Prix',
+  'order.form.pickup.todo': 'À renseigner — aucune adresse principale',
+  'order.form.pickup.ready': 'Pré-rempli',
 
   // ── Champs ──────────────────────────────────────────────────────────────
   'order.form.pickup.name': 'Lieu de retrait *',
@@ -666,6 +673,11 @@ const Map<String, String> _ar = {
   'order.tournee.target.broadcast': 'كامل الشبكة',
   'order.tournee.target.fleet': 'شركة',
   'order.form.section.options': 'خيارات',
+  'order.form.section.options.hint':
+      'محتوى الطرد، المركبة، الإثبات، الجدولة، المفضّل، العنوان المفصّل',
+  'order.form.section.price': 'السعر',
+  'order.form.pickup.todo': 'يجب إدخاله — لا يوجد عنوان رئيسي',
+  'order.form.pickup.ready': 'مُعبّأ مسبقاً',
 
   // ── Champs ──────────────────────────────────────────────────────────────
   'order.form.pickup.name': 'مكان الاستلام *',

@@ -765,6 +765,19 @@ Future<void> pickFromBook(
   required int row,
   required String addressName,
 }) async {
+  // Le formulaire raccourci (C3) replie l'enlèvement quand il est pré-rempli.
+  // Repéré par son icône d'en-tête (`storefront_outlined`, indépendante de la
+  // langue) : une seule occurrence = tuile repliée, le champ « Lieu de
+  // retrait » du corps n'étant pas construit. On l'ouvre avant de chercher le
+  // bouton « carnet » de l'enlèvement.
+  if (row == 0) {
+    final pickupHeader = find.byIcon(Icons.storefront_outlined);
+    if (pickupHeader.evaluate().length == 1) {
+      await tapVisible(tester, pickupHeader);
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+  }
+
   final books = find.byIcon(Icons.bookmark_outline);
   await pumpUntil(tester, books, reason: 'boutons « carnet »');
   expect(books, findsNWidgets(2),

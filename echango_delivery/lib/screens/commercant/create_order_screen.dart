@@ -100,6 +100,18 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   /// l'accepte depuis l'origine ; le formulaire ne l'envoyait pas.
   bool _fragile = false;
 
+  /// Le bloc enlèvement est **replié** quand il est déjà pré-rempli — le cas
+  /// courant, une adresse principale existe. Déplié tant qu'il reste à
+  /// renseigner : un champ obligatoire caché se lirait comme un bug au moment
+  /// où le serveur refuse la création.
+  bool _pickupExpanded = true;
+
+  /// Les options avancées (contenu du colis, véhicule, preuve, programmation,
+  /// favori, adresse détaillée, instructions) sont repliées par défaut :
+  /// ~5 champs visibles au lieu de ~12. Dépliées d'emblée sur une duplication,
+  /// où ces valeurs viennent de la course d'origine et doivent se relire.
+  bool _advancedExpanded = false;
+
   /// Dernier devis renvoyé par le serveur.
   ///
   /// Toute la tarification est **centralisée dans le BFF** : l'app ne calcule
@@ -178,6 +190,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   void initState() {
     super.initState();
     _applyTemplate();
+    // Une duplication apporte véhicule, preuve, favori, colis : les montrer.
+    // Sinon replié. L'enlèvement, lui, part replié dès qu'il porte un point
+    // (template avec coordonnées, ou pré-remplissage plus bas).
+    _advancedExpanded = widget.template != null;
+    _pickupExpanded = _pickupPoint == null;
     _dropoffPhone.addListener(_onDropoffPhoneChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -200,7 +217,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             break;
           }
         }
-        if (defaultAddress != null) _applyAddress(defaultAddress, toPickup: true);
+        if (defaultAddress != null) {
+          _applyAddress(defaultAddress, toPickup: true);
+          // Pré-rempli : on replie. `setState` + clé de la tuile (voir
+          // `_collapsible`) pour que l'`ExpansionTile` relise `initiallyExpanded`.
+          if (mounted) setState(() => _pickupExpanded = false);
+        }
       }
 
       // Le devis est demandé d'emblée sur une commande reprise : les deux
@@ -774,14 +796,36 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _section(_t('order.section.pickup')),
-                _locationRow(orderState, toPickup: true),
-                _field(_pickupName, _t('order.form.pickup.name'), Icons.storefront_outlined),
-                _field(_pickupAddress, _t('order.form.address'), Icons.place_outlined),
-                _field(_pickupContact, _t('order.form.pickup.contact'), Icons.person_outline),
-                _field(_pickupPhone, _t('order.form.phone'), Icons.phone_outlined,
-                    keyboard: TextInputType.phone),
-                const SizedBox(height: AppSpacing.xl),
+                // ── Enlèvement — replié quand il est pré-rempli ───────────────
+                _collapsible(
+                  keySuffix: 'pickup',
+                  expanded: _pickupExpanded,
+                  onChanged: (v) => _pickupExpanded = v,
+                  // Toujours cette icône quand la tuile est repliée (donc quand
+                  // un point est posé) : c'est le repère du parcours
+                  // d'intégration pour l'ouvrir, il ne doit pas dépendre de la
+                  // langue.
+                  leading: const Icon(Icons.storefront_outlined),
+                  title: _t('order.section.pickup'),
+                  subtitle: _pickupPoint == null
+                      ? _t('order.form.pickup.todo')
+                      : (_pickupName.text.trim().isEmpty
+                          ? _t('order.form.pickup.ready')
+                          : _pickupName.text.trim()),
+                  danger: _pickupPoint == null,
+                  children: [
+                    _locationRow(orderState, toPickup: true),
+                    _field(_pickupName, _t('order.form.pickup.name'),
+                        Icons.storefront_outlined),
+                    _field(_pickupAddress, _t('order.form.address'),
+                        Icons.place_outlined),
+                    _field(_pickupContact, _t('order.form.pickup.contact'),
+                        Icons.person_outline),
+                    _field(_pickupPhone, _t('order.form.phone'),
+                        Icons.phone_outlined, keyboard: TextInputType.phone),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
                 _section(_t('order.section.dropoff')),
                 _destinationSelector(orderState),
                 if (_toDepot)
@@ -789,46 +833,59 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 else ...[
                   _locationRow(orderState, toPickup: false),
                   _field(_dropoffName, _t('order.form.dropoff.name'), Icons.person_outline),
-                  _field(_dropoffAddress, _t('order.form.address'), Icons.place_outlined),
-                  _field(_dropoffContact, _t('order.form.dropoff.contact'), Icons.person_outline),
                   _field(_dropoffPhone, _t('order.form.phone'), Icons.phone_outlined,
                       keyboard: TextInputType.phone),
                   _clientLocationSection(),
                 ],
                 const SizedBox(height: AppSpacing.xl),
-                _section(_t('order.section.parcel')),
-                _field(_itemDescription, _t('order.form.item.description'),
-                    Icons.inventory_2_outlined),
-                _field(_itemQuantity, _t('order.form.item.quantity'),
-                    Icons.numbers_outlined, keyboard: TextInputType.number),
-                _field(_itemWeight, _t('order.form.item.weight'),
-                    Icons.scale_outlined, keyboard: TextInputType.number),
-                // Case à cocher plutôt qu'une consigne écrite : une mention
-                // « fragile » noyée dans les instructions se lit après le
-                // chargement, quand il est trop tard.
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _fragile,
-                  onChanged: (v) => setState(() => _fragile = v ?? false),
-                  title: Text(_t('order.form.item.fragile')),
-                  subtitle: Text(
-                    _t('order.form.item.fragile.hint'),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                _vehicleSelector(),
+                _section(_t('order.form.section.price')),
                 _pricingSection(),
-                const SizedBox(height: AppSpacing.lg),
-                _section(_t('order.form.section.options')),
-                // Vers un dépôt : pas d'encaissement (refusé côté serveur),
-                // pas de « confier à » (le dépôt désigne son transporteur).
+                // Vers un dépôt : pas d'encaissement (refusé côté serveur).
                 if (!_toDepot) _codSection(),
-                _scheduleTile(),
-                _podSelector(),
-                if (!_toDepot) _favouritesTile(orderState),
-                const SizedBox(height: AppSpacing.lg),
-                _field(_instructions, _t('order.form.instructions'),
-                    Icons.notes_outlined, maxLines: 3),
+                const SizedBox(height: AppSpacing.md),
+                // ── Options avancées — repliées : ~5 champs visibles ──────────
+                _collapsible(
+                  keySuffix: 'advanced',
+                  expanded: _advancedExpanded,
+                  onChanged: (v) => _advancedExpanded = v,
+                  leading: const Icon(Icons.tune),
+                  title: _t('order.form.section.options'),
+                  subtitle: _t('order.form.section.options.hint'),
+                  danger: false,
+                  children: [
+                    if (!_toDepot) ...[
+                      _field(_dropoffAddress, _t('order.form.address'),
+                          Icons.place_outlined),
+                      _field(_dropoffContact, _t('order.form.dropoff.contact'),
+                          Icons.person_outline),
+                    ],
+                    _field(_itemDescription, _t('order.form.item.description'),
+                        Icons.inventory_2_outlined),
+                    _field(_itemQuantity, _t('order.form.item.quantity'),
+                        Icons.numbers_outlined, keyboard: TextInputType.number),
+                    _field(_itemWeight, _t('order.form.item.weight'),
+                        Icons.scale_outlined, keyboard: TextInputType.number),
+                    // Case à cocher plutôt qu'une consigne écrite : une mention
+                    // « fragile » noyée dans les instructions se lit après le
+                    // chargement, quand il est trop tard.
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: _fragile,
+                      onChanged: (v) => setState(() => _fragile = v ?? false),
+                      title: Text(_t('order.form.item.fragile')),
+                      subtitle: Text(
+                        _t('order.form.item.fragile.hint'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    _vehicleSelector(),
+                    _scheduleTile(),
+                    _podSelector(),
+                    if (!_toDepot) _favouritesTile(orderState),
+                    _field(_instructions, _t('order.form.instructions'),
+                        Icons.notes_outlined, maxLines: 3),
+                  ],
+                ),
                 const SizedBox(height: AppSpacing.lg),
                 // Dire ce qui se passe ensuite : sans ça, un brouillon qui
                 // n'atteint personne tant qu'il n'est pas publié passe pour un
@@ -866,6 +923,49 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         padding: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: Text(title, style: Theme.of(context).textTheme.titleMedium),
       );
+
+  /// Une section qu'on peut replier. Le formulaire raccourci (C3) s'en sert
+  /// deux fois — l'enlèvement pré-rempli, et les options avancées.
+  ///
+  /// ⚠️ **La clé dépend de `expanded`.** `ExpansionTile.initiallyExpanded` n'est
+  /// lu qu'au premier montage ; sans clé qui change, replier l'enlèvement
+  /// **après** le pré-remplissage asynchrone n'aurait aucun effet visible. Un
+  /// changement de `expanded` venu d'un `setState` (le seul : le pré-remplissage)
+  /// remonte donc la tuile ; un pliage/dépliage à la main, lui, passe par
+  /// `onChanged` sans `setState` et ne remonte rien.
+  Widget _collapsible({
+    required String keySuffix,
+    required bool expanded,
+    required ValueChanged<bool> onChanged,
+    required Widget leading,
+    required String title,
+    required String subtitle,
+    required bool danger,
+    required List<Widget> children,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ExpansionTile(
+        key: ValueKey('collapsible-$keySuffix-$expanded'),
+        initiallyExpanded: expanded,
+        onExpansionChanged: onChanged,
+        leading: leading,
+        title: Text(title, style: Theme.of(context).textTheme.titleMedium),
+        subtitle: Text(
+          subtitle,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: danger ? scheme.error : scheme.onSurfaceVariant,
+              ),
+        ),
+        tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        childrenPadding: const EdgeInsets.fromLTRB(
+            AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
+        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      ),
+    );
+  }
 
   Widget _field(
     TextEditingController controller,
