@@ -14,6 +14,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/load_more_footer.dart';
+import '../../utils/reorder.dart';
 import 'addresses_screen.dart';
 import 'favourite_drivers_screen.dart';
 
@@ -153,6 +154,7 @@ class _MerchantOrdersBody extends StatelessWidget {
                   orders: orderState.pastOrders,
                   emptyLabel: _t(context, 'order.list.empty.done'),
                   emptyHint: _t(context, 'order.list.empty.done.hint'),
+                  showReorder: true,
                 ),
               ],
             ),
@@ -229,10 +231,17 @@ class _OrderList extends StatelessWidget {
   /// d'explication se lit comme une panne.
   final String emptyHint;
 
+  /// Affiche « Refaire » sur chaque carte (onglet « Terminées » uniquement) :
+  /// une livraison passée est le point de départ le plus fréquent d'une
+  /// nouvelle (« la même que la dernière fois »). Ailleurs c'est du bruit — une
+  /// course en cours ne se « refait » pas.
+  final bool showReorder;
+
   const _OrderList({
     required this.orders,
     required this.emptyLabel,
     required this.emptyHint,
+    this.showReorder = false,
   });
 
   @override
@@ -312,7 +321,13 @@ class _OrderList extends StatelessWidget {
                         style: const TextStyle(fontSize: 12)),
                 ],
               ),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: showReorder
+                  ? TextButton.icon(
+                      onPressed: () => reorderOrder(context, order.id),
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: Text(_t(context, 'order.list.reorder')),
+                    )
+                  : const Icon(Icons.chevron_right),
               // `order.id` = uuid Fleetbase : c'est ce que le détail sait
               // résoudre (avec l'id local du cache). Le public_id, lui, n'est
               // stocké nulle part côté BFF et ne matcherait rien.

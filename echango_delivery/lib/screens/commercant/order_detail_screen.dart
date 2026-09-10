@@ -18,6 +18,7 @@ import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
+import '../../utils/reorder.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/consultation_map.dart';
@@ -150,22 +151,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   ///
   /// Un échec de reprise n'est pas une impasse : le formulaire s'ouvre vide,
   /// avec un mot pour dire pourquoi.
-  Future<void> _duplicate(MerchantOrderState orderState) async {
-    final router = GoRouter.of(context);
-
-    final template = await orderState.loadOrderTemplate(widget.orderId);
-    if (!mounted) return;
-
-    if (template == null) {
-      showAppError(
-        context,
-        orderState.errorMessage ??
-            _t('order.detail.duplicate.failed'),
-      );
-    }
-
-    router.push('/commercant/nouvelle', extra: template);
-  }
+  Future<void> _duplicate() => reorderOrder(context, widget.orderId);
 
   @override
   Widget build(BuildContext context) {
@@ -368,7 +354,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     // pouce, à l'endroit qu'on touche sans regarder.
                     FilledButton.tonalIcon(
                       onPressed:
-                          orderState.isLoading ? null : () => _duplicate(orderState),
+                          orderState.isLoading ? null : () => _duplicate(),
                       icon: const Icon(Icons.copy_all_outlined),
                       label: Text(_t('order.detail.duplicate')),
                     ),
