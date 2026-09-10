@@ -20,6 +20,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/error_banner.dart';
+import '../../widgets/persona_scaffold.dart';
 import 'status_colors.dart';
 import 'zone_card.dart';
 import '../../widgets/section_card.dart';
@@ -36,8 +37,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _d(String key, [Map<String, String>? vars]) =>
       driverLabel(key, context.read<LocaleState>().locale, vars);
 
-  int _selectedIndex = 0;
-
   @override
   void initState() {
     super.initState();
@@ -51,69 +50,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Echango Delivery'),
-        elevation: 0,
-        actions: [
-          // ⚠️ L'accès à la caisse a été retiré le 03/08/2026 avec le
-          // registre : le transporteur déclare ce qu'il a perçu en clôturant
-          // chaque livraison, et il n'y a plus de solde à consulter
-          // (`docs/registre_caisse_precis.md`).
-          // Les entreprises pour lesquelles il roule — et surtout **les demandes
-          // en attente**. Sans accès depuis l'accueil, une demande de
-          // rattachement resterait invisible : le conducteur ne la découvrirait
-          // qu'en cherchant un écran dont il ignore l'existence, et l'entreprise
-          // conclurait à un refus.
-          IconButton(
-            tooltip: _d('driver.home.fleets'),
-            icon: const Icon(Icons.business_outlined),
-            onPressed: () => context.push('/transporteur/entreprises'),
-          ),
-          const LanguageSelector(),
-          const _AvailabilitySwitch(),
-        ],
-      ),
-      body: Column(
-        children: [
-          const _PresenceBanner(),
-          Expanded(child: _buildBody()),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        items: [
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.list),
-            label: _d('driver.home.orders'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.map),
-            label: _d('driver.home.map'),
-          ),
-          BottomNavigationBarItem(
-            icon: const Icon(Icons.person),
-            label: _d('driver.home.profile'),
-          ),
-        ],
-      ),
+    return PersonaScaffold(
+      title: 'Echango Delivery',
+      // ⚠️ L'accès à la caisse a été retiré le 03/08/2026 avec le registre.
+      // L'accès aux entreprises reste dans la barre du haut : une demande de
+      // rattachement en attente doit se voir depuis l'accueil, sinon
+      // l'entreprise conclurait à un refus.
+      appBarActions: [
+        IconButton(
+          tooltip: _d('driver.home.fleets'),
+          icon: const Icon(Icons.business_outlined),
+          onPressed: () => context.push('/transporteur/entreprises'),
+        ),
+        const LanguageSelector(),
+        const _AvailabilitySwitch(),
+      ],
+      persistentHeader: const _PresenceBanner(),
+      destinations: [
+        PersonaDestination(
+          icon: Icons.list,
+          label: _d('driver.home.orders'),
+          body: const OrdersListScreen(),
+        ),
+        PersonaDestination(
+          icon: Icons.map,
+          label: _d('driver.home.map'),
+          body: const MapScreen(),
+        ),
+        PersonaDestination(
+          icon: Icons.person,
+          label: _d('driver.home.profile'),
+          body: const ProfileScreen(),
+        ),
+      ],
     );
-  }
-
-  Widget _buildBody() {
-    switch (_selectedIndex) {
-      case 0:
-        return const OrdersListScreen();
-      case 1:
-        return const MapScreen();
-      case 2:
-        return const ProfileScreen();
-      default:
-        return const OrdersListScreen();
-    }
   }
 }
 

@@ -132,6 +132,9 @@ const Map<String, String> _fr = {
   'driver.public_id_unresolved': 'Transporteur mal identifié côté serveur.',
   'driver.position_update_failed': 'Envoi de la position impossible.',
   'driver.online_toggle_failed': 'Changement de disponibilité impossible.',
+  'zone.center_incomplete':
+      'Indiquez une latitude ET une longitude pour votre point de base.',
+  'zone.center_invalid': 'Point de base invalide.',
   'driver.search_unavailable': 'Recherche indisponible pour le moment.',
   'driver.search_too_broad':
       'Trop de résultats — précisez le nom ou le numéro de téléphone.',
@@ -309,6 +312,8 @@ const Map<String, String> _ar = {
   'driver.public_id_unresolved': 'خطأ في تعريف السائق على الخادم.',
   'driver.position_update_failed': 'تعذر إرسال الموقع.',
   'driver.online_toggle_failed': 'تعذر تغيير حالة التوفر.',
+  'zone.center_incomplete': 'أدخل خط العرض وخط الطول معاً لنقطة أساسك.',
+  'zone.center_invalid': 'نقطة أساس غير صالحة.',
   'driver.search_unavailable': 'البحث غير متاح حالياً.',
   'driver.search_too_broad': 'نتائج كثيرة — حدّد الاسم أو رقم الهاتف.',
   'driver.already_in_network':

@@ -123,6 +123,10 @@ class AppError {
   static const String driverSearchTooBroad = 'driver.search_too_broad';
   static const String driverAlreadyInNetwork = 'driver.already_in_network';
 
+  // ── Zone de travail (point d'ancrage + rayon) ──────────────────────────
+  static const String zoneCenterIncomplete = 'zone.center_incomplete';
+  static const String zoneCenterInvalid = 'zone.center_invalid';
+
   // ── Adhésions conducteur ↔ entreprise ───────────────────────────────────
   //
   // Un rattachement décide **à qui le conducteur devra les espèces** d'une
