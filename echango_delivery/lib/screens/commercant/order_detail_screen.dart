@@ -23,6 +23,7 @@ import '../../widgets/app_snack_bar.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/consultation_map.dart';
 import '../../widgets/notice.dart';
+import '../../widgets/order_status_ribbon.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/tournee_stops.dart';
 
@@ -220,6 +221,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           ],
                         ),
                     ),
+                    const SizedBox(height: AppSpacing.lg),
+                    // Le suivi en trois pas : où ça en est, et ce qui reste.
+                    // Un brouillon (`created`) reste au premier pas — rien n'a
+                    // démarré.
+                    if (!order.isTournee)
+                      OrderStatusRibbon(status: order.status),
                     const SizedBox(height: AppSpacing.md),
                     // Le commerçant a surtout besoin de savoir « où ça en
                     // est » : l'exprimer en clair plutôt qu'en code de statut.
