@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/driver_strings.dart';
@@ -9,6 +10,7 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/app_snack_bar.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/section_card.dart';
+import '../commercant/map_picker_screen.dart';
 
 /// Où ce transporteur veut voir des courses : un point de base et un rayon.
 ///
@@ -92,6 +94,33 @@ class _ZoneCardState extends State<ZoneCard> {
     });
   }
 
+  /// Choisir le point de base sur une carte plutôt qu'en tapant des
+  /// coordonnées — le pire cas pour un conducteur en mobilité. Réutilise
+  /// l'écran du commerçant (règle 6).
+  Future<void> _pickOnMap() async {
+    final lat = double.tryParse(_lat.text.trim());
+    final lng = double.tryParse(_lng.text.trim());
+    final initial = (lat != null && lng != null)
+        ? LatLng(lat, lng)
+        : (_zone?.position != null
+            ? LatLng(_zone!.position!.latitude, _zone!.position!.longitude)
+            : null);
+
+    final picked = await Navigator.of(context).push<PickedLocation>(
+      MaterialPageRoute(
+        builder: (_) => MapPickerScreen(
+          initial: initial,
+          title: _d('driver.zone.center'),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _lat.text = picked.point.latitude.toString();
+      _lng.text = picked.point.longitude.toString();
+    });
+  }
+
   Future<void> _save({required bool clear}) async {
     final lat = double.tryParse(_lat.text.trim());
     final lng = double.tryParse(_lng.text.trim());
@@ -157,6 +186,15 @@ class _ZoneCardState extends State<ZoneCard> {
             const SizedBox(height: AppSpacing.xs),
             Text(_d('driver.zone.center.hint'),
                 style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: AppSpacing.sm),
+            // ⚠️ `TextButton` et non `OutlinedButton` : le bouton « Retirer »
+            // plus bas est le seul `OutlinedButton` de la carte, et un parcours
+            // d'intégration le désigne par ce type (`audit_ecrans_test` §3).
+            TextButton.icon(
+              onPressed: _saving ? null : _pickOnMap,
+              icon: const Icon(Icons.map_outlined),
+              label: Text(_d('driver.zone.pick_map')),
+            ),
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [

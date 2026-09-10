@@ -136,6 +136,7 @@ const Map<String, String> _fr = {
       'Un point de base et un rayon. Vous voyez les courses dont l’enlèvement '
       'est à portée. Sans point de base, aucune opportunité ne s’affiche.',
   'driver.zone.center': 'Point de base',
+  'driver.zone.pick_map': 'Choisir sur la carte',
   'driver.zone.center.hint':
       'Le centre de votre rayon de recherche. Posez-le là où vous travaillez.',
   'driver.zone.lat': 'Latitude',
@@ -289,6 +290,7 @@ const Map<String, String> _ar = {
       'نقطة أساس ونطاق. ترى الرحلات التي يقع استلامها ضمن المدى. بدون نقطة '
       'أساس، لا تُعرض أي فرصة.',
   'driver.zone.center': 'نقطة الأساس',
+  'driver.zone.pick_map': 'الاختيار على الخريطة',
   'driver.zone.center.hint': 'مركز نطاق بحثك. ضعها حيث تعمل.',
   'driver.zone.lat': 'خط العرض',
   'driver.zone.lng': 'خط الطول',
