@@ -35,6 +35,24 @@ class CollectionsState extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
+  /// ⚠️ **Un état disposé ne réveille plus personne** — même garde que
+  /// `OrderState._notify` et `DriverPresenceState`. `load()` interroge le BFF
+  /// (~secondes) ; si l'écran des encaissements est quitté entre-temps, le
+  /// `finally` notifiait un `ChangeNotifier` détruit — « A CollectionsState was
+  /// used after being disposed », vu quand le parcours d'intégration ouvre puis
+  /// referme l'écran (2026-09-10).
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
   MerchantCollections? get collections => _collections;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
@@ -50,7 +68,7 @@ class CollectionsState extends ChangeNotifier {
   Future<void> load() async {
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notify();
 
     try {
       _collections = await _apiClient.getMerchantCollections();
@@ -61,7 +79,7 @@ class CollectionsState extends ChangeNotifier {
       _errorMessage = messageForError(error, _locale);
     } finally {
       _isLoading = false;
-      notifyListeners();
+      _notify();
     }
   }
 }
