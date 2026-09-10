@@ -150,6 +150,27 @@ void main() {
         onTimeout: 'liste : ${visibleTexts()}');
     await tapVisible(tester, find.byType(ListTile).first);
 
+    // ⚠️ `selectOrder` est asynchrone (l'endpoint répond en ~9 s). Le temps
+    // qu'il charge, la fiche affiche encore la course PRÉCÉDENTE — la confiée
+    // de la branche A, en état « à rendre » —, dont le bouton d'écartement
+    // porte la même icône. Taper « refuser » là-dessus déclenche le RENDU
+    // (message « rendue au réseau », aucun tiroir de motifs) et `_pickReason…`
+    // expire. On attend donc que la fiche montre bien une OPPORTUNITÉ : son
+    // bouton « accepter » est absent d'une course déjà confiée.
+    // ⚠️ **Attendre que le SnackBar de la branche A (« rendue au réseau »)
+    // s'efface AVANT de taper.** Il occupe le bas de l'écran — exactement là où
+    // vit le bouton « Refuser cette course » (y ≈ 933) —, donc le tap partait
+    // dans le bandeau et n'ouvrait jamais le tiroir de motifs. Diagnostiqué sur
+    // un avertissement `tap() derived an Offset that would not hit test`
+    // (2026-09-10).
+    await pumpUntilGone(tester, find.byType(SnackBar),
+        reason: 'le bandeau « rendue au réseau » de la branche A disparaît',
+        onTimeout: 'écran : ${visibleTexts(40)}');
+    await pumpUntil(
+        tester, find.text(orderLabel('driver.order.accept', locale)),
+        reason: 'la fiche de l’opportunité chargée (pas la course confiée)',
+        onTimeout: 'fiche : ${visibleTexts()}');
+
     final decline = find.byIcon(Icons.do_not_disturb_on_outlined);
     await pumpUntil(tester, decline,
         reason: 'le bouton « refuser » sur l’opportunité',
