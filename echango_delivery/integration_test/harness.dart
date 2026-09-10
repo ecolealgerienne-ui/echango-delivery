@@ -273,13 +273,18 @@ enum Home {
 /// seulement utilisé pour choisir.
 Finder homeAnchor(Home home) => switch (home) {
       Home.merchant => find.byType(FloatingActionButton),
-      Home.driver || Home.fleet => find.byType(Tab),
+      // Le transporteur garde ses trois onglets INTERNES (opportunités / en
+      // cours / historique) sous la barre du bas — `Tab` reste son repère.
+      Home.driver => find.byType(Tab),
+      // L'entreprise a une barre du bas (`PersonaScaffold`) depuis le
+      // 10/09/2026 : plus de `TabBar`, cinq `NavigationDestination`.
+      Home.fleet => find.byType(NavigationBar),
     };
 
 int expectedTabs(Home home) => switch (home) {
       Home.merchant => 0,
       Home.driver => 3,
-      Home.fleet => 4,
+      Home.fleet => 0,
     };
 
 /// Se connecte depuis un démarrage neuf et attend l'accueil du persona.
@@ -340,14 +345,34 @@ Future<void> loginAs(
         reason: 'l’accueil ${home.name} doit porter ${expectedTabs(home)} onglets — '
             'un compte d’un autre persona ouvrirait un écran différent');
   }
+  if (home == Home.fleet) {
+    // Repère de désambiguïsation : cinq destinations, aucun onglet, aucun FAB —
+    // un compte d'un autre persona ouvrirait un écran différent.
+    expect(find.byType(NavigationDestination), findsNWidgets(5));
+    expect(find.byType(Tab), findsNothing);
+    expect(find.byType(FloatingActionButton), findsNothing);
+  }
 }
 
 /// Bascule sur l'onglet de rang [index] de la barre visible.
+///
+/// ⚠️ Deux barres possibles : le `TabBar` interne (transporteur : opportunités /
+/// en cours / historique ; commerçant : en cours / terminées) OU la barre du
+/// bas `NavigationBar` de l'entreprise. On tape le `Tab` s'il y en a, sinon la
+/// `NavigationDestination`.
 Future<void> openTab(WidgetTester tester, int index) async {
   final tabs = find.byType(Tab);
-  expect(tabs.evaluate().length, greaterThan(index),
-      reason: 'onglet $index demandé, ${tabs.evaluate().length} présents');
-  await tester.tap(tabs.at(index));
+  if (tabs.evaluate().isNotEmpty) {
+    expect(tabs.evaluate().length, greaterThan(index),
+        reason: 'onglet $index demandé, ${tabs.evaluate().length} présents');
+    await tester.tap(tabs.at(index));
+  } else {
+    final dests = find.byType(NavigationDestination);
+    expect(dests.evaluate().length, greaterThan(index),
+        reason:
+            'destination $index demandée, ${dests.evaluate().length} présentes');
+    await tester.tap(dests.at(index));
+  }
   await tester.pump(const Duration(milliseconds: 600));
 }
 

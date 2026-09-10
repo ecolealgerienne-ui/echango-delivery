@@ -51,6 +51,8 @@ const Map<String, String> _fr = {
   'fleet.tab.opportunities': 'Courses libres',
   'fleet.tab.drivers': 'Conducteurs',
   'fleet.tab.cash': 'Caisse',
+  'fleet.nav.more': 'Plus',
+  'fleet.logout': 'Déconnexion',
 
   // ── Courses ─────────────────────────────────────────────────────────────
   'fleet.orders.empty': 'Aucune course confiée à votre entreprise.',
@@ -416,6 +418,8 @@ const Map<String, String> _ar = {
   'fleet.tab.opportunities': 'رحلات متاحة',
   'fleet.tab.drivers': 'السائقون',
   'fleet.tab.cash': 'الصندوق',
+  'fleet.nav.more': 'المزيد',
+  'fleet.logout': 'تسجيل الخروج',
 
   'fleet.orders.empty': 'لا توجد رحلات مسندة إلى شركتك.',
   'fleet.orders.empty.hint': 'خذ رحلة متاحة، أو انتظر أن يسندها إليك تاجر.',

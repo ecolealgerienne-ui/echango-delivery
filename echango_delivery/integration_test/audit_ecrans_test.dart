@@ -255,10 +255,11 @@ void main() {
 
     // ── Réclamer une opportunité (onglet « Courses libres ») ─────────────────
     await openTab(tester, 1);
-    // ⚠️ `hitTestable` : l'accueil entreprise a quatre onglets et le TabBarView
-    // les construit tous — mais seul l'onglet visible est FRAPPABLE. C'est ainsi
-    // qu'on ne désigne que la liste qu'on regarde, sans la confondre avec les
-    // ListTile des trois autres onglets (ni, plus tard, avec la fiche par-dessus).
+    // ⚠️ `hitTestable` : l'accueil entreprise a une barre du bas et son
+    // `IndexedStack` construit les cinq destinations — mais seule la destination
+    // visible est FRAPPABLE. C'est ainsi qu'on ne désigne que la liste qu'on
+    // regarde, sans la confondre avec les ListTile des autres destinations (ni,
+    // plus tard, avec la fiche par-dessus).
     final opp = find.byType(ListTile).hitTestable();
     await pumpUntil(tester, opp,
         reason: 'des opportunités à réclamer',
@@ -277,7 +278,7 @@ void main() {
     // ── Affecter un conducteur (onglet « Mes courses ») ──────────────────────
     // La prise ramène à l'accueil. Le décor a VIDÉ « Mes courses » : la course
     // qu'on vient de réclamer y est donc seule.
-    await pumpUntil(tester, find.byType(Tab),
+    await pumpUntil(tester, find.byType(NavigationBar),
         reason: 'retour à l’accueil entreprise après la prise',
         onTimeout: 'écran : ${visibleTexts(40)}');
     await openTab(tester, 0);

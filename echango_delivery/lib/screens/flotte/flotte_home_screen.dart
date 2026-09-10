@@ -16,6 +16,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/language_selector.dart';
 import '../../widgets/load_more_footer.dart';
+import '../../widgets/persona_scaffold.dart';
 import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -45,10 +46,7 @@ class FlotteHomeScreen extends StatefulWidget {
   State<FlotteHomeScreen> createState() => _FlotteHomeScreenState();
 }
 
-class _FlotteHomeScreenState extends State<FlotteHomeScreen>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 4, vsync: this);
-
+class _FlotteHomeScreenState extends State<FlotteHomeScreen> {
   @override
   void initState() {
     super.initState();
@@ -58,12 +56,6 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<FleetState>().load();
     });
-  }
-
-  @override
-  void dispose() {
-    _tabs.dispose();
-    super.dispose();
   }
 
   @override
@@ -82,99 +74,101 @@ class _FlotteHomeScreenState extends State<FlotteHomeScreen>
 
     final state = context.watch<FleetState>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(t('fleet.title')),
-        actions: [
-          // ⚠️ La route `GET /flotte/drivers/positions` existait depuis le
-          // 28/07 et n'était appelée nulle part — alors que la vision produit
-          // définit ce persona par « commandes entrantes, assignation à un
-          // conducteur disponible, **position des conducteurs** ». Le tiers
-          // manquant était côté app, pas côté serveur.
-          IconButton(
-            icon: const Icon(Icons.map_outlined),
-            tooltip: t('fleet.map.open'),
-            onPressed: () => context.push('/flotte/carte'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.warehouse_outlined),
-            tooltip: t('fleet.depots.open'),
-            onPressed: () => context.push('/flotte/depots'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.alt_route),
-            tooltip: t('fleet.tournee.open'),
-            onPressed: () => context.push('/flotte/tournees'),
-          ),
-          // ⚠️ L'accès à la caisse a été retiré le 03/08/2026 : l'entreprise
-          // répond des espèces de ses conducteurs et en tient le compte chez
-          // elle (`docs/registre_caisse_precis.md`).
-          const LanguageSelector(),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthState>().logout(),
-          ),
-        ],
-      ),
-      // ⚠️ Le chargement ne remplace plus **tout** le corps : les onglets
-      // restent en place et seul le contenu attend. Sinon ils apparaissaient
-      // une fois la première réponse reçue, et la page sautait sous le doigt —
-      // un défaut que le déplacement depuis l'AppBar aurait introduit, la barre
-      // y étant affichée en permanence.
-      body: Column(
-              children: [
-                // ⚠️ **Les onglets sont sur la PAGE, pas dans l'AppBar.**
-                //
-                // Ils y étaient, et c'était illisible : le thème des onglets
-                // pose un libellé bleu sur fond clair (`tabBarTheme`), tandis
-                // que l'AppBar est bleue — donc libellé bleu sur bleu pour
-                // l'onglet actif, indicateur bleu sur bleu, et gris délavé pour
-                // les autres. Un seul thème ne peut pas servir les deux fonds.
-                //
-                // Les deux autres profils — tableau de bord transporteur, liste
-                // commerçant — posaient déjà leurs onglets sur la page. Celui-ci
-                // était le seul à faire autrement, et le seul illisible.
-                TabBar(
-                  controller: _tabs,
-                  isScrollable: true,
-                  tabs: [
-                    Tab(text: t('fleet.tab.orders')),
-                    Tab(text: t('fleet.tab.opportunities')),
-                    Tab(text: t('fleet.tab.drivers')),
-                    Tab(text: t('fleet.tab.memberships')),
-                  ],
-                ),
-                // ⚠️ Sans ce bandeau, une flotte inactive, un jeton expiré ou
-                // un BFF injoignable produisaient l'écran « Aucune course
-                // confiée à votre entreprise » — un message qui affirme un
-                // fait faux. Le même défaut a été corrigé deux fois ailleurs.
-                if (state.errorMessage != null)
-                  AppErrorBanner(
-                    message: state.errorMessage!,
-                    onRetry: () => context.read<FleetState>().load(),
-                    retryLabel: t('fleet.retry'),
-                  ),
-                Expanded(
-                  child: state.isLoading && state.orders.isEmpty
-                      ? Center(child: Text(t('fleet.loading')))
-                      : RefreshIndicator(
-                          onRefresh: () => context.read<FleetState>().load(),
-                          child: TabBarView(
-                            controller: _tabs,
-                            children: [
-                              _OrdersTab(t: t),
-                              _OpportunitiesTab(t: t),
-                              _DriversTab(t: t),
-                              MembershipsTab(
-                                t: t,
-                                onCreateDriver: () => _addDriver(context, t),
-                              ),
-                            ],
-                          ),
-                        ),
-                ),
-              ],
-            ),
+    Widget refreshable(Widget child) => RefreshIndicator(
+          onRefresh: () => context.read<FleetState>().load(),
+          child: child,
+        );
+
+    return PersonaScaffold(
+      title: t('fleet.title'),
+      appBarActions: const [LanguageSelector()],
+      // ⚠️ Sans ce bandeau, une flotte inactive, un jeton expiré ou un BFF
+      // injoignable produisaient l'écran « Aucune course confiée à votre
+      // entreprise » — un fait faux. Il vit au-dessus de tous les onglets.
+      persistentHeader: state.errorMessage != null
+          ? AppErrorBanner(
+              message: state.errorMessage!,
+              onRetry: () => context.read<FleetState>().load(),
+              retryLabel: t('fleet.retry'),
+            )
+          : null,
+      destinations: [
+        PersonaDestination(
+          icon: Icons.assignment_outlined,
+          selectedIcon: Icons.assignment,
+          label: t('fleet.tab.orders'),
+          // Le premier chargement attend ici plutôt que d'afficher « aucune
+          // course » — un message qui affirmerait un fait avant de le savoir.
+          body: state.isLoading && state.orders.isEmpty
+              ? Center(child: Text(t('fleet.loading')))
+              : refreshable(_OrdersTab(t: t)),
+        ),
+        PersonaDestination(
+          icon: Icons.campaign_outlined,
+          label: t('fleet.tab.opportunities'),
+          body: refreshable(_OpportunitiesTab(t: t)),
+        ),
+        PersonaDestination(
+          icon: Icons.groups_outlined,
+          selectedIcon: Icons.groups,
+          label: t('fleet.tab.drivers'),
+          body: refreshable(_DriversTab(t: t)),
+        ),
+        PersonaDestination(
+          icon: Icons.link_outlined,
+          label: t('fleet.tab.memberships'),
+          body: refreshable(MembershipsTab(
+            t: t,
+            onCreateDriver: () => _addDriver(context, t),
+          )),
+        ),
+        PersonaDestination(
+          icon: Icons.more_horiz,
+          label: t('fleet.nav.more'),
+          body: _FleetMorePanel(t: t),
+        ),
+      ],
+    );
+  }
+}
+
+/// Le panneau « Plus » de l'entreprise : la carte des conducteurs, les dépôts,
+/// la tournée multi-arrêt, la déconnexion — ce qui n'est pas une destination de
+/// premier rang. La carte y gagne un libellé, là où elle était une icône.
+class _FleetMorePanel extends StatelessWidget {
+  const _FleetMorePanel({required this.t});
+
+  final _Translate t;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.map_outlined),
+          title: Text(t('fleet.map.open')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/flotte/carte'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.warehouse_outlined),
+          title: Text(t('fleet.depots.open')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/flotte/depots'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.alt_route),
+          title: Text(t('fleet.tournee.open')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/flotte/tournees'),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.logout),
+          title: Text(t('fleet.logout')),
+          onTap: () => context.read<AuthState>().logout(),
+        ),
+      ],
     );
   }
 }
