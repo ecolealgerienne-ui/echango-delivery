@@ -127,6 +127,16 @@ class Order extends Equatable {
   bool get isInProgress => !isFinished && !isPending;
   bool get isFailed => status == 'failed';
 
+  /// Une opportunité du pool que ce transporteur peut réclamer : diffusée en
+  /// adhoc, sans facilitateur, et pas déjà close. La réclamer l'assigne **et**
+  /// la démarre en un seul appel serveur (§4.2).
+  ///
+  /// ⚠️ **Un seul endroit** (règle 5) : la fiche et la carte de la liste
+  /// proposent toutes deux « Prendre », et ce sont les mêmes courses — une
+  /// divergence ne serait pas une variante, ce serait un défaut (le cas
+  /// fondateur de la règle : une course livrée offerte comme réclamable).
+  bool get isClaimableAdhoc => adhoc && driverId == null && !isFinished;
+
   /// Une tournée multi-arrêt : au moins deux waypoints (spec §4).
   bool get isTournee => waypoints.length >= 2;
 

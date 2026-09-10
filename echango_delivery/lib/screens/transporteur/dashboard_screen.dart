@@ -21,6 +21,7 @@ import '../../widgets/empty_state.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/persona_scaffold.dart';
+import '../../widgets/app_snack_bar.dart';
 import 'status_colors.dart';
 import 'zone_card.dart';
 import '../../widgets/section_card.dart';
@@ -393,14 +394,8 @@ class _OrdersListScreenState extends State<OrdersListScreen>
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // « Y aller » sans ouvrir la fiche : le geste le plus fréquent
-                // du transporteur. Absent si la course ne porte aucune position.
-                if (NavigationLauncher.relevantPlace(order) != null)
-                  IconButton(
-                    tooltip: _d('driver.action.navigate'),
-                    icon: const Icon(Icons.navigation_outlined),
-                    onPressed: () => goThere(context, order),
-                  ),
+                _cardAction(context, order),
+                const SizedBox(width: AppSpacing.xs),
                 const Icon(Icons.arrow_forward_ios, size: 16),
               ],
             ),
@@ -414,6 +409,49 @@ class _OrdersListScreenState extends State<OrdersListScreen>
     );
   }
 
+  /// L'unique action dominante d'une carte de course, jouable sans ouvrir la
+  /// fiche.
+  ///
+  /// ── Pourquoi seulement deux, et pas toute l'échelle ──────────────────────
+  ///
+  /// « Prendre » et « Y aller » se décident depuis les champs que la liste
+  /// porte déjà (`Order.isClaimableAdhoc`, une position exploitable). «
+  /// Démarrer », « Arrivé », « Livrer » dépendent de la transition que le
+  /// **serveur** autorise — `OrderState.nextActivities`, chargé à la sélection
+  /// d'une course. Les recalculer ici rejouerait le défaut corrigé sur la
+  /// fiche : une transition déjà faite, reproposée, puis refusée par Fleetbase.
+  /// Elles restent donc derrière le chevron, sur la fiche.
+  ///
+  /// Rend toujours un widget (au pire un `SizedBox.shrink`) pour que le chevron
+  /// garde sa place à droite.
+  Widget _cardAction(BuildContext context, dynamic order) {
+    if (order.isClaimableAdhoc as bool) {
+      return FilledButton(
+        style: AppButtonStyles.rowAction,
+        onPressed: () => _claim(context, order),
+        child: Text(_d('driver.order.accept.short')),
+      );
+    }
+    if (NavigationLauncher.relevantPlace(order) != null) {
+      return FilledButton.icon(
+        style: AppButtonStyles.rowAction,
+        onPressed: () => goThere(context, order),
+        icon: const Icon(Icons.navigation_outlined, size: 18),
+        label: Text(_d('driver.action.navigate')),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  /// Réclamer une opportunité du pool — même appel que la fiche (assigne et
+  /// démarre en une fois). L'échec remonte par `OrderState.errorMessage`, que
+  /// le bandeau en tête de liste affiche déjà.
+  Future<void> _claim(BuildContext context, dynamic order) async {
+    final ok = await context.read<OrderState>().acceptOrder(order.id as String);
+    if (ok && context.mounted) {
+      showAppSnackBar(context, _d('driver.order.claimed'));
+    }
+  }
 }
 
 /// La carte des courses EN COURS du conducteur.

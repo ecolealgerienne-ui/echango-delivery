@@ -320,8 +320,9 @@ class OrderDetailScreen extends StatelessWidget {
     final busy = orderState.isLoading;
 
     // Opportunité adhoc : elle n'a pas encore de transition, il faut d'abord
-    // la réclamer. Un seul appel serveur assigne et démarre.
-    final claimable = order.adhoc == true && order.driverId == null;
+    // la réclamer. Un seul appel serveur assigne et démarre. Même prédicat que
+    // la carte de la liste (`Order.isClaimableAdhoc`, règle 5).
+    final claimable = order.isClaimableAdhoc as bool;
     if (claimable) {
       buttons.add(
         FilledButton(

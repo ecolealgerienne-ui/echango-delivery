@@ -115,6 +115,14 @@ const Map<String, String> _fr = {
   'driver.map.dropoff': 'Livraison',
   'driver.map.open_detail': 'Ouvrir la fiche',
   'driver.action.navigate': 'Y aller',
+  // ── Action dominante d'une carte de course (liste) ─────────────────────
+  //
+  // ⚠️ Court, pour le `trailing` d'un `ListTile`, qui ne contraint pas sa
+  // largeur. « Prendre » = réclamer une opportunité ; l'échelle POD (Démarrer,
+  // Arrivé, Livrer) reste sur la fiche, seul le serveur sait la transition
+  // permise.
+  'driver.order.accept.short': 'Prendre',
+  'driver.order.claimed': 'Course prise.',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'Transporteur',
@@ -274,6 +282,8 @@ const Map<String, String> _ar = {
   'driver.map.dropoff': 'التسليم',
   'driver.map.open_detail': 'فتح البطاقة',
   'driver.action.navigate': 'الذهاب',
+  'driver.order.accept.short': 'أخذها',
+  'driver.order.claimed': 'تم أخذ الرحلة.',
 
   // ── Profil ──────────────────────────────────────────────────────────────
   'driver.profile.fallback': 'ناقل',
