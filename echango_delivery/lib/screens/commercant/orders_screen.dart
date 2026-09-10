@@ -8,11 +8,14 @@ import '../../state/locale_state.dart';
 import '../../i18n/order_strings.dart';
 import '../../state/merchant_order_state.dart';
 import '../../widgets/language_selector.dart';
+import '../../widgets/persona_scaffold.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
 import '../../widgets/load_more_footer.dart';
+import 'addresses_screen.dart';
+import 'favourite_drivers_screen.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -40,120 +43,172 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget build(BuildContext context) {
     final orderState = context.watch<MerchantOrderState>();
     final authState = context.watch<AuthState>();
+    final unread = orderState.unreadNotifications;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(authState.displayName ?? _t('order.list.title')),
-        actions: [
-          const LanguageSelector(),
-          // La pastille est le seul signal d'un évènement, l'envoi push
-          // n'étant pas branché : elle doit donc être visible depuis l'écran
-          // d'accueil, et non enfouie dans un menu.
-          IconButton(
-            tooltip: _t('order.list.notifications'),
-            icon: Badge(
-              isLabelVisible: orderState.unreadNotifications > 0,
-              label: Text('${orderState.unreadNotifications}'),
-              child: const Icon(Icons.notifications_none),
+    return PersonaScaffold(
+      title: authState.displayName ?? _t('order.list.title'),
+      appBarActions: const [LanguageSelector()],
+      floatingActionButtonFor: (index) => index != 0
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => context.push('/commercant/nouvelle'),
+              icon: const Icon(Icons.add),
+              label: Text(_t('order.form.title.new')),
             ),
-            onPressed: () => context.push('/commercant/notifications'),
+      destinations: [
+        PersonaDestination(
+          icon: Icons.receipt_long_outlined,
+          selectedIcon: Icons.receipt_long,
+          label: _t('order.nav.orders'),
+          // Pastille sur l'onglet : sans envoi push, c'est le seul signal
+          // qu'un évènement est arrivé. L'ouverture des notifications, elle,
+          // vit dans le panneau « Plus ».
+          badge: unread > 0 ? Text('$unread') : null,
+          body: const _MerchantOrdersBody(),
+        ),
+        PersonaDestination(
+          // ⚠️ **Pas `bookmark_*`** : le formulaire de création affiche deux
+          // boutons « carnet » avec cette icône, et un parcours d'intégration
+          // en attend exactement deux (`pickFromBook`). Une troisième dans la
+          // barre du bas casserait le compte.
+          icon: Icons.import_contacts_outlined,
+          selectedIcon: Icons.import_contacts,
+          label: _t('order.nav.addresses'),
+          body: const AddressesScreen(embedded: true),
+        ),
+        PersonaDestination(
+          icon: Icons.star_border,
+          selectedIcon: Icons.star,
+          label: _t('order.nav.favourites'),
+          body: const FavouriteDriversScreen(embedded: true),
+        ),
+        PersonaDestination(
+          icon: Icons.more_horiz,
+          label: _t('order.nav.more'),
+          body: const _MerchantMorePanel(),
+        ),
+      ],
+    );
+  }
+}
+
+/// L'onglet « Commandes » : recherche + « En cours » / « Terminées ».
+class _MerchantOrdersBody extends StatelessWidget {
+  const _MerchantOrdersBody();
+
+  String _t(BuildContext context, String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  @override
+  Widget build(BuildContext context) {
+    final orderState = context.watch<MerchantOrderState>();
+
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          // Une erreur de chargement doit être visible : sans ça, elle est
+          // indiscernable d'une liste réellement vide.
+          if (orderState.errorMessage != null)
+            AppErrorBanner(
+              message: orderState.errorMessage!,
+              onRetry: () => context.read<MerchantOrderState>().loadOrders(),
+            ),
+          // Recherche sur les commandes chargées. Le libellé dit la limite :
+          // laisser croire à une recherche exhaustive ferait conclure « je
+          // n'ai jamais livré ce client » sur une liste partielle.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
+            child: TextField(
+              onChanged: orderState.setSearch,
+              decoration: InputDecoration(
+                hintText: _t(context, 'order.list.search'),
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                suffixIcon: orderState.search.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => orderState.setSearch(''),
+                      ),
+              ),
+            ),
           ),
-          IconButton(
-            tooltip: _t('order.list.cash'),
-            icon: const Icon(Icons.account_balance_wallet_outlined),
-            onPressed: () => context.push('/commercant/encaissements'),
+          TabBar(
+            tabs: [
+              Tab(text: _t(context, 'order.list.tab.active')),
+              Tab(text: _t(context, 'order.list.tab.done')),
+            ],
           ),
-          IconButton(
-            tooltip: _t('order.list.addresses'),
-            icon: const Icon(Icons.bookmark_border),
-            onPressed: () => context.push('/commercant/adresses'),
-          ),
-          IconButton(
-            tooltip: _t('order.list.favourites'),
-            icon: const Icon(Icons.star_border),
-            onPressed: () => context.push('/commercant/transporteurs'),
-          ),
-          IconButton(
-            tooltip: _t('order.tournee.open'),
-            icon: const Icon(Icons.alt_route),
-            onPressed: () => context.push('/commercant/tournees'),
-          ),
-          IconButton(
-            tooltip: _t('order.list.logout'),
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              final router = GoRouter.of(context);
-              await authState.logout();
-              router.go('/login');
-            },
+          Expanded(
+            child: TabBarView(
+              children: [
+                _OrderList(
+                  orders: orderState.activeOrders,
+                  emptyLabel: _t(context, 'order.list.empty.active'),
+                  emptyHint: _t(context, 'order.list.empty.active.hint'),
+                ),
+                _OrderList(
+                  orders: orderState.pastOrders,
+                  emptyLabel: _t(context, 'order.list.empty.done'),
+                  emptyHint: _t(context, 'order.list.empty.done.hint'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/commercant/nouvelle'),
-        icon: const Icon(Icons.add),
-        label: Text(_t('order.form.title.new')),
-      ),
-      body: DefaultTabController(
-        length: 2,
-        child: Column(
-          children: [
-            // Une erreur de chargement doit être visible : sans ça, elle est
-            // indiscernable d'une liste réellement vide.
-            if (orderState.errorMessage != null)
-              AppErrorBanner(
-                message: orderState.errorMessage!,
-                onRetry: () => context.read<MerchantOrderState>().loadOrders(),
-              ),
-            // Recherche sur les commandes chargées. Le libellé dit la limite :
-            // laisser croire à une recherche exhaustive ferait conclure « je
-            // n'ai jamais livré ce client » sur une liste partielle.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
-              child: TextField(
-                onChanged: orderState.setSearch,
-                decoration: InputDecoration(
-                  hintText: _t('order.list.search'),
-                  prefixIcon: const Icon(Icons.search),
-                  isDense: true,
-                  suffixIcon: orderState.search.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: const Icon(Icons.clear),
-                          onPressed: () => orderState.setSearch(''),
-                        ),
-                ),
-              ),
-            ),
-            TabBar(
-              tabs: [
-                Tab(text: _t('order.list.tab.active')),
-                Tab(text: _t('order.list.tab.done')),
-              ],
-            ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _OrderList(
-                    orders: orderState.activeOrders,
-                    emptyLabel: _t('order.list.empty.active'),
-                    emptyHint: _t('order.list.empty.active.hint'),
-                  ),
-                  _OrderList(
-                    orders: orderState.pastOrders,
-                    emptyLabel: _t('order.list.empty.done'),
-                    // Consigne écrite parce que le composant l'exige — cet
-                    // onglet n'en avait aucune, et « Aucune livraison
-                    // terminée » sur un compte neuf se lit comme une panne
-                    // plutôt que comme un début.
-                    emptyHint: _t('order.list.empty.done.hint'),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    );
+  }
+}
+
+/// Le panneau « Plus » : ce qui n'est pas une destination de premier rang —
+/// encaissements, notifications, tournée multi-arrêt, déconnexion.
+class _MerchantMorePanel extends StatelessWidget {
+  const _MerchantMorePanel();
+
+  String _t(BuildContext context, String key, [Map<String, String>? vars]) =>
+      orderLabel(key, context.read<LocaleState>().locale, vars);
+
+  @override
+  Widget build(BuildContext context) {
+    final unread = context.watch<MerchantOrderState>().unreadNotifications;
+
+    return ListView(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.notifications_none),
+          title: Text(_t(context, 'order.list.notifications')),
+          trailing: unread > 0
+              ? Badge(label: Text('$unread'))
+              : const Icon(Icons.chevron_right),
+          onTap: () => context.push('/commercant/notifications'),
         ),
-      ),
+        ListTile(
+          leading: const Icon(Icons.account_balance_wallet_outlined),
+          title: Text(_t(context, 'order.list.cash')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/commercant/encaissements'),
+        ),
+        ListTile(
+          leading: const Icon(Icons.alt_route),
+          title: Text(_t(context, 'order.more.tournee')),
+          subtitle: Text(_t(context, 'order.more.tournee.hint')),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/commercant/tournees'),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.logout),
+          title: Text(_t(context, 'order.list.logout')),
+          onTap: () async {
+            final router = GoRouter.of(context);
+            await context.read<AuthState>().logout();
+            router.go('/login');
+          },
+        ),
+      ],
     );
   }
 }

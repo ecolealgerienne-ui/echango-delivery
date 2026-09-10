@@ -35,7 +35,10 @@ import '../../widgets/app_snack_bar.dart';
 /// composition du réseau à quiconque crée un compte, et n'aiderait personne —
 /// trente noms inconnus ne s'ordonnent pas, on choisirait au hasard.
 class FavouriteDriversScreen extends StatefulWidget {
-  const FavouriteDriversScreen({super.key});
+  /// `true` : onglet du `PersonaScaffold` commerçant (pas d'AppBar propre).
+  final bool embedded;
+
+  const FavouriteDriversScreen({super.key, this.embedded = false});
 
   @override
   State<FavouriteDriversScreen> createState() => _FavouriteDriversScreenState();
@@ -170,7 +173,8 @@ class _FavouriteDriversScreenState extends State<FavouriteDriversScreen> {
         _known.where((d) => !favouriteKeys.contains(d.partyKey)).toList();
 
     return Scaffold(
-      appBar: AppBar(title: Text(_t('order.fav.title'))),
+      appBar:
+          widget.embedded ? null : AppBar(title: Text(_t('order.fav.title'))),
       body: RefreshIndicator(
         onRefresh: _load,
         // ⚠️ `_firstLoad` et non `_loading`. Avec `_loading`, **tirer pour

@@ -27,7 +27,12 @@ import '../../widgets/empty_state.dart';
 /// abandonne un paramètre inconnu sans erreur. Voir
 /// `docs/architecture_bff_fleetbase.md`.
 class AddressesScreen extends StatefulWidget {
-  const AddressesScreen({super.key});
+  /// `true` quand l'écran est un onglet du `PersonaScaffold` commerçant : la
+  /// barre du haut est alors celle du squelette, pas la sienne. `false` (défaut)
+  /// pour la route poussée `/commercant/adresses`, qui garde son AppBar.
+  final bool embedded;
+
+  const AddressesScreen({super.key, this.embedded = false});
 
   @override
   State<AddressesScreen> createState() => _AddressesScreenState();
@@ -108,7 +113,9 @@ class _AddressesScreenState extends State<AddressesScreen> {
     final orderState = context.watch<MerchantOrderState>();
 
     return Scaffold(
-      appBar: AppBar(title: Text(_t('order.book.title'))),
+      appBar: widget.embedded
+          ? null
+          : AppBar(title: Text(_t('order.book.title'))),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
