@@ -52,9 +52,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
       floatingActionButtonFor: (index) => index != 0
           ? null
           : FloatingActionButton.extended(
-              onPressed: () => context.push('/commercant/nouvelle'),
+              onPressed: _showNewCourseSheet,
               icon: const Icon(Icons.add),
-              label: Text(_t('order.form.title.new')),
+              label: Text(_t('order.new.fab')),
             ),
       destinations: [
         PersonaDestination(
@@ -89,6 +89,52 @@ class _OrdersScreenState extends State<OrdersScreen> {
           body: const _MerchantMorePanel(),
         ),
       ],
+    );
+  }
+
+  /// Le point d'entrée unique de la création : une livraison simple, ou une
+  /// tournée à plusieurs arrêts. Les deux menaient chacun à un endroit
+  /// différent — le « + » pour la première, le panneau « Plus » pour la
+  /// seconde —, si bien qu'un commerçant qui cherchait « comment livrer à
+  /// plusieurs adresses » ne trouvait pas (retour utilisateur du 09/2026).
+  void _showNewCourseSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md,
+                  AppSpacing.lg, AppSpacing.xs),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(_t('order.new.sheet'),
+                    style: Theme.of(context).textTheme.titleMedium),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.local_shipping_outlined),
+              title: Text(_t('order.new.delivery')),
+              subtitle: Text(_t('order.new.delivery.hint')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/commercant/nouvelle');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.alt_route),
+              title: Text(_t('order.new.tournee')),
+              subtitle: Text(_t('order.new.tournee.hint')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/commercant/tournees');
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -192,13 +238,6 @@ class _MerchantMorePanel extends StatelessWidget {
           title: Text(_t(context, 'order.list.cash')),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push('/commercant/encaissements'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.alt_route),
-          title: Text(_t(context, 'order.more.tournee')),
-          subtitle: Text(_t(context, 'order.more.tournee.hint')),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/commercant/tournees'),
         ),
         const Divider(),
         ListTile(

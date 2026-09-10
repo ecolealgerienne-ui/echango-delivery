@@ -139,7 +139,17 @@ void main() {
     app.main();
     await loginAs(tester, email: merchantEmail, home: Home.merchant);
 
+    // Le « + » ouvre un choix — une livraison simple, ou une tournée (C4,
+    // point d'entrée unique). On prend la livraison, reconnue à son icône
+    // dans la feuille (indépendante de la langue).
     await tester.tap(find.byType(FloatingActionButton));
+    await tester.pump(const Duration(milliseconds: 300));
+    final pickDelivery = find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.byIcon(Icons.local_shipping_outlined));
+    await pumpUntil(tester, pickDelivery,
+        reason: 'le choix « une livraison » dans la feuille du « + »');
+    await tester.tap(pickDelivery);
     await pumpUntil(tester, find.byIcon(Icons.save_outlined),
         reason: 'formulaire de course');
 
