@@ -214,6 +214,7 @@ void main() {
             'scripts/provision-app-parcours.sh');
 
     await tapVisible(tester, rows.first);
+    await waitDetailCoversHome(tester);
 
     // ⚠️ **Sur une opportunité non réclamée, la fiche n'expose qu'UN
     // `FilledButton` : « Accepter ».** Le refus est un `OutlinedButton`, et le
@@ -335,6 +336,7 @@ void parcoursArgentDeuxMaillons() {
             'publiée, ou quelqu’un l’a déjà prise. '
             'Relancer scripts/provision-app-parcours.sh');
     await tapVisible(tester, codRow.first);
+    await waitDetailCoversHome(tester);
 
     final accept = find.byType(FilledButton);
     await pumpUntil(tester, accept, reason: 'fiche de la course encaissée');
@@ -491,6 +493,7 @@ void parcoursEcartALaPorte() {
         onTimeout: 'introuvable même après défilement — relancer '
             'scripts/provision-app-parcours.sh');
     await tapVisible(tester, gapRow.first);
+    await waitDetailCoversHome(tester);
 
     final accept = find.byType(FilledButton);
     await pumpUntil(tester, accept, reason: 'fiche de la course d’écart');
@@ -596,6 +599,7 @@ void parcoursSortiesDeCourse() {
         reason: 'au moins une opportunité à écarter',
         onTimeout: 'relancer scripts/provision-app-parcours.sh');
     await tapVisible(tester, rows.first);
+    await waitDetailCoversHome(tester);
 
     // Le bouton de refus est le seul `OutlinedButton` d'une fiche réclamable,
     // et son icône ne dépend d'aucune langue.
@@ -648,6 +652,7 @@ void parcoursSortiesDeCourse() {
         reason: 'une opportunité à prendre',
         onTimeout: 'relancer scripts/provision-app-parcours.sh');
     await tapVisible(tester, rows.first);
+    await waitDetailCoversHome(tester);
 
     final accept = find.byType(FilledButton);
     await pumpUntil(tester, accept, reason: 'fiche de la course');

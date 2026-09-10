@@ -161,11 +161,27 @@ Future<void> goBack(WidgetTester tester) async {
 /// quarante secondes avant de conclure que l'écran ne montrait rien — un
 /// diagnostic qui accuse l'écran d'argent d'un défaut de navigation.
 ///
-/// L'écran ne porte **aucun onglet** : leur disparition dit qu'on a quitté
-/// l'accueil, et c'est le seul repère qui ne dépende ni de la langue ni du
-/// contenu.
+/// ⚠️ **Depuis C1, les encaissements vivent dans le panneau « Plus » de la
+/// barre du bas** (4ᵉ destination du `PersonaScaffold` commerçant). L'icône
+/// porte-monnaie n'est donc à l'écran qu'une fois cet onglet choisi —
+/// l'`IndexedStack` garde les autres corps *offstage*. On sélectionne d'abord
+/// la destination, puis on tape l'icône.
+///
+/// L'arrivée se lit à la disparition de la `NavigationBar` du tableau de bord :
+/// la route poussée (`CollectionsScreen`, un `Scaffold`/`AppBar` sans barre du
+/// bas) la recouvre et la passe *offstage*. Repère indépendant de la langue et
+/// du contenu — l'ancien « plus d'onglet » ne vaut plus rien, le corps
+/// « Livraisons » et son `TabBar` étant déjà *offstage* dès qu'on quitte cet
+/// onglet.
 Future<void> openCaisse(WidgetTester tester) async {
-  for (var attempt = 0; attempt < 3; attempt++) {
+  for (var attempt = 0; attempt < 4; attempt++) {
+    if (find.byIcon(Icons.account_balance_wallet_outlined).evaluate().isEmpty) {
+      final dests = find.byType(NavigationDestination);
+      if (dests.evaluate().length >= 4) {
+        await tester.tap(dests.at(3));
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+    }
     final wallet = find.byIcon(Icons.account_balance_wallet_outlined);
     if (wallet.evaluate().isEmpty) {
       await tester.pump(const Duration(milliseconds: 400));
@@ -175,7 +191,7 @@ Future<void> openCaisse(WidgetTester tester) async {
     final until = DateTime.now().add(const Duration(seconds: 8));
     while (DateTime.now().isBefore(until)) {
       await tester.pump(const Duration(milliseconds: 150));
-      if (find.byType(Tab).evaluate().isEmpty) return;
+      if (find.byType(NavigationBar).evaluate().isEmpty) return;
     }
   }
   fail('Les encaissements ne se sont pas ouverts — écran : ${whatIsOnScreen()}');
@@ -374,6 +390,24 @@ Future<void> openTab(WidgetTester tester, int index) async {
     await tester.tap(dests.at(index));
   }
   await tester.pump(const Duration(milliseconds: 600));
+}
+
+/// Attend que la fiche poussée recouvre **entièrement** le tableau de bord.
+///
+/// ⚠️ **`pumpUntil(find.byType(FilledButton))` ne suffit plus après une ligne
+/// de course tapée.** Depuis que la carte d'opportunité conducteur porte son
+/// action « Prendre » en `FilledButton` (T1), la liste — restée montée sous la
+/// route poussée le temps de la transition — expose six `FilledButton` que
+/// `find.byType` compte tant que le tableau de bord n'est pas passé
+/// *offstage*. Les assertions `findsOneWidget` sur « Accepter » voyaient donc
+/// sept boutons. On attend la disparition de la `NavigationBar` du
+/// `PersonaScaffold` : elle ne part *offstage* qu'une fois la fiche opaque en
+/// place.
+Future<void> waitDetailCoversHome(WidgetTester tester) async {
+  await pumpUntilGone(tester, find.byType(NavigationBar),
+      reason: 'la fiche recouvre le tableau de bord (barre du bas offstage)',
+      onTimeout: 'la navigation vers la fiche n’a pas abouti — '
+          'écran : ${whatIsOnScreen()}');
 }
 
 // ── Attentes ────────────────────────────────────────────────────────────────

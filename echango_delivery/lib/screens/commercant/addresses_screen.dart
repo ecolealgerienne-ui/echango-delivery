@@ -116,7 +116,13 @@ class _AddressesScreenState extends State<AddressesScreen> {
       appBar: widget.embedded
           ? null
           : AppBar(title: Text(_t('order.book.title'))),
+      // ⚠️ `heroTag` explicite : en mode `embedded`, cet écran vit dans
+      // l'`IndexedStack` de `PersonaScaffold` à côté de la carte « Nouvelle
+      // course », qui porte elle aussi un `FloatingActionButton`. Deux FAB au
+      // tag Hero par défaut dans le même Navigator = « multiple heroes share
+      // the same tag » à la première transition de route.
       floatingActionButton: FloatingActionButton(
+        heroTag: 'commercant-add-address',
         onPressed: () => _openForm(null),
         child: const Icon(Icons.add),
       ),
