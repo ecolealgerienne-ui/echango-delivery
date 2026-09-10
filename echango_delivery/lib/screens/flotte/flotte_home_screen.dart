@@ -21,6 +21,7 @@ import '../../theme/app_buttons.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
+import '../../utils/order_label.dart';
 
 /// Espace « entreprise de transport ».
 ///
@@ -213,7 +214,7 @@ class _OrdersTab extends StatelessWidget {
         final hasDriver = order['driver_assigned_uuid'] != null;
 
         return ListTile(
-          title: Text(_dropoffLabel(order)),
+          title: Text(fleetOrderLabel(order)),
           // ⚠️ Une seule ligne d'état, composée, à la place de deux.
           //
           // L'ancienne version affichait « Statut : dispatched » puis
@@ -909,25 +910,6 @@ String? _scheduledLabel(Object? raw, _Translate t, Locale locale) {
   final at = DateTime.tryParse(raw);
   if (at == null) return null;
   return '${t('fleet.orders.scheduled')} ${formatDayTime(at, locale)}';
-}
-
-String _dropoffLabel(Map<String, dynamic> order) {
-  final payload = order['payload'] as Map<String, dynamic>?;
-  final dropoff = payload?['dropoff'] as Map<String, dynamic>?;
-
-  for (final candidate in [
-    dropoff?['name'],
-    dropoff?['address'],
-    dropoff?['street1'],
-    dropoff?['city'],
-    order['public_id'],
-  ]) {
-    // ⚠️ `??` ne suffit pas : `address` vaut `''` quand le commerçant a saisi
-    // une adresse sans passer par la carte, et une chaîne vide n'est pas nulle.
-    // La ligne restait alors titrée par du blanc.
-    if (candidate is String && candidate.trim().isNotEmpty) return candidate.trim();
-  }
-  return '—';
 }
 
 /// L'état de la course, en une phrase.

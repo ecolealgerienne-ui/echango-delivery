@@ -340,6 +340,14 @@ const Map<String, String> _fr = {
   'fleet.map.unnamed': 'Conducteur sans nom',
   'fleet.map.seen': 'Vu',
   'fleet.map.seen.unknown': 'Date du relevé inconnue',
+  // Confier une course depuis la carte : le seul écran qui montre OÙ est chaque
+  // conducteur est le bon endroit pour donner la course au plus proche.
+  'fleet.map.assign': 'Assigner à une course',
+  'fleet.map.assign.title': 'Confier une course à ce conducteur',
+  // ⚠️ Distinct de « aucune course » : ici il y en a, mais toutes ont déjà un
+  // conducteur ou sont terminées. Le dire évite de croire à un écran cassé.
+  'fleet.map.assign.none': 'Aucune course sans conducteur à confier.',
+  'fleet.map.assigned': 'Conducteur désigné sur la course.',
 
   // ── Caisse ──────────────────────────────────────────────────────────────
   // ⚠️ **Ces quatre clés ne sont branchées nulle part.** `CashScreen` est servi
@@ -629,6 +637,10 @@ const Map<String, String> _ar = {
   'fleet.map.unnamed': 'سائق بلا اسم',
   'fleet.map.seen': 'شوهد',
   'fleet.map.seen.unknown': 'تاريخ التسجيل غير معروف',
+  'fleet.map.assign': 'إسناد إلى رحلة',
+  'fleet.map.assign.title': 'إسناد رحلة إلى هذا السائق',
+  'fleet.map.assign.none': 'لا توجد رحلة بلا سائق لإسنادها.',
+  'fleet.map.assigned': 'تم تعيين السائق على الرحلة.',
 
   'fleet.cash.title': 'صندوق الشركة',
   'fleet.cash.owed_by_drivers': 'ما يدين به سائقوك لك',

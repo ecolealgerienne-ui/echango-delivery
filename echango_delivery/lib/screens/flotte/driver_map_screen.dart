@@ -4,11 +4,14 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/fleet_strings.dart';
 import '../../models/fleet_driver_position.dart';
+import '../../models/fleet_order_state.dart';
 import '../../state/fleet_state.dart';
 import '../../state/locale_state.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../utils/dates.dart';
+import '../../utils/order_label.dart';
+import '../../widgets/app_snack_bar.dart';
 import '../../widgets/consultation_map.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/error_banner.dart';
@@ -31,6 +34,19 @@ import '../../widgets/error_banner.dart';
 /// en ligne). D'où « vu il y a X » plutôt que « position datant de X », et
 /// d'où le repère grisé au-delà de dix minutes : c'est la première chose qu'on
 /// lit sur une carte, avant toute légende.
+///
+/// ── Ce qu'il permet, lui, de faire ───────────────────────────────────────
+///
+/// Toucher un conducteur, puis « Assigner à une course » : la carte est le
+/// seul écran où l'entreprise voit **où** est chacun, donc le bon endroit pour
+/// confier une course au plus proche sans repasser par la liste puis la fiche.
+/// C'est le pendant de `pickAndAssignDriver` (fiche → conducteur) pris par
+/// l'autre bout (conducteur → course). Le serveur revérifie l'appartenance des
+/// deux avant d'appeler Fleetbase — cet écran présente, il n'autorise pas.
+///
+/// ⚠️ Les courses ne sont **pas** chargées par `initState` (voir plus haut) :
+/// `_assignFromMap` les demande à la première ouverture de la feuille, une
+/// fois, quand quelqu'un veut vraiment assigner.
 class FlotteDriverMapScreen extends StatefulWidget {
   const FlotteDriverMapScreen({super.key});
 
@@ -149,9 +165,85 @@ class _FlotteDriverMapScreenState extends State<FlotteDriverMapScreen> {
           locale: locale,
           positions: positions,
           selected: selected,
+          onAssign: selected == null
+              ? null
+              : () => _assignFromMap(
+                    selected.driverUuid,
+                    selected.name ?? t('fleet.map.unnamed'),
+                  ),
         ),
       ],
     );
+  }
+
+  /// Confier une course à ce conducteur, sans quitter la carte.
+  ///
+  /// Les courses viennent d'un `load()` fait **ici** et pas dans `initState` :
+  /// cet écran se veut léger à l'ouverture (voir l'en-tête), et la liste des
+  /// courses n'est utile qu'à ce geste-ci. On ne recharge pas si elle est déjà
+  /// là.
+  Future<void> _assignFromMap(String driverUuid, String driverName) async {
+    final state = context.read<FleetState>();
+    final locale = context.read<LocaleState>().locale;
+    String tr(String key) => fleetLabel(key, locale);
+
+    if (state.orders.isEmpty) {
+      await state.load();
+      if (!mounted) return;
+    }
+
+    // Une course à confier : personne dessus, et pas déjà terminée. Le même
+    // couple de clés que `fleetOrderStateKey` sert à trancher — pas une
+    // seconde liste de statuts terminaux (règle 5).
+    final assignable = [
+      for (final o in state.orders)
+        if (o['driver_assigned_uuid'] == null && o['driver_assigned'] == null)
+          if (fleetOrderStateKey(o) case final key
+              when key != 'fleet.state.completed' &&
+                  key != 'fleet.state.canceled')
+            o,
+    ];
+
+    if (assignable.isEmpty) {
+      showAppSnackBar(context, tr('fleet.map.assign.none'));
+      return;
+    }
+
+    final orderId = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            ListTile(
+              title: Text(tr('fleet.map.assign.title')),
+              subtitle: Text(driverName),
+            ),
+            const Divider(height: 1),
+            for (final o in assignable)
+              ListTile(
+                title: Text(fleetOrderLabel(o)),
+                subtitle: Text(_orderStateText(o, tr)),
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(o['uuid'] as String?),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (orderId == null || !mounted) return;
+    final error = await state.assignDriver(orderId, driverUuid);
+    if (!mounted) return;
+    showAppOutcome(context, error, tr('fleet.map.assigned'));
+  }
+
+  /// L'état d'une course pour la feuille de choix. Retombe sur le statut brut
+  /// quand il n'est pas reconnu, comme la liste de l'accueil : un libellé
+  /// rassurant et faux enverrait confier une course déjà close.
+  String _orderStateText(Map<String, dynamic> order, String Function(String) tr) {
+    final key = fleetOrderStateKey(order);
+    return key != null ? tr(key) : (order['status']?.toString() ?? '—');
   }
 
   FleetDriverPosition? _selectedOf(List<FleetDriverPosition> positions) {
@@ -173,12 +265,17 @@ class _Legend extends StatelessWidget {
     required this.locale,
     required this.positions,
     required this.selected,
+    required this.onAssign,
   });
 
   final String Function(String) t;
   final Locale locale;
   final List<FleetDriverPosition> positions;
   final FleetDriverPosition? selected;
+
+  /// Confier une course au conducteur touché. `null` quand aucun n'est
+  /// sélectionné — le bouton n'a alors rien à cibler.
+  final VoidCallback? onAssign;
 
   @override
   Widget build(BuildContext context) {
@@ -226,6 +323,17 @@ class _Legend extends StatelessWidget {
                     : context.semantic.success,
               ),
             ),
+            if (onAssign != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: FilledButton.icon(
+                  onPressed: onAssign,
+                  icon: const Icon(Icons.assignment_ind_outlined),
+                  label: Text(t('fleet.map.assign')),
+                ),
+              ),
+            ],
           ] else
             Padding(
               padding: const EdgeInsets.only(top: AppSpacing.xs),
